@@ -15,19 +15,26 @@ import (
 )
 
 type nodeJSON struct {
-	ID           uuid.UUID  `json:"id"`
-	Name         string     `json:"name"`
-	State        string     `json:"state"`
-	Version      string     `json:"version"`
-	CPUs         int        `json:"cpus"`
-	MemoryMB     int        `json:"memoryMB"`
-	Machine      any        `json:"machine"`
-	LastSeen     *time.Time `json:"lastSeen"`
-	VMCount      int        `json:"vmCount"`
-	UsedCPUs     int        `json:"usedCPUs"`
-	UsedMemoryMB int        `json:"usedMemoryMB"`
-	CanUpdate    bool       `json:"canUpdate"`
-	CanDelete    bool       `json:"canDelete"`
+	ID           uuid.UUID     `json:"id"`
+	Name         string        `json:"name"`
+	State        string        `json:"state"`
+	Version      string        `json:"version"`
+	CPUs         int           `json:"cpus"`
+	MemoryMB     int           `json:"memoryMB"`
+	Machine      any           `json:"machine"`
+	LastSeen     *time.Time    `json:"lastSeen"`
+	VMCount      int           `json:"vmCount"`
+	UsedCPUs     int           `json:"usedCPUs"`
+	UsedMemoryMB int           `json:"usedMemoryMB"`
+	CanUpdate    bool          `json:"canUpdate"`
+	CanDelete    bool          `json:"canDelete"`
+	Underlay     *underlayJSON `json:"underlay"`
+}
+
+type underlayJSON struct {
+	IP            string     `json:"ip"`
+	Registered    bool       `json:"registered"`
+	LastHandshake *time.Time `json:"lastHandshake"`
 }
 
 func (h *api) installCommand(token string) string {
@@ -50,6 +57,9 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		if h.fleet.Online(n.ID) {
 			j.State = "online"
 		}
+	}
+	if cs, ok := h.network.ChassisStatus(n.ID); ok {
+		j.Underlay = &underlayJSON{IP: cs.IP, Registered: cs.Registered, LastHandshake: cs.LastHandshake}
 	}
 	for _, v := range vms {
 		j.UsedCPUs += v.CPUs

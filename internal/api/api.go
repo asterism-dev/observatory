@@ -14,6 +14,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -23,10 +24,11 @@ type api struct {
 	z         *authz.Service
 	publicURL *url.URL
 	fleet     *fleet.Fleet
+	network   *network.Hub
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet) http.Handler {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f}
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub) http.Handler {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)

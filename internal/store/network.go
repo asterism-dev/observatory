@@ -131,7 +131,7 @@ func (s *Store) BackfillMgmtIPs(ctx context.Context) (int, error) {
 			n += int(tag.RowsAffected())
 			return err
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return n, err
 		}
 	}
