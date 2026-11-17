@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down idp-up idp-down idp-bootstrap hub cli web test run
+.PHONY: dev-up dev-down idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -29,3 +29,6 @@ test:
 
 run:
 	set -a; . deploy/dev/hub.env; set +a; go run ./cmd/hub
+
+node:
+	GOOS=linux GOARCH=amd64 go build -o bin/observatory-node-linux-amd64 ./cmd/node
