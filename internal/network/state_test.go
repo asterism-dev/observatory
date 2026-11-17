@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ import (
 )
 
 type fixture struct {
-	t                      *testing.T
+	t                      testing.TB
 	s                      *store.Store
 	z                      *authz.Service
 	h                      *network.Hub
@@ -28,7 +29,7 @@ type fixture struct {
 	nodeA, nodeB           uuid.UUID
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t testing.TB) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	f := &fixture{t: t, s: newStore(t)}
@@ -37,7 +38,7 @@ func newFixture(t *testing.T) *fixture {
 	f.member(f.orgA, f.a1, store.RoleMember)
 	f.member(f.orgA, f.a2, store.RoleMember)
 	f.member(f.orgA, f.adm, store.RoleAdmin)
-	f.nodeA, f.nodeB = f.node(f.orgA, f.owner), f.node(f.orgB, f.b1)
+	f.nodeA, f.nodeB = f.node(f.orgA, f.owner, "n"), f.node(f.orgB, f.b1, "n")
 	z, err := authz.NewService(ctx, f.s.PolicySnapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -79,17 +80,17 @@ func (f *fixture) member(org, user uuid.UUID, role store.Role) {
 	}
 }
 
-func (f *fixture) node(org, by uuid.UUID) uuid.UUID {
+func (f *fixture) node(org, by uuid.UUID, name string) uuid.UUID {
 	f.t.Helper()
 	ctx := context.Background()
-	n, tok, err := f.s.CreateNode(ctx, store.Node{OrgID: org, Name: "n", CreatedBy: by})
+	n, tok, err := f.s.CreateNode(ctx, store.Node{OrgID: org, Name: name, CreatedBy: by})
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	if _, _, err := f.s.EnrollNode(ctx, tok); err != nil {
 		f.t.Fatal(err)
 	}
-	_, pub, _ := wgkey.Generate()
+	pub := f.key()
 	if _, err := f.s.EnrollChassis(ctx, n.ID, pub); err != nil {
 		f.t.Fatal(err)
 	}
@@ -98,12 +99,66 @@ func (f *fixture) node(org, by uuid.UUID) uuid.UUID {
 
 func (f *fixture) device(org, user uuid.UUID, name string) store.Device {
 	f.t.Helper()
-	_, pub, _ := wgkey.Generate()
+	pub := f.key()
 	d, err := f.s.CreateDevice(context.Background(), store.Device{OrgID: org, UserID: user, Name: name, PublicKey: pub})
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	return d
+}
+
+func (f *fixture) key() string {
+	f.t.Helper()
+	_, pub, err := wgkey.Generate()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return pub
+}
+
+func (f *fixture) team(members ...uuid.UUID) uuid.UUID {
+	f.t.Helper()
+	ctx := context.Background()
+	team, err := f.s.CreateTeam(ctx, f.orgA, "core")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, u := range members {
+		if err := f.s.SetTeamMember(ctx, f.orgA, team.ID, u, false); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return team.ID
+}
+
+func (f *fixture) network(name string) store.Network {
+	f.t.Helper()
+	n, err := f.s.CreateNetwork(context.Background(), store.Network{OrgID: f.orgA, Name: name, CreatedBy: f.owner})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return n
+}
+
+func (f *fixture) attach(vm store.VM, n store.Network) {
+	f.t.Helper()
+	if _, err := f.s.SetVMNetworks(context.Background(), f.orgA, vm.ID, []uuid.UUID{n.ID}, true); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) bindRole(rule authz.Rule, subjects ...string) {
+	f.t.Helper()
+	ctx := context.Background()
+	r, err := f.s.CreateRole(ctx, f.orgA, authz.CustomRole{Name: uuid.NewString(), Rules: []authz.Rule{rule}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, sub := range subjects {
+		if _, err := f.s.Bind(ctx, f.orgA, sub, r.ID); err != nil {
+			f.t.Fatal(err)
+		}
+	}
 }
 
 func (f *fixture) vm(org, node uuid.UUID, name string, user, team *uuid.UUID) store.VM {
@@ -175,16 +230,9 @@ func TestAllowListOtherPerson(t *testing.T) {
 
 func TestUserVMAdmitsOnlyOwner(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
 	d2 := f.device(f.orgA, f.a2, "laptop")
 	v1 := f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil)
-	r, err := f.s.CreateRole(ctx, f.orgA, authz.CustomRole{Name: "connect", Rules: []authz.Rule{{Effect: authz.Allow, Object: authz.VMObject(v1.ID), Action: "vm:connect"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.s.Bind(ctx, f.orgA, authz.UserSubject(f.a2), r.ID); err != nil {
-		t.Fatal(err)
-	}
+	f.bindRole(authz.Rule{Effect: authz.Allow, Object: authz.VMObject(v1.ID), Action: "vm:connect"}, authz.UserSubject(f.a2))
 	st := f.state()
 	if !f.z.Allowed(authz.UserSubject(f.a2), f.orgA, authz.VMObject(v1.ID), "vm:connect") {
 		t.Fatal("custom grant not effective")
@@ -196,21 +244,14 @@ func TestUserVMAdmitsOnlyOwner(t *testing.T) {
 
 func TestTeamVMAllowList(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
-	team, err := f.s.CreateTeam(ctx, f.orgA, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.s.SetTeamMember(ctx, f.orgA, team.ID, f.a1, false); err != nil {
-		t.Fatal(err)
-	}
+	team := f.team(f.a1)
 	d1, d2 := f.device(f.orgA, f.a1, "laptop"), f.device(f.orgA, f.a2, "laptop")
-	v := f.vm(f.orgA, f.nodeA, "tv", nil, &team.ID)
+	v := f.vm(f.orgA, f.nodeA, "tv", nil, &team)
 	st := f.state()
 	if !allowed(t, st, v, d1) || allowed(t, st, v, d2) {
 		t.Fatalf("team VM allow list %v", mgmtPort(t, st, v).AllowFrom)
 	}
-	if err := f.s.RemoveTeamMember(ctx, f.orgA, team.ID, f.a1); err != nil {
+	if err := f.s.RemoveTeamMember(context.Background(), f.orgA, team, f.a1); err != nil {
 		t.Fatal(err)
 	}
 	if st := f.state(); allowed(t, st, v, d1) {
@@ -232,25 +273,17 @@ func TestAdminDeviceNotAllowed(t *testing.T) {
 
 func TestDenyConnectEmptiesList(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
-	team, _ := f.s.CreateTeam(ctx, f.orgA, "core")
-	if err := f.s.SetTeamMember(ctx, f.orgA, team.ID, f.a1, false); err != nil {
-		t.Fatal(err)
-	}
-	f.device(f.orgA, f.a1, "laptop")
+	team := f.team(f.a1)
+	d1 := f.device(f.orgA, f.a1, "laptop")
 	f.device(f.orgA, f.a2, "laptop")
-	f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil)
+	v1 := f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil)
 	f.vm(f.orgA, f.nodeA, "v2", &f.a2, nil)
-	f.vm(f.orgA, f.nodeA, "tv", nil, &team.ID)
-	r, err := f.s.CreateRole(ctx, f.orgA, authz.CustomRole{Name: "deny", Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjVMs + "/*", Action: "vm:connect"}}})
-	if err != nil {
-		t.Fatal(err)
+	f.vm(f.orgA, f.nodeA, "tv", nil, &team)
+	if !allowed(t, f.state(), v1, d1) {
+		t.Fatal("a1's device not admitted to v1 before the deny")
 	}
-	for _, sub := range []string{authz.UserSubject(f.a1), authz.UserSubject(f.a2), authz.TeamSubject(team.ID)} {
-		if _, err := f.s.Bind(ctx, f.orgA, sub, r.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
+	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.ObjVMs + "/*", Action: "vm:connect"},
+		authz.UserSubject(f.a1), authz.UserSubject(f.a2), authz.TeamSubject(team))
 	for _, p := range orgOf(t, f.state(), f.orgA).Ports {
 		if len(p.AllowFrom) != 0 {
 			t.Errorf("%s allows %v", p.Name, p.AllowFrom)
@@ -290,17 +323,11 @@ func TestOrgIsolation(t *testing.T) {
 
 func TestPortsRequestChassis(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
-	n, err := f.s.CreateNetwork(ctx, store.Network{OrgID: f.orgA, Name: "build", CreatedBy: f.owner})
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := f.network("build")
+	nodeA2 := f.node(f.orgA, f.owner, "n2")
 	vms := map[string]string{}
-	for _, name := range []string{"v1", "v2"} {
-		v := f.vm(f.orgA, f.nodeA, name, &f.a1, nil)
-		if _, err := f.s.SetVMNetworks(ctx, f.orgA, v.ID, []uuid.UUID{n.ID}, true); err != nil {
-			t.Fatal(err)
-		}
+	for _, v := range []store.VM{f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil), f.vm(f.orgA, nodeA2, "v2", &f.a1, nil)} {
+		f.attach(v, n)
 		vms[v.ID.String()] = v.NodeID.String()
 	}
 	a := orgOf(t, f.state(), f.orgA)
@@ -311,25 +338,27 @@ func TestPortsRequestChassis(t *testing.T) {
 	if len(ports) != 4 {
 		t.Fatalf("ports %+v", ports)
 	}
+	onA2 := 0
 	for _, p := range ports {
 		if p.Chassis == "" || p.Chassis != vms[p.Name[:36]] {
 			t.Errorf("port %s chassis %q", p.Name, p.Chassis)
 		}
+		if p.Chassis == nodeA2.String() {
+			onA2++
+		}
+	}
+	if onA2 != 2 {
+		t.Errorf("%d ports request the second node, want 2", onA2)
 	}
 }
 
 func TestNetworkPortsAndRecords(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	n, err := f.s.CreateNetwork(ctx, store.Network{OrgID: f.orgA, Name: "build", CreatedBy: f.owner})
-	if err != nil {
-		t.Fatal(err)
-	}
+	n := f.network("build")
 	f.device(f.orgA, f.a1, "laptop")
 	v := f.vm(f.orgA, f.nodeA, "dev", &f.a1, nil)
-	if _, err := f.s.SetVMNetworks(ctx, f.orgA, v.ID, []uuid.UUID{n.ID}, true); err != nil {
-		t.Fatal(err)
-	}
+	f.attach(v, n)
 	nics, err := f.s.VMNetworks(ctx, v.ID)
 	if err != nil || len(nics) != 1 {
 		t.Fatalf("nics %v %v", nics, err)
@@ -366,21 +395,23 @@ func TestDeletedDeviceLeavesState(t *testing.T) {
 
 func TestStateDeterministic(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
-	team, _ := f.s.CreateTeam(ctx, f.orgA, "core")
-	_ = f.s.SetTeamMember(ctx, f.orgA, team.ID, f.a1, false)
-	_ = f.s.SetTeamMember(ctx, f.orgA, team.ID, f.a2, false)
+	team := f.team(f.a1, f.a2)
 	for _, u := range []uuid.UUID{f.a1, f.a2} {
 		f.device(f.orgA, u, "laptop")
 		f.device(f.orgA, u, "phone")
 	}
-	n, _ := f.s.CreateNetwork(ctx, store.Network{OrgID: f.orgA, Name: "build", CreatedBy: f.owner})
+	n := f.network("build")
 	for _, name := range []string{"c", "a", "b"} {
-		v := f.vm(f.orgA, f.nodeA, name, nil, &team.ID)
-		_, _ = f.s.SetVMNetworks(ctx, f.orgA, v.ID, []uuid.UUID{n.ID}, true)
+		f.attach(f.vm(f.orgA, f.nodeA, name, nil, &team), n)
 	}
-	first, _ := json.Marshal(f.state())
-	second, _ := json.Marshal(f.state())
+	first, err := json.Marshal(f.state())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(f.state())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(first, second) {
 		t.Fatalf("state differs:\n%s\n%s", first, second)
 	}
@@ -390,18 +421,16 @@ func TestStateDeterministic(t *testing.T) {
 func TestAllowListMatchesCanConnect(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	team, _ := f.s.CreateTeam(ctx, f.orgA, "core")
-	_ = f.s.SetTeamMember(ctx, f.orgA, team.ID, f.a2, false)
-	_ = f.s.SetTeamMember(ctx, f.orgA, team.ID, f.adm, true)
+	team := f.team(f.a2)
+	if err := f.s.SetTeamMember(ctx, f.orgA, team, f.adm, true); err != nil {
+		t.Fatal(err)
+	}
 	var devices []store.Device
 	for _, u := range []uuid.UUID{f.owner, f.a1, f.a2, f.adm} {
 		devices = append(devices, f.device(f.orgA, u, "laptop"))
 	}
-	vms := []store.VM{f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil), f.vm(f.orgA, f.nodeA, "v2", &f.a2, nil), f.vm(f.orgA, f.nodeA, "tv", nil, &team.ID)}
-	r, _ := f.s.CreateRole(ctx, f.orgA, authz.CustomRole{Name: "deny", Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.VMObject(vms[1].ID), Action: "vm:connect"}}})
-	if _, err := f.s.Bind(ctx, f.orgA, authz.UserSubject(f.a2), r.ID); err != nil {
-		t.Fatal(err)
-	}
+	vms := []store.VM{f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil), f.vm(f.orgA, f.nodeA, "v2", &f.a2, nil), f.vm(f.orgA, f.nodeA, "tv", nil, &team)}
+	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.VMObject(vms[1].ID), Action: "vm:connect"}, authz.UserSubject(f.a2))
 	st := f.state()
 	e := f.z.Enforcer()
 	hits := 0
@@ -454,5 +483,35 @@ func TestSetStatus(t *testing.T) {
 	}
 	if _, ok := f.h.ChassisStatus(uuid.New()); ok {
 		t.Error("unknown node has chassis status")
+	}
+}
+
+// BenchmarkState builds the state for 200 devices and 500 VMs, half of them owned by a 50-member team.
+func BenchmarkState(b *testing.B) {
+	f := newFixture(b)
+	users := make([]uuid.UUID, 100)
+	for i := range users {
+		users[i] = f.user(fmt.Sprintf("u%d", i))
+		f.member(f.orgA, users[i], store.RoleMember)
+		f.device(f.orgA, users[i], "laptop")
+		f.device(f.orgA, users[i], "phone")
+	}
+	team := f.team(users[:50]...)
+	for i := range 500 {
+		if i%2 == 0 {
+			f.vm(f.orgA, f.nodeA, fmt.Sprintf("u%d", i), &users[i%len(users)], nil)
+		} else {
+			f.vm(f.orgA, f.nodeA, fmt.Sprintf("t%d", i), nil, &team)
+		}
+	}
+	ctx := context.Background()
+	if err := f.z.Reload(ctx); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for range b.N {
+		if _, err := f.h.State(ctx); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

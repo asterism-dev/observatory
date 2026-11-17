@@ -150,10 +150,14 @@ func (s *Store) EnrollChassis(ctx context.Context, node uuid.UUID, publicKey str
 		if err != nil {
 			return err
 		}
+		// The address lock also serializes against CreateDevice, which shares the WireGuard key space on the gateway.
+		if err := tx.lockAddresses(ctx); err != nil {
+			return err
+		}
+		if err := tx.checkKeyFree(ctx, publicKey, node); err != nil {
+			return err
+		}
 		if !ip.IsValid() {
-			if err := tx.lockAddresses(ctx); err != nil {
-				return err
-			}
 			used, err := tx.collectAddrs(ctx, "SELECT underlay_ip FROM nodes WHERE underlay_ip IS NOT NULL")
 			if err != nil {
 				return err
@@ -163,9 +167,23 @@ func (s *Store) EnrollChassis(ctx context.Context, node uuid.UUID, publicKey str
 			}
 		}
 		_, err = tx.q.Exec(ctx, "UPDATE nodes SET chassis_key = $2, underlay_ip = $3 WHERE id = $1", node, publicKey, ip)
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
 		return err
 	})
 	return ip, err
+}
+
+// checkKeyFree fails with ErrConflict if a device or another node's chassis already uses the WireGuard key.
+func (s *Store) checkKeyFree(ctx context.Context, key string, node uuid.UUID) error {
+	var taken bool
+	err := s.q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM devices WHERE public_key = $1)
+		OR EXISTS (SELECT 1 FROM nodes WHERE chassis_key = $1 AND id <> $2)`, key, node).Scan(&taken)
+	if err == nil && taken {
+		err = ErrConflict
+	}
+	return err
 }
 
 func hubSecretAAD(name string) []byte { return []byte("hub-secret:" + name) }
@@ -228,8 +246,10 @@ type NetSnapshot struct {
 	NICs     []VMNIC
 }
 
-func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) {
-	rows, err := s.q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
+func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) { return readChassis(ctx, s.q) }
+
+func readChassis(ctx context.Context, q querier) ([]Chassis, error) {
+	rows, err := q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -243,18 +263,18 @@ func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) {
 func (s *Store) NetworkSnapshot(ctx context.Context) (NetSnapshot, error) {
 	pool, ok := s.q.(*pgxpool.Pool)
 	if !ok {
-		return s.readNetSnapshot(ctx)
+		return readNetSnapshot(ctx, s.q)
 	}
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return NetSnapshot{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	return (&Store{q: tx}).readNetSnapshot(ctx)
+	return readNetSnapshot(ctx, tx)
 }
 
-func (s *Store) readNetSnapshot(ctx context.Context) (snap NetSnapshot, err error) {
-	rows, err := s.q.Query(ctx, "SELECT id, mgmt_slice FROM orgs WHERE mgmt_slice IS NOT NULL ORDER BY id")
+func readNetSnapshot(ctx context.Context, q querier) (snap NetSnapshot, err error) {
+	rows, err := q.Query(ctx, "SELECT id, mgmt_slice FROM orgs WHERE mgmt_slice IS NOT NULL ORDER BY id")
 	if err != nil {
 		return snap, err
 	}
@@ -264,27 +284,27 @@ func (s *Store) readNetSnapshot(ctx context.Context) (snap NetSnapshot, err erro
 	}); err != nil {
 		return snap, err
 	}
-	if snap.Chassis, err = s.Chassis(ctx); err != nil {
+	if snap.Chassis, err = readChassis(ctx, q); err != nil {
 		return snap, err
 	}
-	rows, err = s.q.Query(ctx, "SELECT "+deviceColumns+" FROM devices ORDER BY ip")
+	rows, err = q.Query(ctx, "SELECT "+deviceColumns+" FROM devices ORDER BY ip")
 	if err != nil {
 		return snap, err
 	}
 	if snap.Devices, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Device, error) { return scanDevice(r) }); err != nil {
 		return snap, err
 	}
-	if snap.VMs, err = collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE mgmt_ip IS NOT NULL ORDER BY id")); err != nil {
+	if snap.VMs, err = collectVMs(q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE mgmt_ip IS NOT NULL ORDER BY id")); err != nil {
 		return snap, err
 	}
-	rows, err = s.q.Query(ctx, "SELECT "+networkColumns+" FROM networks ORDER BY id")
+	rows, err = q.Query(ctx, "SELECT "+networkColumns+" FROM networks ORDER BY id")
 	if err != nil {
 		return snap, err
 	}
 	if snap.Networks, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Network, error) { return scanNetwork(r) }); err != nil {
 		return snap, err
 	}
-	rows, err = s.q.Query(ctx, "SELECT vm_id, network_id, ip FROM vm_networks ORDER BY vm_id, network_id")
+	rows, err = q.Query(ctx, "SELECT vm_id, network_id, ip FROM vm_networks ORDER BY vm_id, network_id")
 	if err != nil {
 		return snap, err
 	}

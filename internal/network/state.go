@@ -35,6 +35,7 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 	if err != nil {
 		return proto.GatewayState{}, err
 	}
+	// Revocations reach the allow lists on the next successful authz reload, which may trail this snapshot.
 	e := h.authz.Enforcer()
 	st := proto.GatewayState{
 		UnderlayKey: h.underlay.priv,
@@ -48,10 +49,13 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 	for _, c := range snap.Chassis {
 		st.Chassis = append(st.Chassis, proto.GatewayChassis{NodeID: c.NodeID.String(), OrgID: c.OrgID.String(), PublicKey: c.PublicKey, IP: c.IP.String()})
 	}
-	devices := map[uuid.UUID][]store.Device{}
+	devices := map[uuid.UUID]map[uuid.UUID][]store.Device{}
 	for _, d := range snap.Devices {
 		st.Devices = append(st.Devices, proto.GatewayDevice{PublicKey: d.PublicKey, IP: d.IP.String(), OrgID: d.OrgID.String()})
-		devices[d.OrgID] = append(devices[d.OrgID], d)
+		if devices[d.OrgID] == nil {
+			devices[d.OrgID] = map[uuid.UUID][]store.Device{}
+		}
+		devices[d.OrgID][d.UserID] = append(devices[d.OrgID][d.UserID], d)
 	}
 	orgs := map[uuid.UUID]*proto.GatewayOrg{}
 	for _, o := range snap.Orgs {
@@ -101,13 +105,22 @@ func port(name string, vm store.VM, ip netip.Addr, allow []string) proto.Gateway
 	return proto.GatewayPort{Name: name, MAC: netaddr.MAC(ip), IP: ip.String(), Chassis: vm.NodeID.String(), AllowFrom: allow}
 }
 
-// ponytail: devices × VMs CanConnect per poll; index devices by user if orgs grow large.
-func allowFrom(e *authz.Enforcer, vm store.VM, devices []store.Device) []string {
+// allowFrom checks CanConnect once per user: a user VM only for its owner, a team VM for each user with a device in the org.
+func allowFrom(e *authz.Enforcer, vm store.VM, byUser map[uuid.UUID][]store.Device) []string {
 	ref := authz.VMRef{OrgID: vm.OrgID, ID: vm.ID, UserID: vm.UserID, TeamID: vm.TeamID}
 	var out []string
-	for _, d := range devices {
-		if d.OrgID == vm.OrgID && e.CanConnect(d.UserID, ref) {
-			out = append(out, d.IP.String())
+	add := func(user uuid.UUID) {
+		if e.CanConnect(user, ref) {
+			for _, d := range byUser[user] {
+				out = append(out, d.IP.String())
+			}
+		}
+	}
+	if vm.UserID != nil {
+		add(*vm.UserID)
+	} else {
+		for user := range byUser {
+			add(user)
 		}
 	}
 	slices.Sort(out)
@@ -140,6 +153,7 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.GatewayStatus) error {
 	return nil
 }
 
+// ChassisStatus is the node's chassis as of the gateway's last status report; false if not enrolled then.
 func (h *Hub) ChassisStatus(node uuid.UUID) (ChassisStatus, bool) {
 	h.status.mu.Lock()
 	defer h.status.mu.Unlock()

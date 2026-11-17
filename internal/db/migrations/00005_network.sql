@@ -1,7 +1,7 @@
 -- +goose Up
 ALTER TABLE orgs ADD COLUMN mgmt_slice cidr UNIQUE;
 ALTER TABLE vms ADD COLUMN mgmt_ip inet UNIQUE;
-ALTER TABLE nodes ADD COLUMN chassis_key text, ADD COLUMN underlay_ip inet UNIQUE;
+ALTER TABLE nodes ADD COLUMN chassis_key text UNIQUE, ADD COLUMN underlay_ip inet UNIQUE;
 CREATE TABLE devices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL REFERENCES orgs(id),
   user_id uuid NOT NULL REFERENCES users(id), name text NOT NULL, public_key text UNIQUE NOT NULL,
   ip inet UNIQUE NOT NULL, last_handshake timestamptz, created_at timestamptz NOT NULL DEFAULT now(),

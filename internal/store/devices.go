@@ -45,6 +45,9 @@ func (s *Store) CreateDevice(ctx context.Context, d Device) (Device, error) {
 		if err := tx.lockAddresses(ctx); err != nil {
 			return err
 		}
+		if err := tx.checkKeyFree(ctx, d.PublicKey, uuid.Nil); err != nil {
+			return err
+		}
 		used, err := tx.collectAddrs(ctx, "SELECT ip FROM devices")
 		if err != nil {
 			return err

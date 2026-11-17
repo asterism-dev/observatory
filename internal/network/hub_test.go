@@ -21,7 +21,7 @@ const token = "0123456789abcdef0123456789abcdef"
 
 var cfg = network.Config{GatewayHost: "gw.test", GatewayToken: token}
 
-func newStore(t *testing.T) *store.Store {
+func newStore(t testing.TB) *store.Store {
 	t.Helper()
 	return store.New(dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
 }

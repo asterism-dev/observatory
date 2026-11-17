@@ -3,6 +3,7 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sync"
@@ -208,5 +209,30 @@ func TestHubSecretSealed(t *testing.T) {
 	}
 	if _, err := store.New(pool).HubSecret(ctx, "ovn-ca", gen); err == nil {
 		t.Fatal("no master key returned a secret")
+	}
+}
+
+func TestWireGuardKeysUniqueAcrossNodesAndDevices(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	if _, err := e.s.EnrollChassis(ctx, e.node.ID, "chassis"); err != nil {
+		t.Fatal(err)
+	}
+	n2, _, err := e.s.CreateNode(ctx, store.Node{OrgID: e.org.ID, Name: "n2", CreatedBy: e.user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.EnrollChassis(ctx, n2.ID, "chassis"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("other node's chassis key: %v", err)
+	}
+	if _, err := e.s.CreateDevice(ctx, store.Device{OrgID: e.org.ID, UserID: e.user, Name: "d", PublicKey: "chassis"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("device with chassis key: %v", err)
+	}
+	mustCreateDevice(t, e.s, e.org.ID, e.user, "d", "device")
+	if _, err := e.s.EnrollChassis(ctx, n2.ID, "device"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("chassis with device key: %v", err)
+	}
+	if _, err := e.s.EnrollChassis(ctx, e.node.ID, "chassis"); err != nil {
+		t.Fatalf("re-enroll with own key: %v", err)
 	}
 }
