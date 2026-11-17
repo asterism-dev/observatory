@@ -147,7 +147,7 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, kind stor
 		return nil
 	})
 	if err == nil && created && h.Reload != nil {
-		if rerr := h.Reload(ctx); rerr != nil {
+		if rerr := h.Reload(context.WithoutCancel(ctx)); rerr != nil {
 			slog.Error("reload permissions after login", "err", rerr)
 		}
 	}

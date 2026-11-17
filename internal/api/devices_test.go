@@ -196,6 +196,28 @@ func TestFreshLoginCanCreateDevice(t *testing.T) {
 	e.createDevice(tok.Token, e.personalOrg(store.User{ID: me.User.ID}), "laptop")
 }
 
+func TestLoginReloadIgnoresRequestCancel(t *testing.T) {
+	e := newEnv(t)
+	called := false
+	reload := func(ctx context.Context) error {
+		called = true
+		if ctx.Done() != nil {
+			t.Error("reload runs on a cancellable request context")
+		}
+		return e.z.Reload(ctx)
+	}
+	a := &auth.Handler{Store: e.store, Auth: loginAuth{}, Reload: reload}
+	mux := http.NewServeMux()
+	a.Routes(mux)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(`{"idToken":"x","accessToken":"y"}`)).WithContext(ctx)
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+	if !called {
+		t.Fatal("reload not called")
+	}
+}
+
 func TestDeviceDuplicateName(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user("alice")
