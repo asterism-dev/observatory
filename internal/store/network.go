@@ -20,6 +20,15 @@ var (
 	underlayLast  = netip.MustParseAddr("10.198.255.254")
 )
 
+var ErrAddressesExhausted = errors.New("no free addresses left")
+
+func exhausted(err error) error {
+	if errors.Is(err, netaddr.ErrExhausted) {
+		return ErrAddressesExhausted
+	}
+	return err
+}
+
 func (s *Store) lockAddresses(ctx context.Context) error {
 	_, err := s.q.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", addressLock)
 	return err
@@ -63,7 +72,7 @@ func (s *Store) OrgSlice(ctx context.Context, org uuid.UUID) (netip.Prefix, erro
 		}
 		fresh, err := netaddr.FreeSlice(used)
 		if err != nil {
-			return err
+			return exhausted(err)
 		}
 		slice = &fresh
 		_, err = tx.q.Exec(ctx, "UPDATE orgs SET mgmt_slice = $2 WHERE id = $1", org, fresh)
@@ -89,7 +98,8 @@ func (s *Store) nextMgmtIP(ctx context.Context, org uuid.UUID) (netip.Addr, erro
 	if err != nil {
 		return netip.Addr{}, err
 	}
-	return netaddr.FreeHost(slice, used)
+	ip, err := netaddr.FreeHost(slice, used)
+	return ip, exhausted(err)
 }
 
 // BackfillMgmtIPs gives VMs created before management addresses existed one.
@@ -148,7 +158,7 @@ func (s *Store) EnrollChassis(ctx context.Context, node uuid.UUID, publicKey str
 				return err
 			}
 			if ip, err = netaddr.FreeAddr(underlayFirst, underlayLast, used); err != nil {
-				return err
+				return exhausted(err)
 			}
 		}
 		_, err = tx.q.Exec(ctx, "UPDATE nodes SET chassis_key = $2, underlay_ip = $3 WHERE id = $1", node, publicKey, ip)

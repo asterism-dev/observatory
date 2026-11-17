@@ -94,6 +94,9 @@ var storeErrorStatus = []struct {
 	{store.ErrOwnsResources, http.StatusConflict},
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
+	{store.ErrRestartRequired, http.StatusConflict},
+	{store.ErrSubnetOverlap, http.StatusConflict},
+	{store.ErrAddressesExhausted, http.StatusConflict},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.
