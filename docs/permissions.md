@@ -133,11 +133,14 @@ Org admins and owners see, power and delete every VM through `vm:*` on `org/vms/
 look inside a VM. Members see every node and may place VMs on it (`node:use`); only admins and owners
 add, rename or delete nodes.
 
+A member who still owns VMs cannot be removed from the org or leave it, and a team that owns VMs cannot be
+deleted (`409` "owns VMs").
+
 ## Limits
 
 Fields: vCPU, RAM (MB), disk (GB), VM count; `null` is unlimited. Set per org by platform admins, per team
 and per member by org admins (`limit:set`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
-team or member limit (both return `400` "limit exceeds org limit"). Limits are configuration only and not enforced yet.
+team or member limit (both return `400` "limit exceeds org limit"). Creating a VM that would exceed a limit returns `409` "limit exceeded".
 
 ## Platform admins
 
@@ -153,5 +156,4 @@ with result `denied`, actor, org, action and object.
 
 ## Not yet built
 
-Shares (per-object bindings) and per-resource cost centers arrive with the first resource type (VMs), as
-does the check that a member who still owns resources cannot be removed. Org deletion is also pending.
+Shares (per-object bindings) and per-resource cost centers are not built yet. Org deletion is also pending.
