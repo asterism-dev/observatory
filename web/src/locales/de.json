@@ -1,0 +1,54 @@
+{
+  "app": {
+    "name": "Observatory"
+  },
+  "login": {
+    "intro": "Melde dich an, um fortzufahren.",
+    "signIn": "Anmelden",
+    "createAccount": "Konto erstellen",
+    "failed": "Anmeldung fehlgeschlagen. Bitte versuche es erneut."
+  },
+  "nav": {
+    "label": "Navigation",
+    "profile": "Profil",
+    "audit": "Audit-Log"
+  },
+  "theme": {
+    "system": "Design: System",
+    "light": "Design: Hell",
+    "dark": "Design: Dunkel"
+  },
+  "user": {
+    "signOut": "Abmelden"
+  },
+  "profile": {
+    "admin": "Plattform-Admin",
+    "sessions": "Sitzungen",
+    "kind": "Art",
+    "userAgent": "User-Agent",
+    "ip": "IP",
+    "lastUsed": "Zuletzt genutzt",
+    "expires": "Läuft ab",
+    "current": "Diese Sitzung",
+    "revoke": "Widerrufen",
+    "revokeTitle": "Sitzung widerrufen?",
+    "revokeBody": "Das Gerät dieser Sitzung wird abgemeldet.",
+    "revokeCurrent": "Das ist deine aktuelle Sitzung; du wirst abgemeldet.",
+    "cancel": "Abbrechen",
+    "idpNote": "Passkeys und Passwort verwaltest du in deinem Konto beim Identity Provider.",
+    "idpLink": "Identity Provider öffnen"
+  },
+  "audit": {
+    "actor": "Akteur",
+    "action": "Aktion",
+    "from": "Von",
+    "to": "Bis",
+    "time": "Zeit",
+    "org": "Org",
+    "resource": "Ressource",
+    "result": "Ergebnis",
+    "loadMore": "Mehr laden",
+    "empty": "Keine Einträge",
+    "filter": "Filtern"
+  }
+}

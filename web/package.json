@@ -1,0 +1,23 @@
+{
+  "name": "observatory-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --build && vite build && touch dist/.gitkeep",
+    "typecheck": "vue-tsc --build"
+  },
+  "dependencies": {
+    "@asterism-dev/lumen": "github:asterism-dev/lumen#v0.4.0",
+    "vue": "3.5.45",
+    "vue-i18n": "11.4.21",
+    "vue-router": "5.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@vitejs/plugin-vue": "6.0.11",
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "vue-tsc": "3.3.14"
+  }
+}
