@@ -155,6 +155,7 @@ func TestRemoveMemberCleansTeamsAndBindings(t *testing.T) {
 		for _, u := range []uuid.UUID{a.User.ID, m.User.ID} {
 			execSQL(t, pool, `INSERT INTO team_members (team_id, user_id) VALUES ($1, $2)`, team, u)
 			execSQL(t, pool, `INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org.ID, "user:"+u.String(), role)
+			execSQL(t, pool, `INSERT INTO limits (org_id, scope, vcpu) VALUES ($1, $2, 1)`, org.ID, "user:"+u.String())
 		}
 	}
 
@@ -171,13 +172,14 @@ func TestRemoveMemberCleansTeamsAndBindings(t *testing.T) {
 	}
 	teams := `SELECT count(*) FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE t.org_id = $1 AND tm.user_id = $2`
 	bindings := `SELECT count(*) FROM role_bindings WHERE org_id = $1 AND subject = $2`
-	if count(teams, orgs[0], m.User.ID) != 0 || count(bindings, orgs[0], "user:"+m.User.ID.String()) != 0 {
-		t.Fatal("team membership or binding left in org")
+	limits := `SELECT count(*) FROM limits WHERE org_id = $1 AND scope = $2`
+	if count(teams, orgs[0], m.User.ID) != 0 || count(bindings, orgs[0], "user:"+m.User.ID.String()) != 0 || count(limits, orgs[0], "user:"+m.User.ID.String()) != 0 {
+		t.Fatal("team membership, binding or limit left in org")
 	}
-	if count(teams, orgs[0], a.User.ID) != 1 || count(bindings, orgs[0], "user:"+a.User.ID.String()) != 1 {
+	if count(teams, orgs[0], a.User.ID) != 1 || count(bindings, orgs[0], "user:"+a.User.ID.String()) != 1 || count(limits, orgs[0], "user:"+a.User.ID.String()) != 1 {
 		t.Fatal("other member's rows removed")
 	}
-	if count(teams, orgs[1], m.User.ID) != 1 || count(bindings, orgs[1], "user:"+m.User.ID.String()) != 1 {
+	if count(teams, orgs[1], m.User.ID) != 1 || count(bindings, orgs[1], "user:"+m.User.ID.String()) != 1 || count(limits, orgs[1], "user:"+m.User.ID.String()) != 1 {
 		t.Fatal("rows in other org removed")
 	}
 	if _, err := s.Membership(ctx, orgs[0], m.User.ID); !errors.Is(err, store.ErrNotFound) {

@@ -29,6 +29,11 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
+	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
+	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
+	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
+	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
+	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)
 	mux.HandleFunc("POST /api/orgs", h.createOrg)
 	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
 	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
@@ -55,6 +60,8 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("GET /api/orgs/{org}/bindings", h.listBindings)
 	mux.HandleFunc("POST /api/orgs/{org}/bindings", h.bind)
 	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
+	mux.HandleFunc("GET /api/orgs/{org}/limits", h.getLimits)
+	mux.HandleFunc("PUT /api/orgs/{org}/limits/{scope}", h.setScopeLimits)
 	return a.Require(mux)
 }
 

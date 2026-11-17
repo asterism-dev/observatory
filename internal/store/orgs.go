@@ -133,7 +133,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role
 	})
 }
 
-// RemoveMember also drops the user's team memberships and role bindings in the org.
+// RemoveMember also drops the user's team memberships, role bindings and limits in the org.
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		current, err := tx.LockMember(ctx, orgID, userID)
@@ -150,7 +150,74 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 		if _, err := tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.UserSubject(userID)); err != nil {
 			return err
 		}
+		if _, err := tx.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", orgID, authz.UserSubject(userID)); err != nil {
+			return err
+		}
 		_, err = tx.q.Exec(ctx, "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID)
 		return err
+	})
+}
+
+var ErrLastPlatformAdmin = errors.New("a platform needs at least one admin")
+
+type OrgSummary struct {
+	Org         Org
+	MemberCount int
+}
+
+func (s *Store) Orgs(ctx context.Context) ([]OrgSummary, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT o.id, o.name, o.personal_for IS NOT NULL, o.created_at, (SELECT count(*) FROM memberships m WHERE m.org_id = o.id)
+		FROM orgs o ORDER BY o.name, o.id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (o OrgSummary, err error) {
+		err = r.Scan(&o.Org.ID, &o.Org.Name, &o.Org.Personal, &o.Org.CreatedAt, &o.MemberCount)
+		return
+	})
+}
+
+// Org returns the org without regard to membership; callers must be platform admins.
+func (s *Store) Org(ctx context.Context, orgID uuid.UUID) (Org, error) {
+	var o Org
+	err := s.q.QueryRow(ctx, "SELECT id, name, personal_for IS NOT NULL, created_at FROM orgs WHERE id = $1", orgID).
+		Scan(&o.ID, &o.Name, &o.Personal, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Org{}, ErrNotFound
+	}
+	return o, err
+}
+
+func (s *Store) Users(ctx context.Context) ([]User, error) {
+	rows, err := s.q.Query(ctx, "SELECT "+userColumns+" FROM users ORDER BY name, id")
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (User, error) { return scanUser(r) })
+}
+
+// SetPlatformAdmin locks every current admin row, so concurrent revocations can't leave none.
+func (s *Store) SetPlatformAdmin(ctx context.Context, userID uuid.UUID, admin bool) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		rows, err := tx.q.Query(ctx, "SELECT id FROM users WHERE platform_admin ORDER BY id FOR UPDATE")
+		if err != nil {
+			return err
+		}
+		admins, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if !admin && len(admins) == 1 && admins[0] == userID {
+			return ErrLastPlatformAdmin
+		}
+		tag, err := tx.q.Exec(ctx, "UPDATE users SET platform_admin = $2 WHERE id = $1", userID, admin)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
 	})
 }

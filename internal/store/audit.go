@@ -53,6 +53,7 @@ const (
 	ActionRoleUnbind          = "role:unbind"
 	ActionLimitSet            = "limit:set"
 	ActionPlatformRevokeAdmin = "platform:revoke-admin"
+	ActionAdminRead           = "admin:read"
 )
 
 type AuditEntry struct {

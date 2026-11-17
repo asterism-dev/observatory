@@ -79,4 +79,14 @@ func TestTeamStore(t *testing.T) {
 	if err := s.DeleteTeam(ctx, orgA.ID, uuid.New()); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("delete unknown: %v", err)
 	}
+	one := 1
+	if err := s.SetLimits(ctx, orgA.ID, "team:"+other.ID.String(), store.Limits{VCPU: &one}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteTeam(ctx, orgA.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ls, err := s.Limits(ctx, orgA.ID); err != nil || len(ls) != 0 {
+		t.Fatalf("limits after team delete: %+v %v", ls, err)
+	}
 }

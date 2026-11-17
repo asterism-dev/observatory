@@ -58,7 +58,7 @@ func (s *Store) RenameTeam(ctx context.Context, orgID, teamID uuid.UUID, name st
 	return nil
 }
 
-// DeleteTeam also drops the team's memberships (cascade) and the role bindings whose subject is the team.
+// DeleteTeam also drops the team's memberships (cascade) the role bindings whose subject is the team and its limits.
 func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		if err := tx.LockOrg(ctx, orgID); err != nil {
@@ -71,7 +71,10 @@ func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		_, err = tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.TeamSubject(teamID))
+		if _, err = tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.TeamSubject(teamID)); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", orgID, authz.TeamSubject(teamID))
 		return err
 	})
 }
