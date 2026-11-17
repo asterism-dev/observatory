@@ -14,11 +14,12 @@ Replace the workspace rail + side panel with a single sidebar with the user card
   - New organization (existing `CreateOrgDialog`)
   - Organization settings — shown when at least one org settings tab is permitted
   - Platform settings — platform admins only
-  - Profile
+  - User settings (`/profile`)
+  - language dropdown (from `LOCALES`) and theme switch (system/light/dark)
   - Log out
 - Organization settings: one layout with tabs General, Members, Teams, Roles, Limits, Audit; each tab gated by `can()` exactly like today's sidebar entries. URLs stay `/orgs/:orgId/...`.
 - Platform settings: one layout with tabs Orgs, Users, Audit. URLs stay `/admin/...`.
-- Language and theme move from the user menu to the Profile page.
+- Language and theme stay in the user menu; language is a dropdown so new locales only need an entry in `LOCALES`.
 - Mobile keeps working (sidebar collapses to a top bar as today).
 
 ## Non-goals
