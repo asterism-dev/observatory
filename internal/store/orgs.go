@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/asterism-dev/observatory/internal/authz"
 )
 
 var (
@@ -56,4 +59,98 @@ func (s *Store) Membership(ctx context.Context, orgID, userID uuid.UUID) (Member
 		return Membership{}, ErrNotFound
 	}
 	return m, err
+}
+
+type Member struct {
+	User     User
+	Role     Role
+	JoinedAt time.Time
+}
+
+func (s *Store) Members(ctx context.Context, orgID uuid.UUID) ([]Member, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT u.id, u.subject, u.email, u.name, u.platform_admin, u.created_at, m.role, m.created_at
+		FROM memberships m JOIN users u ON u.id = m.user_id
+		WHERE m.org_id = $1
+		ORDER BY m.created_at, u.id`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (m Member, err error) {
+		err = r.Scan(&m.User.ID, &m.User.Subject, &m.User.Email, &m.User.Name, &m.User.PlatformAdmin, &m.User.CreatedAt, &m.Role, &m.JoinedAt)
+		return
+	})
+}
+
+// lockMember locks the org row, serializing membership changes in the org, and returns the user's current role there.
+func (s *Store) lockMember(ctx context.Context, orgID, userID uuid.UUID) (Role, error) {
+	var personal bool
+	err := s.q.QueryRow(ctx, "SELECT personal_for IS NOT NULL FROM orgs WHERE id = $1 FOR UPDATE", orgID).Scan(&personal)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", ErrNotFound
+	case err != nil:
+		return "", err
+	case personal:
+		return "", ErrPersonalOrg
+	}
+	var role Role
+	err = s.q.QueryRow(ctx, "SELECT role FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return role, err
+}
+
+// checkNotLastOwner must run after lockMember so the count can't change before commit.
+func (s *Store) checkNotLastOwner(ctx context.Context, orgID uuid.UUID, current Role) error {
+	if current != RoleOwner {
+		return nil
+	}
+	var owners int
+	if err := s.q.QueryRow(ctx, "SELECT count(*) FROM memberships WHERE org_id = $1 AND role = $2", orgID, RoleOwner).Scan(&owners); err != nil {
+		return err
+	}
+	if owners <= 1 {
+		return ErrLastOwner
+	}
+	return nil
+}
+
+func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role Role) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		current, err := tx.lockMember(ctx, orgID, userID)
+		if err != nil {
+			return err
+		}
+		if role != RoleOwner {
+			if err := tx.checkNotLastOwner(ctx, orgID, current); err != nil {
+				return err
+			}
+		}
+		_, err = tx.q.Exec(ctx, "UPDATE memberships SET role = $3 WHERE org_id = $1 AND user_id = $2", orgID, userID, role)
+		return err
+	})
+}
+
+// RemoveMember also drops the user's team memberships and role bindings in the org.
+func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		current, err := tx.lockMember(ctx, orgID, userID)
+		if err != nil {
+			return err
+		}
+		if err := tx.checkNotLastOwner(ctx, orgID, current); err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, `
+			DELETE FROM team_members WHERE user_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`, orgID, userID); err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.UserSubject(userID)); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID)
+		return err
+	})
 }

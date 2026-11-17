@@ -72,6 +72,8 @@ var storeErrorStatus = []struct {
 	{store.ErrPersonalOrg, http.StatusConflict},
 	{store.ErrConflict, http.StatusConflict},
 	{store.ErrNotMember, http.StatusBadRequest},
+	{store.ErrInviteInvalid, http.StatusBadRequest},
+	{store.ErrAlreadyMember, http.StatusConflict},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.

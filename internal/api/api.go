@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -16,12 +17,13 @@ import (
 )
 
 type api struct {
-	store *store.Store
-	z     *authz.Service
+	store     *store.Store
+	z         *authz.Service
+	publicURL *url.URL
 }
 
 func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
-	h := &api{store: s, z: z}
+	h := &api{store: s, z: z, publicURL: a.PublicURL}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -31,6 +33,13 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
 	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
 	mux.HandleFunc("GET /api/orgs/{org}/audit", h.orgAudit)
+	mux.HandleFunc("GET /api/orgs/{org}/members", h.listMembers)
+	mux.HandleFunc("PATCH /api/orgs/{org}/members/{user}", h.setMemberRole)
+	mux.HandleFunc("DELETE /api/orgs/{org}/members/{user}", h.removeMember)
+	mux.HandleFunc("GET /api/orgs/{org}/invites", h.listInvites)
+	mux.HandleFunc("POST /api/orgs/{org}/invites", h.createInvite)
+	mux.HandleFunc("DELETE /api/orgs/{org}/invites/{id}", h.revokeInvite)
+	mux.HandleFunc("POST /api/invites/accept", h.acceptInvite)
 	return a.Require(mux)
 }
 
