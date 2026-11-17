@@ -106,6 +106,34 @@ func TestGuardBindings(t *testing.T) {
 	}
 }
 
+func TestApplySBSkipsUnchangedConfig(t *testing.T) {
+	dir := t.TempDir()
+	key, cert, ca := filepath.Join(dir, "sb-key.pem"), filepath.Join(dir, "sb-cert.pem"), filepath.Join(dir, "sb-ca.pem")
+	configured := map[string]string{
+		"ovn-sbctl get-ssl":        "Private key: " + key + "\nCertificate: " + cert + "\nCA Certificate: " + ca + "\nBootstrap: false\n",
+		"ovn-sbctl get-connection": "read-write role=\"ovn-controller\" pssl:6642:10.198.0.1\n",
+	}
+	for _, c := range []struct {
+		name     string
+		out      map[string]string
+		ssl, con bool
+	}{
+		{"unchanged", configured, false, false},
+		{"empty", map[string]string{}, true, true},
+		{"other paths", map[string]string{"ovn-sbctl get-ssl": "Private key: /x\nCertificate: /y\nCA Certificate: /z\n", "ovn-sbctl get-connection": configured["ovn-sbctl get-connection"]}, true, false},
+		{"other connection", map[string]string{"ovn-sbctl get-ssl": configured["ovn-sbctl get-ssl"], "ovn-sbctl get-connection": "read-write pssl:6642:10.198.0.1\n"}, false, true},
+	} {
+		f := &fakeRun{out: c.out}
+		if err := applySB(f.run, goodSB, dir); err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(f.cmds, "\n")
+		if strings.Contains(joined, "set-ssl") != c.ssl || strings.Contains(joined, "set-connection") != c.con {
+			t.Errorf("%s: %v", c.name, f.cmds)
+		}
+	}
+}
+
 func TestApplySBWritesOnce(t *testing.T) {
 	dir := t.TempDir()
 	var calls []string

@@ -152,13 +152,32 @@ func applySB(run runner, sb proto.GatewaySB, dir string) error {
 			return err
 		}
 	}
-	if _, err := run("ovn-sbctl", "set-ssl", key, cert, ca); err != nil {
-		return fmt.Errorf("ovn-sbctl set-ssl: %w", err)
+	// ovsdb-server reloads changed PEM files itself; rewriting the SSL or Connection rows would reset live chassis sessions.
+	cur, err := run("ovn-sbctl", "get-ssl")
+	if err != nil {
+		return fmt.Errorf("ovn-sbctl get-ssl: %w", err)
 	}
-	if _, err := run("ovn-sbctl", "set-connection", "role=ovn-controller", "pssl:6642:"+netaddr.GatewayUnderlay.String()); err != nil {
-		return fmt.Errorf("ovn-sbctl set-connection: %w", err)
+	if !sslConfigured(cur, key, cert, ca) {
+		if _, err := run("ovn-sbctl", "set-ssl", key, cert, ca); err != nil {
+			return fmt.Errorf("ovn-sbctl set-ssl: %w", err)
+		}
+	}
+	remote := "pssl:6642:" + netaddr.GatewayUnderlay.String()
+	if cur, err = run("ovn-sbctl", "get-connection"); err != nil {
+		return fmt.Errorf("ovn-sbctl get-connection: %w", err)
+	}
+	if strings.TrimSpace(cur) != `read-write role="ovn-controller" `+remote {
+		if _, err := run("ovn-sbctl", "set-connection", "role=ovn-controller", remote); err != nil {
+			return fmt.Errorf("ovn-sbctl set-connection: %w", err)
+		}
 	}
 	return nil
+}
+
+func sslConfigured(getSSL, key, cert, ca string) bool {
+	return strings.Contains(getSSL, "Private key: "+key+"\n") &&
+		strings.Contains(getSSL, "Certificate: "+cert+"\n") &&
+		strings.Contains(getSSL, "CA Certificate: "+ca+"\n")
 }
 
 // guardBindings clears a port binding claimed by a chassis other than the requested one; rows without a requested chassis (router and gateway ports) are left to OVN.
