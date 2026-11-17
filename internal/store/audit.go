@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -59,12 +61,33 @@ type AuditFilter struct {
 const (
 	defaultAuditLimit = 50
 	maxAuditLimit     = 200
+	maxTextBytes      = 512
 )
 
-func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
-	if e.Details == nil {
-		e.Details = map[string]any{}
+// SanitizeText makes client-controlled text storable: valid UTF-8, no control characters (Postgres rejects NUL), at most 512 bytes.
+func SanitizeText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(s, ""))
+	if len(s) > maxTextBytes {
+		s = strings.ToValidUTF8(s[:maxTextBytes], "")
 	}
+	return s
+}
+
+func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
+	details := make(map[string]any, len(e.Details))
+	for k, v := range e.Details {
+		if str, ok := v.(string); ok {
+			v = SanitizeText(str)
+		}
+		details[k] = v
+	}
+	e.Details = details
+	e.UserAgent = SanitizeText(e.UserAgent)
 	_, err := s.q.Exec(ctx, `
 		INSERT INTO audit_log (actor_kind, actor_id, org_id, action, resource, result, ip, user_agent, details)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,

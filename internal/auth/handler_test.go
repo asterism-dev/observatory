@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,8 +199,8 @@ func TestCallbackStateMismatch(t *testing.T) {
 	req := httptest.NewRequest("GET", "/auth/callback?code=c&state=wrong", nil)
 	req.AddCookie(cookieNamed(rec, "obs_oidc"))
 	rec = e.do(req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status %d", rec.Code)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?error=1" {
+		t.Fatalf("status %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 	if cookieNamed(rec, "obs_session") != nil {
 		t.Fatal("session cookie set")
@@ -213,8 +214,33 @@ func TestCallbackStateMismatch(t *testing.T) {
 
 	// No obs_oidc cookie at all.
 	rec = e.do(httptest.NewRequest("GET", "/auth/callback?code=c&state=", nil))
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?error=1" {
 		t.Fatalf("no cookie: status %d", rec.Code)
+	}
+}
+
+func TestCallbackIdPErrorIsSanitized(t *testing.T) {
+	e := newEnv(t)
+	rec := e.do(httptest.NewRequest("GET", "/auth/login", nil))
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	long := strings.Repeat("y", 2000)
+	req := httptest.NewRequest("GET", "/auth/callback?error=%00"+long+"&state="+url.QueryEscape(loc.Query().Get("state")), nil)
+	req.AddCookie(cookieNamed(rec, "obs_oidc"))
+	req.Header.Set("User-Agent", "agent"+long)
+	rec = e.do(req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?error=1" {
+		t.Fatalf("status %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{})
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries %v, %v", entries, err)
+	}
+	reason, _ := entries[0].Details["reason"].(string)
+	if entries[0].Result != store.ResultFailed || reason != ("idp error: " + long)[:512] {
+		t.Fatalf("reason %d bytes: %.40q", len(reason), reason)
+	}
+	if entries[0].UserAgent != ("agent" + long)[:512] {
+		t.Fatalf("user agent %d bytes", len(entries[0].UserAgent))
 	}
 }
 

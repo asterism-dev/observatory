@@ -26,13 +26,13 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
-// RequestMeta returns the peer IP; X-Forwarded-For is deliberately not trusted.
+// RequestMeta returns the peer IP and sanitized user agent; X-Forwarded-For is deliberately not trusted.
 func RequestMeta(r *http.Request) (ip, userAgent string) {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		ip = r.RemoteAddr
 	}
-	return ip, r.UserAgent()
+	return ip, store.SanitizeText(r.UserAgent())
 }
 
 func (h *Handler) Require(next http.Handler) http.Handler {

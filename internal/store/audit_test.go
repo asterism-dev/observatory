@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -88,5 +89,40 @@ func TestAuditInRolledBackTxDisappears(t *testing.T) {
 	got, err := s.AuditEntries(ctx, store.AuditFilter{})
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+func TestSanitizeText(t *testing.T) {
+	for in, want := range map[string]string{
+		"Mozilla/5.0":            "Mozilla/5.0",
+		"a\x00b\nc\x7f":          "abc",
+		"bad\xffutf8":            "badutf8",
+		"Grüße":                  "Grüße",
+		strings.Repeat("ü", 300): strings.Repeat("ü", 256),
+	} {
+		if got := store.SanitizeText(in); got != want {
+			t.Errorf("SanitizeText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAuditSanitizesFreeText(t *testing.T) {
+	ctx := context.Background()
+	s := store.New(dbtest.New(t))
+	long := strings.Repeat("x", 2000)
+	err := s.Audit(ctx, store.AuditEntry{
+		ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
+		UserAgent: "ua\x00" + long, Details: map[string]any{"reason": "r\x00" + long, "n": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AuditEntries(ctx, store.AuditFilter{})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	reason, _ := got[0].Details["reason"].(string)
+	if got[0].UserAgent != ("ua" + long)[:512] || reason != ("r" + long)[:512] {
+		t.Fatalf("not sanitized: ua %d bytes, reason %d bytes", len(got[0].UserAgent), len(reason))
 	}
 }

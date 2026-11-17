@@ -65,13 +65,14 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	ip, ua := RequestMeta(r)
 	http.SetCookie(w, h.cookie(oidcCookie, "", "/auth", -1))
 	fail := func(reason string) {
+		reason = store.SanitizeText(reason)
 		if err := h.Store.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
 			IP: ip, UserAgent: ua, Details: map[string]any{"reason": reason},
 		}); err != nil {
 			slog.Error("audit failed login", "reason", reason, "ip", ip, "err", err)
 		}
-		http.Error(w, "login failed", http.StatusBadRequest)
+		http.Redirect(w, r, "/login?error=1", http.StatusFound)
 	}
 
 	st, ok := readOIDCState(r)
@@ -86,7 +87,13 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.Auth.Exchange(r.Context(), q.Get("code"), st.Verifier)
 	if err != nil {
-		fail("exchange: " + err.Error())
+		// The IdP response body is attacker-influenced; record only the OAuth error code.
+		var re *oauth2.RetrieveError
+		if errors.As(err, &re) {
+			fail("exchange: " + re.ErrorCode)
+		} else {
+			fail("exchange: " + err.Error())
+		}
 		return
 	}
 
@@ -155,6 +162,7 @@ func (h *Handler) cliToken(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.Auth.VerifyCLIToken(r.Context(), body.IDToken, body.AccessToken)
 	if err != nil {
+		slog.Warn("cli token verification failed", "ip", ip, "err", err)
 		if aerr := h.Store.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorSystem, Action: store.ActionAuthCLILogin, Result: store.ResultFailed,
 			IP: ip, UserAgent: ua, Details: map[string]any{"reason": "token verification failed"},
