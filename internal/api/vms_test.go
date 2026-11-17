@@ -341,7 +341,7 @@ func TestSetVMDisksMissingDisk(t *testing.T) {
 	if err := e.disks.SetStatus(context.Background(), statusWithFiles()); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 409 {
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 409 || !strings.Contains(rec.Body.String(), "missing from storage") {
 		t.Fatalf("missing disk: %d %s", rec.Code, rec.Body.String())
 	}
 }

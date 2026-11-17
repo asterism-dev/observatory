@@ -59,7 +59,7 @@ func (e *env) markReady() {
 
 func (e *env) attach(org uuid.UUID, vm, disk string) {
 	e.t.Helper()
-	_, err := e.store.SetVMDisks(context.Background(), org, uuid.MustParse(vm), []store.VMDisk{{DiskID: uuid.MustParse(disk), MountPath: "/data"}}, true)
+	_, _, err := e.store.SetVMDisks(context.Background(), org, uuid.MustParse(vm), []store.VMDisk{{DiskID: uuid.MustParse(disk), MountPath: "/data"}}, true)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestForceReleaseAPI(t *testing.T) {
 	if rec := e.do("POST", path, tok); rec.Code != 409 {
 		t.Fatalf("attached: %d", rec.Code)
 	}
-	if _, err := e.store.SetVMDisks(context.Background(), org, uuid.MustParse(v.ID), nil, true); err != nil {
+	if _, _, err := e.store.SetVMDisks(context.Background(), org, uuid.MustParse(v.ID), nil, true); err != nil {
 		t.Fatal(err)
 	}
 	if rec := e.do("POST", path, tok); rec.Code != 204 {

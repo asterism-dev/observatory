@@ -57,9 +57,9 @@ func (s *Store) OrgVMDisks(ctx context.Context, org uuid.UUID) (map[uuid.UUID][]
 func diskExportAAD(disk uuid.UUID) []byte { return []byte("disk-export:" + disk.String()) }
 
 // SetVMDisks replaces the VM's disk list; every newly attached disk gets a fresh export (port and key) on the VM's node.
-func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDisk, restartAllowed bool) (VM, error) {
-	var out VM
-	err := s.InTx(ctx, func(tx *Store) error {
+// changed is false when the list was already disks.
+func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDisk, restartAllowed bool) (out VM, changed bool, err error) {
+	err = s.InTx(ctx, func(tx *Store) error {
 		// Org first, like DeleteDisk and GrowDisk, so a disk can't be deleted or grown while it is being attached.
 		if err := tx.LockOrg(ctx, org); err != nil {
 			return err
@@ -159,9 +159,10 @@ func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDis
 			}
 		}
 		out, err = scanVM(tx.q.QueryRow(ctx, "UPDATE vms SET generation = generation + 1 WHERE id = $1 RETURNING "+vmColumns, vm))
+		changed = err == nil
 		return err
 	})
-	return out, err
+	return out, changed, err
 }
 
 // createExport needs the address lock so two attaches can't pick the same port.

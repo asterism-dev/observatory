@@ -503,11 +503,10 @@ func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
 				return errDiskMissing
 			}
 		}
-		updated, err := tx.SetVMDisks(r.Context(), v.OrgID, v.ID, body.Disks, body.RestartAllowed)
+		updated, changed, err := tx.SetVMDisks(r.Context(), v.OrgID, v.ID, body.Disks, body.RestartAllowed)
 		if err != nil {
 			return err
 		}
-		changed := updated.Generation != v.Generation
 		v = updated
 		if !changed {
 			return nil
@@ -516,13 +515,13 @@ func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		names := make(map[uuid.UUID]string, len(all))
+		for _, disk := range all {
+			names[disk.ID] = disk.Name
+		}
 		entries := []string{}
 		for _, d := range body.Disks {
-			for _, disk := range all {
-				if disk.ID == d.DiskID {
-					entries = append(entries, disk.Name+":"+d.MountPath)
-				}
-			}
+			entries = append(entries, names[d.DiskID]+":"+d.MountPath)
 		}
 		ae := vmAudit(r, store.ActionVMDisks, v)
 		ae.Details["disks"] = entries

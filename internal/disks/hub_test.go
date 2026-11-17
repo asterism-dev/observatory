@@ -160,7 +160,7 @@ func TestGrowReadyBumpsVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := e.disk(t, "data", 10, nil)
-	if _, err := e.s.SetVMDisks(ctx, e.org, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	e.report(t, file(d, 10))

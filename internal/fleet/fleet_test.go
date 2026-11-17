@@ -746,7 +746,7 @@ func (e *env) readyDisk(v store.VM, name string) store.Disk {
 	if _, err := e.s.ApplyStorageFiles(ctx, []proto.StorageFile{{Name: proto.StorageFileName(d.ID.String()), SizeBytes: 1 << 30}}); err != nil {
 		e.t.Fatal(err)
 	}
-	if _, err := e.s.SetVMDisks(ctx, v.OrgID, v.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, v.OrgID, v.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); err != nil {
 		e.t.Fatal(err)
 	}
 	return d
@@ -768,7 +768,7 @@ func (e *env) releaseSeq(disk uuid.UUID) (seq *int64, ok bool) {
 // detach removes every disk of v and returns the seq of the first list sent without them.
 func (e *env) detach(node *fakeNode, v store.VM) uint64 {
 	e.t.Helper()
-	if _, err := e.s.SetVMDisks(context.Background(), v.OrgID, v.ID, nil, true); err != nil {
+	if _, _, err := e.s.SetVMDisks(context.Background(), v.OrgID, v.ID, nil, true); err != nil {
 		e.t.Fatal(err)
 	}
 	e.f.NotifyOrg(v.OrgID)

@@ -40,7 +40,7 @@ func TestStorageEndpointsAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.SetVMDisks(ctx, org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.store.SetVMDisks(ctx, org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 

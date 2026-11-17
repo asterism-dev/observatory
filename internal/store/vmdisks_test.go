@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -44,8 +45,11 @@ func exportOf(t *testing.T, e vmEnv, disk uuid.UUID) *export {
 	var x export
 	err := e.pool.QueryRow(context.Background(), "SELECT port, sealed, releasing, release_seq FROM disk_exports WHERE disk_id = $1", disk).
 		Scan(&x.port, &x.sealed, &x.releasing, &x.seq)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	return &x
 }
@@ -72,9 +76,9 @@ func TestSetVMDisksAttach(t *testing.T) {
 	d1 := mustCreateDisk(t, e, e.disk("d1", nil, 1))
 	d2 := mustCreateDisk(t, e, e.disk("d2", nil, 1))
 
-	got, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d1.ID, MountPath: "/data"}}, false)
-	if err != nil {
-		t.Fatal(err)
+	got, changed, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d1.ID, MountPath: "/data"}}, false)
+	if err != nil || !changed {
+		t.Fatal(changed, err)
 	}
 	if got.Generation != vm.Generation+1 {
 		t.Fatalf("generation %d, want %d", got.Generation, vm.Generation+1)
@@ -88,16 +92,16 @@ func TestSetVMDisksAttach(t *testing.T) {
 	}
 
 	list := []store.VMDisk{{DiskID: d1.ID, MountPath: "/data"}, {DiskID: d2.ID, MountPath: "/data2"}}
-	got, err = e.s.SetVMDisks(ctx, e.org.ID, vm.ID, list, false)
+	got, _, err = e.s.SetVMDisks(ctx, e.org.ID, vm.ID, list, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if x := exportOf(t, e, d2.ID); x == nil || x.port != 10811 {
 		t.Fatalf("second export: %+v", x)
 	}
-	again, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, list, false)
-	if err != nil || again.Generation != got.Generation {
-		t.Fatalf("same list: generation %d -> %d, %v", got.Generation, again.Generation, err)
+	again, changed, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, list, false)
+	if err != nil || changed || again.Generation != got.Generation {
+		t.Fatalf("same list: changed %v, generation %d -> %d, %v", changed, got.Generation, again.Generation, err)
 	}
 	if d, _ := e.s.Disk(ctx, e.org.ID, d2.ID); d.Attachment == nil || d.Attachment.MountPath != "/data2" {
 		t.Fatalf("attachment: %+v", d.Attachment)
@@ -116,7 +120,7 @@ func TestSetVMDisksRefusals(t *testing.T) {
 		{{DiskID: onB.ID, MountPath: "/data"}, {DiskID: releasing.ID, MountPath: "/rel"}},
 		{{DiskID: onB.ID, MountPath: "/data"}},
 	} {
-		if _, err := e.s.SetVMDisks(ctx, e.org.ID, vmB.ID, list, false); err != nil {
+		if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vmB.ID, list, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,14 +147,14 @@ func TestSetVMDisksRefusals(t *testing.T) {
 		{"running without flag", running.ID, free.ID, store.ErrRestartRequired},
 		{"other org", vmA.ID, foreign.ID, store.ErrNotFound},
 	} {
-		if _, err := e.s.SetVMDisks(ctx, e.org.ID, c.vm, []store.VMDisk{{DiskID: c.disk, MountPath: "/data"}}, false); !errors.Is(err, c.want) {
+		if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, c.vm, []store.VMDisk{{DiskID: c.disk, MountPath: "/data"}}, false); !errors.Is(err, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, err, c.want)
 		}
 	}
 	if x := exportOf(t, e, free.ID); x != nil {
 		t.Fatalf("export after refusal: %+v", x)
 	}
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, running.ID, []store.VMDisk{{DiskID: free.ID, MountPath: "/data"}}, true); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, running.ID, []store.VMDisk{{DiskID: free.ID, MountPath: "/data"}}, true); err != nil {
 		t.Fatalf("running with flag: %v", err)
 	}
 }
@@ -160,10 +164,10 @@ func TestDetachMarksReleasing(t *testing.T) {
 	e := newDiskEnv(t)
 	vm := mustStoppedVM(t, e, "v", nil)
 	d := mustCreateDisk(t, e, e.disk("d", nil, 1))
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, nil, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if x := exportOf(t, e, d.ID); x == nil || !x.releasing || x.seq != nil {
@@ -175,7 +179,7 @@ func TestDetachMarksReleasing(t *testing.T) {
 
 	vm2 := mustStoppedVM(t, e, "v2", nil)
 	d2 := mustCreateDisk(t, e, e.disk("d2", nil, 1))
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm2.ID, []store.VMDisk{{DiskID: d2.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm2.ID, []store.VMDisk{{DiskID: d2.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.DeleteVM(ctx, e.org.ID, vm2.ID); err != nil {
@@ -196,10 +200,10 @@ func TestConfirmReleases(t *testing.T) {
 	d := mustCreateDisk(t, e, e.disk("d", nil, 1))
 	unmarked := mustCreateDisk(t, e, e.disk("u", nil, 1))
 	both := []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}, {DiskID: unmarked.ID, MountPath: "/data2"}}
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, both, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, both, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, nil, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.MarkReleaseSeq(ctx, e.node.ID, []uuid.UUID{d.ID}, 100); err != nil {
@@ -233,14 +237,14 @@ func TestForceReleaseThenReattachNewKey(t *testing.T) {
 	vmB := mustStoppedVM(t, e, "b", nil)
 	blocker := mustCreateDisk(t, e, e.disk("blocker", nil, 1))
 	d := mustCreateDisk(t, e, e.disk("d", nil, 1))
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vmA.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vmA.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.ForceRelease(ctx, e.org.ID, d.ID); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("force release of attached disk: %v", err)
 	}
 	old := exportOf(t, e, d.ID)
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vmA.ID, nil, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vmA.ID, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.s.ForceRelease(ctx, e.org.ID, d.ID); err != nil {
@@ -250,7 +254,7 @@ func TestForceReleaseThenReattachNewKey(t *testing.T) {
 		t.Fatalf("export left: %+v", x)
 	}
 	// blocker takes the freed port first, so the port must change along with the key
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vmB.ID, []store.VMDisk{{DiskID: blocker.ID, MountPath: "/b"}, {DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vmB.ID, []store.VMDisk{{DiskID: blocker.ID, MountPath: "/b"}, {DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 	fresh := exportOf(t, e, d.ID)
@@ -282,10 +286,10 @@ func TestNodeAttachmentsScoped(t *testing.T) {
 	pending := mustCreateDisk(t, e, e.disk("pending", nil, 1))
 	ready := mustCreateDisk(t, e, e.disk("ready", nil, 1))
 	onN2 := mustCreateDisk(t, e, e.disk("onn2", nil, 1))
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, v1.ID, []store.VMDisk{{DiskID: pending.ID, MountPath: "/p"}, {DiskID: ready.ID, MountPath: "/r"}}, false); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, v1.ID, []store.VMDisk{{DiskID: pending.ID, MountPath: "/p"}, {DiskID: ready.ID, MountPath: "/r"}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, v2.ID, []store.VMDisk{{DiskID: onN2.ID, MountPath: "/data"}}, true); err != nil {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, v2.ID, []store.VMDisk{{DiskID: onN2.ID, MountPath: "/data"}}, true); err != nil {
 		t.Fatal(err)
 	}
 	execSQL(t, e.pool, "UPDATE disks SET ready_gb = size_gb WHERE id = ANY($1)", []uuid.UUID{ready.ID, onN2.ID})
@@ -319,7 +323,7 @@ func TestStoragePortsExhausted(t *testing.T) {
 		INSERT INTO disk_exports (disk_id, node_id, port, key_id, nonce, sealed)
 		SELECT id, $5, substr(name, 6)::int, 'k', '', '' FROM fill`,
 		e.org.ID, e.user, netaddr.StoragePortFirst, netaddr.StoragePortLast, e.node.ID)
-	if _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); !errors.Is(err, store.ErrNoStoragePort) {
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); !errors.Is(err, store.ErrNoStoragePort) {
 		t.Fatalf("attach: %v", err)
 	}
 }
