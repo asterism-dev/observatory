@@ -55,6 +55,9 @@ const (
 	ActionLimitSet            = "limit:set"
 	ActionPlatformRevokeAdmin = "platform:revoke-admin"
 	ActionAdminRead           = "admin:read"
+	ActionEnvSet              = "env:set"
+	ActionEnvMove             = "env:move"
+	ActionEnvDelete           = "env:delete"
 )
 
 type AuditEntry struct {

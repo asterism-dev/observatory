@@ -16,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -30,7 +31,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := store.New(pool).WithMasterKey(seal.Key{1})
 	z, err := authz.NewService(context.Background(), s.PolicySnapshot)
 	if err != nil {
 		t.Fatal(err)
