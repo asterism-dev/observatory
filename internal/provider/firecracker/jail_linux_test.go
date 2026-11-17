@@ -88,3 +88,27 @@ func TestBuildJailRejectsNodev(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestBuildJailNames(t *testing.T) {
+	dir := jailTestDir(t)
+	shared := writeFile(t, filepath.Join(dir, "vmlinux"))
+	got, err := buildJail(dir, 70005, []jailFile{{path: "/dev/null", name: "vdc"}, {path: shared, readOnly: true, shared: true}})
+	if err != nil || !slices.Equal(got, []string{"/vdc", "/vmlinux"}) {
+		t.Fatalf("%q, %v", got, err)
+	}
+	root := jailRoot(dir)
+	if st := statT(t, filepath.Join(root, "vdc")); st.Rdev != statT(t, "/dev/null").Rdev {
+		t.Errorf("vdc: rdev %d", st.Rdev)
+	}
+	// A shared file is linked into several jails, so no VM's UID may own it.
+	if st := statT(t, filepath.Join(root, "vmlinux")); st.Ino != statT(t, shared).Ino || st.Uid != 0 || st.Gid != 0 || st.Mode&0o777 != 0o644 {
+		t.Errorf("shared: ino %d uid %d gid %d mode %o", st.Ino, st.Uid, st.Gid, st.Mode&0o777)
+	}
+	private := writeFile(t, filepath.Join(dir, "mem"))
+	if err := os.Chmod(private, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildJail(dir, 70005, []jailFile{{path: private, shared: true}}); err == nil || !strings.Contains(err.Error(), "mem") {
+		t.Fatalf("shared 0600 file: err = %v", err)
+	}
+}

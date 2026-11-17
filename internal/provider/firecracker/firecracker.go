@@ -5,11 +5,9 @@ package firecracker
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -98,19 +96,31 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 	}
 	files := []jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}}
 	for i, d := range node.AttachOrder(f) {
-		files = append(files, jailFile{path: drives[i], readOnly: d.ReadOnly})
+		jf := jailFile{path: drives[i], readOnly: d.ReadOnly}
+		// /dev/nbdN differs between attaches; a memory snapshot needs the drive at the same jail path when restored.
+		if d.NBD {
+			jf.name = node.DeviceName(i)
+		}
+		files = append(files, jf)
 	}
 	proc, sock, err := p.spawnJailed(f, dir, files, nbds)
 	if err != nil {
 		linuxvm.DetachAll(f.Spec.ID, dir, nbds)
 		return nil, err
 	}
+	// The jail path can exceed the 107-byte unix socket limit, so the socket is reached through its directory's fd.
+	sockDir, err := os.Open(filepath.Dir(sock))
+	if err != nil {
+		proc.Kill()
+		return nil, err
+	}
+	go func() { <-proc.Done(); sockDir.Close() }()
 	// Firecracker has no ACPI power-off and would idle forever after a halt.
 	go proc.KillOnConsole("System halted")
 	for _, id := range nbds {
 		go p.nbd.Watch(f.Spec.ID, dir, id, proc.Done())
 	}
-	return &instance{Process: proc, sock: sock}, nil
+	return &instance{Process: proc, sock: sock, api: apiAt(fmt.Sprintf("/proc/self/fd/%d/%s", sockDir.Fd(), filepath.Base(sock)))}, nil
 }
 
 // spawnJailed starts Firecracker under the jailer; files holds the kernel, the initrd and then the drives.
@@ -145,7 +155,7 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		removeJail()
 		return nil, "", err
 	}
-	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid), nbds, uid, removeJail)
+	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, true), nbds, uid, removeJail)
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {
 		proc.IP = ip
@@ -164,11 +174,12 @@ func (p *Provider) StopChassis() error { return nil }
 type instance struct {
 	*linuxvm.Process
 	sock string
+	api  fcAPI
 }
 
 // Stop asks the guest to shut down (Ctrl-Alt-Del reboots it, and reboot=k ends Firecracker) and kills it after 10s.
 func (i *instance) Stop() error {
-	if err := i.sendCtrlAltDel(); err == nil {
+	if err := i.api.CtrlAltDel(); err == nil {
 		select {
 		case <-i.Done():
 			return nil
@@ -176,26 +187,4 @@ func (i *instance) Stop() error {
 		}
 	}
 	return i.Kill()
-}
-
-func (i *instance) sendCtrlAltDel() error {
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/actions", strings.NewReader(`{"action_type":"SendCtrlAltDel"}`))
-	if err != nil {
-		return err
-	}
-	// The jail path can exceed the 107-byte unix socket limit, so the socket is reached through its directory's fd.
-	d, err := os.Open(filepath.Dir(i.sock))
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	resp, err := linuxvm.DialSocket(fmt.Sprintf("/proc/self/fd/%d/%s", d.Fd(), filepath.Base(i.sock))).Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("SendCtrlAltDel: %s", resp.Status)
-	}
-	return nil
 }

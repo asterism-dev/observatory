@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -149,12 +147,4 @@ func (p *Process) KillOnConsole(text string) {
 	} else if !errors.Is(err, context.Canceled) {
 		log.Printf("watching console %s: %v", p.Console, err)
 	}
-}
-
-func DialSocket(sock string) *http.Client {
-	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", sock)
-		},
-	}}
 }

@@ -11,6 +11,11 @@ import (
 
 const bootArgs = "console=ttyS0 reboot=k panic=1 root=LABEL=cloudimg-rootfs ro"
 
+const (
+	guestCID  = 3
+	vsockPath = "/v.sock"
+)
+
 type fcDrive struct {
 	ID       string `json:"drive_id"`
 	Path     string `json:"path_on_host"`
@@ -45,5 +50,8 @@ func vmConfig(f node.VMFile, kernel, initrd string, drives []string) ([]byte, er
 		"drives":             ds,
 		"machine-config":     map[string]int{"vcpu_count": f.Spec.CPUs, "mem_size_mib": f.Spec.MemoryMB},
 		"network-interfaces": nics,
+		// An empty balloon only reports guest memory statistics; deflate_on_oom keeps a future inflate from starving the guest.
+		"balloon": map[string]any{"amount_mib": 0, "deflate_on_oom": true, "stats_polling_interval_s": 5},
+		"vsock":   map[string]any{"guest_cid": guestCID, "uds_path": vsockPath},
 	}, "", "  ")
 }

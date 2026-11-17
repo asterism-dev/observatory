@@ -22,7 +22,14 @@ func TestJailerArgs(t *testing.T) {
 	want := []string{"-c", `"$@" & wait $!`, "sh", "jailer", "--id", "vm", "--exec-file", "/usr/local/bin/firecracker",
 		"--uid", "100005", "--gid", "100005", "--chroot-base-dir", "/v/vm1/jail",
 		"--", "--api-sock", "/fc.sock", "--config-file", "/fc.json"}
-	if got := jailerArgs("/usr/local/bin/firecracker", "/v/vm1", 100005); !slices.Equal(got, want) {
+	if got := jailerArgs("/usr/local/bin/firecracker", "/v/vm1", 100005, true); !slices.Equal(got, want) {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestJailerArgsRestore(t *testing.T) {
+	got := jailerArgs("/usr/local/bin/firecracker", "/v/vm1", 100005, false)
+	if slices.Contains(got, "--config-file") || got[len(got)-1] != "/fc.sock" {
+		t.Errorf("restore args %q load a config file", got)
 	}
 }

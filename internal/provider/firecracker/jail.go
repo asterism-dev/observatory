@@ -30,9 +30,14 @@ func jailRoot(dir string) string {
 }
 
 // jailerArgs are /bin/sh arguments: the shell stays PID 1 of the VM's PID namespace and runs the jailer as its child.
-func jailerArgs(fcPath, dir string, uid int) []string {
+// Without configFile Firecracker waits on its API socket, as a snapshot restore needs.
+func jailerArgs(fcPath, dir string, uid int, configFile bool) []string {
 	id := strconv.Itoa(uid)
-	return []string{"-c", `"$@" & wait $!`, "sh", "jailer", "--id", jailID, "--exec-file", fcPath,
+	args := []string{"-c", `"$@" & wait $!`, "sh", "jailer", "--id", jailID, "--exec-file", fcPath,
 		"--uid", id, "--gid", id, "--chroot-base-dir", jailBase(dir),
-		"--", "--api-sock", "/fc.sock", "--config-file", "/fc.json"}
+		"--", "--api-sock", "/fc.sock"}
+	if configFile {
+		args = append(args, "--config-file", "/fc.json")
+	}
+	return args
 }

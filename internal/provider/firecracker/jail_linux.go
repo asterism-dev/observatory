@@ -10,9 +10,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// jailFile is linked into the jail as name (default: the file's base name); a shared file is linked as is into many jails.
 type jailFile struct {
-	path     string
-	readOnly bool
+	path, name       string
+	readOnly, shared bool
 }
 
 // buildJail recreates the VM's jail with files inside (hard links, or device nodes for NBD disks) and returns their paths in the jail.
@@ -37,7 +38,10 @@ func buildJail(dir string, uid int, files []jailFile) ([]string, error) {
 	}
 	var inJail []string
 	for _, f := range files {
-		name := filepath.Base(f.path)
+		name := f.name
+		if name == "" {
+			name = filepath.Base(f.path)
+		}
 		if err := jailOne(f, filepath.Join(root, name), uid); err != nil {
 			return nil, fmt.Errorf("jail %s: %w", name, err)
 		}
@@ -61,6 +65,13 @@ func jailOne(f jailFile, dst string, uid int) error {
 	default:
 		return fmt.Errorf("%s is neither a regular file nor a device", f.path)
 	}
+	if f.shared {
+		// Changing a shared inode's owner or mode would change it in every other jail too.
+		if st.Uid != 0 || st.Mode&0o7777 != 0o644 {
+			return fmt.Errorf("shared file %s must be owned by root with mode 0644", f.path)
+		}
+		return os.Link(f.path, dst)
+	}
 	if err := os.Link(f.path, dst); err != nil {
 		return err
 	}
@@ -76,8 +87,8 @@ func jailOne(f jailFile, dst string, uid int) error {
 }
 
 // jailerCmd's shell is the init of a new PID namespace: when it dies, the kernel kills the jailed Firecracker, whose own Pdeathsig the jailer's UID change clears.
-func jailerCmd(fcPath, dir string, uid int) *exec.Cmd {
-	cmd := exec.Command("/bin/sh", jailerArgs(fcPath, dir, uid)...)
+func jailerCmd(fcPath, dir string, uid int, configFile bool) *exec.Cmd {
+	cmd := exec.Command("/bin/sh", jailerArgs(fcPath, dir, uid, configFile)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWPID}
 	return cmd
 }

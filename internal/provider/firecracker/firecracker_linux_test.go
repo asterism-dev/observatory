@@ -310,7 +310,120 @@ func TestCtrlAltDelWithLongSocketPath(t *testing.T) {
 	if _, err := inst.WaitIP(ctx); err != nil {
 		t.Fatalf("WaitIP: %v", err)
 	}
-	if err := inst.(*instance).sendCtrlAltDel(); err != nil {
+	if err := inst.(*instance).api.CtrlAltDel(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSnapshotRestore checks the control API against a real Firecracker: pause, full snapshot, kill, restore in a fresh jail.
+func TestSnapshotRestore(t *testing.T) {
+	p := testProvider(t)
+	key := filepath.Join(t.TempDir(), "id")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	pub, _ := os.ReadFile(key + ".pub")
+	f := testVM("fcsnap")
+	f.Spec.MemoryMB = 512
+	f.Boot = &proto.Boot{SSHPublicKeys: []string{string(pub)}}
+	inst := startVM(t, p, f)
+	defer inst.Kill()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	ip, err := inst.WaitIP(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssh := func(cmd string) string {
+		t.Helper()
+		out, err := exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "ubuntu@"+ip, cmd).CombinedOutput()
+		if err != nil {
+			t.Fatalf("ssh %q: %v: %s", cmd, err, out)
+		}
+		return string(out)
+	}
+	t.Logf("guest devices: %s", ssh("ls -l /dev/vsock; ls -d /sys/bus/virtio/drivers/virtio_balloon/virtio*; echo before-snapshot > /dev/shm/marker"))
+	api := inst.(*instance).api
+	var stats balloonStats
+	for deadline := time.Now().Add(30 * time.Second); stats.TotalMemory == 0 && time.Now().Before(deadline); time.Sleep(time.Second) {
+		if stats, err = api.BalloonStats(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("balloon stats: %+v", stats)
+	if stats.TotalMemory == 0 || stats.AvailableMemory == 0 {
+		t.Fatalf("no balloon statistics from the guest: %+v", stats)
+	}
+	if err := api.Pause(); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.CreateSnapshot("/vmstate", "/mem"); err != nil {
+		t.Fatal(err)
+	}
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	state := filepath.Join(dir, "state")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"vmstate", "mem"} {
+		if err := os.Link(filepath.Join(jailRoot(dir), name), filepath.Join(state, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inst.Kill()
+	<-inst.Done()
+
+	kernel, initrd, err := bootFiles(filepath.Join(dir, "root.img"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := jailUID(ip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}, {path: filepath.Join(dir, "root.img")},
+		{path: filepath.Join(dir, node.SeedISO), readOnly: true}, {path: filepath.Join(state, "vmstate")}, {path: filepath.Join(state, "mem")}}
+	if _, err := buildJail(dir, uid, files); err != nil {
+		t.Fatal(err)
+	}
+	fcPath, err := exec.LookPath("firecracker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, false), nil, uid, func() { os.RemoveAll(jailBase(dir)) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Kill()
+	sock := filepath.Join(jailRoot(dir), "fc.sock")
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if _, err := os.Stat(sock); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+	}
+	sockDir, err := os.Open(jailRoot(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sockDir.Close()
+	api = apiAt(fmt.Sprintf("/proc/self/fd/%d/fc.sock", sockDir.Fd()))
+	start := time.Now()
+	if err := api.LoadSnapshot("/vmstate", "/mem", []netOverride{{IfaceID: "eth0", HostDevName: linuxvm.TapName(f.Spec.ID, 0)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("restored and resumed in %v", time.Since(start))
+	// tmpfs content survives only if the guest memory was restored rather than rebooted.
+	if got := strings.TrimSpace(ssh("cat /dev/shm/marker")); got != "before-snapshot" {
+		t.Fatalf("marker after restore = %q", got)
+	}
+	if stats, err := api.BalloonStats(); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("balloon stats after restore: %+v", stats)
 	}
 }
