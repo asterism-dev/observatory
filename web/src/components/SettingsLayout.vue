@@ -18,7 +18,7 @@ const active = computed({
 
 <template>
   <h1>{{ title }}</h1>
-  <Tabs v-model="active" :tabs="tabs.map((tab) => ({ value: tab.path, label: tab.label }))" variant="underline" :aria-label="title" />
+  <Tabs v-model="active" :tabs="tabs.map((tab) => ({ value: tab.path, label: tab.label }))" variant="underline" activation-mode="manual" :aria-label="title" />
   <div class="settings__body"><RouterView /></div>
 </template>
 

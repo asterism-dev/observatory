@@ -21,7 +21,7 @@ onMounted(async () => {
     })
     await load()
     selectOrg(orgId)
-    await router.replace(`/orgs/${orgId}/members`)
+    await router.replace(`/orgs/${orgId}/dashboard`)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }

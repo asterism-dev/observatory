@@ -139,6 +139,8 @@ async function signOut() {
   display: flex;
   flex-direction: column;
   min-width: 240px;
+  max-height: var(--reka-popover-content-available-height);
+  overflow-y: auto;
 }
 .row {
   display: flex;

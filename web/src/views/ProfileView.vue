@@ -98,8 +98,8 @@ onMounted(async () => {
 
   <h2>{{ t('profile.preferences') }}</h2>
   <div class="prefs">
-    <Field :label="t('profile.language')"><SegmentedControl v-model="locale" :options="localeOptions" /></Field>
-    <Field :label="t('profile.theme')"><SegmentedControl v-model="theme" :options="themeOptions" /></Field>
+    <Field :label="t('profile.language')"><SegmentedControl v-model="locale" :options="localeOptions" :aria-label="t('profile.language')" /></Field>
+    <Field :label="t('profile.theme')"><SegmentedControl v-model="theme" :options="themeOptions" :aria-label="t('profile.theme')" /></Field>
   </div>
 
   <h2>{{ t('profile.sessions') }}</h2>
