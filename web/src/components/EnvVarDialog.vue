@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Checkbox, Dialog, Select, TextInput } from '@asterism-dev/lumen'
+import { Button, Checkbox, Dialog, Select, Textarea, TextInput } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -63,9 +63,10 @@ async function save() {
 <template>
   <Dialog :open="open" :title="editing ? t('env.editTitle') : t('env.addTitle')" @update:open="(o) => !busy && emit('update:open', o)">
     <TextInput v-model="name" :aria-label="t('env.name')" :placeholder="t('env.name')" />
-    <TextInput
+    <Textarea
       v-model="value"
-      :type="secret ? 'password' : 'text'"
+      :class="{ masked: secret }"
+      spellcheck="false"
       :aria-label="t('env.value')"
       :placeholder="lockedSecret ? t('env.unchanged') : t('env.value')"
     />
@@ -80,3 +81,9 @@ async function save() {
     </template>
   </Dialog>
 </template>
+
+<style scoped>
+.masked {
+  -webkit-text-security: disc;
+}
+</style>

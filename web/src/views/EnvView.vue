@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import EnvMoveDialog from '@/components/EnvMoveDialog.vue'
 import EnvVarDialog from '@/components/EnvVarDialog.vue'
-import { scopeLabel, type EnvVar, type WritableScope } from '@/composables/envScopes'
+import { scopeKey, scopeLabel, type EnvVar, type WritableScope } from '@/composables/envScopes'
 import { useOrg } from '@/composables/useOrg'
 
 const { t } = useI18n()
@@ -50,6 +50,8 @@ async function refresh() {
     if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
   }
 }
+
+const canMove = (v: EnvVar) => v.canEdit && writableScopes.value.some((s) => scopeKey(s) !== scopeKey(v))
 
 const copy = (v?: string) => navigator.clipboard.writeText(v ?? '')
 
@@ -120,7 +122,7 @@ watch(
       <template #cell-actions="{ row }">
         <span class="cell">
           <Button v-if="row.canEdit" size="sm" @click="openEdit(row)">{{ t('env.edit') }}</Button>
-          <Button v-if="row.canEdit" size="sm" @click="openMove(row)">{{ t('env.move') }}</Button>
+          <Button v-if="canMove(row)" size="sm" @click="openMove(row)">{{ t('env.move') }}</Button>
           <Button v-if="row.canDelete" size="sm" variant="danger" @click="pendingDelete = row">{{ t('env.delete') }}</Button>
         </span>
       </template>
