@@ -72,8 +72,15 @@ func (s *Store) usage(ctx context.Context, orgID uuid.UUID, ownerCol string, own
 	return Limits{VCPU: &cpus, RAMMB: &mem, DiskGB: &disk, VMCount: &count}, nil
 }
 
+// plus leaves a dimension nil (unchecked) when the addend has none, so an operation is only held to the limits it uses.
 func (u Limits) plus(a Limits) Limits {
-	return Limits{VCPU: ptr(*u.VCPU + *a.VCPU), RAMMB: ptr(*u.RAMMB + *a.RAMMB), DiskGB: ptr(*u.DiskGB + *a.DiskGB), VMCount: ptr(*u.VMCount + *a.VMCount)}
+	add := func(used, n *int) *int {
+		if n == nil {
+			return nil
+		}
+		return ptr(*used + *n)
+	}
+	return Limits{VCPU: add(u.VCPU, a.VCPU), RAMMB: add(u.RAMMB, a.RAMMB), DiskGB: add(u.DiskGB, a.DiskGB), VMCount: add(u.VMCount, a.VMCount)}
 }
 
 // checkLimits checks that the owner belongs to the org and that adding add stays within the org and owner limits.

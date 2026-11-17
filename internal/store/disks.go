@@ -80,8 +80,7 @@ func (s *Store) CreateDisk(ctx context.Context, d Disk) (Disk, error) {
 				return err
 			}
 		}
-		zero := 0
-		if err := tx.checkLimits(ctx, d.OrgID, d.UserID, d.TeamID, Limits{VCPU: &zero, RAMMB: &zero, DiskGB: &d.SizeGB, VMCount: &zero}); err != nil {
+		if err := tx.checkLimits(ctx, d.OrgID, d.UserID, d.TeamID, Limits{DiskGB: &d.SizeGB}); err != nil {
 			return err
 		}
 		var id uuid.UUID
@@ -125,8 +124,8 @@ func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, res
 				return ErrRestartRequired
 			}
 		}
-		zero, delta := 0, sizeGB-d.SizeGB
-		if err := tx.checkLimits(ctx, org, d.UserID, d.TeamID, Limits{VCPU: &zero, RAMMB: &zero, DiskGB: &delta, VMCount: &zero}); err != nil {
+		delta := sizeGB - d.SizeGB
+		if err := tx.checkLimits(ctx, org, d.UserID, d.TeamID, Limits{DiskGB: &delta}); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "UPDATE disks SET size_gb = $2 WHERE id = $1", id, sizeGB); err != nil {

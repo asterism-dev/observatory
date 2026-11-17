@@ -45,14 +45,17 @@ func TestDiskLimits(t *testing.T) {
 
 	copyOf := e.disk("copy", nil, 0)
 	copyOf.CopyFrom = &ten.ID
-	for name, err := range map[string]error{
-		"one more": func() error { _, err := e.s.CreateDisk(ctx, e.disk("one", nil, 1)); return err }(),
-		"copy":     func() error { _, err := e.s.CreateDisk(ctx, copyOf); return err }(),
-		"grow":     func() error { _, err := e.s.GrowDisk(ctx, e.org.ID, ten.ID, 11, true); return err }(),
-		"team 21":  func() error { _, err := e.s.CreateDisk(ctx, e.disk("team21", &e.team.ID, 21)); return err }(),
+	for _, c := range []struct {
+		name string
+		op   func() error
+	}{
+		{"one more", func() error { _, err := e.s.CreateDisk(ctx, e.disk("one", nil, 1)); return err }},
+		{"copy", func() error { _, err := e.s.CreateDisk(ctx, copyOf); return err }},
+		{"grow", func() error { _, err := e.s.GrowDisk(ctx, e.org.ID, ten.ID, 11, true); return err }},
+		{"team 21", func() error { _, err := e.s.CreateDisk(ctx, e.disk("team21", &e.team.ID, 21)); return err }},
 	} {
-		if !errors.Is(err, store.ErrLimitExceeded) {
-			t.Errorf("%s: %v", name, err)
+		if err := c.op(); !errors.Is(err, store.ErrLimitExceeded) {
+			t.Errorf("%s: %v", c.name, err)
 		}
 	}
 	mustCreateDisk(t, e, e.disk("team20", &e.team.ID, 20))
@@ -165,6 +168,39 @@ func TestGrowDiskRestart(t *testing.T) {
 	}
 	if _, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 6, true); !errors.Is(err, store.ErrInvalidSize) {
 		t.Fatalf("equal: %v", err)
+	}
+	execSQL(t, e.pool, "UPDATE vms SET power = 'stopped' WHERE id = $1", vm.ID)
+	if got, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 7, false); err != nil || got.SizeGB != 7 {
+		t.Fatalf("stopped vm: %+v %v", got, err)
+	}
+	free := mustCreateDisk(t, e, e.disk("free", nil, 1))
+	if got, err := e.s.GrowDisk(ctx, e.org.ID, free.ID, 2, false); err != nil || got.SizeGB != 2 {
+		t.Fatalf("unattached: %+v %v", got, err)
+	}
+	execSQL(t, e.pool, `INSERT INTO disk_exports (disk_id, node_id, port, key_id, nonce, sealed, releasing)
+		VALUES ($1, $2, 10810, 'k', '\x00', '\x00', true)`, free.ID, e.node.ID)
+	if _, err := e.s.GrowDisk(ctx, e.org.ID, free.ID, 3, true); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("releasing: %v", err)
+	}
+}
+
+func TestDiskLimitsIgnoreOtherDimensions(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	for _, name := range []string{"a", "b"} {
+		if _, err := e.s.CreateVM(ctx, e.vm(name, nil, 1, 1, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{VMCount: ip(1), DiskGB: ip(5)}); err != nil {
+		t.Fatal(err)
+	}
+	d := mustCreateDisk(t, e, e.disk("data", nil, 2))
+	if _, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 3, true); err != nil {
+		t.Fatalf("grow under vm count overrun: %v", err)
+	}
+	if _, err := e.s.CreateDisk(ctx, e.disk("big", nil, 1)); !errors.Is(err, store.ErrLimitExceeded) {
+		t.Fatalf("disk over: %v", err)
 	}
 }
 
