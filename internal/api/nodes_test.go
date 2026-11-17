@@ -30,6 +30,15 @@ func (e *env) createNode(tok string, org uuid.UUID, name string) nodeCreated {
 	return got
 }
 
+func (e *env) enrolledNode(tok string, org uuid.UUID, name string) string {
+	e.t.Helper()
+	c := e.createNode(tok, org, name)
+	if rec := e.enroll(tokenOf(c.InstallCommand)); rec.Code != 200 {
+		e.t.Fatalf("enroll: %d %s", rec.Code, rec.Body.String())
+	}
+	return c.Node.ID
+}
+
 func tokenOf(cmd string) string { return cmd[strings.LastIndex(cmd, " ")+1:] }
 
 func (e *env) enroll(token string) *httptest.ResponseRecorder {

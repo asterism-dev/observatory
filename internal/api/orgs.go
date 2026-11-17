@@ -92,6 +92,7 @@ var storeErrorStatus = []struct {
 	{store.ErrLastPlatformAdmin, http.StatusConflict},
 	{store.ErrLimitExceeded, http.StatusConflict},
 	{store.ErrOwnsResources, http.StatusConflict},
+	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
 }
 

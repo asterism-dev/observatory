@@ -15,6 +15,7 @@ import (
 var (
 	ErrLimitExceeded = errors.New("limit exceeded")
 	ErrOwnsResources = errors.New("owns VMs")
+	ErrNotEnrolled   = errors.New("node not enrolled")
 )
 
 type VM struct {
@@ -78,11 +79,14 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 		if err := tx.LockOrg(ctx, v.OrgID); err != nil {
 			return err
 		}
-		var one int
-		if err := tx.q.QueryRow(ctx, "SELECT 1 FROM nodes WHERE id = $1 AND org_id = $2", v.NodeID, v.OrgID).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
+		var enrolled bool
+		if err := tx.q.QueryRow(ctx, "SELECT enrolled_at IS NOT NULL FROM nodes WHERE id = $1 AND org_id = $2", v.NodeID, v.OrgID).Scan(&enrolled); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
+		}
+		if !enrolled {
+			return ErrNotEnrolled
 		}
 		ownerScope, ownerCol, owner := "", "team_id", v.TeamID
 		switch {

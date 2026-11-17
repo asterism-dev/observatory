@@ -176,7 +176,7 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes := []nodeRef{}
 	for _, n := range names.nodeList {
-		if e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "node:use") {
+		if n.Enrolled && e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "node:use") {
 			nodes = append(nodes, nodeRef{n.ID, n.Name, h.fleet.Online(n.ID)})
 		}
 	}

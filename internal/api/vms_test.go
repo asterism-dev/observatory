@@ -67,7 +67,7 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
-	node := e.createNode(tok, org, "n1").Node.ID
+	node := e.enrolledNode(tok, org, "n1")
 
 	for _, body := range []string{
 		vmBody("Bad", userOwner(), node),
@@ -85,6 +85,13 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 	}
 	if rec := e.send("POST", vmsPath(org), tok, vmBody("a", userOwner(), uuid.NewString())); rec.Code != 404 {
 		t.Errorf("unknown node: %d", rec.Code)
+	}
+	pending := e.createNode(tok, org, "pending").Node.ID
+	if rec := e.send("POST", vmsPath(org), tok, vmBody("a", userOwner(), pending)); rec.Code != 409 || !strings.Contains(rec.Body.String(), "node not enrolled") {
+		t.Errorf("pending node: %d %s", rec.Code, rec.Body.String())
+	}
+	if nodes := e.listVMs(tok, org).Nodes; len(nodes) != 1 || nodes[0].ID != node {
+		t.Errorf("creatable nodes: %+v", nodes)
 	}
 
 	if rec := e.send("PUT", "/api/orgs/"+org.String()+"/limits/user:"+alice.ID.String(), tok, `{"vmCount":1}`); rec.Code != 204 {
@@ -129,7 +136,7 @@ func TestVMTeamPermissions(t *testing.T) {
 		t.Fatal(rec.Code)
 	}
 	e.makeTeamAdmin(ownerTok, org, team, carol)
-	node := e.createNode(ownerTok, org, "n1").Node.ID
+	node := e.enrolledNode(ownerTok, org, "n1")
 
 	if rec := e.send("POST", vmsPath(org), bobTok, vmBody("t1", teamOwner(team), node)); rec.Code != 403 {
 		t.Fatalf("team VM by non-admin member: %d", rec.Code)
@@ -180,7 +187,7 @@ func TestVMPowerAndVisibility(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	node := e.createNode(ownerTok, org, "n1").Node.ID
+	node := e.enrolledNode(ownerTok, org, "n1")
 	v := e.createVM(bobTok, org, vmBody("bobs", userOwner(), node))
 
 	if got := e.listVMs(carolTok, org).VMs; len(got) != 0 {

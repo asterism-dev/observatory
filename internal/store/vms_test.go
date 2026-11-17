@@ -32,8 +32,11 @@ func newVMEnv(t *testing.T) vmEnv {
 	a := login(t, s, "a")
 	org, _ := s.CreateOrg(ctx, "A", a.User.ID)
 	team, _ := s.CreateTeam(ctx, org.ID, "core")
-	node, _, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: a.User.ID})
+	node, tok, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: a.User.ID})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.EnrollNode(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
 	return vmEnv{s, pool, org, a.User.ID, team, node}
@@ -156,6 +159,12 @@ func TestVMLifecycleAndNodeScoping(t *testing.T) {
 	v.NodeID = foreign.ID
 	if _, err := e.s.CreateVM(ctx, v); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("foreign node: %v", err)
+	}
+
+	pending, _, _ := e.s.CreateNode(ctx, store.Node{OrgID: e.org.ID, Name: "pending", CreatedBy: e.user})
+	v.NodeID = pending.ID
+	if _, err := e.s.CreateVM(ctx, v); !errors.Is(err, store.ErrNotEnrolled) {
+		t.Fatalf("pending node: %v", err)
 	}
 
 	vm, err := e.s.CreateVM(ctx, e.vm("a", nil, 1, 1, 1))
