@@ -1,21 +1,28 @@
 <script setup lang="ts">
-import { Popover } from '@asterism-dev/lumen'
-import { Building2, Check, ChevronUp, LogOut, Plus, Shield, User } from '@lucide/vue'
-import { ref } from 'vue'
+import { Popover, SegmentedControl } from '@asterism-dev/lumen'
+import { Building2, Check, ChevronUp, LogOut, Monitor, Moon, Plus, Shield, Sun, User } from '@lucide/vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import { useSettingsNav } from '@/composables/useSettingsNav'
+import { THEME_PREFERENCES, useTheme } from '@/composables/useTheme'
+import { LOCALES } from '@/i18n'
 
 const emit = defineEmits<{ switch: [orgId: string]; create: [] }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const { me, activeOrg } = useMe()
 const { orgTabs, platformTabs } = useSettingsNav()
 const open = ref(false)
+const { theme } = useTheme()
+
+const THEME_ICONS = { system: Monitor, light: Sun, dark: Moon }
+const localeOptions = LOCALES.map((l) => ({ value: l.code, label: l.code.toUpperCase(), ariaLabel: l.name }))
+const themeOptions = computed(() => THEME_PREFERENCES.map((p) => ({ value: p, icon: THEME_ICONS[p], ariaLabel: t(`theme.${p}`) })))
 
 const initial = (name: string) => name.trim()[0]?.toUpperCase() ?? '?'
 
@@ -70,6 +77,10 @@ async function signOut() {
         <RouterLink to="/profile" class="row" @click="open = false">
           <User :size="16" :stroke-width="1.75" />{{ t('nav.profile') }}
         </RouterLink>
+        <div class="prefs">
+          <SegmentedControl v-model="locale" :options="localeOptions" size="sm" :aria-label="t('profile.language')" />
+          <SegmentedControl v-model="theme" :options="themeOptions" size="sm" :aria-label="t('profile.theme')" />
+        </div>
         <hr />
         <button type="button" class="row" @click="signOut">
           <LogOut :size="16" :stroke-width="1.75" />{{ t('user.signOut') }}
@@ -167,6 +178,12 @@ async function signOut() {
 }
 .row__check {
   color: var(--accent);
+}
+.prefs {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
 }
 hr {
   width: 100%;

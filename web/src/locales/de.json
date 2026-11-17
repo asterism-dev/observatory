@@ -10,7 +10,7 @@
   },
   "nav": {
     "label": "Navigation",
-    "profile": "Profil",
+    "profile": "Benutzereinstellungen",
     "audit": "Audit-Log",
     "members": "Mitglieder",
     "teams": "Teams",
@@ -52,7 +52,6 @@
     "cancel": "Abbrechen",
     "idpNote": "Passkeys und Passwort verwaltest du in deinem Konto beim Identity Provider.",
     "idpLink": "Identity Provider öffnen",
-    "preferences": "Einstellungen",
     "language": "Sprache",
     "theme": "Design"
   },

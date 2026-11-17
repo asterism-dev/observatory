@@ -10,7 +10,7 @@
   },
   "nav": {
     "label": "Navigation",
-    "profile": "Profile",
+    "profile": "User settings",
     "audit": "Audit log",
     "members": "Members",
     "teams": "Teams",
@@ -52,7 +52,6 @@
     "cancel": "Cancel",
     "idpNote": "Passkeys and password are managed in your account at the identity provider.",
     "idpLink": "Open identity provider",
-    "preferences": "Preferences",
     "language": "Language",
     "theme": "Theme"
   },

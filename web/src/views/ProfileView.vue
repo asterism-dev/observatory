@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Field, SegmentedControl, Table, type TableColumn } from '@asterism-dev/lumen'
+import { Badge, Button, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
-import { THEME_PREFERENCES, useTheme } from '@/composables/useTheme'
-import { LOCALES } from '@/i18n'
 
 interface Session {
   id: string
@@ -19,12 +17,8 @@ interface Session {
   current: boolean
 }
 
-const { t, d, locale } = useI18n()
+const { t, d } = useI18n()
 const { me, expire } = useMe()
-const { theme } = useTheme()
-
-const localeOptions = LOCALES.map((l) => ({ value: l.code, label: l.name }))
-const themeOptions = computed(() => THEME_PREFERENCES.map((p) => ({ value: p, label: t(`theme.${p}`) })))
 
 const sessions = ref<Session[]>([])
 const issuer = ref('')
@@ -96,12 +90,6 @@ onMounted(async () => {
     <a v-if="issuer" :href="issuer" target="_blank" rel="noopener">{{ t('profile.idpLink') }}</a>
   </p>
 
-  <h2>{{ t('profile.preferences') }}</h2>
-  <div class="prefs">
-    <Field :label="t('profile.language')"><SegmentedControl v-model="locale" :options="localeOptions" :aria-label="t('profile.language')" /></Field>
-    <Field :label="t('profile.theme')"><SegmentedControl v-model="theme" :options="themeOptions" :aria-label="t('profile.theme')" /></Field>
-  </div>
-
   <h2>{{ t('profile.sessions') }}</h2>
   <p v-if="error" role="alert">{{ error }}</p>
   <Table :columns="columns" :rows="sessions" row-key="id">
@@ -128,11 +116,3 @@ onMounted(async () => {
     </template>
   </Dialog>
 </template>
-
-<style scoped>
-.prefs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-</style>
