@@ -40,6 +40,13 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("POST /api/orgs/{org}/invites", h.createInvite)
 	mux.HandleFunc("DELETE /api/orgs/{org}/invites/{id}", h.revokeInvite)
 	mux.HandleFunc("POST /api/invites/accept", h.acceptInvite)
+	mux.HandleFunc("GET /api/orgs/{org}/teams", h.listTeams)
+	mux.HandleFunc("POST /api/orgs/{org}/teams", h.createTeam)
+	mux.HandleFunc("GET /api/orgs/{org}/teams/{team}", h.getTeam)
+	mux.HandleFunc("PATCH /api/orgs/{org}/teams/{team}", h.renameTeam)
+	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}", h.deleteTeam)
+	mux.HandleFunc("PUT /api/orgs/{org}/teams/{team}/members/{user}", h.setTeamMember)
+	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}/members/{user}", h.removeTeamMember)
 	return a.Require(mux)
 }
 
