@@ -46,7 +46,10 @@ func TestIdentityFrom(t *testing.T) {
 	}
 }
 
-type fakeAuth struct{ id store.Identity }
+type fakeAuth struct {
+	id       store.Identity
+	cliToken string
+}
 
 func (f fakeAuth) AuthCodeURL(state, verifier string, register bool) string {
 	return "https://idp.test/auth?state=" + url.QueryEscape(state)
@@ -60,7 +63,10 @@ func (f fakeAuth) Exchange(ctx context.Context, code, verifier string) (store.Id
 }
 
 func (f fakeAuth) VerifyCLIToken(ctx context.Context, rawIDToken, accessToken string) (store.Identity, error) {
-	return store.Identity{}, errors.New("not used")
+	if f.cliToken == "" || rawIDToken != f.cliToken {
+		return store.Identity{}, errors.New("secret-detail rejected")
+	}
+	return f.id, nil
 }
 
 type env struct {
@@ -73,9 +79,11 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	s := store.New(dbtest.New(t))
 	h := &Handler{
-		Store:     s,
-		Auth:      fakeAuth{id: store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Alice"}},
-		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"},
+		Store:       s,
+		Auth:        fakeAuth{id: store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Alice"}, cliToken: "good"},
+		Issuer:      "https://idp.test",
+		CLIClientID: "cli-client",
+		PublicURL:   &url.URL{Scheme: "https", Host: "hub.test"},
 	}
 	mux := http.NewServeMux()
 	h.Routes(mux)

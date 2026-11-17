@@ -23,6 +23,8 @@ const (
 	oidcCookie     = "obs_oidc"
 	oidcCookieTTL  = 10 * time.Minute
 	browserSessTTL = 7 * 24 * time.Hour
+	cliSessTTL     = 30 * 24 * time.Hour
+	maxCLIBody     = 64 << 10
 )
 
 type Handler struct {
@@ -42,6 +44,8 @@ type oidcState struct {
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/login", h.login)
 	mux.HandleFunc("GET /auth/callback", h.callback)
+	mux.HandleFunc("GET /api/auth/config", h.config)
+	mux.HandleFunc("POST /api/auth/cli-token", h.cliToken)
 	mux.Handle("POST /auth/logout", h.Require(http.HandlerFunc(h.logout)))
 }
 
@@ -86,7 +90,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.startSession(r.Context(), id, ip, ua)
+	token, _, err := h.startSession(r.Context(), id, store.SessionBrowser, browserSessTTL, store.ActionAuthLogin, ip, ua)
 	if err != nil {
 		slog.Error("start session", "subject", id.Subject, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -96,16 +100,17 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeRedirect(st.Redirect), http.StatusFound)
 }
 
-// startSession logs the identity in, creates a browser session and writes the audit entries in one transaction.
-func (h *Handler) startSession(ctx context.Context, id store.Identity, ip, ua string) (string, error) {
+// startSession logs the identity in, creates a session and writes the audit entries in one transaction.
+func (h *Handler) startSession(ctx context.Context, id store.Identity, kind store.SessionKind, ttl time.Duration, action, ip, ua string) (string, time.Time, error) {
 	var token string
+	var expires time.Time
 	err := h.Store.InTx(ctx, func(tx *store.Store) error {
 		res, err := tx.Login(ctx, id)
 		if err != nil {
 			return err
 		}
 		var sess store.Session
-		token, sess, err = tx.CreateSession(ctx, res.User.ID, store.SessionBrowser, browserSessTTL, ua, ip)
+		token, sess, err = tx.CreateSession(ctx, res.User.ID, kind, ttl, ua, ip)
 		if err != nil {
 			return err
 		}
@@ -115,7 +120,8 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, ip, ua st
 				Action: action, Resource: resource, Result: store.ResultAllowed, IP: ip, UserAgent: ua,
 			}
 		}
-		entries := []store.AuditEntry{entry(store.ActionAuthLogin, "session/"+sess.ID.String(), nil)}
+		expires = sess.ExpiresAt
+		entries := []store.AuditEntry{entry(action, "session/"+sess.ID.String(), nil)}
 		if res.Created && res.PersonalOrg != nil {
 			entries = append(entries, entry(store.ActionOrgCreate, "org/"+res.PersonalOrg.ID.String(), &res.PersonalOrg.ID))
 		}
@@ -129,7 +135,44 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, ip, ua st
 		}
 		return nil
 	})
-	return token, err
+	return token, expires, err
+}
+
+func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"issuer": h.Issuer, "cliClientId": h.CLIClientID})
+}
+
+func (h *Handler) cliToken(w http.ResponseWriter, r *http.Request) {
+	ip, ua := RequestMeta(r)
+	var body struct {
+		IDToken     string `json:"idToken"`
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCLIBody)).Decode(&body); err != nil || body.IDToken == "" {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	id, err := h.Auth.VerifyCLIToken(r.Context(), body.IDToken, body.AccessToken)
+	if err != nil {
+		if aerr := h.Store.Audit(r.Context(), store.AuditEntry{
+			ActorKind: store.ActorSystem, Action: store.ActionAuthCLILogin, Result: store.ResultFailed,
+			IP: ip, UserAgent: ua, Details: map[string]any{"reason": "token verification failed"},
+		}); aerr != nil {
+			slog.Error("audit failed cli login", "ip", ip, "err", aerr)
+		}
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	token, expires, err := h.startSession(r.Context(), id, store.SessionCLI, cliSessTTL, store.ActionAuthCLILogin, ip, ua)
+	if err != nil {
+		slog.Error("start cli session", "subject", id.Subject, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
