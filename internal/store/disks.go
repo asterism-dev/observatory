@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -160,4 +162,96 @@ func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 		_, err = tx.q.Exec(ctx, "UPDATE disks SET deleted_at = now() WHERE id = $1", id)
 		return err
 	})
+}
+
+// StorageState is the storage server's desired state; it carries unsealed export keys, so callers must never log it.
+func (s *Store) StorageState(ctx context.Context) (proto.StorageState, error) {
+	st := proto.StorageState{Disks: []proto.StorageDisk{}, Deleted: []string{}, Exports: []proto.StorageExport{}}
+	rows, err := s.q.Query(ctx, "SELECT id, size_gb, ready_gb, copy_from, deleted_at IS NOT NULL FROM disks ORDER BY id")
+	if err != nil {
+		return st, err
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		var size, ready int
+		var copyFrom *uuid.UUID
+		var deleted bool
+		if err := rows.Scan(&id, &size, &ready, &copyFrom, &deleted); err != nil {
+			rows.Close()
+			return st, err
+		}
+		if deleted {
+			st.Deleted = append(st.Deleted, id.String())
+			continue
+		}
+		d := proto.StorageDisk{ID: id.String(), SizeBytes: int64(size) << 30, Create: ready == 0}
+		if copyFrom != nil {
+			d.CopyFrom = copyFrom.String()
+		}
+		st.Disks = append(st.Disks, d)
+	}
+	if err := rows.Err(); err != nil {
+		return st, err
+	}
+	rows, err = s.q.Query(ctx, `
+		SELECT e.disk_id, e.port, e.key_id, e.nonce, e.sealed FROM disk_exports e JOIN disks d ON d.id = e.disk_id
+		WHERE d.ready_gb > 0 ORDER BY e.port`)
+	if err != nil {
+		return st, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var disk uuid.UUID
+		var x proto.StorageExport
+		var keyID string
+		var nonce, sealed []byte
+		if err := rows.Scan(&disk, &x.Port, &keyID, &nonce, &sealed); err != nil {
+			return st, err
+		}
+		x.DiskID = disk.String()
+		if x.PSK, err = s.exportKey(disk, keyID, nonce, sealed); err != nil {
+			return st, err
+		}
+		st.Exports = append(st.Exports, x)
+	}
+	return st, rows.Err()
+}
+
+// ApplyStorageFiles records what the storage server has on disk and returns the orgs whose VMs got a new disk size.
+func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile) ([]uuid.UUID, error) {
+	ids, sizes := []uuid.UUID{}, []int64{}
+	for _, f := range files {
+		name, ok := strings.CutSuffix(f.Name, ".img")
+		if id, err := uuid.Parse(name); ok && err == nil && proto.StorageFileName(id.String()) == f.Name {
+			ids, sizes = append(ids, id), append(sizes, f.SizeBytes)
+		}
+	}
+	var orgs []uuid.UUID
+	err := s.InTx(ctx, func(tx *Store) error {
+		const grown = `FROM disks d JOIN unnest($1::uuid[], $2::bigint[]) f(id, size) ON f.id = d.id
+			WHERE d.deleted_at IS NULL AND d.ready_gb <> d.size_gb AND f.size >= d.size_gb::bigint << 30`
+		candidates, err := collectIDs(tx.q.Query(ctx, "SELECT DISTINCT d.org_id "+grown+" ORDER BY 1", ids, sizes))
+		if err != nil {
+			return err
+		}
+		// Org locks first, in order, like GrowDisk and SetVMDisks, so the disk and VM updates below can't deadlock with them.
+		for _, org := range candidates {
+			if err := tx.LockOrg(ctx, org); err != nil {
+				return err
+			}
+		}
+		if orgs, err = collectIDs(tx.q.Query(ctx, `
+			WITH ready AS (UPDATE disks SET ready_gb = size_gb WHERE id IN (SELECT d.id `+grown+`) RETURNING id)
+			UPDATE vms v SET generation = generation + 1 FROM vm_disks vd
+			WHERE vd.vm_id = v.id AND vd.disk_id IN (SELECT id FROM ready) RETURNING v.org_id`, ids, sizes)); err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, "UPDATE disks SET copy_from = NULL WHERE id = ANY($1) AND copy_from IS NOT NULL", ids); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, "DELETE FROM disks WHERE deleted_at IS NOT NULL AND id <> ALL($1)", ids)
+		return err
+	})
+	slices.SortFunc(orgs, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	return slices.Compact(orgs), err
 }

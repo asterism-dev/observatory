@@ -18,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db"
+	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -84,6 +85,7 @@ func run() error {
 	f := fleet.New(s, z, nh)
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
+	api.StorageEndpoints(mux, disks.New(s, cfg.StorageToken, f.NotifyOrg))
 	nodeAssets(mux, cfg.NodeBinary)
 	mux.Handle("/api/", api.New(s, a, z, f, nh))
 	mux.Handle("/", spa(dist))
