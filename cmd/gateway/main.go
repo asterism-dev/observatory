@@ -186,8 +186,33 @@ func apply(run runner, st proto.GatewayState, dir string) error {
 		applySB(run, st.SB, dir),
 		reconcileNB(run, st),
 		applyUnderlay(run, st),
+		cleanChassis(run, st),
 		syncWG(run, "wg-underlay", st.UnderlayKey, netaddr.UnderlayPort, underlay),
 		syncWG(run, "wg-clients", st.ClientsKey, netaddr.ClientsPort, clients))
+}
+
+// cleanChassis deletes SB chassis of unknown and quarantined nodes, after nft has cut them off, so a re-enrolled node registers a fresh row.
+func cleanChassis(run runner, st proto.GatewayState) error {
+	out, err := run("ovn-sbctl", "--bare", "--columns=name", "list", "chassis")
+	if err != nil {
+		return fmt.Errorf("ovn-sbctl list chassis: %w", err)
+	}
+	keep := map[string]bool{"hub-gw": true}
+	for _, c := range st.Chassis {
+		keep[c.NodeID] = !c.Quarantined
+	}
+	var errs []error
+	for _, name := range strings.Fields(out) {
+		if keep[name] {
+			continue
+		}
+		if _, err := run("ovn-sbctl", "chassis-del", name); err != nil {
+			errs = append(errs, fmt.Errorf("ovn-sbctl chassis-del %s: %w", name, err))
+			continue
+		}
+		log.Printf("deleted southbound chassis %s", name)
+	}
+	return errors.Join(errs...)
 }
 
 // withValidPeers drops chassis and devices whose key or address would break wg syncconf or nft for everyone.

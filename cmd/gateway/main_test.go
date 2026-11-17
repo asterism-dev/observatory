@@ -304,3 +304,48 @@ func TestWithQuarantine(t *testing.T) {
 		t.Fatal("input modified")
 	}
 }
+
+func TestCleanChassis(t *testing.T) {
+	var calls []string
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		calls = append(calls, c)
+		if c == "ovn-sbctl --bare --columns=name list chassis" {
+			return nodeA + "\n\n" + nodeB + "\nhub-gw\nstranger\n" + orgC + "\n", nil
+		}
+		return "", nil
+	}
+	st := proto.GatewayState{Chassis: []proto.GatewayChassis{{NodeID: nodeA}, {NodeID: nodeB, Quarantined: true}, {NodeID: "offline-node"}}}
+	if err := cleanChassis(run, st); err != nil {
+		t.Fatal(err)
+	}
+	var del []string
+	for _, c := range calls {
+		if strings.Contains(c, "chassis-del") {
+			del = append(del, c)
+		}
+	}
+	want := "ovn-sbctl chassis-del " + nodeB + "\novn-sbctl chassis-del stranger\novn-sbctl chassis-del " + orgC
+	if strings.Join(del, "\n") != want {
+		t.Fatalf("deleted %v", del)
+	}
+}
+
+func TestApplyCleansChassisAfterQuarantineRules(t *testing.T) {
+	var order []string
+	run := func(args ...string) (string, error) {
+		switch {
+		case args[0] == "nft":
+			order = append(order, "nft")
+		case len(args) > 1 && args[1] == "chassis-del":
+			order = append(order, "chassis-del")
+		case strings.Join(args, " ") == "ovn-sbctl --bare --columns=name list chassis":
+			return "gone\n", nil
+		}
+		return "", nil
+	}
+	_ = apply(run, proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB}, t.TempDir())
+	if strings.Join(order, ",") != "nft,chassis-del" {
+		t.Fatalf("order %v", order)
+	}
+}

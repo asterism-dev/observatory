@@ -114,6 +114,7 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
   (in, out and forwarded, including Geneve and the southbound session from the gateway), the hub logs
   `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub and lifted only when
   the node is re-enrolled (regenerate its credential, then re-install).
+- The gateway deletes southbound chassis rows of unknown and quarantined nodes, so a re-enrolled node registers afresh.
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
 - The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway.
 
