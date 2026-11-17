@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Popover, SegmentedControl } from '@asterism-dev/lumen'
+import { Popover, SegmentedControl, Select } from '@asterism-dev/lumen'
 import { Building2, Check, ChevronUp, LogOut, Monitor, Moon, Plus, Shield, Sun, User } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -21,7 +21,7 @@ const open = ref(false)
 const { theme } = useTheme()
 
 const THEME_ICONS = { system: Monitor, light: Sun, dark: Moon }
-const localeOptions = LOCALES.map((l) => ({ value: l.code, label: l.code.toUpperCase(), ariaLabel: l.name }))
+const localeOptions = LOCALES.map((l) => ({ value: l.code, label: l.name }))
 const themeOptions = computed(() => THEME_PREFERENCES.map((p) => ({ value: p, icon: THEME_ICONS[p], ariaLabel: t(`theme.${p}`) })))
 
 const initial = (name: string) => name.trim()[0]?.toUpperCase() ?? '?'
@@ -78,7 +78,7 @@ async function signOut() {
           <User :size="16" :stroke-width="1.75" />{{ t('nav.profile') }}
         </RouterLink>
         <div class="prefs">
-          <SegmentedControl v-model="locale" :options="localeOptions" size="sm" :aria-label="t('profile.language')" />
+          <Select v-model="locale" class="prefs__locale" :options="localeOptions" :aria-label="t('profile.language')" />
           <SegmentedControl v-model="theme" :options="themeOptions" size="sm" :aria-label="t('profile.theme')" />
         </div>
         <hr />
@@ -181,9 +181,13 @@ async function signOut() {
 }
 .prefs {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   padding: 4px 8px;
+}
+.prefs__locale {
+  flex: 1;
+  min-width: 0;
 }
 hr {
   width: 100%;
