@@ -45,3 +45,14 @@ func TestAttachNBD(t *testing.T) {
 		t.Logf("wrong key refused after %s: %v", time.Since(start), err)
 	}
 }
+
+func TestAttachNBDRejectsOtherExport(t *testing.T) {
+	dir := t.TempDir()
+	_, err := AttachNBD(dir, "d1", "nbd://127.0.0.1:10810/d2", strings.Repeat("0", 64))
+	if err == nil || !strings.Contains(err.Error(), "export d2") {
+		t.Fatalf("err = %v, want an export mismatch", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nbd-d1-tls")); err == nil {
+		t.Fatal("key dir written for a mismatched export")
+	}
+}

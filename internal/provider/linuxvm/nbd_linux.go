@@ -31,6 +31,10 @@ func AttachNBD(vmDir, diskID, rawURL, psk string) (dev string, err error) {
 	if err != nil {
 		return "", err
 	}
+	if export != diskID {
+		return "", fmt.Errorf("disk %s: NBD URL names export %s, but the key identity is the disk ID", diskID, export)
+	}
+	// Safe outside nbdMu: a running qemu-nbd loaded its key at start and never rereads the file.
 	tlsDir, err := writeNBDKey(vmDir, diskID, psk)
 	if err != nil {
 		return "", err

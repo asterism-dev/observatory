@@ -75,8 +75,12 @@ func TestWriteNBDKey(t *testing.T) {
 		t.Fatalf("keys.psk = %q, %v", b, err)
 	}
 	for path, want := range map[string]os.FileMode{tlsDir: 0o700, filepath.Join(tlsDir, "keys.psk"): 0o600} {
-		if st, err := os.Stat(path); err != nil || st.Mode().Perm() != want {
-			t.Errorf("%s: mode %v, %v; want %v", path, st.Mode().Perm(), err, want)
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, want %v", path, st.Mode().Perm(), want)
 		}
 	}
 }
