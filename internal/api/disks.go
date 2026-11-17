@@ -257,8 +257,8 @@ func (h *api) copyDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var warning string
-	if src.Attachment != nil || src.Releasing {
-		warning = "source disk is in use; the copy may not be consistent"
+	if st := h.disks.Info(src).State; src.Attachment != nil || st == "releasing" || st == "creating" || st == "growing" {
+		warning = "source disk is in use or not settled; the copy may not be consistent"
 	}
 	h.writeDisk(w, r, http.StatusCreated, d, warning)
 }
