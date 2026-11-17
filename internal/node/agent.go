@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -243,9 +244,19 @@ func (a *Agent) disksInUse() []string {
 	return slices.Compact(ids)
 }
 
+// storageError is a boot refused because storage is not reachable yet; boot retries it without giving up.
+type storageError struct{ error }
+
 // checkStorage dials each NBD server f attaches, so a VM whose disks are unreachable fails instead of booting.
 // Its error is the full status message.
 func checkStorage(f VMFile) error {
+	if err := dialStorage(f); err != nil {
+		return storageError{err}
+	}
+	return nil
+}
+
+func dialStorage(f VMFile) error {
 	dialed := map[string]bool{}
 	for _, at := range f.Spec.Attachments {
 		if at.URL == "" {
@@ -343,6 +354,10 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 		}
 		for inst = nil; inst == nil; {
 			if failures == len(backoff) {
+				if errors.As(reason, new(storageError)) {
+					failures--
+					continue
+				}
 				report(proto.VMStatus{ID: id, State: proto.StateError, Error: "restarting failed repeatedly: " + reason.Error()})
 				return
 			}

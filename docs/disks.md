@@ -109,7 +109,8 @@ Disk files live in the `disks` volume:
 - 1 000 exports (attached disks) per hub, one storage server per hub. Attach returns `409` "no free storage port"
   when the range is used up.
 - A storage or gateway restart pauses disk I/O in running VMs. A VM that starts while its storage is unreachable
-  retries with the restart backoff (about one minute in total) and then stays in `error` until it is started again.
+  shows `error` and retries with the restart backoff, then every 30 s for as long as storage stays unreachable; it
+  boots once storage is back.
 - Disk errors on a VM (e.g. "NBD connection lost") are shown once the node's NBD device drops; a `qemu-nbd` that is
   still trying to reconnect does not show up as an error.
 - Stopping `observatory-node.service` stops the node's VMs and their `qemu-nbd` processes (they run in the service's
