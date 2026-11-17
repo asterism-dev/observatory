@@ -52,12 +52,19 @@ func (h *api) authorize(w http.ResponseWriter, r *http.Request, org uuid.UUID, o
 	if h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, obj, act) {
 		return true
 	}
-	if err := h.store.Audit(r.Context(), auditEntry(r, &org, act, obj, store.ResultDenied)); err != nil {
-		slog.Error("audit denied access", "user", p.User.ID, "org", org, "action", act, "err", err)
-	}
+	h.auditDenied(r, org, obj, act)
 	writeError(w, http.StatusForbidden, "forbidden")
 	return false
 }
+
+func (h *api) auditDenied(r *http.Request, org uuid.UUID, obj, act string) {
+	if err := h.store.Audit(r.Context(), auditEntry(r, &org, act, obj, store.ResultDenied)); err != nil {
+		slog.Error("audit denied access", "org", org, "action", act, "err", err)
+	}
+}
+
+// errForbidden rolls back a commit whose permission check depends on rows read inside the transaction.
+var errForbidden = errors.New("forbidden")
 
 type invalidPolicyError struct{ err error }
 
@@ -74,6 +81,7 @@ var storeErrorStatus = []struct {
 	{store.ErrNotMember, http.StatusBadRequest},
 	{store.ErrInviteInvalid, http.StatusBadRequest},
 	{store.ErrAlreadyMember, http.StatusConflict},
+	{errForbidden, http.StatusForbidden},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.

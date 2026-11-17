@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -102,31 +103,33 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
+	leaving := target == p.User.ID
 	action := store.ActionMemberLeave
-	if target != p.User.ID {
+	if !leaving {
 		action = store.ActionMemberRemove
 		if !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberRemove) {
 			return
 		}
-		tm, err := h.store.Membership(r.Context(), m.Org.ID, target)
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not found")
-			return
-		}
-		if err != nil {
-			serverError(w, "membership", err)
-			return
-		}
-		if privileged(tm.Role) && !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
-			return
-		}
 	}
+	var removeErr error
 	if !h.commit(w, r, func(tx *store.Store) error {
+		// The target's role is only stable under the lock, so the extra check for admins/owners happens here.
+		current, err := tx.LockMember(r.Context(), m.Org.ID, target)
+		if err != nil {
+			return err
+		}
+		if !leaving && privileged(current) && !h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
+			removeErr = errForbidden
+			return removeErr
+		}
 		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, action, "org/members/"+target.String(), store.ResultAllowed))
 	}) {
+		if removeErr != nil {
+			h.auditDenied(r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -217,15 +220,18 @@ func (h *api) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	var (
 		org       store.Org
-		role      store.Role
+		inv       store.Invite
 		acceptErr error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if org, role, acceptErr = tx.AcceptInvite(r.Context(), body.Token, p.User.ID); acceptErr != nil {
+		if org, inv, acceptErr = tx.AcceptInvite(r.Context(), body.Token, p.User.ID); acceptErr != nil {
+			return acceptErr
+		}
+		if acceptErr = h.checkInviter(r, tx, inv); acceptErr != nil {
 			return acceptErr
 		}
 		e := auditEntry(r, &org.ID, store.ActionInviteAccept, authz.ObjMembers, store.ResultAllowed)
-		e.Details = map[string]any{"role": role}
+		e.Details = map[string]any{"role": inv.Role}
 		return tx.Audit(r.Context(), e)
 	}) {
 		// The rejected attempt is audited outside the rolled-back transaction; the token never goes into the log.
@@ -238,5 +244,21 @@ func (h *api) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"orgId": org.ID, "role": role})
+	writeJSON(w, http.StatusOK, map[string]any{"orgId": org.ID, "role": inv.Role})
+}
+
+// checkInviter rejects an invite whose creator could no longer issue it, so lost rights can't be regained through a kept link.
+func (h *api) checkInviter(r *http.Request, tx *store.Store, inv store.Invite) error {
+	errInviter := fmt.Errorf("%w: inviter lacks permission", store.ErrInviteInvalid)
+	if _, err := tx.Membership(r.Context(), inv.OrgID, inv.CreatedBy); errors.Is(err, store.ErrNotFound) {
+		return errInviter
+	} else if err != nil {
+		return err
+	}
+	e, sub := h.z.Enforcer(), authz.UserSubject(inv.CreatedBy)
+	if !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberInvite) ||
+		privileged(inv.Role) && !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberSetRole) {
+		return errInviter
+	}
+	return nil
 }

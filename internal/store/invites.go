@@ -82,16 +82,18 @@ func (s *Store) RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error {
 }
 
 // AcceptInvite consumes the invite and adds the user; on ErrAlreadyMember the invite stays usable.
-func (s *Store) AcceptInvite(ctx context.Context, token string, userID uuid.UUID) (Org, Role, error) {
+// Callers must check the invite's creator may still issue it before committing.
+func (s *Store) AcceptInvite(ctx context.Context, token string, userID uuid.UUID) (Org, Invite, error) {
 	var (
-		org  Org
-		role Role
+		org Org
+		inv Invite
 	)
 	err := s.InTx(ctx, func(tx *Store) error {
-		err := tx.q.QueryRow(ctx, `
+		var err error
+		inv, err = scanInvite(tx.q.QueryRow(ctx, `
 			UPDATE invites SET used_at = now(), used_by = $2
 			WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()
-			RETURNING org_id, role`, hashToken(token), userID).Scan(&org.ID, &role)
+			RETURNING `+inviteColumns, hashToken(token), userID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInviteInvalid
 		}
@@ -100,18 +102,19 @@ func (s *Store) AcceptInvite(ctx context.Context, token string, userID uuid.UUID
 		}
 		tag, err := tx.q.Exec(ctx, `
 			INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)
-			ON CONFLICT (org_id, user_id) DO NOTHING`, org.ID, userID, role)
+			ON CONFLICT (org_id, user_id) DO NOTHING`, inv.OrgID, userID, inv.Role)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrAlreadyMember
 		}
+		org.ID = inv.OrgID
 		return tx.q.QueryRow(ctx, "SELECT name, personal_for IS NOT NULL, created_at FROM orgs WHERE id = $1", org.ID).
 			Scan(&org.Name, &org.Personal, &org.CreatedAt)
 	})
 	if err != nil {
-		return Org{}, "", err
+		return Org{}, Invite{}, err
 	}
-	return org, role, nil
+	return org, inv, nil
 }

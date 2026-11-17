@@ -82,8 +82,8 @@ func (s *Store) Members(ctx context.Context, orgID uuid.UUID) ([]Member, error) 
 	})
 }
 
-// lockMember locks the org row, serializing membership changes in the org, and returns the user's current role there.
-func (s *Store) lockMember(ctx context.Context, orgID, userID uuid.UUID) (Role, error) {
+// LockMember locks the org row, serializing membership changes in the org, and returns the user's current role there.
+func (s *Store) LockMember(ctx context.Context, orgID, userID uuid.UUID) (Role, error) {
 	var personal bool
 	err := s.q.QueryRow(ctx, "SELECT personal_for IS NOT NULL FROM orgs WHERE id = $1 FOR UPDATE", orgID).Scan(&personal)
 	switch {
@@ -95,7 +95,7 @@ func (s *Store) lockMember(ctx context.Context, orgID, userID uuid.UUID) (Role, 
 		return "", ErrPersonalOrg
 	}
 	var role Role
-	err = s.q.QueryRow(ctx, "SELECT role FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID).Scan(&role)
+	err = s.q.QueryRow(ctx, "SELECT role FROM memberships WHERE org_id = $1 AND user_id = $2 FOR UPDATE", orgID, userID).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -119,7 +119,7 @@ func (s *Store) checkNotLastOwner(ctx context.Context, orgID uuid.UUID, current 
 
 func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role Role) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		current, err := tx.lockMember(ctx, orgID, userID)
+		current, err := tx.LockMember(ctx, orgID, userID)
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role
 // RemoveMember also drops the user's team memberships and role bindings in the org.
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		current, err := tx.lockMember(ctx, orgID, userID)
+		current, err := tx.LockMember(ctx, orgID, userID)
 		if err != nil {
 			return err
 		}

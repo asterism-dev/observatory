@@ -323,3 +323,92 @@ func TestCrossOrgMemberID(t *testing.T) {
 		t.Fatalf("invite in B: %+v", list)
 	}
 }
+
+func (e *env) invite(org uuid.UUID, token, role string) string {
+	e.t.Helper()
+	rec := e.send("POST", "/api/orgs/"+org.String()+"/invites", token, `{"role":"`+role+`"}`)
+	if rec.Code != 201 {
+		e.t.Fatalf("invite: %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct{ Token string }
+	decode(e.t, rec, &got)
+	return got.Token
+}
+
+func (e *env) inviteCount(org uuid.UUID) int {
+	e.t.Helper()
+	invs, err := e.store.Invites(context.Background(), org)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return len(invs)
+}
+
+func TestInviteNeedsCreatorStillAllowed(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	owner2, owner2Tok := e.user("bob")
+	admin, adminTok := e.user("carol")
+	inviter, inviterTok := e.user("dave")
+	_, joinerTok := e.user("erin")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, owner2, store.RoleOwner)
+	e.addMember(org, admin, store.RoleAdmin)
+	e.addMember(org, inviter, store.RoleMember)
+	accept := func(token string) int {
+		return e.send("POST", "/api/invites/accept", joinerTok, `{"token":"`+token+`"}`).Code
+	}
+
+	// Removed admin.
+	adminInvite := e.invite(org, adminTok, "member")
+	if rec := e.do("DELETE", memberPath(org, admin), ownerTok); rec.Code != 204 {
+		t.Fatal(rec.Code)
+	}
+	if code := accept(adminInvite); code != 400 {
+		t.Fatalf("removed creator: %d", code)
+	}
+
+	// Owner demoted to member: their admin invite no longer works.
+	ownerInvite := e.invite(org, owner2Tok, "admin")
+	if rec := e.send("PATCH", memberPath(org, owner2), ownerTok, `{"role":"member"}`); rec.Code != 204 {
+		t.Fatal(rec.Code)
+	}
+	if code := accept(ownerInvite); code != 400 {
+		t.Fatalf("demoted creator: %d", code)
+	}
+
+	// Member who could invite through a custom role that is then unbound.
+	var role uuid.UUID
+	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'inviter') RETURNING id`, org).Scan(&role); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/members', 'member:invite')`, role)
+	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+inviter.ID.String(), role)
+	e.reload()
+	boundInvite := e.invite(org, inviterTok, "member")
+	e.exec(`DELETE FROM role_bindings WHERE role_id = $1`, role)
+	e.reload()
+	if code := accept(boundInvite); code != 400 {
+		t.Fatalf("unbound creator: %d", code)
+	}
+
+	// None of the rejected invites were consumed, and nobody joined.
+	if n := e.inviteCount(org); n != 3 {
+		t.Fatalf("invites left: %d", n)
+	}
+	var failed int
+	for _, en := range e.audit(store.ActionInviteAccept) {
+		if en.Result != store.ResultFailed || en.OrgID != nil || en.Details["reason"] != "invalid invite: inviter lacks permission" {
+			t.Fatalf("audit: %+v", en)
+		}
+		failed++
+	}
+	if failed != 3 {
+		t.Fatalf("failed audits: %d", failed)
+	}
+
+	// A creator who still holds the rights: the invite works.
+	if code := accept(e.invite(org, ownerTok, "admin")); code != 200 {
+		t.Fatalf("valid creator: %d", code)
+	}
+}

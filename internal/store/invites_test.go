@@ -42,9 +42,9 @@ func TestInviteLifecycle(t *testing.T) {
 	if _, _, err := s.AcceptInvite(ctx, token, a.User.ID); !errors.Is(err, store.ErrAlreadyMember) {
 		t.Fatalf("accept by member: %v", err)
 	}
-	got, role, err := s.AcceptInvite(ctx, token, b.User.ID)
-	if err != nil || got.ID != org.ID || got.Name != "Acme" || role != store.RoleAdmin {
-		t.Fatalf("accept: %+v %s %v", got, role, err)
+	got, used, err := s.AcceptInvite(ctx, token, b.User.ID)
+	if err != nil || got.ID != org.ID || got.Name != "Acme" || used.ID != inv.ID || used.Role != store.RoleAdmin || used.CreatedBy != a.User.ID {
+		t.Fatalf("accept: %+v %+v %v", got, used, err)
 	}
 	if m, err := s.Membership(ctx, org.ID, b.User.ID); err != nil || m.Role != store.RoleAdmin {
 		t.Fatalf("membership: %+v %v", m, err)
