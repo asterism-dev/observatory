@@ -29,6 +29,7 @@ func TestVMConfig(t *testing.T) {
 			Path     string `json:"path_on_host"`
 			Root     bool   `json:"is_root_device"`
 			ReadOnly bool   `json:"is_read_only"`
+			Cache    string `json:"cache_type"`
 		} `json:"drives"`
 		Machine struct {
 			VCPUs int `json:"vcpu_count"`
@@ -51,6 +52,11 @@ func TestVMConfig(t *testing.T) {
 	}
 	if len(c.Drives) != 3 || c.Drives[0].ID != "root" || c.Drives[1].ID != "d1" || c.Drives[1].Path != "/dev/nbd0" || c.Drives[2].ID != "seed" || !c.Drives[2].ReadOnly || c.Drives[0].ReadOnly || c.Drives[0].Root {
 		t.Errorf("drives = %+v", c.Drives)
+	}
+	for _, d := range c.Drives {
+		if d.Cache != "Writeback" {
+			t.Errorf("drive %s cache_type %q, guest flushes would not reach the host", d.ID, d.Cache)
+		}
 	}
 	if len(c.NICs) != 2 || c.NICs[0].MAC != f.MAC || c.NICs[0].Dev != linuxvm.TapName("vm1", 0) || c.NICs[1].MAC != "02:0a:c8:00:00:0a" || c.NICs[1].Dev != linuxvm.TapName("vm1", 1) {
 		t.Errorf("nics = %+v", c.NICs)

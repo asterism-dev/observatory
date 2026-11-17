@@ -16,6 +16,8 @@ type fcDrive struct {
 	Path     string `json:"path_on_host"`
 	Root     bool   `json:"is_root_device"`
 	ReadOnly bool   `json:"is_read_only"`
+	// Writeback makes Firecracker fsync on guest flushes; the default "Unsafe" acknowledges them without writing
+	Cache string `json:"cache_type"`
 }
 
 type fcNIC struct {
@@ -32,7 +34,7 @@ func vmConfig(f node.VMFile, kernel, initrd string, drives []string) ([]byte, er
 	}
 	var ds []fcDrive
 	for i, d := range order {
-		ds = append(ds, fcDrive{ID: d.Name, Path: drives[i], ReadOnly: d.ReadOnly})
+		ds = append(ds, fcDrive{ID: d.Name, Path: drives[i], ReadOnly: d.ReadOnly, Cache: "Writeback"})
 	}
 	nics := []fcNIC{{ID: "eth0", MAC: f.MAC, Dev: linuxvm.TapName(f.Spec.ID, 0)}}
 	for i, n := range f.Spec.NICs {
