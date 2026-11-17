@@ -11,7 +11,15 @@
   "nav": {
     "label": "Navigation",
     "profile": "Profile",
-    "audit": "Audit log"
+    "audit": "Audit log",
+    "members": "Members",
+    "settings": "Settings",
+    "teams": "Teams",
+    "roles": "Roles",
+    "limits": "Limits",
+    "adminOrgs": "Admin: organizations",
+    "adminUsers": "Admin: users",
+    "orgAudit": "Audit"
   },
   "theme": {
     "system": "Theme: system",
@@ -50,5 +58,103 @@
     "loadMore": "Load more",
     "empty": "No entries",
     "filter": "Filter"
+  },
+  "role": {
+    "owner": "Owner",
+    "admin": "Admin",
+    "member": "Member"
+  },
+  "org": {
+    "createTitle": "Create organization",
+    "name": "Name",
+    "create": "Create",
+    "save": "Save",
+    "personalNote": "Your personal organization cannot be renamed."
+  },
+  "members": {
+    "name": "Name",
+    "email": "Email",
+    "role": "Role",
+    "joined": "Joined",
+    "expires": "Expires",
+    "remove": "Remove",
+    "leave": "Leave org",
+    "removeTitle": "Remove member?",
+    "removeBody": "{name} will lose access to this organization.",
+    "leaveTitle": "Leave organization?",
+    "leaveBody": "You will lose access to this organization.",
+    "invitations": "Invitations",
+    "invite": "Create invitation",
+    "linkOnce": "Copy this link now; it is shown only once.",
+    "link": "Invitation link",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "invite": {
+    "title": "Invitation",
+    "accepting": "Accepting invitation...",
+    "home": "Back to start"
+  },
+  "teams": {
+    "name": "Name",
+    "members": "Members",
+    "create": "Create team",
+    "open": "Open",
+    "empty": "No teams",
+    "admin": "Team admin",
+    "promote": "Make admin",
+    "demote": "Remove admin",
+    "noMembers": "No members",
+    "addMember": "Add member",
+    "add": "Add",
+    "delete": "Delete team",
+    "deleteTitle": "Delete team?",
+    "deleteBody": "{name} and its role bindings will be removed.",
+    "leave": "Leave team"
+  },
+  "roles": {
+    "create": "Create role",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "builtin": "Built-in",
+    "builtinNote": "Built-in roles are read-only.",
+    "bindings": "Role bindings",
+    "subject": "Member or team",
+    "teamLabel": "Team: {name}",
+    "bind": "Bind",
+    "unbind": "Remove",
+    "noBindings": "No bindings",
+    "deleteTitle": "Delete role?",
+    "deleteBody": "{name} and its bindings will be removed.",
+    "description": "Description",
+    "parents": "Inherits from",
+    "addParent": "Add parent role",
+    "rules": "Rules",
+    "allow": "Allow",
+    "deny": "Deny",
+    "object": "Object",
+    "addRule": "Add rule",
+    "removeRule": "Remove",
+    "back": "Back",
+    "notFound": "Role not found"
+  },
+  "limits": {
+    "org": "Organization (set by platform admins)",
+    "teams": "Teams",
+    "members": "Members",
+    "vcpu": "vCPU",
+    "ramMb": "RAM (MB)",
+    "diskGb": "Disk (GB)",
+    "vmCount": "VMs",
+    "unlimited": "Unlimited",
+    "required": "Enter a value or select unlimited",
+    "invalid": "Use a whole number, 0 or more"
+  },
+  "admin": {
+    "members": "Members",
+    "created": "Created",
+    "personal": "Personal",
+    "platformAdmin": "Platform admin"
   }
 }

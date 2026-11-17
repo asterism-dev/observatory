@@ -5,24 +5,63 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-type api struct{ store *store.Store }
+type api struct {
+	store     *store.Store
+	z         *authz.Service
+	publicURL *url.URL
+}
 
-func New(s *store.Store, a *auth.Handler) http.Handler {
-	h := &api{store: s}
+func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
+	h := &api{store: s, z: z, publicURL: a.PublicURL}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
+	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
+	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
+	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
+	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
+	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)
+	mux.HandleFunc("POST /api/orgs", h.createOrg)
+	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
+	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
+	mux.HandleFunc("GET /api/orgs/{org}/audit", h.orgAudit)
+	mux.HandleFunc("GET /api/orgs/{org}/members", h.listMembers)
+	mux.HandleFunc("PATCH /api/orgs/{org}/members/{user}", h.setMemberRole)
+	mux.HandleFunc("DELETE /api/orgs/{org}/members/{user}", h.removeMember)
+	mux.HandleFunc("GET /api/orgs/{org}/invites", h.listInvites)
+	mux.HandleFunc("POST /api/orgs/{org}/invites", h.createInvite)
+	mux.HandleFunc("DELETE /api/orgs/{org}/invites/{id}", h.revokeInvite)
+	mux.HandleFunc("POST /api/invites/accept", h.acceptInvite)
+	mux.HandleFunc("GET /api/orgs/{org}/teams", h.listTeams)
+	mux.HandleFunc("POST /api/orgs/{org}/teams", h.createTeam)
+	mux.HandleFunc("GET /api/orgs/{org}/teams/{team}", h.getTeam)
+	mux.HandleFunc("PATCH /api/orgs/{org}/teams/{team}", h.renameTeam)
+	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}", h.deleteTeam)
+	mux.HandleFunc("PUT /api/orgs/{org}/teams/{team}/members/{user}", h.setTeamMember)
+	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}/members/{user}", h.removeTeamMember)
+	mux.HandleFunc("GET /api/orgs/{org}/catalog", h.catalog)
+	mux.HandleFunc("GET /api/orgs/{org}/roles", h.listRoles)
+	mux.HandleFunc("POST /api/orgs/{org}/roles", h.createRole)
+	mux.HandleFunc("PUT /api/orgs/{org}/roles/{role}", h.updateRole)
+	mux.HandleFunc("DELETE /api/orgs/{org}/roles/{role}", h.deleteRole)
+	mux.HandleFunc("GET /api/orgs/{org}/bindings", h.listBindings)
+	mux.HandleFunc("POST /api/orgs/{org}/bindings", h.bind)
+	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
+	mux.HandleFunc("GET /api/orgs/{org}/limits", h.getLimits)
+	mux.HandleFunc("PUT /api/orgs/{org}/limits/{scope}", h.setScopeLimits)
 	return a.Require(mux)
 }
 
@@ -33,15 +72,9 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "memberships", err)
 		return
 	}
-	type orgJSON struct {
-		ID       uuid.UUID  `json:"id"`
-		Name     string     `json:"name"`
-		Personal bool       `json:"personal"`
-		Role     store.Role `json:"role"`
-	}
 	orgs := make([]orgJSON, 0, len(ms))
 	for _, m := range ms {
-		orgs = append(orgs, orgJSON{m.Org.ID, m.Org.Name, m.Org.Personal, m.Role})
+		orgs = append(orgs, toOrgJSON(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
@@ -119,6 +152,10 @@ func (h *api) adminAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.writeAuditPage(w, r, f)
+}
+
+func (h *api) writeAuditPage(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
 	entries, err := h.store.AuditEntries(r.Context(), f)
 	if err != nil {
 		serverError(w, "audit entries", err)

@@ -11,7 +11,15 @@
   "nav": {
     "label": "Navigation",
     "profile": "Profil",
-    "audit": "Audit-Log"
+    "audit": "Audit-Log",
+    "members": "Mitglieder",
+    "settings": "Einstellungen",
+    "teams": "Teams",
+    "roles": "Rollen",
+    "limits": "Limits",
+    "adminOrgs": "Admin: Organisationen",
+    "adminUsers": "Admin: Benutzer",
+    "orgAudit": "Audit"
   },
   "theme": {
     "system": "Design: System",
@@ -50,5 +58,103 @@
     "loadMore": "Mehr laden",
     "empty": "Keine Einträge",
     "filter": "Filtern"
+  },
+  "role": {
+    "owner": "Eigentümer",
+    "admin": "Admin",
+    "member": "Mitglied"
+  },
+  "org": {
+    "createTitle": "Organisation erstellen",
+    "name": "Name",
+    "create": "Erstellen",
+    "save": "Speichern",
+    "personalNote": "Deine persönliche Organisation kann nicht umbenannt werden."
+  },
+  "members": {
+    "name": "Name",
+    "email": "E-Mail",
+    "role": "Rolle",
+    "joined": "Beigetreten",
+    "expires": "Läuft ab",
+    "remove": "Entfernen",
+    "leave": "Organisation verlassen",
+    "removeTitle": "Mitglied entfernen?",
+    "removeBody": "{name} verliert den Zugriff auf diese Organisation.",
+    "leaveTitle": "Organisation verlassen?",
+    "leaveBody": "Du verlierst den Zugriff auf diese Organisation.",
+    "invitations": "Einladungen",
+    "invite": "Einladung erstellen",
+    "linkOnce": "Kopiere diesen Link jetzt; er wird nur einmal angezeigt.",
+    "link": "Einladungslink",
+    "copy": "Kopieren",
+    "copied": "Kopiert"
+  },
+  "invite": {
+    "title": "Einladung",
+    "accepting": "Einladung wird angenommen...",
+    "home": "Zurück zum Start"
+  },
+  "teams": {
+    "name": "Name",
+    "members": "Mitglieder",
+    "create": "Team erstellen",
+    "open": "Öffnen",
+    "empty": "Keine Teams",
+    "admin": "Team-Admin",
+    "promote": "Zum Admin machen",
+    "demote": "Admin entziehen",
+    "noMembers": "Keine Mitglieder",
+    "addMember": "Mitglied hinzufügen",
+    "add": "Hinzufügen",
+    "delete": "Team löschen",
+    "deleteTitle": "Team löschen?",
+    "deleteBody": "{name} und seine Rollenzuweisungen werden entfernt.",
+    "leave": "Team verlassen"
+  },
+  "roles": {
+    "create": "Rolle erstellen",
+    "view": "Ansehen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "builtin": "Eingebaut",
+    "builtinNote": "Eingebaute Rollen sind schreibgeschützt.",
+    "bindings": "Rollenzuweisungen",
+    "subject": "Mitglied oder Team",
+    "teamLabel": "Team: {name}",
+    "bind": "Zuweisen",
+    "unbind": "Entfernen",
+    "noBindings": "Keine Zuweisungen",
+    "deleteTitle": "Rolle löschen?",
+    "deleteBody": "{name} und ihre Zuweisungen werden entfernt.",
+    "description": "Beschreibung",
+    "parents": "Erbt von",
+    "addParent": "Elternrolle hinzufügen",
+    "rules": "Regeln",
+    "allow": "Erlauben",
+    "deny": "Verbieten",
+    "object": "Objekt",
+    "addRule": "Regel hinzufügen",
+    "removeRule": "Entfernen",
+    "back": "Zurück",
+    "notFound": "Rolle nicht gefunden"
+  },
+  "limits": {
+    "org": "Organisation (von Plattform-Admins gesetzt)",
+    "teams": "Teams",
+    "members": "Mitglieder",
+    "vcpu": "vCPU",
+    "ramMb": "RAM (MB)",
+    "diskGb": "Disk (GB)",
+    "vmCount": "VMs",
+    "unlimited": "Unbegrenzt",
+    "required": "Wert eingeben oder unbegrenzt wählen",
+    "invalid": "Ganze Zahl ab 0 verwenden"
+  },
+  "admin": {
+    "members": "Mitglieder",
+    "created": "Erstellt",
+    "personal": "Persönlich",
+    "platformAdmin": "Plattform-Admin"
   }
 }
