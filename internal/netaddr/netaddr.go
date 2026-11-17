@@ -76,8 +76,12 @@ func FreeSubnet(used []netip.Prefix) (netip.Prefix, error) {
 }
 
 func FreeAddr(first, last netip.Addr, used []netip.Addr) (netip.Addr, error) {
+	taken := make(map[netip.Addr]struct{}, len(used))
+	for _, a := range used {
+		taken[a] = struct{}{}
+	}
 	for a := first; a.Compare(last) <= 0; a = a.Next() {
-		if !slices.Contains(used, a) {
+		if _, ok := taken[a]; !ok {
 			return a, nil
 		}
 	}
@@ -85,6 +89,9 @@ func FreeAddr(first, last netip.Addr, used []netip.Addr) (netip.Addr, error) {
 }
 
 func FreeHost(p netip.Prefix, used []netip.Addr) (netip.Addr, error) {
+	if !p.IsValid() || !p.Addr().Is4() {
+		return netip.Addr{}, fmt.Errorf("%w: %s is not an IPv4 prefix", ErrInvalidSubnet, p)
+	}
 	base := toU32(p.Masked().Addr())
 	broadcast := base | (^uint32(0) >> p.Bits())
 	return FreeAddr(fromU32(base+HostOffset), fromU32(broadcast-1), used)

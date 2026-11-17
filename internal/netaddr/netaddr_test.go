@@ -95,6 +95,7 @@ func TestValidateSubnet(t *testing.T) {
 		"10.64.1.0/24", "10.100.0.0/16", "10.192.5.0/24", "10.198.0.0/24",
 		"10.199.0.0/29", "10.210.5.0/24", "192.168.64.0/25", "8.8.8.0/24",
 		"10.1.0.0/15", "10.1.0.0/29", "fd00::/64", "garbage",
+		"10.199.0.0/16", "10.198.0.0/16", "192.168.0.0/16", "10.192.0.0/16",
 	} {
 		if _, err := ValidateSubnet(in); !errors.Is(err, ErrInvalidSubnet) {
 			t.Errorf("%s: want ErrInvalidSubnet, got %v", in, err)
@@ -111,5 +112,26 @@ func TestMAC(t *testing.T) {
 func TestRouter(t *testing.T) {
 	if got := Router(pfx("10.64.16.0/20")); got != ip("10.64.16.1") {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestFreeAddrExhausted(t *testing.T) {
+	a := ip("10.192.0.2")
+	if _, err := FreeAddr(a, a, []netip.Addr{a}); !errors.Is(err, ErrExhausted) {
+		t.Fatalf("want ErrExhausted, got %v", err)
+	}
+}
+
+func TestFreeSubnetExhausted(t *testing.T) {
+	if _, err := FreeSubnet([]netip.Prefix{AutoNetworks}); !errors.Is(err, ErrExhausted) {
+		t.Fatalf("want ErrExhausted, got %v", err)
+	}
+}
+
+func TestFreeHostInvalidPrefix(t *testing.T) {
+	for _, p := range []netip.Prefix{{}, pfx("fd00::/64")} {
+		if _, err := FreeHost(p, nil); !errors.Is(err, ErrInvalidSubnet) {
+			t.Errorf("%s: want ErrInvalidSubnet, got %v", p, err)
+		}
 	}
 }
