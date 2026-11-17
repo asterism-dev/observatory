@@ -22,6 +22,7 @@
     "dashboard": "Dashboard",
     "nodes": "Nodes",
     "vms": "VMs",
+    "env": "Environment",
     "orgSettings": "Organization settings",
     "platformSettings": "Platform settings",
     "general": "General",
@@ -168,5 +169,35 @@
   },
   "placeholder": {
     "empty": "Nothing here yet."
+  },
+  "env": {
+    "subtitle": "Variables and secrets injected into your VMs.",
+    "add": "Add",
+    "addTitle": "Add variable",
+    "editTitle": "Edit variable",
+    "name": "Name",
+    "value": "Value",
+    "unchanged": "unchanged",
+    "type": "Type",
+    "scope": "Scope",
+    "scopeOrg": "org",
+    "scopeTeam": "team",
+    "scopePrivate": "private",
+    "makeSecret": "Make this a secret (sealed, write-only)",
+    "save": "Save",
+    "edit": "Edit",
+    "move": "Move",
+    "moveTitle": "Move {name}",
+    "delete": "Delete",
+    "deleteTitle": "Delete variable",
+    "deleteBody": "Delete {name}? This cannot be undone.",
+    "copy": "Copy value",
+    "empty": "No variables yet.",
+    "tab": {
+      "all": "All",
+      "org": "Org",
+      "teams": "Teams",
+      "private": "Private"
+    }
   }
 }

@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
+import EnvView from '@/views/EnvView.vue'
 import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
 import AdminOrgView from '@/views/admin/AdminOrgView.vue'
 import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
@@ -36,6 +37,7 @@ export const router = createRouter({
     { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
     { path: '/orgs/:orgId/nodes', component: PlaceholderView, meta: { title: 'nav.nodes' } },
     { path: '/orgs/:orgId/vms', component: PlaceholderView, meta: { title: 'nav.vms' } },
+    { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
     {
       path: '/orgs/:orgId',
       component: OrgSettingsLayout,
