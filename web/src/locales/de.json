@@ -1,0 +1,11 @@
+{
+  "app": { "name": "Observatory" },
+  "login": {
+    "intro": "Melde dich an, um fortzufahren.",
+    "signIn": "Anmelden",
+    "createAccount": "Konto erstellen"
+  },
+  "nav": { "label": "Navigation", "profile": "Profil", "audit": "Audit-Log" },
+  "theme": { "system": "Design: System", "light": "Design: Hell", "dark": "Design: Dunkel" },
+  "user": { "signOut": "Abmelden" }
+}
