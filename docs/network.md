@@ -110,6 +110,10 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
 - Every VM port carries `requested-chassis=<node id>`. The gateway clears any binding by a chassis whose name (its
   cert CN) is not that node id within one poll (2 s) and reports it; the hub logs `gateway cleared chassis bindings`.
   The chassis hostname, which a node sets itself, is never trusted.
+- A node caught holding a port bound to another node is quarantined: the gateway drops all its `wg-underlay` traffic
+  (in, out and forwarded, including Geneve and the southbound session from the gateway), the hub logs
+  `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub and lifted only when
+  the node is re-enrolled (regenerate its credential, then re-install).
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
 - The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway.
 
@@ -118,11 +122,10 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
 - Southbound contents (port and chassis names, MACs, IPs) are readable by every chassis. They contain no secrets.
 - Networks bypass the connect check: any VM of the org may be attached to any network of the org, and VMs on a network
   reach each other regardless of who may connect to them.
-- A node can claim a foreign port binding for up to one gateway poll (2 s) before it is reverted. In practice the rightful
-  node's ovn-controller usually takes the binding back first. While the rightful node's chassis is gone (e.g. its
-  ovn-controller is stopped), a node whose chassis hostname is that node id keeps re-claiming the port; the gateway
-  clears and reports it on every poll.
-- A VM moving between nodes may briefly show up as a cleared binding while the old chassis still holds it.
+- A node can hold a foreign port binding for up to one gateway poll (2 s) before it is reverted and the node is
+  quarantined. Traffic sent to the port in that window may reach it.
+- VMs never move between nodes. A future move must update the guard, or the old node, still holding the binding, gets
+  quarantined.
 - The southbound server cert is valid as long as the OVN CA (10 years) and is not rotated.
 - Chassis certs are valid for one year; the hub re-signs a connected node's cert when less than 30 days are left.
 - DNS over TCP shares the gateway's limit of 256 concurrent requests with UDP.
