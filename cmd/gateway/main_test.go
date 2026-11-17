@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 var goodSB = proto.GatewaySB{CACert: "ca", Cert: "cert", Key: "key"}
@@ -48,6 +49,54 @@ func TestApplySyncsWGWhenNBFails(t *testing.T) {
 	}
 }
 
+func TestApplySkipsInvalidPeers(t *testing.T) {
+	_, good := keyPair(t)
+	files := map[string]string{}
+	run := func(args ...string) (string, error) {
+		if (args[0] == "wg" && args[1] == "syncconf") || args[0] == "nft" {
+			b, err := os.ReadFile(args[len(args)-1])
+			files[args[0]+" "+args[len(args)-2]] += string(b)
+			return "", err
+		}
+		return "", nil
+	}
+	st := proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB,
+		Orgs: []proto.GatewayOrg{{ID: orgA, Slice: "10.64.0.0/20"}},
+		Chassis: []proto.GatewayChassis{
+			{NodeID: "ok", OrgID: orgA, PublicKey: good, IP: "10.198.0.11"},
+			{NodeID: "newline", OrgID: orgA, PublicKey: good[:20] + "\n" + good[20:], IP: "10.198.0.12"},
+			{NodeID: "badip", OrgID: orgA, PublicKey: good, IP: "10.198.0.13\n"},
+			{NodeID: "v6", OrgID: orgA, PublicKey: good, IP: "fe80::1"},
+		},
+		Devices: []proto.GatewayDevice{
+			{PublicKey: good, IP: "10.192.0.10", OrgID: orgA},
+			{PublicKey: good + "\r\n", IP: "10.192.0.11", OrgID: orgA},
+			{PublicKey: good, IP: "nope", OrgID: orgA},
+		},
+	}
+	_ = apply(run, st, t.TempDir()) // the fake NB fails; only the WireGuard and nft inputs matter here
+	underlay, clients := files["wg wg-underlay"], files["wg wg-clients"]
+	if strings.Count(underlay, "[Peer]") != 1 || !strings.Contains(underlay, "AllowedIPs = 10.198.0.11/32") {
+		t.Errorf("underlay peers:\n%s", underlay)
+	}
+	if strings.Count(clients, "[Peer]") != 1 || !strings.Contains(clients, "AllowedIPs = 10.192.0.10/32") {
+		t.Errorf("client peers:\n%s", clients)
+	}
+	nft := files["nft -f"]
+	if !strings.Contains(nft, "elements = { 10.198.0.11 }") {
+		t.Errorf("nft:\n%s", nft)
+	}
+}
+
+func keyPair(t *testing.T) (string, string) {
+	t.Helper()
+	priv, pub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv, pub
+}
+
 type testErr struct{}
 
 func (testErr) Error() string { return "boom" }
@@ -83,8 +132,20 @@ func TestGuardBindings(t *testing.T) {
 	run := func(args ...string) (string, error) {
 		c := strings.Join(args, " ")
 		calls = append(calls, c)
-		if strings.Contains(c, "list port_binding") {
-			return "u1,vm1-mgmt,ch-a,ch-a\nu2,vm2-mgmt,ch-b,ch-a\nu3,vm3-mgmt,,ch-a\nu4,cr-lrp-transit,ch-gw,\n", nil
+		switch {
+		case c == "ovn-sbctl --bare --columns=_uuid find chassis name=hub-gw":
+			return "ch-gw\n", nil
+		case strings.Contains(c, "list port_binding"):
+			return strings.Join([]string{
+				"u1,vm1-mgmt,ch-a,ch-a,,",     // bound where requested
+				"u2,vm2-mgmt,ch-b,ch-a,,",     // foreign claim
+				"u3,vm3-mgmt,,ch-a,,",         // unbound
+				"u4,cr-lrp-transit,ch-gw,,,",  // gateway port on hub-gw
+				"u5,cr-lrp-transit2,ch-b,,,",  // gateway port claimed by a node
+				"u6,vm6-mgmt,ch-a,ch-a,ch-b,", // additional chassis not requested
+				"u7,vm7-mgmt,ch-a,ch-a,ch-b,ch-b",
+				"u8,patch-lr,,,,",
+			}, "\n") + "\n", nil
 		}
 		return "", nil
 	}
@@ -92,7 +153,7 @@ func TestGuardBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != "vm2-mgmt" {
+	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt" {
 		t.Fatalf("rebound %v", got)
 	}
 	var clears []string
@@ -101,7 +162,12 @@ func TestGuardBindings(t *testing.T) {
 			clears = append(clears, c)
 		}
 	}
-	if len(clears) != 1 || clears[0] != "ovn-sbctl clear port_binding u2 chassis" {
+	want := []string{
+		"ovn-sbctl clear port_binding u2 chassis",
+		"ovn-sbctl clear port_binding u5 chassis",
+		"ovn-sbctl clear port_binding u6 additional_chassis",
+	}
+	if strings.Join(clears, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("clears %v", clears)
 	}
 }
@@ -148,6 +214,9 @@ func TestApplySBWritesOnce(t *testing.T) {
 	fi, err := os.Stat(key)
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("key file %v %v", fi, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 3 {
+		t.Fatalf("leftover files: %v", entries)
 	}
 	for name, want := range map[string]string{"sb-key.pem": "key", "sb-cert.pem": "cert", "sb-ca.pem": "ca"} {
 		if b, _ := os.ReadFile(filepath.Join(dir, name)); string(b) != want {

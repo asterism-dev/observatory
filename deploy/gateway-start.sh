@@ -70,9 +70,11 @@ for proto in udp tcp; do
   rule INPUT -i gw0 -s 10.64.0.0/10 -d 10.192.0.1 -p $proto --dport 53 -j ACCEPT
 done
 rule INPUT -i gw0 -j DROP
-rule FORWARD -i wg-clients ! -o gw0 -j DROP
+iptables -P FORWARD DROP
+rule FORWARD -i wg-clients -o gw0 -j ACCEPT
 # VMs may only answer device connections, never open their own
 rule FORWARD -i gw0 -o wg-clients -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-rule FORWARD -i gw0 -j DROP
+# per-org filtering happens in the nft table obs_underlay
+rule FORWARD -i wg-underlay -o wg-underlay -j ACCEPT
 
 exec gateway -hub "${HUB_URL:-http://host.docker.internal:8090}"

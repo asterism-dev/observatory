@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -11,16 +12,19 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/version"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 const sslDir = "/var/lib/ovn/ssl"
@@ -40,14 +44,16 @@ func main() {
 		if args[0] == "ovn-nbctl" {
 			args = append([]string{args[0], "--db=" + *nbDB}, args[1:]...)
 		}
-		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
 		if err != nil {
 			return string(out), fmt.Errorf("%w: %s", err, bytes.TrimSpace(out))
 		}
 		return string(out), nil
 	}
 
-	dns := &dnsServer{}
+	dns := newDNSServer()
 	upstream := upstreamResolver()
 	listen := net.JoinHostPort(netaddr.GatewayDNS.String(), "53")
 	pc, err := net.ListenPacket("udp", listen)
@@ -66,28 +72,43 @@ func main() {
 		return callHub(client, *hubURL, token, method, path, body)
 	}
 
-	var lastHash [32]byte
-	var lastApply, lastStatus time.Time
+	var reboundMu sync.Mutex
 	rebound := map[string]bool{}
-	for ; ; time.Sleep(2 * time.Second) {
-		if ports, err := guardBindings(run); err != nil {
-			log.Print(err)
-		} else {
+	go func() {
+		for range time.Tick(2 * time.Second) {
+			ports, err := guardBindings(run)
+			if err != nil {
+				log.Print(err)
+			}
+			reboundMu.Lock()
 			for _, p := range ports {
 				rebound[p] = true
 			}
+			reboundMu.Unlock()
 		}
+	}()
+
+	var lastHash [32]byte
+	var lastApply, lastStatus time.Time
+	for ; ; time.Sleep(2 * time.Second) {
 		if time.Since(lastStatus) >= 10*time.Second {
 			st := observe(run)
+			reboundMu.Lock()
 			for p := range rebound {
 				st.Rebound = append(st.Rebound, p)
 			}
+			reboundMu.Unlock()
 			slices.Sort(st.Rebound)
 			if b, err := json.Marshal(st); err == nil {
 				if _, err := call("POST", "/api/gateway/status", b); err != nil {
 					log.Print(err)
 				} else {
-					lastStatus, rebound = time.Now(), map[string]bool{}
+					lastStatus = time.Now()
+					reboundMu.Lock()
+					for _, p := range st.Rebound {
+						delete(rebound, p)
+					}
+					reboundMu.Unlock()
 				}
 			}
 		}
@@ -120,6 +141,7 @@ func main() {
 
 // apply runs every step even if one fails; the start script's default-drop covers a failed underlay step.
 func apply(run runner, st proto.GatewayState, dir string) error {
+	st = withValidPeers(st)
 	var underlay, clients []peer
 	for _, c := range st.Chassis {
 		underlay = append(underlay, peer{c.PublicKey, c.IP + "/32"})
@@ -135,6 +157,32 @@ func apply(run runner, st proto.GatewayState, dir string) error {
 		syncWG(run, "wg-clients", st.ClientsKey, netaddr.ClientsPort, clients))
 }
 
+// withValidPeers drops chassis and devices whose key or address would break wg syncconf or nft for everyone.
+func withValidPeers(st proto.GatewayState) proto.GatewayState {
+	valid := func(key, ip string) bool {
+		a, err := netip.ParseAddr(ip)
+		return wgkey.Valid(key) && err == nil && a.Is4()
+	}
+	var chassis []proto.GatewayChassis
+	for _, c := range st.Chassis {
+		if valid(c.PublicKey, c.IP) {
+			chassis = append(chassis, c)
+		} else {
+			log.Printf("skipping chassis of node %s: invalid key or address", c.NodeID)
+		}
+	}
+	var devices []proto.GatewayDevice
+	for _, d := range st.Devices {
+		if valid(d.PublicKey, d.IP) {
+			devices = append(devices, d)
+		} else {
+			log.Printf("skipping a device of org %s: invalid key or address", d.OrgID)
+		}
+	}
+	st.Chassis, st.Devices = chassis, devices
+	return st
+}
+
 // applySB rewrites the SB SSL files only when they change, so ovsdb-server keeps its sessions.
 func applySB(run runner, sb proto.GatewaySB, dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -148,7 +196,7 @@ func applySB(run runner, sb proto.GatewaySB, dir string) error {
 		if cur, err := os.ReadFile(f.path); err == nil && string(cur) == f.content {
 			continue
 		}
-		if err := os.WriteFile(f.path, []byte(f.content), f.mode); err != nil {
+		if err := writeAtomic(f.path, f.content, f.mode); err != nil {
 			return err
 		}
 	}
@@ -174,16 +222,41 @@ func applySB(run runner, sb proto.GatewaySB, dir string) error {
 	return nil
 }
 
+// writeAtomic renames a complete file into place so ovsdb-server never reads a partial key; the temp file starts as 0600.
+func writeAtomic(path, content string, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.WriteString(content)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), mode)
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	return err
+}
+
 func sslConfigured(getSSL, key, cert, ca string) bool {
 	return strings.Contains(getSSL, "Private key: "+key+"\n") &&
 		strings.Contains(getSSL, "Certificate: "+cert+"\n") &&
 		strings.Contains(getSSL, "CA Certificate: "+ca+"\n")
 }
 
-// guardBindings clears a port binding claimed by a chassis other than the requested one; rows without a requested chassis (router and gateway ports) are left to OVN.
+// guardBindings clears bindings a node may not hold: a foreign chassis, any non-hub-gw chassis on unrequested (gateway) ports, unrequested additional chassis.
 func guardBindings(run runner) ([]string, error) {
+	gw, err := run("ovn-sbctl", "--bare", "--columns=_uuid", "find", "chassis", "name=hub-gw")
+	if err != nil {
+		return nil, fmt.Errorf("ovn-sbctl find chassis hub-gw: %w", err)
+	}
+	gw = strings.TrimSpace(gw)
 	out, err := run("ovn-sbctl", "--format=csv", "--data=bare", "--no-headings",
-		"--columns=_uuid,logical_port,chassis,requested_chassis", "list", "port_binding")
+		"--columns=_uuid,logical_port,chassis,requested_chassis,additional_chassis,requested_additional_chassis", "list", "port_binding")
 	if err != nil {
 		return nil, fmt.Errorf("ovn-sbctl list port_binding: %w", err)
 	}
@@ -191,15 +264,32 @@ func guardBindings(run runner) ([]string, error) {
 	var errs []error
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(strings.TrimSpace(line), ",")
-		if len(f) != 4 || f[2] == "" || f[3] == "" || f[2] == f[3] {
+		if len(f) != 6 {
 			continue
 		}
-		if _, err := run("ovn-sbctl", "clear", "port_binding", f[0], "chassis"); err != nil {
-			errs = append(errs, fmt.Errorf("clear binding of %s: %w", f[1], err))
+		uuid, port, ch, req, add, reqAdd := f[0], f[1], f[2], f[3], f[4], f[5]
+		var cols []string
+		if ch != "" && ((req != "" && ch != req) || (req == "" && ch != gw)) {
+			cols = append(cols, "chassis")
+		}
+		if add != "" && reqAdd == "" {
+			cols = append(cols, "additional_chassis")
+		}
+		if len(cols) == 0 {
 			continue
 		}
-		log.Printf("cleared binding of port %s: claimed by chassis %s, requested %s", f[1], f[2], f[3])
-		rebound = append(rebound, f[1])
+		cleared := false
+		for _, col := range cols {
+			if _, err := run("ovn-sbctl", "clear", "port_binding", uuid, col); err != nil {
+				errs = append(errs, fmt.Errorf("clear %s of %s: %w", col, port, err))
+				continue
+			}
+			cleared = true
+		}
+		if cleared {
+			log.Printf("cleared binding of port %s (%s): chassis %s, additional %s, requested %s", port, strings.Join(cols, ","), ch, add, req)
+			rebound = append(rebound, port)
+		}
 	}
 	return rebound, errors.Join(errs...)
 }

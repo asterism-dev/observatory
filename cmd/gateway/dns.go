@@ -29,7 +29,10 @@ type dnsServer struct {
 	mu      sync.RWMutex
 	devices map[netip.Addr]*view
 	slices  []orgSlice
+	sem     chan struct{}
 }
+
+func newDNSServer() *dnsServer { return &dnsServer{sem: make(chan struct{}, 256)} }
 
 func (d *dnsServer) setViews(orgs []proto.GatewayOrg, devices []proto.GatewayDevice) {
 	byOrg := map[string]*view{}
@@ -168,7 +171,9 @@ func (d *dnsServer) serveUDP(conn net.PacketConn, upstream string) {
 			return
 		}
 		req := append([]byte(nil), buf[:n]...)
+		d.sem <- struct{}{}
 		go func() {
+			defer func() { <-d.sem }()
 			if resp, err := d.handle("udp", req, upstream, sourceAddr(from)); err == nil {
 				conn.WriteTo(resp, from)
 			}
@@ -182,7 +187,9 @@ func (d *dnsServer) serveTCP(l net.Listener, upstream string) {
 		if err != nil {
 			return
 		}
+		d.sem <- struct{}{}
 		go func() {
+			defer func() { <-d.sem }()
 			defer c.Close()
 			src := sourceAddr(c.RemoteAddr())
 			for {

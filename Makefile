@@ -7,7 +7,7 @@ dev-down:
 	docker compose -f deploy/dev/compose.yaml down
 
 gateway-token:
-	grep -q '^OBSERVATORY_GATEWAY_TOKEN=' deploy/dev/hub.env || echo "OBSERVATORY_GATEWAY_TOKEN=$$(openssl rand -hex 32)" >> deploy/dev/hub.env
+	grep -q '^OBSERVATORY_GATEWAY_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_GATEWAY_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
 
 gateway-up: gateway-token
 	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway

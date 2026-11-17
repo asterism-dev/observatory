@@ -35,6 +35,7 @@ func orgACLs(pg, router string, ports []proto.GatewayPort) [][]string {
 		{"acl-del", pg},
 		{"acl-add", pg, "from-lport", "1002", "inport == @" + pg + " && (ip4.dst == " + trusted + " || (udp.src == 68 && udp.dst == 67))", "allow-related"},
 		{"acl-add", pg, "from-lport", "1001", "inport == @" + pg + " && ip4", "drop"},
+		{"acl-add", pg, "from-lport", "1001", "inport == @" + pg + " && ip6", "drop"},
 		{"acl-add", pg, "to-lport", "1002", "outport == @" + pg + " && ip4.src == " + trusted, "allow-related"},
 	}
 	for _, p := range ports {
@@ -43,7 +44,9 @@ func orgACLs(pg, router string, ports []proto.GatewayPort) [][]string {
 				fmt.Sprintf("outport == %q && ip4.src == {%s}", p.Name, strings.Join(p.AllowFrom, ", ")), "allow-related"})
 		}
 	}
-	return append(acls, []string{"acl-add", pg, "to-lport", "1001", "outport == @" + pg + " && ip4", "drop"})
+	return append(acls,
+		[]string{"acl-add", pg, "to-lport", "1001", "outport == @" + pg + " && ip4", "drop"},
+		[]string{"acl-add", pg, "to-lport", "1001", "outport == @" + pg + " && ip6", "drop"})
 }
 
 func reconcileNB(run runner, s proto.GatewayState) error {

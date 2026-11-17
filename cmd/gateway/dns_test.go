@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/netip"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 
@@ -63,7 +64,7 @@ func answer(m dnsmessage.Message) string {
 }
 
 func viewsServer() *dnsServer {
-	s := &dnsServer{}
+	s := newDNSServer()
 	s.setViews([]proto.GatewayOrg{
 		{ID: orgA, Slice: "10.64.0.0/20", Records: map[string]string{"dev.internal": "10.64.0.10", "dev.build.internal": "10.210.0.10"}},
 		{ID: orgB, Slice: "10.64.16.0/20", Records: map[string]string{"Dev.internal": "10.64.16.10"}},
@@ -130,7 +131,7 @@ func TestDNSServesAndForwards(t *testing.T) {
 	}()
 	conn, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer conn.Close()
-	s := &dnsServer{}
+	s := newDNSServer()
 	s.setViews([]proto.GatewayOrg{{ID: orgA, Slice: "127.0.0.0/8", Records: map[string]string{"dev.internal": "10.64.0.10"}}}, nil)
 	go s.serveUDP(conn, up.LocalAddr().String())
 	addr := conn.LocalAddr().String()
@@ -153,5 +154,32 @@ func TestDNSServesAndForwards(t *testing.T) {
 	}
 	if m := query(t, addr, "example.com.", dnsmessage.TypeA); answer(m) != "9.9.9.9" {
 		t.Fatalf("forward for unknown source: %+v", m)
+	}
+}
+
+func TestDNSBoundsConcurrency(t *testing.T) {
+	conn, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer conn.Close()
+	s := newDNSServer()
+	s.setViews([]proto.GatewayOrg{{ID: orgA, Slice: "127.0.0.0/8", Records: map[string]string{"dev.internal": "10.64.0.10"}}}, nil)
+	for i := 0; i < cap(s.sem); i++ {
+		s.sem <- struct{}{}
+	}
+	go s.serveUDP(conn, "127.0.0.1:1")
+	c, _ := net.Dial("udp", conn.LocalAddr().String())
+	defer c.Close()
+	c.Write(pack(t, "dev.internal.", dnsmessage.TypeA))
+	c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	buf := make([]byte, 1500)
+	if _, err := c.Read(buf); err == nil {
+		t.Fatal("answered while all slots were taken")
+	}
+	for i := 0; i < cap(s.sem); i++ {
+		<-s.sem
+	}
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	k, err := c.Read(buf)
+	if err != nil || answer(unpack(t, buf[:k])) != "10.64.0.10" {
+		t.Fatalf("not answered after release: %v", err)
 	}
 }
