@@ -5,6 +5,7 @@ import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
 import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
 import AdminOrgView from '@/views/admin/AdminOrgView.vue'
+import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
 import AdminUsersView from '@/views/admin/AdminUsersView.vue'
 import LoginView from '@/views/LoginView.vue'
 import InviteView from '@/views/InviteView.vue'
@@ -15,6 +16,7 @@ import RolesView from '@/views/org/RolesView.vue'
 import TeamDetailView from '@/views/org/TeamDetailView.vue'
 import TeamsView from '@/views/org/TeamsView.vue'
 import MembersView from '@/views/org/MembersView.vue'
+import OrgSettingsLayout from '@/views/org/OrgSettingsLayout.vue'
 import OrgSettingsView from '@/views/org/OrgSettingsView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
 import ProfileView from '@/views/ProfileView.vue'
@@ -34,19 +36,32 @@ export const router = createRouter({
     { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
     { path: '/orgs/:orgId/nodes', component: PlaceholderView, meta: { title: 'nav.nodes' } },
     { path: '/orgs/:orgId/vms', component: PlaceholderView, meta: { title: 'nav.vms' } },
-    { path: '/orgs/:orgId/members', component: MembersView },
-    { path: '/orgs/:orgId/settings', component: OrgSettingsView },
-    { path: '/orgs/:orgId/teams', component: TeamsView },
-    { path: '/orgs/:orgId/teams/:teamId', component: TeamDetailView },
-    { path: '/orgs/:orgId/roles', component: RolesView },
-    { path: '/orgs/:orgId/roles/:roleId', component: RoleEditorView },
-    { path: '/orgs/:orgId/limits', component: LimitsView },
-    { path: '/orgs/:orgId/audit', component: OrgAuditView },
+    {
+      path: '/orgs/:orgId',
+      component: OrgSettingsLayout,
+      children: [
+        { path: 'settings', component: OrgSettingsView },
+        { path: 'members', component: MembersView },
+        { path: 'teams', component: TeamsView },
+        { path: 'teams/:teamId', component: TeamDetailView },
+        { path: 'roles', component: RolesView },
+        { path: 'roles/:roleId', component: RoleEditorView },
+        { path: 'limits', component: LimitsView },
+        { path: 'audit', component: OrgAuditView },
+      ],
+    },
     { path: '/invite/:token', component: InviteView },
-    { path: '/admin/orgs', component: AdminOrgsView, meta: { platformAdmin: true } },
-    { path: '/admin/orgs/:orgId', component: AdminOrgView, meta: { platformAdmin: true } },
-    { path: '/admin/users', component: AdminUsersView, meta: { platformAdmin: true } },
-    { path: '/admin/audit', component: AdminAuditView, meta: { platformAdmin: true } },
+    {
+      path: '/admin',
+      component: PlatformSettingsLayout,
+      meta: { platformAdmin: true },
+      children: [
+        { path: 'orgs', component: AdminOrgsView },
+        { path: 'orgs/:orgId', component: AdminOrgView },
+        { path: 'users', component: AdminUsersView },
+        { path: 'audit', component: AdminAuditView },
+      ],
+    },
   ],
 })
 

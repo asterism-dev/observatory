@@ -17,12 +17,15 @@
     "teams": "Teams",
     "roles": "Roles",
     "limits": "Limits",
-    "adminOrgs": "Admin: organizations",
-    "adminUsers": "Admin: users",
+    "adminOrgs": "Organizations",
+    "adminUsers": "Users",
     "orgAudit": "Audit",
     "dashboard": "Dashboard",
     "nodes": "Nodes",
-    "vms": "VMs"
+    "vms": "VMs",
+    "orgSettings": "Organization settings",
+    "platformSettings": "Platform settings",
+    "general": "General"
   },
   "theme": {
     "system": "Theme: system",

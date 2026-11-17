@@ -157,7 +157,6 @@ watch(
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.members') }}</h1>
     <p v-if="error" role="alert">{{ error }}</p>
     <Table :columns="columns" :rows="members" row-key="id">
       <template #cell-role="{ row }">

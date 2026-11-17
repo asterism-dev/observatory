@@ -121,7 +121,6 @@ watch(
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.roles') }}</h1>
     <p v-if="error" role="alert">{{ error }}</p>
     <Button v-if="can('role:write')" variant="accent" @click="router.push(`/orgs/${org.id}/roles/new`)">
       {{ t('roles.create') }}

@@ -34,7 +34,6 @@ async function save() {
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.settings') }}</h1>
     <p v-if="org.personal">{{ t('org.personalNote') }}</p>
     <TextInput v-model="name" :aria-label="t('org.name')" :disabled="org.personal || !can('org:update') || busy" />
     <p v-if="error" role="alert">{{ error }}</p>
