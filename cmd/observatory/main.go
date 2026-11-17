@@ -75,12 +75,10 @@ func run(ctx context.Context, cmd string, args []string) error {
 	if err != nil {
 		return err
 	}
-	saved, err := loadCredentials(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
+	saved, loadErr := loadCredentials(path)
 	switch cmd {
 	case "login":
+		// A corrupt credentials file must not block logging in again, which overwrites it.
 		flags := flag.NewFlagSet("login", flag.ContinueOnError)
 		hub := flags.String("hub", firstNonEmpty(saved.Hub, defaultHub), "hub URL")
 		if err := flags.Parse(args); err != nil {
@@ -88,6 +86,9 @@ func run(ctx context.Context, cmd string, args []string) error {
 		}
 		return login(ctx, strings.TrimRight(*hub, "/"), path, os.Stdout)
 	case "whoami":
+		if loadErr != nil && !errors.Is(loadErr, fs.ErrNotExist) {
+			return loadErr
+		}
 		if saved.Token == "" {
 			return errors.New("not logged in, run observatory login")
 		}

@@ -65,3 +65,29 @@ func TestWhoami(t *testing.T) {
 		t.Fatalf("want login hint error, got %v", err)
 	}
 }
+
+func TestLoginIgnoresCorruptCredentials(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path, err := credentialsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+
+	err = run(context.Background(), "login", []string{"--hub", srv.URL})
+	if err == nil || !strings.Contains(err.Error(), "fetch hub config") {
+		t.Fatalf("login should get past corrupt credentials, got %v", err)
+	}
+	if err := run(context.Background(), "whoami", nil); err == nil || strings.Contains(err.Error(), "not logged in") {
+		t.Fatalf("whoami should report the corrupt file, got %v", err)
+	}
+}
