@@ -38,7 +38,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
-	return &env{t: t, pool: pool, store: s, z: z, h: New(s, a, z, fleet.New(s, z))}
+	return &env{t: t, pool: pool, store: s, z: z, h: New(s, a, z, fleet.New(s, z, nil))}
 }
 
 // user logs an identity in and returns the user and a fresh session token.
@@ -247,7 +247,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, fleet.New(e.store, e.z)))
+	mux.Handle("/api/", New(e.store, a, e.z, fleet.New(e.store, e.z, nil)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

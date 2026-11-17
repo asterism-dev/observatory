@@ -71,7 +71,7 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	f := fleet.New(s, z)
+	f := fleet.New(s, z, nil)
 	api.NodeEndpoints(mux, s, f)
 	nodeAssets(mux, cfg.NodeBinary)
 	mux.Handle("/api/", api.New(s, a, z, f))

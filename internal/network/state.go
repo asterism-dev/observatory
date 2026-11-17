@@ -71,7 +71,7 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 			continue
 		}
 		vms[vm.ID] = vm
-		o.Ports = append(o.Ports, port(vm.ID.String()+"-mgmt", vm, vm.MgmtIP, allowFrom(connect, vm, devices[vm.OrgID])))
+		o.Ports = append(o.Ports, port(MgmtPort(vm.ID), vm, vm.MgmtIP, allowFrom(connect, vm, devices[vm.OrgID])))
 		o.Records[strings.ToLower(vm.Name)+".internal"] = vm.MgmtIP.String()
 	}
 	type netRef struct {
@@ -95,11 +95,16 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 			continue
 		}
 		gn := &ref.org.Networks[ref.idx]
-		gn.Ports = append(gn.Ports, port(vm.ID.String()+"-"+nic.NetworkID.String(), vm, nic.IP, nil))
+		gn.Ports = append(gn.Ports, port(NICPort(vm.ID, nic.NetworkID), vm, nic.IP, nil))
 		ref.org.Records[strings.ToLower(vm.Name+"."+ref.net.Name)+".internal"] = nic.IP.String()
 	}
 	return st, nil
 }
+
+// MgmtPort and NICPort name a VM's logical switch ports; the node uses the same name as the tap's iface-id.
+func MgmtPort(vm uuid.UUID) string { return vm.String() + "-mgmt" }
+
+func NICPort(vm, network uuid.UUID) string { return vm.String() + "-" + network.String() }
 
 func port(name string, vm store.VM, ip netip.Addr, allow []string) proto.GatewayPort {
 	return proto.GatewayPort{Name: name, MAC: netaddr.MAC(ip), IP: ip.String(), Chassis: vm.NodeID.String(), AllowFrom: allow}

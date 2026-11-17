@@ -3,11 +3,14 @@ package fleet
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/netaddr"
+	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -15,13 +18,14 @@ import (
 type Fleet struct {
 	store *store.Store
 	authz *authz.Service
+	net   *network.Hub
 
 	mu    sync.Mutex
 	conns map[uuid.UUID]*conn
 }
 
-func New(s *store.Store, z *authz.Service) *Fleet {
-	return &Fleet{store: s, authz: z, conns: map[uuid.UUID]*conn{}}
+func New(s *store.Store, z *authz.Service, n *network.Hub) *Fleet {
+	return &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}}
 }
 
 func (f *Fleet) Online(node uuid.UUID) bool {
@@ -75,16 +79,47 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	if err != nil {
 		return nil, err
 	}
+	nets, err := f.store.Networks(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	rank := make(map[uuid.UUID]int, len(nets))
+	for i, n := range nets {
+		rank[n.ID] = i
+	}
 	out := make([]proto.DesiredVM, 0, len(vms))
 	for _, v := range vms {
 		boot, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, err
 		}
+		nics, err := f.nics(ctx, v, rank)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, proto.DesiredVM{
-			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: []proto.NIC{}},
+			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 		})
+	}
+	return out, nil
+}
+
+// nics lists the management NIC, then network NICs by network name (rank); names and MACs match the gateway's ports.
+func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([]proto.NIC, error) {
+	if !v.MgmtIP.IsValid() {
+		return []proto.NIC{}, nil
+	}
+	attached, err := f.store.VMNetworks(ctx, v.ID)
+	if err != nil {
+		return nil, err
+	}
+	// A network missing from rank was created after the list was read; the next push picks it up.
+	attached = slices.DeleteFunc(attached, func(n store.VMNIC) bool { _, ok := rank[n.NetworkID]; return !ok })
+	slices.SortFunc(attached, func(a, b store.VMNIC) int { return rank[a.NetworkID] - rank[b.NetworkID] })
+	out := []proto.NIC{{Network: "mgmt", MAC: netaddr.MAC(v.MgmtIP), IP: v.MgmtIP.String(), Port: network.MgmtPort(v.ID)}}
+	for _, n := range attached {
+		out = append(out, proto.NIC{Network: n.NetworkID.String(), MAC: netaddr.MAC(n.IP), IP: n.IP.String(), Port: network.NICPort(v.ID, n.NetworkID)})
 	}
 	return out, nil
 }
