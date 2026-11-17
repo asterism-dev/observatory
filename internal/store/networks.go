@@ -130,6 +130,17 @@ func (s *Store) VMNetworks(ctx context.Context, vm uuid.UUID) ([]VMNIC, error) {
 	})
 }
 
+func (s *Store) OrgVMNetworks(ctx context.Context, org uuid.UUID) ([]VMNIC, error) {
+	rows, err := s.q.Query(ctx, "SELECT vn.vm_id, vn.network_id, vn.ip FROM vm_networks vn JOIN networks n ON n.id = vn.network_id WHERE n.org_id = $1 ORDER BY vn.vm_id, n.name", org)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (n VMNIC, err error) {
+		err = r.Scan(&n.VMID, &n.NetworkID, &n.IP)
+		return
+	})
+}
+
 // SetVMNetworks replaces the VM's attachments; retained NICs keep their address.
 func (s *Store) SetVMNetworks(ctx context.Context, org, vm uuid.UUID, networks []uuid.UUID, restartAllowed bool) (VM, error) {
 	var out VM

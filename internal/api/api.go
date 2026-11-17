@@ -91,6 +91,10 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/shutdown", h.powerVM(proto.PowerStopped, proto.StopGraceful))
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/stop", h.powerVM(proto.PowerStopped, proto.StopHard))
 	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}", h.deleteVM)
+	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/networks", h.setVMNetworks)
+	mux.HandleFunc("GET /api/orgs/{org}/networks", h.listNetworks)
+	mux.HandleFunc("POST /api/orgs/{org}/networks", h.createNetwork)
+	mux.HandleFunc("DELETE /api/orgs/{org}/networks/{id}", h.deleteNetwork)
 	return a.Require(mux)
 }
 
