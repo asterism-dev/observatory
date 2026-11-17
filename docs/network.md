@@ -33,7 +33,7 @@ and at least every 60 s. Every 10 s it reports device handshakes, chassis and cl
 | UDP/TCP 53 | DNS on `10.192.0.1`, for devices and VM management NICs |
 
 The northbound DB listens on a unix socket only. On `wg-underlay` the gateway accepts only Geneve (UDP 6081), the
-southbound DB (TCP 6642) and rate-limited ICMP echo to `10.198.0.1`, so nodes can ping it for diagnostics. ICMP
+southbound DB (TCP 6642), the storage exports (TCP 10810–11809) and rate-limited ICMP echo to `10.198.0.1`, so nodes can ping it for diagnostics. ICMP
 between nodes is not forwarded.
 
 ### Running it
@@ -42,15 +42,22 @@ Hub env (`deploy/dev/hub.env`):
 
 - `OBSERVATORY_GATEWAY_TOKEN`: the gateway's credential, at least 32 characters. `make gateway-token` adds a random one
   if it is missing.
+- `OBSERVATORY_STORAGE_TOKEN`: the storage server's credential, at least 32 characters. `make storage-token` adds a
+  random one if it is missing.
 - `OBSERVATORY_GATEWAY_HOST`: the address nodes and devices use to reach the gateway. It defaults to the host of
   `OBSERVATORY_PUBLIC_URL`, so that URL must not be `localhost` once real nodes or devices connect.
 - `OBSERVATORY_SECRETS_KEY` is required: the gateway's WireGuard keys and the OVN CA are generated on first start and
   sealed with it.
 
 ```sh
-make gateway-up      # builds the image and starts it with the dev compose (profile "gateway")
+make gateway-up      # builds the gateway and storage images and starts them with the dev compose (profile "gateway")
 make gateway-down
 ```
+
+The storage server runs as compose service `storage` in the gateway's network namespace, so its NBD exports
+(TCP 10810–11809) listen on `10.198.0.1` and are reachable from the underlay only; nothing is published on the host.
+Disk files live in the `disks` volume. Put it on XFS (`mkfs.xfs -m reflink=1`) or btrfs for instant copies; other
+filesystems fall back to a sparse copy.
 
 The container reads `OBSERVATORY_GATEWAY_TOKEN` and `HUB_URL` (default `http://host.docker.internal:8090`). For a
 hub on another port, set `HUB_URL` in the shell or in `hub.env`. The gateway needs the `openvswitch` and `wireguard`
