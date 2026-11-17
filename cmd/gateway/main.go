@@ -75,9 +75,11 @@ func main() {
 
 	var reboundMu sync.Mutex
 	rebound := map[string]bool{}
+	// caught holds offending chassis names until the hub has stored them; it then sends them back as quarantined.
+	caught := map[string]bool{}
 	go func() {
 		for range time.Tick(2 * time.Second) {
-			ports, err := guardBindings(run)
+			ports, offenders, err := guardBindings(run)
 			if err != nil {
 				log.Print(err)
 			}
@@ -88,6 +90,9 @@ func main() {
 			for _, p := range ports {
 				rebound[p] = true
 			}
+			for _, o := range offenders {
+				caught[o] = true
+			}
 			reboundMu.Unlock()
 		}
 	}()
@@ -95,14 +100,21 @@ func main() {
 	var lastHash [32]byte
 	var lastApply, lastStatus time.Time
 	for ; ; time.Sleep(2 * time.Second) {
-		if time.Since(lastStatus) >= 10*time.Second {
+		reboundMu.Lock()
+		pending := len(caught) > 0
+		reboundMu.Unlock()
+		if pending || time.Since(lastStatus) >= 10*time.Second {
 			st := observe(run)
 			reboundMu.Lock()
 			for p := range rebound {
 				st.Rebound = append(st.Rebound, p)
 			}
+			for o := range caught {
+				st.Quarantined = append(st.Quarantined, o)
+			}
 			reboundMu.Unlock()
 			slices.Sort(st.Rebound)
+			slices.Sort(st.Quarantined)
 			if b, err := json.Marshal(st); err == nil {
 				if _, err := call("POST", "/api/gateway/status", b); err != nil {
 					log.Print(err)
@@ -111,6 +123,9 @@ func main() {
 					reboundMu.Lock()
 					for _, p := range st.Rebound {
 						delete(rebound, p)
+					}
+					for _, o := range st.Quarantined {
+						delete(caught, o)
 					}
 					reboundMu.Unlock()
 				}
@@ -133,7 +148,11 @@ func main() {
 		}
 		dns.setViews(st.Orgs, st.Devices)
 
-		if h := sha256.Sum256(body); h != lastHash || time.Since(lastApply) > 60*time.Second {
+		reboundMu.Lock()
+		st = withQuarantine(st, caught)
+		reboundMu.Unlock()
+		chassis, _ := json.Marshal(st.Chassis)
+		if h := sha256.Sum256(append(body, chassis...)); h != lastHash || time.Since(lastApply) > 60*time.Second {
 			if err := apply(run, st, sslDir); err != nil {
 				log.Print(err)
 			} else {
@@ -141,6 +160,16 @@ func main() {
 			}
 		}
 	}
+}
+
+// withQuarantine also quarantines the chassis caught since the last status report, before the hub echoes them back.
+func withQuarantine(st proto.GatewayState, caught map[string]bool) proto.GatewayState {
+	chassis := slices.Clone(st.Chassis)
+	for i := range chassis {
+		chassis[i].Quarantined = chassis[i].Quarantined || caught[chassis[i].NodeID]
+	}
+	st.Chassis = chassis
+	return st
 }
 
 // apply runs every step even if one fails; the start script's default-drop covers a failed underlay step.
@@ -271,14 +300,14 @@ func parseCSV(out string, fields int) ([][]string, error) {
 }
 
 // guardBindings checks chassis names against the NB requested-chassis option (hub-gw when unset); SB copies are chassis-writable or resolved by a chassis-set hostname.
-func guardBindings(run runner) ([]string, error) {
+func guardBindings(run runner) (rebound, offenders []string, err error) {
 	out, err := run("ovn-nbctl", "--format=csv", "--data=bare", "--no-headings", "--columns=name,options", "list", "logical_switch_port")
 	if err != nil {
-		return nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
+		return nil, nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
 	}
 	lsps, err := parseCSV(out, 2)
 	if err != nil {
-		return nil, fmt.Errorf("parse logical_switch_port: %w", err)
+		return nil, nil, fmt.Errorf("parse logical_switch_port: %w", err)
 	}
 	requested := map[string][]string{}
 	for _, l := range lsps {
@@ -290,7 +319,7 @@ func guardBindings(run runner) ([]string, error) {
 	}
 	chassis, err := sbRows(run, "chassis", "_uuid,name")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	names := map[string]string{}
 	for _, c := range chassis {
@@ -298,9 +327,8 @@ func guardBindings(run runner) ([]string, error) {
 	}
 	bindings, err := sbRows(run, "port_binding", "_uuid,logical_port,chassis,additional_chassis")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var rebound []string
 	var errs []error
 	for _, f := range bindings {
 		uuid, port, ch, add := f[0], f[1], f[2], f[3]
@@ -308,14 +336,21 @@ func guardBindings(run runner) ([]string, error) {
 		if !ok {
 			req = []string{"hub-gw"}
 		}
-		var cols []string
+		var cols, wrong []string
 		if ch != "" && names[ch] != req[0] {
-			cols = append(cols, "chassis")
+			cols, wrong = append(cols, "chassis"), append(wrong, names[ch])
 		}
 		for _, a := range strings.Fields(add) {
 			if !slices.Contains(req[1:], names[a]) {
-				cols = append(cols, "additional_chassis")
-				break
+				wrong = append(wrong, names[a])
+			}
+		}
+		if len(wrong) > len(cols) {
+			cols = append(cols, "additional_chassis")
+		}
+		for _, w := range wrong {
+			if w != "" {
+				offenders = append(offenders, w)
 			}
 		}
 		if len(cols) == 0 {
@@ -334,7 +369,7 @@ func guardBindings(run runner) ([]string, error) {
 			rebound = append(rebound, port)
 		}
 	}
-	return rebound, errors.Join(errs...)
+	return rebound, offenders, errors.Join(errs...)
 }
 
 // guardMACBindings deletes lr-gw neighbor entries that do not match the address plan; any chassis may write MAC_Binding.

@@ -159,12 +159,15 @@ func TestGuardBindings(t *testing.T) {
 		}
 		return "", nil
 	}
-	got, err := guardBindings(run)
+	got, offenders, err := guardBindings(run)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt,vm9-mgmt,vm10-mgmt" {
 		t.Fatalf("rebound %v", got)
+	}
+	if strings.Join(offenders, ",") != "node-b,node-b,node-b,hub-gw" {
+		t.Fatalf("offenders %v", offenders)
 	}
 	var clears []string
 	for _, c := range calls {
@@ -288,5 +291,16 @@ func TestApplySBWritesOnce(t *testing.T) {
 	joined := strings.Join(calls, "\n")
 	if !strings.Contains(joined, "set-ssl "+key) || !strings.Contains(joined, "set-connection role=ovn-controller pssl:6642:10.198.0.1") {
 		t.Errorf("calls %v", calls)
+	}
+}
+
+func TestWithQuarantine(t *testing.T) {
+	st := proto.GatewayState{Chassis: []proto.GatewayChassis{{NodeID: nodeA}, {NodeID: nodeB, Quarantined: true}, {NodeID: "n3"}}}
+	got := withQuarantine(st, map[string]bool{nodeA: true, "hub-gw": true})
+	if !got.Chassis[0].Quarantined || !got.Chassis[1].Quarantined || got.Chassis[2].Quarantined {
+		t.Fatalf("%+v", got.Chassis)
+	}
+	if st.Chassis[0].Quarantined {
+		t.Fatal("input modified")
 	}
 }

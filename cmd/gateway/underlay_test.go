@@ -20,8 +20,8 @@ func TestUnderlayRules(t *testing.T) {
 	if !strings.HasPrefix(r, "table inet obs_underlay\ndelete table inet obs_underlay\ntable inet obs_underlay {") {
 		t.Errorf("not an atomic replace:\n%s", r)
 	}
-	if strings.Count(r, "type ipv4_addr") != 2 {
-		t.Errorf("want two sets (org C has no chassis):\n%s", r)
+	if strings.Count(r, "type ipv4_addr") != 3 {
+		t.Errorf("want two org sets (org C has no chassis) and the quarantine set:\n%s", r)
 	}
 	for _, want := range []string{
 		"set org_0 {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.11, 10.198.0.12 }\n\t}",
@@ -39,5 +39,30 @@ func TestUnderlayRules(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(r), "iifname \"wg-underlay\" drop\n\t}\n}") {
 		t.Errorf("does not end with the drop:\n%s", r)
+	}
+}
+
+func TestUnderlayRulesQuarantine(t *testing.T) {
+	st := proto.GatewayState{
+		Orgs: []proto.GatewayOrg{{ID: orgA}},
+		Chassis: []proto.GatewayChassis{
+			{NodeID: nodeA, OrgID: orgA, IP: "10.198.0.11", Quarantined: true},
+			{NodeID: "a2", OrgID: orgA, IP: "10.198.0.12"},
+		},
+	}
+	r := underlayRules(st)
+	for _, want := range []string{
+		"set quarantine {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.11 }\n\t}",
+		"type filter hook input priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop",
+		"type filter hook output priority 0; policy accept;\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop",
+		"type filter hook forward priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop\n",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("missing %q in:\n%s", want, r)
+		}
+	}
+	st.Chassis[0].Quarantined = false
+	if r := underlayRules(st); !strings.Contains(r, "set quarantine {\n\t\ttype ipv4_addr\n\t}") {
+		t.Errorf("empty quarantine set:\n%s", r)
 	}
 }
