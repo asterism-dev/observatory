@@ -16,7 +16,14 @@ import TeamDetailView from '@/views/org/TeamDetailView.vue'
 import TeamsView from '@/views/org/TeamsView.vue'
 import MembersView from '@/views/org/MembersView.vue'
 import OrgSettingsView from '@/views/org/OrgSettingsView.vue'
+import PlaceholderView from '@/views/PlaceholderView.vue'
 import ProfileView from '@/views/ProfileView.vue'
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    title?: string
+  }
+}
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -24,6 +31,9 @@ export const router = createRouter({
     { path: '/', component: ProfileView },
     { path: '/login', component: LoginView, meta: { public: true } },
     { path: '/profile', component: ProfileView },
+    { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
+    { path: '/orgs/:orgId/nodes', component: PlaceholderView, meta: { title: 'nav.nodes' } },
+    { path: '/orgs/:orgId/vms', component: PlaceholderView, meta: { title: 'nav.vms' } },
     { path: '/orgs/:orgId/members', component: MembersView },
     { path: '/orgs/:orgId/settings', component: OrgSettingsView },
     { path: '/orgs/:orgId/teams', component: TeamsView },
@@ -53,7 +63,7 @@ router.beforeEach(async (to) => {
       throw e
     }
   }
-  if (to.path === '/') return activeOrg.value ? `/orgs/${activeOrg.value.id}/members` : '/profile'
+  if (to.path === '/') return activeOrg.value ? `/orgs/${activeOrg.value.id}/dashboard` : '/profile'
   if (to.meta.platformAdmin && !me.value?.user.platformAdmin) return '/profile'
   return true
 })

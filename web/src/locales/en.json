@@ -19,7 +19,10 @@
     "limits": "Limits",
     "adminOrgs": "Admin: organizations",
     "adminUsers": "Admin: users",
-    "orgAudit": "Audit"
+    "orgAudit": "Audit",
+    "dashboard": "Dashboard",
+    "nodes": "Nodes",
+    "vms": "VMs"
   },
   "theme": {
     "system": "Theme: system",
@@ -156,5 +159,8 @@
     "created": "Created",
     "personal": "Personal",
     "platformAdmin": "Platform admin"
+  },
+  "placeholder": {
+    "empty": "Nothing here yet."
   }
 }
