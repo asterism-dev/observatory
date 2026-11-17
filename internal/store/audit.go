@@ -58,6 +58,15 @@ const (
 	ActionEnvSet              = "env:set"
 	ActionEnvMove             = "env:move"
 	ActionEnvDelete           = "env:delete"
+	ActionNodeCreate          = "node:create"
+	ActionNodeEnroll          = "node:enroll"
+	ActionNodeRevoke          = "node:revoke"
+	ActionNodeDelete          = "node:delete"
+	ActionVMCreate            = "vm:create"
+	ActionVMPower             = "vm:power"
+	ActionVMDelete            = "vm:delete"
+	ActionSSHKeyAdd           = "sshkey:add"
+	ActionSSHKeyDelete        = "sshkey:delete"
 )
 
 type AuditEntry struct {
