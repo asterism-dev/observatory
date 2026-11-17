@@ -1,0 +1,196 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/store"
+)
+
+type api struct{ store *store.Store }
+
+func New(s *store.Store, a *auth.Handler) http.Handler {
+	h := &api{store: s}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/me", h.me)
+	mux.HandleFunc("GET /api/me/sessions", h.sessions)
+	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
+	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
+	return a.Require(mux)
+}
+
+func (h *api) me(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	ms, err := h.store.Memberships(r.Context(), p.User.ID)
+	if err != nil {
+		serverError(w, "memberships", err)
+		return
+	}
+	type orgJSON struct {
+		ID       uuid.UUID  `json:"id"`
+		Name     string     `json:"name"`
+		Personal bool       `json:"personal"`
+		Role     store.Role `json:"role"`
+	}
+	orgs := make([]orgJSON, 0, len(ms))
+	for _, m := range ms {
+		orgs = append(orgs, orgJSON{m.Org.ID, m.Org.Name, m.Org.Personal, m.Role})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
+		"orgs": orgs,
+	})
+}
+
+func (h *api) sessions(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	ss, err := h.store.Sessions(r.Context(), p.User.ID)
+	if err != nil {
+		serverError(w, "sessions", err)
+		return
+	}
+	type sessionJSON struct {
+		ID         uuid.UUID         `json:"id"`
+		Kind       store.SessionKind `json:"kind"`
+		UserAgent  string            `json:"userAgent"`
+		IP         string            `json:"ip"`
+		CreatedAt  time.Time         `json:"createdAt"`
+		LastUsedAt time.Time         `json:"lastUsedAt"`
+		ExpiresAt  time.Time         `json:"expiresAt"`
+		Current    bool              `json:"current"`
+	}
+	out := make([]sessionJSON, 0, len(ss))
+	for _, s := range ss {
+		out = append(out, sessionJSON{s.ID, s.Kind, s.UserAgent, s.IP, s.CreatedAt, s.LastUsedAt, s.ExpiresAt, s.ID == p.Session.ID})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *api) revokeSession(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	ip, ua := auth.RequestMeta(r)
+	err = h.store.InTx(r.Context(), func(tx *store.Store) error {
+		if err := tx.RevokeSession(r.Context(), p.User.ID, id); err != nil {
+			return err
+		}
+		return tx.Audit(r.Context(), store.AuditEntry{
+			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionSessionRevoke,
+			Resource: "session/" + id.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,
+		})
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		serverError(w, "revoke session", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) adminAudit(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	if !p.User.PlatformAdmin {
+		ip, ua := auth.RequestMeta(r)
+		if err := h.store.Audit(r.Context(), store.AuditEntry{
+			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionAuditRead,
+			Resource: "audit", Result: store.ResultDenied, IP: ip, UserAgent: ua,
+		}); err != nil {
+			slog.Error("audit denied audit read", "user", p.User.ID, "err", err)
+		}
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	f, err := auditFilter(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	entries, err := h.store.AuditEntries(r.Context(), f)
+	if err != nil {
+		serverError(w, "audit entries", err)
+		return
+	}
+	type entryJSON struct {
+		ID        int64           `json:"id"`
+		At        time.Time       `json:"at"`
+		ActorKind store.ActorKind `json:"actorKind"`
+		ActorID   string          `json:"actorId"`
+		OrgID     *uuid.UUID      `json:"orgId"`
+		Action    string          `json:"action"`
+		Resource  string          `json:"resource"`
+		Result    store.Result    `json:"result"`
+		IP        string          `json:"ip"`
+		UserAgent string          `json:"userAgent"`
+		Details   map[string]any  `json:"details"`
+	}
+	out := make([]entryJSON, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, entryJSON{e.ID, e.At, e.ActorKind, e.ActorID, e.OrgID, e.Action, e.Resource, e.Result, e.IP, e.UserAgent, e.Details})
+	}
+	var next *int64
+	if len(entries) == f.Limit {
+		next = &entries[len(entries)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": out, "next": next})
+}
+
+func auditFilter(r *http.Request) (store.AuditFilter, error) {
+	q := r.URL.Query()
+	f := store.AuditFilter{ActorID: q.Get("actor"), Action: q.Get("action"), Limit: 50}
+	var err error
+	if v := q.Get("org"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return f, errors.New("invalid org")
+		}
+		f.OrgID = &id
+	}
+	for key, dst := range map[string]*time.Time{"from": &f.From, "to": &f.To} {
+		if v := q.Get(key); v != "" {
+			if *dst, err = time.Parse(time.RFC3339, v); err != nil {
+				return f, errors.New("invalid " + key)
+			}
+		}
+	}
+	if v := q.Get("before"); v != "" {
+		if f.Before, err = strconv.ParseInt(v, 10, 64); err != nil || f.Before < 1 {
+			return f, errors.New("invalid before")
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		if f.Limit, err = strconv.Atoi(v); err != nil || f.Limit < 1 {
+			return f, errors.New("invalid limit")
+		}
+		f.Limit = min(f.Limit, 200)
+	}
+	return f, nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func serverError(w http.ResponseWriter, what string, err error) {
+	slog.Error(what, "err", err)
+	writeError(w, http.StatusInternalServerError, "internal error")
+}
