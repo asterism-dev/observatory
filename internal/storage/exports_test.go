@@ -113,3 +113,39 @@ func TestExportsRejectsBadInput(t *testing.T) {
 		t.Fatalf("procs %d status %+v", len(f.procs), st)
 	}
 }
+
+func TestExportsRejectsKeyFileBreakingIDAndBadPort(t *testing.T) {
+	ex, f := newExports(t, "d:1", "d\n1", "d1")
+	st := ex.Apply([]proto.StorageExport{
+		{DiskID: "d:1", Port: 10810, PSK: psk1},
+		{DiskID: "d\n1", Port: 10811, PSK: psk1},
+		{DiskID: "d1", Port: 10809, PSK: psk1},
+		{DiskID: "d1", Port: 11810, PSK: psk1},
+	})
+	if len(f.procs) != 0 {
+		t.Fatalf("spawned %d", len(f.procs))
+	}
+	for i, s := range st {
+		if s.Error == "" {
+			t.Fatalf("export %d accepted: %+v", i, s)
+		}
+	}
+	if m, _ := filepath.Glob(filepath.Join(ex.KeyDir, "*")); len(m) != 0 {
+		t.Fatalf("key files written: %v", m)
+	}
+}
+
+func TestExportsRemovesStaleKeysOnFirstApply(t *testing.T) {
+	ex, _ := newExports(t, "d1")
+	if err := os.MkdirAll(ex.KeyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(ex.KeyDir, "old.psk")
+	if err := os.WriteFile(stale, []byte("old:"+psk1+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ex.Apply(nil)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale key kept: %v", err)
+	}
+}

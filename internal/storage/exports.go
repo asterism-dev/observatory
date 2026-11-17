@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -41,6 +43,11 @@ func (e *Exports) keyFile(diskID string) string { return filepath.Join(e.KeyDir,
 func (e *Exports) Apply(want []proto.StorageExport) []proto.StorageExportStatus {
 	if e.running == nil {
 		e.running = map[string]*export{}
+		// keys of a previous run belong to nbdkits that died with it
+		stale, _ := filepath.Glob(filepath.Join(e.KeyDir, "*.psk"))
+		for _, f := range stale {
+			os.Remove(f)
+		}
 	}
 	wanted := map[string]proto.StorageExport{}
 	for _, w := range want {
@@ -85,8 +92,12 @@ func (e *Exports) Apply(want []proto.StorageExport) []proto.StorageExportStatus 
 }
 
 func (e *Exports) start(w proto.StorageExport) error {
-	if !plainName(w.DiskID) {
+	// ':' and newlines would break the "<id>:<key>" line of the key file
+	if !plainName(w.DiskID) || strings.ContainsAny(w.DiskID, ":\n") {
 		return errors.New("invalid disk id")
+	}
+	if w.Port < netaddr.StoragePortFirst || w.Port > netaddr.StoragePortLast {
+		return errors.New("invalid port")
 	}
 	if !validPSK.MatchString(w.PSK) {
 		return errors.New("invalid key")

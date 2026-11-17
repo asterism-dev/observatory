@@ -53,6 +53,8 @@ func spawn(args []string) (func(), <-chan error, error) {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = io.MultiWriter(os.Stderr, &tail)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	// a child of nbdkit holding stderr open must not block Wait after the kill
+	cmd.WaitDelay = 5 * time.Second
 	started, done, exited := make(chan error, 1), make(chan error, 1), make(chan struct{})
 	go func() {
 		// Pdeathsig fires when the starting thread exits, so this goroutine keeps its thread until nbdkit is gone.
