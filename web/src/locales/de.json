@@ -109,7 +109,8 @@
     "add": "Hinzufügen",
     "delete": "Team löschen",
     "deleteTitle": "Team löschen?",
-    "deleteBody": "{name} und seine Rollenzuweisungen werden entfernt."
+    "deleteBody": "{name} und seine Rollenzuweisungen werden entfernt.",
+    "leave": "Team verlassen"
   },
   "roles": {
     "create": "Rolle erstellen",

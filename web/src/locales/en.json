@@ -109,7 +109,8 @@
     "add": "Add",
     "delete": "Delete team",
     "deleteTitle": "Delete team?",
-    "deleteBody": "{name} and its role bindings will be removed."
+    "deleteBody": "{name} and its role bindings will be removed.",
+    "leave": "Leave team"
   },
   "roles": {
     "create": "Create role",

@@ -153,7 +153,7 @@ watch(
             {{ row.admin ? t('teams.demote') : t('teams.promote') }}
           </Button>
           <Button v-if="row.id === me?.user.id ? team.canLeave : team.canManageMembers" variant="danger" size="sm" :disabled="busy" @click="removeMember(row.id)">
-            {{ row.id === me?.user.id ? t('members.leave') : t('members.remove') }}
+            {{ row.id === me?.user.id ? t('teams.leave') : t('members.remove') }}
           </Button>
         </template>
         <template #empty>{{ t('teams.noMembers') }}</template>
