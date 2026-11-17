@@ -84,3 +84,15 @@ func TestWriteNBDKey(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNBDRecord(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"/dev/nbd3\nnbd://10.198.0.1:10810/d1\n": {"/dev/nbd3", "nbd://10.198.0.1:10810/d1"},
+		"/dev/nbd3\n":                            {"/dev/nbd3", ""},
+		"":                                       {"", ""},
+	} {
+		if dev, url := parseNBDRecord([]byte(in)); dev != want[0] || url != want[1] {
+			t.Errorf("%q: %q %q", in, dev, url)
+		}
+	}
+}

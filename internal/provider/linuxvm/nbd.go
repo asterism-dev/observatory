@@ -23,6 +23,12 @@ func parseNBDURL(raw string) (host, port, export string, err error) {
 	return host, port, export, nil
 }
 
+// parseNBDRecord reads a device record: the device, then the NBD URL it serves (absent in records of older nodes).
+func parseNBDRecord(b []byte) (dev, url string) {
+	dev, url, _ = strings.Cut(strings.TrimSpace(string(b)), "\n")
+	return strings.TrimSpace(dev), strings.TrimSpace(url)
+}
+
 const nbdReconnectSeconds = 7 * 24 * 60 * 60
 
 var validPSK = regexp.MustCompile(`^[0-9a-f]{64}$`)

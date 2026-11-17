@@ -67,17 +67,24 @@ func TestDetachNBDFenced(t *testing.T) {
 	if os.Getenv("VMM_TEST_NBD_FENCE") == "" || os.Geteuid() != 0 {
 		t.Skip("needs root and VMM_TEST_NBD_FENCE=1")
 	}
+	old := nbdStopWait
 	nbdStopWait = 3 * time.Second
+	t.Cleanup(func() { nbdStopWait = old })
 	dir, srv := t.TempDir(), t.TempDir()
 	img, keys, psk := filepath.Join(srv, "d1.img"), filepath.Join(srv, "keys.psk"), strings.Repeat("ab", 32)
 	if err := os.WriteFile(keys, []byte("d1:"+psk+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if f, err := os.Create(img); err != nil || f.Truncate(64<<20) != nil {
+	f, err := os.Create(img)
+	if err != nil {
 		t.Fatal(err)
 	}
-	serve := func() *exec.Cmd {
-		cmd := exec.Command("nbdkit", storage.NBDKitArgs("127.0.0.1", 10899, keys, img)...)
+	if err := f.Truncate(64 << 20); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	serve := func(port int) *exec.Cmd {
+		cmd := exec.Command("nbdkit", storage.NBDKitArgs("127.0.0.1", port, keys, img)...)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +97,7 @@ func TestDetachNBDFenced(t *testing.T) {
 		return exec.Command("dd", append([]string{"bs=1M", "count=4", "status=none"}, args...)...)
 	}
 
-	server := serve()
+	server := serve(10899)
 	dev, err := AttachNBD(dir, "d1", url, psk)
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +131,27 @@ func TestDetachNBDFenced(t *testing.T) {
 	got, err := exec.Command("dd", "if="+dev, "bs=1M", "count=64", "iflag=direct", "status=none").Output()
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("data after reattach differs (err %v)", err)
+	}
+
+	// A later attach of the same disk gets a new port: the device of the old one must not be reused.
+	server.Process.Kill()
+	server.Wait()
+	if pid, err = nbdClientPID(dev); err != nil {
+		t.Fatal(err)
+	}
+	server = serve(10898)
+	url2 := "nbd://127.0.0.1:10898/d1"
+	if dev, err = AttachNBD(dir, "d1", url2, psk); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := os.ReadFile(NBDRecord(dir, "d1")); !strings.Contains(string(rec), url2) {
+		t.Fatalf("record %q lacks the new URL", rec)
+	}
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+		t.Errorf("qemu-nbd %d of the old URL still running", pid)
+	}
+	if got, err = exec.Command("dd", "if="+dev, "bs=1M", "count=64", "iflag=direct", "status=none").Output(); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("data via the new URL differs (err %v)", err)
 	}
 	server.Process.Kill()
 	server.Wait()
