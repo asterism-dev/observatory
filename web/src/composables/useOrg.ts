@@ -12,7 +12,7 @@ let currentId = ''
 
 async function load(id: string) {
   currentId = id
-  org.value = null
+  if (org.value?.id !== id) org.value = null
   const loaded = await api<OrgDetail>(`/api/orgs/${id}`)
   // A newer navigation superseded this request.
   if (id === currentId) org.value = loaded
