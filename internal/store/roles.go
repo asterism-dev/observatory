@@ -279,7 +279,7 @@ func (s *Store) Bind(ctx context.Context, orgID uuid.UUID, subject string, roleI
 		} else if err != nil {
 			return err
 		}
-		if err := tx.lockSubject(ctx, orgID, subject); err != nil {
+		if err := tx.LockSubject(ctx, orgID, subject); err != nil {
 			return err
 		}
 		err = tx.q.QueryRow(ctx, "INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3) RETURNING id, created_at",
@@ -295,8 +295,8 @@ func (s *Store) Bind(ctx context.Context, orgID uuid.UUID, subject string, roleI
 	return b, nil
 }
 
-// lockSubject share-locks the membership or team behind subject (role_bindings.subject has no FK), so it can't vanish before commit.
-func (s *Store) lockSubject(ctx context.Context, orgID uuid.UUID, subject string) error {
+// LockSubject share-locks the membership or team behind subject (role_bindings.subject has no FK), so it can't vanish before commit.
+func (s *Store) LockSubject(ctx context.Context, orgID uuid.UUID, subject string) error {
 	query := "SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2 FOR SHARE"
 	raw, ok := strings.CutPrefix(subject, "user:")
 	if !ok {

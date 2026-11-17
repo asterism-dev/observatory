@@ -530,3 +530,82 @@ func TestTeamDenyEscape(t *testing.T) {
 		t.Fatalf("after owner delete: %d", rec.Code)
 	}
 }
+
+// Guards must read the policy under the org lock: a deny committed after the last enforcer reload still counts.
+func TestGuardsSeeUnreloadedPolicy(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	member, memberTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, member, store.RoleMember)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"role:*"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
+	target := e.createRole(ownerTok, org, `{"name":"target"}`)
+
+	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'deny', 'org/audit', 'audit:read')`, target)
+	if rec := e.send("PUT", rolePath(org, target), memberTok, `{"name":"target"}`); rec.Code != 403 {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit(store.ActionRoleUpdate); len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() {
+		t.Fatalf("update audit: %+v", es)
+	}
+	if rec := e.do("DELETE", rolePath(org, target), memberTok); rec.Code != 403 {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	if rec := e.send("POST", bindingsPath(org), memberTok, `{"subject":"`+authz.UserSubject(member.ID)+`","roleId":"`+target.String()+`"}`); rec.Code != 403 {
+		t.Fatalf("bind: %d", rec.Code)
+	}
+	if es := e.audit(store.ActionRoleBind); es[0].Result != store.ResultDenied {
+		t.Fatalf("bind audit: %+v", es)
+	}
+	var n int
+	if err := e.pool.QueryRow(t.Context(), `SELECT count(*) FROM role_rules WHERE role_id = $1 AND effect = 'deny'`, target).Scan(&n); err != nil || n != 1 || e.roleCount(org) != 2 {
+		t.Fatalf("deny lost: %d %v", n, err)
+	}
+
+	var fresh uuid.UUID
+	if err := e.pool.QueryRow(t.Context(), `INSERT INTO roles (org_id, name, description) VALUES ($1, 'fresh', '') RETURNING id`, org).Scan(&fresh); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.send("POST", bindingsPath(org), ownerTok, `{"subject":"`+authz.UserSubject(member.ID)+`","roleId":"`+fresh.String()+`"}`); rec.Code != 201 {
+		t.Fatalf("bind unreloaded role: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNonAdminCannotAttachDenyViaParent(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	admin, _ := e.user("bob")
+	member, memberTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, admin, store.RoleAdmin)
+	e.addMember(org, member, store.RoleMember)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"role:*"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
+	harmless := e.createRole(ownerTok, org, `{"name":"harmless"}`)
+	e.bind(ownerTok, org, authz.UserSubject(admin.ID), harmless)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	wrapper := e.createRole(ownerTok, org, `{"name":"wrapper","parents":["`+denying.String()+`"]}`)
+
+	for _, parent := range []uuid.UUID{denying, wrapper} {
+		body := `{"name":"harmless","parents":["` + parent.String() + `"]}`
+		if rec := e.send("PUT", rolePath(org, harmless), memberTok, body); rec.Code != 403 {
+			t.Fatalf("update with deny parent: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.send("POST", rolesPath(org), memberTok, `{"name":"new","parents":["`+parent.String()+`"]}`); rec.Code != 403 {
+			t.Fatalf("create with deny parent: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	if es := e.audit(store.ActionRoleUpdate); len(es) != 2 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() {
+		t.Fatalf("update audit: %+v", es)
+	}
+	if es := e.audit(store.ActionRoleCreate); es[0].Result != store.ResultDenied {
+		t.Fatalf("create audit: %+v", es)
+	}
+	if e.roleCount(org) != 4 {
+		t.Fatal("role created")
+	}
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/audit", e.session(admin)); rec.Code != 200 {
+		t.Fatalf("deny reached admin: %d", rec.Code)
+	}
+}

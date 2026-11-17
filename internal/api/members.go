@@ -250,12 +250,17 @@ func (h *api) acceptInvite(w http.ResponseWriter, r *http.Request) {
 // checkInviter rejects an invite whose creator could no longer issue it, so lost rights can't be regained through a kept link.
 func (h *api) checkInviter(r *http.Request, tx *store.Store, inv store.Invite) error {
 	errInviter := fmt.Errorf("%w: inviter lacks permission", store.ErrInviteInvalid)
-	if _, err := tx.Membership(r.Context(), inv.OrgID, inv.CreatedBy); errors.Is(err, store.ErrNotFound) {
+	sub := authz.UserSubject(inv.CreatedBy)
+	// The share lock makes a concurrent removal or role change of the creator wait for this accept.
+	if err := tx.LockSubject(r.Context(), inv.OrgID, sub); errors.Is(err, store.ErrNotMember) {
 		return errInviter
 	} else if err != nil {
 		return err
 	}
-	e, sub := h.z.Enforcer(), authz.UserSubject(inv.CreatedBy)
+	e, err := policyEnforcer(r.Context(), tx)
+	if err != nil {
+		return err
+	}
 	if !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberInvite) ||
 		privileged(inv.Role) && !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberSetRole) {
 		return errInviter

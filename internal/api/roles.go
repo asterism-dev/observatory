@@ -161,20 +161,28 @@ func (h *api) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	if err := h.z.Enforcer().CanGrantRole(authz.UserSubject(p.User.ID), m.Org.ID, privileged(m.Role), role.Rules, role.Parents); err != nil {
-		h.guardFailed(w, r, m.Org.ID, store.ActionRoleCreate, authz.ObjRoles, err)
-		return
-	}
-	role.Rules = expandRules(role.Rules)
+	actor := authz.UserSubject(p.User.ID)
+	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		var err error
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
+			return err
+		}
+		if denied = e.CanGrantRole(actor, m.Org.ID, privileged(cur.Role), role.Rules, role.Parents); denied != nil {
+			return denied
+		}
+		role.Rules = expandRules(role.Rules)
 		if role, err = tx.CreateRole(r.Context(), m.Org.ID, role); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionRoleCreate, authz.RoleObject(role.ID), store.ResultAllowed)
-		e.Details = map[string]any{"name": role.Name}
-		return tx.Audit(r.Context(), e)
+		if denied = denyFreeUnlessPrivileged(r, tx, cur, role.ID); denied != nil {
+			return denied
+		}
+		ae := auditEntry(r, &m.Org.ID, store.ActionRoleCreate, authz.RoleObject(role.ID), store.ResultAllowed)
+		ae.Details = map[string]any{"name": role.Name}
+		return tx.Audit(r.Context(), ae)
 	}) {
+		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleCreate, authz.ObjRoles, denied)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toRoleJSON(role))
@@ -195,22 +203,26 @@ func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	role.ID = id
 	p, _ := auth.PrincipalFrom(r.Context())
-	e, actor, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.RoleObject(id)
-	err := e.CanGrantRole(actor, m.Org.ID, privileged(m.Role), role.Rules, role.Parents)
-	if err == nil && !privileged(m.Role) {
-		err = carriesDeny(e, m.Org.ID, id)
-	}
-	if err != nil {
-		h.guardFailed(w, r, m.Org.ID, store.ActionRoleUpdate, obj, err)
-		return
-	}
-	role.Rules = expandRules(role.Rules)
+	actor, obj := authz.UserSubject(p.User.ID), authz.RoleObject(id)
 	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		if denied = guardOwnDenies(r.Context(), tx, m, actor, func() error { return tx.UpdateRole(r.Context(), m.Org.ID, role) }); denied != nil {
+		if denied = e.CanGrantRole(actor, m.Org.ID, privileged(cur.Role), role.Rules, role.Parents); denied != nil {
+			return denied
+		}
+		if !privileged(cur.Role) {
+			if denied = carriesDeny(e, m.Org.ID, id); denied != nil {
+				return denied
+			}
+		}
+		role.Rules = expandRules(role.Rules)
+		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.UpdateRole(r.Context(), m.Org.ID, role) }); denied != nil {
+			return denied
+		}
+		if denied = denyFreeUnlessPrivileged(r, tx, cur, id); denied != nil {
 			return denied
 		}
 		ae := auditEntry(r, &m.Org.ID, store.ActionRoleUpdate, obj, store.ResultAllowed)
@@ -233,19 +245,19 @@ func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	e, actor, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.RoleObject(id)
-	if !privileged(m.Role) {
-		if err := carriesDeny(e, m.Org.ID, id); err != nil {
-			h.guardFailed(w, r, m.Org.ID, store.ActionRoleDelete, obj, err)
-			return
-		}
-	}
+	actor, obj := authz.UserSubject(p.User.ID), authz.RoleObject(id)
 	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		if denied = guardOwnDenies(r.Context(), tx, m, actor, func() error { return tx.DeleteRole(r.Context(), m.Org.ID, id) }); denied != nil {
+		if !privileged(cur.Role) {
+			if denied = carriesDeny(e, m.Org.ID, id); denied != nil {
+				return denied
+			}
+		}
+		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteRole(r.Context(), m.Org.ID, id) }); denied != nil {
 			return denied
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionRoleDelete, obj, store.ResultAllowed))
@@ -286,19 +298,25 @@ func (h *api) bind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	e, obj := h.z.Enforcer(), authz.RoleObject(body.RoleID)
-	// Bindings only reference custom roles; the guard rejects anything else as an invalid parent.
-	err := e.CanGrantRole(authz.UserSubject(p.User.ID), m.Org.ID, privileged(m.Role), nil, []string{body.RoleID.String()})
-	if err == nil && !privileged(m.Role) {
-		err = carriesDeny(e, m.Org.ID, body.RoleID)
-	}
-	if err != nil {
-		h.guardFailed(w, r, m.Org.ID, store.ActionRoleBind, obj, err)
-		return
-	}
-	var b store.BindingRow
+	obj := authz.RoleObject(body.RoleID)
+	var (
+		b      store.BindingRow
+		denied error
+	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		var err error
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
+			return err
+		}
+		// Bindings only reference custom roles; the guard rejects anything else as an invalid parent.
+		if denied = e.CanGrantRole(authz.UserSubject(p.User.ID), m.Org.ID, privileged(cur.Role), nil, []string{body.RoleID.String()}); denied != nil {
+			return denied
+		}
+		if !privileged(cur.Role) {
+			if denied = carriesDeny(e, m.Org.ID, body.RoleID); denied != nil {
+				return denied
+			}
+		}
 		if b, err = tx.Bind(r.Context(), m.Org.ID, body.Subject, body.RoleID); err != nil {
 			return err
 		}
@@ -306,6 +324,7 @@ func (h *api) bind(w http.ResponseWriter, r *http.Request) {
 		ae.Details = map[string]any{"subject": b.Subject, "binding": b.ID.String()}
 		return tx.Audit(r.Context(), ae)
 	}) {
+		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleBind, obj, denied)
 		return
 	}
 	writeJSON(w, http.StatusCreated, bindingJSON(b))
@@ -321,21 +340,22 @@ func (h *api) unbind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	e, actor := h.z.Enforcer(), authz.UserSubject(p.User.ID)
+	actor := authz.UserSubject(p.User.ID)
 	var (
 		b      store.BindingRow
 		denied error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		denied = guardOwnDenies(r.Context(), tx, m, actor, func() error {
+		denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error {
 			var err error
 			if b, err = tx.Unbind(r.Context(), m.Org.ID, id); err != nil {
 				return err
 			}
-			if !privileged(m.Role) {
+			if !privileged(cur.Role) {
 				return carriesDeny(e, m.Org.ID, b.RoleID)
 			}
 			return nil
@@ -391,6 +411,15 @@ func guardOwnDenies(ctx context.Context, tx *store.Store, m store.Membership, ac
 
 // ownDenies returns the deny rules applying to actor under tx's current policy.
 func ownDenies(ctx context.Context, tx *store.Store, org uuid.UUID, actor string) ([]authz.Rule, error) {
+	e, err := policyEnforcer(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return e.DenyRulesFor(actor, org)
+}
+
+// policyEnforcer builds an enforcer from tx's current policy, uncommitted changes included.
+func policyEnforcer(ctx context.Context, tx *store.Store) (*authz.Enforcer, error) {
 	p, err := tx.PolicySnapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -399,7 +428,34 @@ func ownDenies(ctx context.Context, tx *store.Store, org uuid.UUID, actor string
 	if err != nil {
 		return nil, invalidPolicyError{err}
 	}
-	return e.DenyRulesFor(actor, org)
+	return e, nil
+}
+
+// lockedPolicy takes LockOrg and returns the caller's membership and enforcer as of that lock; guards deciding a write must use these, not request-start state.
+func lockedPolicy(r *http.Request, tx *store.Store, org uuid.UUID) (store.Membership, *authz.Enforcer, error) {
+	ctx := r.Context()
+	if err := tx.LockOrg(ctx, org); err != nil {
+		return store.Membership{}, nil, err
+	}
+	p, _ := auth.PrincipalFrom(ctx)
+	m, err := tx.Membership(ctx, org, p.User.ID)
+	if err != nil {
+		return store.Membership{}, nil, err
+	}
+	e, err := policyEnforcer(ctx, tx)
+	return m, e, err
+}
+
+// denyFreeUnlessPrivileged checks role after a change in tx: a deny-carrying parent writes denies too, which only owners and admins may.
+func denyFreeUnlessPrivileged(r *http.Request, tx *store.Store, m store.Membership, role uuid.UUID) error {
+	if privileged(m.Role) {
+		return nil
+	}
+	e, err := policyEnforcer(r.Context(), tx)
+	if err != nil {
+		return err
+	}
+	return carriesDeny(e, m.Org.ID, role)
 }
 
 func isGuardDenial(err error) bool {
@@ -415,18 +471,5 @@ func (h *api) auditGuardDenial(r *http.Request, org uuid.UUID, act, obj string, 
 	e.Details = map[string]any{"error": err.Error()}
 	if aerr := h.store.Audit(r.Context(), e); aerr != nil {
 		slog.Error("audit denied guard", "org", org, "action", act, "err", aerr)
-	}
-}
-
-// guardFailed answers a failed escalation guard: invalid input is 400, a missing permission 403 with a denied audit row.
-func (h *api) guardFailed(w http.ResponseWriter, r *http.Request, org uuid.UUID, act, obj string, err error) {
-	switch {
-	case errors.Is(err, authz.ErrInvalidPattern):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case isGuardDenial(err):
-		h.auditGuardDenial(r, org, act, obj, err)
-		writeError(w, http.StatusForbidden, err.Error())
-	default:
-		serverError(w, "escalation guard", err)
 	}
 }

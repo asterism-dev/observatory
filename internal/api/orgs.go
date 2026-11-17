@@ -116,7 +116,12 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		}
 		for _, se := range storeErrorStatus {
 			if errors.Is(err, se.err) {
-				writeError(w, se.status, se.err.Error())
+				msg := se.err.Error()
+				// These name the caller's own missing permission or bad input, which they need to fix the request.
+				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern {
+					msg = err.Error()
+				}
+				writeError(w, se.status, msg)
 				return false
 			}
 		}

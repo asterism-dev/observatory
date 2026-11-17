@@ -132,18 +132,19 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	e, actor := h.z.Enforcer(), authz.UserSubject(p.User.ID)
+	actor := authz.UserSubject(p.User.ID)
 	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		if !privileged(m.Role) {
+		if !privileged(cur.Role) {
 			if denied = teamCarriesDeny(r, tx, e, m.Org.ID, id); denied != nil {
 				return denied
 			}
 		}
-		if denied = guardOwnDenies(r.Context(), tx, m, actor, func() error { return tx.DeleteTeam(r.Context(), m.Org.ID, id) }); denied != nil {
+		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.Org.ID, id) }); denied != nil {
 			return denied
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionTeamDelete, authz.TeamObject(id), store.ResultAllowed))
@@ -178,27 +179,30 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	enf, obj := h.z.Enforcer(), authz.TeamObject(id)+"/members/"+user.String()
+	obj := authz.TeamObject(id) + "/members/" + user.String()
 	var (
 		denied   bool
 		guardErr error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		if denied = h.demotesTeamAdmin(r, tx, m.Org.ID, id, user); denied {
+		if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
+			return err
+		} else if denied {
 			return errForbidden
 		}
-		if guardErr = checkTeamRoles(r, tx, enf, m, authz.UserSubject(p.User.ID), id); guardErr != nil {
+		if guardErr = checkTeamRoles(r, tx, e, cur, authz.UserSubject(p.User.ID), id); guardErr != nil {
 			return guardErr
 		}
 		if err := tx.SetTeamMember(r.Context(), m.Org.ID, id, user, admin); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionTeamMemberSet, obj, store.ResultAllowed)
-		e.Details = map[string]any{"admin": admin}
-		return tx.Audit(r.Context(), e)
+		ae := auditEntry(r, &m.Org.ID, store.ActionTeamMemberSet, obj, store.ResultAllowed)
+		ae.Details = map[string]any{"admin": admin}
+		return tx.Audit(r.Context(), ae)
 	}) {
 		if denied {
 			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
@@ -219,25 +223,28 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	enf, obj := h.z.Enforcer(), authz.TeamObject(id)+"/members/"+user.String()
+	obj := authz.TeamObject(id) + "/members/" + user.String()
 	var (
 		denied   bool
 		guardErr error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
 			return err
 		}
-		if denied = h.demotesTeamAdmin(r, tx, m.Org.ID, id, user); denied {
+		if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
+			return err
+		} else if denied {
 			return errForbidden
 		}
 		// Removing someone from a team lifts its deny rules from them, which only org owners and admins may do.
-		if !privileged(m.Role) {
-			if guardErr = teamCarriesDeny(r, tx, enf, m.Org.ID, id); guardErr != nil {
+		if !privileged(cur.Role) {
+			if guardErr = teamCarriesDeny(r, tx, e, m.Org.ID, id); guardErr != nil {
 				return guardErr
 			}
 		}
-		if guardErr = guardOwnDenies(r.Context(), tx, m, authz.UserSubject(p.User.ID), func() error { return tx.RemoveTeamMember(r.Context(), m.Org.ID, id, user) }); guardErr != nil {
+		if guardErr = guardOwnDenies(r.Context(), tx, cur, authz.UserSubject(p.User.ID), func() error { return tx.RemoveTeamMember(r.Context(), m.Org.ID, id, user) }); guardErr != nil {
 			return guardErr
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionTeamMemberRemove, obj, store.ResultAllowed))
@@ -265,13 +272,16 @@ func (h *api) teamAction(w http.ResponseWriter, r *http.Request, act string) (st
 }
 
 // demotesTeamAdmin reports whether the target is a team admin (read under lock) and the caller lacks team:update, which changing an admin requires.
-func (h *api) demotesTeamAdmin(r *http.Request, tx *store.Store, org, team, user uuid.UUID) bool {
+func demotesTeamAdmin(r *http.Request, tx *store.Store, e *authz.Enforcer, org, team, user uuid.UUID) (bool, error) {
 	admin, err := tx.LockTeamMember(r.Context(), org, team, user)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
 	if err != nil || !admin {
-		return false
+		return false, err
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	return !h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, authz.TeamObject(team), store.ActionTeamUpdate)
+	return !e.Allowed(authz.UserSubject(p.User.ID), org, authz.TeamObject(team), store.ActionTeamUpdate), nil
 }
 
 // teamRoles returns the IDs of the custom roles bound to team.
