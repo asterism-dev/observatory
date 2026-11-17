@@ -678,6 +678,37 @@ func TestUnderlayRenewed(t *testing.T) {
 	}
 }
 
+func TestUnderlayRetriedAfterFailure(t *testing.T) {
+	old := *fleet.DesiredRetry
+	*fleet.DesiredRetry = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.DesiredRetry = old })
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred := e.node(e.org.ID, "n")
+	other, _ := e.node(e.org.ID, "other")
+	_, pub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another node holding the key makes enrollment fail until it lets go.
+	if _, err := e.s.EnrollChassis(ctx, other.ID, pub); err != nil {
+		t.Fatal(err)
+	}
+	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
+	if m := node.next(); m.Type != "desired" {
+		t.Fatalf("first message %q", m.Type)
+	}
+	_, otherPub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.EnrollChassis(ctx, other.ID, otherPub); err != nil {
+		t.Fatal(err)
+	}
+	for m := node.next(); m.Type != "underlay"; m = node.next() {
+	}
+}
+
 func certCN(t *testing.T, certPEM string) string {
 	t.Helper()
 	b, _ := pem.Decode([]byte(certPEM))

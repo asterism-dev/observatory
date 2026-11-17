@@ -20,7 +20,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// desiredRetry is how long a node waits for another desired list after building one failed.
+// desiredRetry is how long a node waits for another desired list or underlay after building one failed.
 var desiredRetry = 5 * time.Second
 
 // The chassis cert is re-signed from the node's start-up CSR when less than underlayRenewBefore is left, checked every underlayCheck.
@@ -136,14 +136,20 @@ func (f *Fleet) register(ctx context.Context, node uuid.UUID, reg proto.Register
 func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node store.Node, reg proto.Register) {
 	chassis := f.net != nil && reg.ChassisKey != "" && reg.ChassisCSR != ""
 	var certExpiry time.Time
+	renew := time.NewTicker(underlayCheck)
+	defer renew.Stop()
 	// Only a failed write ends the loop; without an underlay the node still runs, and the next check retries.
 	sendUnderlay := func() error {
 		u, expiry, err := f.underlay(ctx, node, reg)
 		if err != nil {
 			slog.Error("node underlay", "node", node.ID, "err", err)
+			if certExpiry.IsZero() {
+				renew.Reset(desiredRetry)
+			}
 			return nil
 		}
 		certExpiry = expiry
+		renew.Reset(underlayCheck)
 		return enc.Encode(proto.Message{Type: "underlay", Underlay: u})
 	}
 	if chassis {
@@ -152,8 +158,6 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			return
 		}
 	}
-	renew := time.NewTicker(underlayCheck)
-	defer renew.Stop()
 	var seq uint64
 	for {
 		select {
