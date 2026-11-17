@@ -135,14 +135,18 @@ func (f *Fleet) register(ctx context.Context, node uuid.UUID, reg proto.Register
 // node comes from the credential, never from reg, so a node can only get a chassis cert for itself.
 func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node store.Node, reg proto.Register) {
 	chassis := f.net != nil && reg.ChassisKey != "" && reg.ChassisCSR != ""
-	var certExpiry time.Time
+	var certExpiry, lastErrLog time.Time
 	renew := time.NewTicker(underlayCheck)
 	defer renew.Stop()
 	// Only a failed write ends the loop; without an underlay the node still runs, and the next check retries.
 	sendUnderlay := func() error {
 		u, expiry, err := f.underlay(ctx, node, reg)
 		if err != nil {
-			slog.Error("node underlay", "node", node.ID, "err", err)
+			// The short retry would otherwise log every few seconds.
+			if time.Since(lastErrLog) >= 5*time.Minute {
+				slog.Error("node underlay", "node", node.ID, "err", err)
+				lastErrLog = time.Now()
+			}
 			if certExpiry.IsZero() {
 				renew.Reset(desiredRetry)
 			}
