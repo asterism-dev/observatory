@@ -75,3 +75,14 @@ func TestSaveVMOmitsBoot(t *testing.T) {
 		t.Fatalf("vm.json holds boot data: %s", b)
 	}
 }
+
+func TestSaveVMMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveVM(dir, VMFile{Spec: proto.VMSpec{ID: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(VMDir(dir, "a"), "vm.json"))
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("vm.json mode %v, %v; want 0600", st.Mode().Perm(), err)
+	}
+}

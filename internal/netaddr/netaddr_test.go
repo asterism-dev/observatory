@@ -135,3 +135,12 @@ func TestFreeHostInvalidPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageURL(t *testing.T) {
+	if got := StorageURL(10810, "abc"); got != "nbd://10.198.0.1:10810/abc" {
+		t.Errorf("StorageURL = %s", got)
+	}
+	if StoragePortFirst != 10810 || StoragePortLast != 11809 {
+		t.Errorf("storage ports %d-%d", StoragePortFirst, StoragePortLast)
+	}
+}

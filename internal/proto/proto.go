@@ -40,6 +40,7 @@ type DiskAttachment struct {
 	MountPath string `json:"mountPath"`
 	SizeGB    int    `json:"sizeGB"`        // size the guest should see; a change restarts the VM
 	URL       string `json:"url,omitempty"` // set by the hub in DesiredVM only
+	PSK       string `json:"psk,omitempty"` // set by the hub in DesiredVM only
 }
 
 // NIC is one virtual network interface; Port is the OVN logical switch port name.
@@ -163,13 +164,30 @@ type StorageDisk struct {
 	Create bool `json:"create,omitempty"`
 }
 
-// StorageMessage types: "register" and "report" (agent→hub), "desired" (hub→agent).
-type StorageMessage struct {
-	Type    string        `json:"type"`
-	Files   []StorageFile `json:"files,omitempty"`
-	Disks   []StorageDisk `json:"disks,omitempty"`
-	Deleted []string      `json:"deleted,omitempty"` // disk IDs whose files must be removed
-	Version string        `json:"version,omitempty"` // type "register": the storage server's version
+type StorageExport struct {
+	DiskID string `json:"diskId"`
+	Port   int    `json:"port"`
+	PSK    string `json:"psk"`
+}
+
+// StorageState is what the hub wants from the storage server.
+type StorageState struct {
+	Disks   []StorageDisk   `json:"disks"`
+	Deleted []string        `json:"deleted"` // disk IDs whose files must be removed
+	Exports []StorageExport `json:"exports"`
+}
+
+type StorageExportStatus struct {
+	DiskID string `json:"diskId"`
+	Port   int    `json:"port"`
+	Error  string `json:"error,omitempty"`
+}
+
+// StorageStatus is what the storage server reports to the hub.
+type StorageStatus struct {
+	Files   []StorageFile         `json:"files"`
+	Exports []StorageExportStatus `json:"exports"`
+	Version string                `json:"version"`
 }
 
 // ValidEndpoint reports whether s is host:port with a non-empty host and a port in 1-65535.

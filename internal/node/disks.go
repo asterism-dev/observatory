@@ -12,15 +12,15 @@ import (
 )
 
 type AttachedDisk struct {
-	Name, File    string
-	ReadOnly, NBD bool
+	Name, File, PSK string
+	ReadOnly, NBD   bool
 }
 
 // AttachOrder is the single source of the block device order; guests name them vda, vdb, ... by position.
 func AttachOrder(f VMFile) []AttachedDisk {
 	disks := []AttachedDisk{{Name: "root", File: "root.img"}}
 	for _, a := range f.Spec.Attachments {
-		disks = append(disks, AttachedDisk{Name: a.DiskID, File: a.URL, NBD: true})
+		disks = append(disks, AttachedDisk{Name: a.DiskID, File: a.URL, PSK: a.PSK, NBD: true})
 	}
 	return append(disks, AttachedDisk{Name: "seed", File: SeedISO, ReadOnly: true})
 }

@@ -26,11 +26,20 @@ func NBDConnected(dev string) bool {
 func NBDRecord(vmDir, diskID string) string { return filepath.Join(vmDir, "nbd-"+diskID) }
 
 // AttachNBD connects the export to a free /dev/nbdN, reusing the device recorded for this disk if it is still connected (after a node crash).
-func AttachNBD(vmDir, diskID, rawURL string) (string, error) {
+func AttachNBD(vmDir, diskID, rawURL, psk string) (dev string, err error) {
 	host, port, export, err := parseNBDURL(rawURL)
 	if err != nil {
 		return "", err
 	}
+	tlsDir, err := writeNBDKey(vmDir, diskID, psk)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			os.RemoveAll(tlsDir)
+		}
+	}()
 	nbdMu.Lock()
 	defer nbdMu.Unlock()
 	if b, err := os.ReadFile(NBDRecord(vmDir, diskID)); err == nil {
@@ -50,7 +59,7 @@ func AttachNBD(vmDir, diskID, rawURL string) (string, error) {
 			continue
 		}
 		// Not nbd-client: its -persist does not reconnect, and writes after a storage restart were lost without an error.
-		if err := chassisconf.Run("qemu-nbd", qemuNBDArgs(dev, host, port, export)...); err != nil {
+		if err := chassisconf.Run("qemu-nbd", qemuNBDArgs(dev, host, port, export, tlsDir)...); err != nil {
 			return "", fmt.Errorf("disk %s: %w", diskID, err)
 		}
 		// qemu-nbd returns once its daemon runs, which is before the kernel has the device.
@@ -85,6 +94,9 @@ func DetachNBD(vmDir, diskID string) error {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+	}
+	if err := os.RemoveAll(nbdKeyDir(vmDir, diskID)); err != nil {
+		return err
 	}
 	return os.Remove(NBDRecord(vmDir, diskID))
 }

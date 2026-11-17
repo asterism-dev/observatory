@@ -35,7 +35,7 @@ func AttachDisks(f node.VMFile, dir string) ([]string, []string, error) {
 			paths = append(paths, filepath.Join(dir, d.File))
 			continue
 		}
-		dev, err := AttachNBD(dir, d.Name, d.File)
+		dev, err := AttachNBD(dir, d.Name, d.File, d.PSK)
 		if err != nil {
 			DetachAll(f.Spec.ID, dir, nbdIDs)
 			return nil, nil, err
