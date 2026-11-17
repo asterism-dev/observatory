@@ -15,7 +15,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
-var ErrNoMasterKey = errors.New("no master key configured")
+var (
+	ErrNoMasterKey       = errors.New("no master key configured")
+	ErrMasterKeyMismatch = errors.New("org keys are wrapped by a different master key than OBSERVATORY_SECRETS_KEY")
+)
 
 type EnvKind string
 
@@ -69,9 +72,13 @@ func (s *Store) orgKey(ctx context.Context, org uuid.UUID) (seal.Key, error) {
 		return seal.Key{}, ErrNoMasterKey
 	}
 	load := func() (seal.Key, error) {
+		var masterID string
 		var nonce, wrapped []byte
-		if err := s.q.QueryRow(ctx, "SELECT nonce, wrapped FROM org_keys WHERE org_id = $1", org).Scan(&nonce, &wrapped); err != nil {
+		if err := s.q.QueryRow(ctx, "SELECT master_key_id, nonce, wrapped FROM org_keys WHERE org_id = $1", org).Scan(&masterID, &nonce, &wrapped); err != nil {
 			return seal.Key{}, err
+		}
+		if masterID != s.master.ID() {
+			return seal.Key{}, ErrMasterKeyMismatch
 		}
 		raw, err := seal.Open(*s.master, nonce, wrapped, org[:])
 		if err != nil {
@@ -102,7 +109,38 @@ func (s *Store) orgKey(ctx context.Context, org uuid.UUID) (seal.Key, error) {
 	return load()
 }
 
-func envAAD(org, id uuid.UUID) []byte { return append(org[:len(org):len(org)], id[:]...) }
+// CheckMasterKey fails if any org key was wrapped by another master key, so a wrong key can't split the hierarchy.
+func (s *Store) CheckMasterKey(ctx context.Context) error {
+	if s.master == nil {
+		return ErrNoMasterKey
+	}
+	var other bool
+	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM org_keys WHERE master_key_id <> $1)", s.master.ID()).Scan(&other); err != nil {
+		return err
+	}
+	if other {
+		return ErrMasterKeyMismatch
+	}
+	return nil
+}
+
+// envAAD binds the kind too, so flipping a secret to env in the database can't make the hub reveal it.
+func envAAD(org, id uuid.UUID, kind EnvKind) []byte {
+	return append(append(org[:len(org):len(org)], id[:]...), kind...)
+}
+
+// lockEnvOwner keeps a private variable's owner from being removed from the org before the write commits.
+func (s *Store) lockEnvOwner(ctx context.Context, v EnvVar) error {
+	if v.Scope != EnvScopeUser {
+		return nil
+	}
+	var one int
+	err := s.q.QueryRow(ctx, "SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2 FOR SHARE", v.OrgID, v.OwnerID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
 
 func (s *Store) EnvVars(ctx context.Context, org uuid.UUID) ([]EnvVar, error) {
 	rows, err := s.q.Query(ctx, "SELECT "+envCols+" FROM env_vars WHERE org_id = $1 ORDER BY name, id", org)
@@ -128,18 +166,21 @@ func (s *Store) EnvValue(ctx context.Context, v EnvVar) (string, error) {
 	} else if err != nil {
 		return "", err
 	}
-	plain, err := seal.Open(key, nonce, ct, envAAD(v.OrgID, v.ID))
+	plain, err := seal.Open(key, nonce, ct, envAAD(v.OrgID, v.ID, v.Kind))
 	return string(plain), err
 }
 
 func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVar, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockEnvOwner(ctx, v); err != nil {
+			return err
+		}
 		key, err := tx.orgKey(ctx, v.OrgID)
 		if err != nil {
 			return err
 		}
 		v.ID = uuid.New()
-		nonce, ct, err := seal.Seal(key, []byte(value), envAAD(v.OrgID, v.ID))
+		nonce, ct, err := seal.Seal(key, []byte(value), envAAD(v.OrgID, v.ID, v.Kind))
 		if err != nil {
 			return err
 		}
@@ -171,32 +212,59 @@ func envGuardArgs(old EnvVar, rest ...any) []any {
 	return append([]any{old.OrgID, old.ID, old.Scope, teamID, userID, old.Kind}, rest...)
 }
 
-// UpdateEnvVar sets name, kind and updated_by from v if the row still matches old; a nil value keeps the stored ciphertext.
+// UpdateEnvVar sets name, kind and updated_by from v if the row still matches old; a nil value keeps the stored value.
 func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) error {
-	var nonce, ct []byte
-	if value != nil {
-		key, err := s.orgKey(ctx, old.OrgID)
-		if err != nil {
-			return err
+	return s.InTx(ctx, func(tx *Store) error {
+		if value == nil && v.Kind != old.Kind {
+			// The kind is in the AAD, so the kept value is re-sealed; the lock keeps it from changing meanwhile.
+			var nonce, ct []byte
+			err := tx.q.QueryRow(ctx, "SELECT nonce, ciphertext FROM env_vars WHERE "+envGuard+" FOR UPDATE", envGuardArgs(old)...).Scan(&nonce, &ct)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return tx.envWriteResult(ctx, old, 0, nil)
+			} else if err != nil {
+				return err
+			}
+			key, err := tx.orgKey(ctx, old.OrgID)
+			if err != nil {
+				return err
+			}
+			plain, err := seal.Open(key, nonce, ct, envAAD(old.OrgID, old.ID, old.Kind))
+			if err != nil {
+				return err
+			}
+			kept := string(plain)
+			value = &kept
 		}
-		if nonce, ct, err = seal.Seal(key, []byte(*value), envAAD(old.OrgID, old.ID)); err != nil {
-			return err
+		var nonce, ct []byte
+		if value != nil {
+			key, err := tx.orgKey(ctx, old.OrgID)
+			if err != nil {
+				return err
+			}
+			if nonce, ct, err = seal.Seal(key, []byte(*value), envAAD(old.OrgID, old.ID, v.Kind)); err != nil {
+				return err
+			}
 		}
-	}
-	tag, err := s.q.Exec(ctx, `
-		UPDATE env_vars SET name = $7, kind = $8, updated_by = $9, updated_at = now(),
-		  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext)
-		WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct)...)
-	return s.envWriteResult(ctx, old, tag.RowsAffected(), err)
+		tag, err := tx.q.Exec(ctx, `
+			UPDATE env_vars SET name = $7, kind = $8, updated_by = $9, updated_at = now(),
+			  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext)
+			WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct)...)
+		return tx.envWriteResult(ctx, old, tag.RowsAffected(), err)
+	})
 }
 
 // MoveEnvVar sets scope and owner from v if the row still matches old; the value is not re-encrypted since the AAD has no scope.
 func (s *Store) MoveEnvVar(ctx context.Context, old, v EnvVar) error {
-	teamID, userID := envOwnerColumns(v)
-	tag, err := s.q.Exec(ctx, `
-		UPDATE env_vars SET scope = $7, team_id = $8, user_id = $9, updated_by = $10, updated_at = now()
-		WHERE `+envGuard, envGuardArgs(old, v.Scope, teamID, userID, v.UpdatedBy)...)
-	return s.envWriteResult(ctx, old, tag.RowsAffected(), err)
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockEnvOwner(ctx, v); err != nil {
+			return err
+		}
+		teamID, userID := envOwnerColumns(v)
+		tag, err := tx.q.Exec(ctx, `
+			UPDATE env_vars SET scope = $7, team_id = $8, user_id = $9, updated_by = $10, updated_at = now()
+			WHERE `+envGuard, envGuardArgs(old, v.Scope, teamID, userID, v.UpdatedBy)...)
+		return tx.envWriteResult(ctx, old, tag.RowsAffected(), err)
+	})
 }
 
 // DeleteEnvVar deletes old if the row still matches it.
@@ -241,19 +309,20 @@ func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID
 		return map[string]string{}, nil
 	}
 	rows, err := s.q.Query(ctx, `
-		SELECT id, scope, name, nonce, ciphertext FROM env_vars
+		SELECT id, kind, scope, name, nonce, ciphertext FROM env_vars
 		WHERE org_id = $1 AND (scope = 'org' OR (scope = $2 AND coalesce(team_id, user_id) = $3))`, org, ownScope, id)
 	if err != nil {
 		return nil, err
 	}
 	type row struct {
 		id        uuid.UUID
+		kind      EnvKind
 		scope     EnvScope
 		name      string
 		nonce, ct []byte
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (x row, err error) {
-		err = r.Scan(&x.id, &x.scope, &x.name, &x.nonce, &x.ct)
+		err = r.Scan(&x.id, &x.kind, &x.scope, &x.name, &x.nonce, &x.ct)
 		return
 	})
 	if err != nil {
@@ -275,7 +344,7 @@ func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID
 			if r.scope != pass {
 				continue
 			}
-			plain, err := seal.Open(key, r.nonce, r.ct, envAAD(org, r.id))
+			plain, err := seal.Open(key, r.nonce, r.ct, envAAD(org, r.id, r.kind))
 			if err != nil {
 				return nil, fmt.Errorf("decrypt env var %s: %w", r.id, err)
 			}

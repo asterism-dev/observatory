@@ -70,9 +70,9 @@ Master key  (OBSERVATORY_SECRETS_KEY, 32 bytes base64; later optionally an exter
 ```
 
 - AES-256-GCM with a random nonce per encryption, also for wrapping the org key.
-- Additional authenticated data binds each ciphertext to its row: the org id for the org key; org id and variable id for a value. A ciphertext copied into another row or org fails to decrypt. Rename and move keep the id, so they need no re-encryption.
+- Additional authenticated data binds each ciphertext to its row: the org id for the org key; org id, variable id and kind for a value. A ciphertext copied into another row or org, or a kind changed behind the hub's back, fails to decrypt. Rename and move keep the id and kind, so they need no re-encryption; env → secret re-seals the value.
 - The org key is created on first use, in the same transaction as the first variable.
-- The hub refuses to start when `OBSERVATORY_SECRETS_KEY` is missing or not 32 bytes.
+- The hub refuses to start when `OBSERVATORY_SECRETS_KEY` is missing or not 32 bytes, or when an existing org key was wrapped by a different master key.
 - Rotation is possible by design, not built: master key → rewrap all org keys (values untouched); org key → re-encrypt that org's values. Storing the master key id per org key makes a rolling master rotation possible.
 - Deleting an org's key makes all its values unreadable, including in backups.
 

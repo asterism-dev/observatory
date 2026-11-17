@@ -27,10 +27,10 @@ type Store struct {
 
 func New(pool *pgxpool.Pool) *Store { return &Store{q: pool} }
 
-// InTx runs fn in a transaction; on a Store already in one it becomes a savepoint.
 // WithMasterKey returns a copy of s that wraps org keys with k.
 func (s *Store) WithMasterKey(k seal.Key) *Store { return &Store{q: s.q, master: &k} }
 
+// InTx runs fn in a transaction; on a Store already in one it becomes a savepoint.
 func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	tx, err := s.q.Begin(ctx)
 	if err != nil {

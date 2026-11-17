@@ -140,8 +140,52 @@ func TestEnvVarWrongMasterKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.WithMasterKey(testKey(2)).EnvValue(ctx, v); err == nil {
-		t.Fatal("wrong master key decrypted")
+	if _, err := s.WithMasterKey(testKey(2)).EnvValue(ctx, v); !errors.Is(err, store.ErrMasterKeyMismatch) {
+		t.Fatalf("wrong master key: %v", err)
+	}
+}
+
+func TestCheckMasterKey(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	if err := s.WithMasterKey(testKey(2)).CheckMasterKey(ctx); err != nil {
+		t.Fatalf("no org keys yet: %v", err)
+	}
+	mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvSecret, store.EnvScopeOrg, nil, "A"), "a")
+	if err := s.CheckMasterKey(ctx); err != nil {
+		t.Fatalf("same key: %v", err)
+	}
+	if err := s.WithMasterKey(testKey(2)).CheckMasterKey(ctx); !errors.Is(err, store.ErrMasterKeyMismatch) {
+		t.Fatalf("other key: %v", err)
+	}
+}
+
+func TestEnvVarKindBound(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(testKey(1))
+	u := login(t, s, "kind")
+	org := mustCreateOrg(t, s, "K", u.User.ID)
+	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvSecret, store.EnvScopeOrg, nil, "A"), "hidden")
+	execSQL(t, pool, "UPDATE env_vars SET kind = 'env' WHERE id = $1", v.ID)
+	flipped := mustEnvVar(t, s, org.ID, v.ID)
+	if got, err := s.EnvValue(ctx, flipped); err == nil || errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("flipped kind revealed %q, err %v", got, err)
+	}
+}
+
+func TestEnvVarUserScopeNonMember(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	outsider := login(t, s, "outsider").User.ID
+	if _, err := s.CreateEnvVar(ctx, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeUser, &outsider, "P"), "p"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("create: %v", err)
+	}
+	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "P"), "p")
+	target := v
+	target.Scope, target.OwnerID = store.EnvScopeUser, &outsider
+	if err := s.MoveEnvVar(ctx, v, target); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("move: %v", err)
 	}
 }
 
@@ -340,6 +384,7 @@ func TestResolveEnv(t *testing.T) {
 	empty := mustCreateOrg(t, s, "Empty", u.User.ID)
 	uid := u.User.ID
 	other := login(t, s, "env-other").User.ID
+	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, other)
 	for _, c := range []struct {
 		kind  store.EnvKind
 		scope store.EnvScope
