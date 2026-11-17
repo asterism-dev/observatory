@@ -54,7 +54,16 @@
     "idpNote": "Passkeys and password are managed in your account at the identity provider.",
     "idpLink": "Open identity provider",
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "sshKeys": "SSH keys",
+    "keyName": "Name",
+    "fingerprint": "Fingerprint",
+    "added": "Added",
+    "addKey": "Add key",
+    "publicKey": "Public key",
+    "deleteKey": "Delete",
+    "deleteKeyTitle": "Delete SSH key?",
+    "deleteKeyBody": "New VMs will no longer get this key; running VMs keep it until their next boot."
   },
   "audit": {
     "actor": "Actor",

@@ -54,7 +54,16 @@
     "idpNote": "Passkeys und Passwort verwaltest du in deinem Konto beim Identity Provider.",
     "idpLink": "Identity Provider öffnen",
     "language": "Sprache",
-    "theme": "Design"
+    "theme": "Design",
+    "sshKeys": "SSH-Schlüssel",
+    "keyName": "Name",
+    "fingerprint": "Fingerprint",
+    "added": "Hinzugefügt",
+    "addKey": "Schlüssel hinzufügen",
+    "publicKey": "Öffentlicher Schlüssel",
+    "deleteKey": "Löschen",
+    "deleteKeyTitle": "SSH-Schlüssel löschen?",
+    "deleteKeyBody": "Neue VMs erhalten diesen Schlüssel nicht mehr; laufende VMs behalten ihn bis zum nächsten Start."
   },
   "audit": {
     "actor": "Akteur",
