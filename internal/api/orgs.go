@@ -134,6 +134,9 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet {
 					msg = err.Error()
 				}
+				if errors.Is(err, errDiskMissing) {
+					msg = errDiskMissing.Error()
+				}
 				writeError(w, se.status, msg)
 				return false
 			}
