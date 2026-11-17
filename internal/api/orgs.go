@@ -90,6 +90,8 @@ var storeErrorStatus = []struct {
 	{authz.ErrInvalidPattern, http.StatusBadRequest},
 	{store.ErrLimitExceedsOrg, http.StatusBadRequest},
 	{store.ErrLastPlatformAdmin, http.StatusConflict},
+	{store.ErrLimitExceeded, http.StatusConflict},
+	{store.ErrOwnsResources, http.StatusConflict},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.

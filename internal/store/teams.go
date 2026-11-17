@@ -64,6 +64,13 @@ func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 		if err := tx.LockOrg(ctx, orgID); err != nil {
 			return err
 		}
+		var owns bool
+		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND team_id = $2)", orgID, teamID).Scan(&owns); err != nil {
+			return err
+		}
+		if owns {
+			return ErrOwnsResources
+		}
 		tag, err := tx.q.Exec(ctx, "DELETE FROM teams WHERE org_id = $1 AND id = $2", orgID, teamID)
 		if err != nil {
 			return err
