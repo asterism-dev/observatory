@@ -75,7 +75,11 @@ async function refresh() {
 }
 
 async function refreshAfterChange(self: boolean) {
-  if (self) await loadMe()
+  try {
+    if (self) await loadMe()
+  } catch (e) {
+    error.value = message(e)
+  }
   await reload()
   await refresh()
 }

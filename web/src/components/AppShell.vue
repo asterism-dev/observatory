@@ -45,8 +45,11 @@ watch(
       await loadOrg(id)
     } catch (e) {
       if (id !== orgId.value) return
-      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) router.replace('/')
-      else orgError.value = e instanceof Error ? e.message : String(e)
+      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+        // Refresh the org list first so the guard's '/' redirect doesn't land on this org again.
+        const target = await loadMe().then(() => '/', () => '/profile')
+        if (id === orgId.value) router.replace(target)
+      } else orgError.value = e instanceof Error ? e.message : String(e)
     }
   },
   { immediate: true },
