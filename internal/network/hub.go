@@ -40,6 +40,7 @@ type Hub struct {
 	ca       *CA
 	sbCert   string
 	sbKey    string
+	status   gatewayStatus
 }
 
 // Load reads the hub's sealed network secrets, generating each on first start.

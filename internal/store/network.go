@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -203,4 +204,93 @@ func (s *Store) HubSecret(ctx context.Context, name string, generate func() ([]b
 		return nil, err
 	}
 	return load()
+}
+
+type OrgNet struct {
+	ID    uuid.UUID
+	Slice netip.Prefix
+}
+
+// Chassis is an enrolled node's underlay identity.
+type Chassis struct {
+	NodeID, OrgID uuid.UUID
+	PublicKey     string
+	IP            netip.Addr
+}
+
+// NetSnapshot is everything the gateway state is built from, read at one point in time and sorted by id (devices by IP).
+type NetSnapshot struct {
+	Orgs     []OrgNet
+	Chassis  []Chassis
+	Devices  []Device
+	VMs      []VM
+	Networks []Network
+	NICs     []VMNIC
+}
+
+func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) {
+	rows, err := s.q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (c Chassis, err error) {
+		err = r.Scan(&c.NodeID, &c.OrgID, &c.PublicKey, &c.IP)
+		return
+	})
+}
+
+// NetworkSnapshot reads in one read-only transaction; inside a transaction it uses that one.
+func (s *Store) NetworkSnapshot(ctx context.Context) (NetSnapshot, error) {
+	pool, ok := s.q.(*pgxpool.Pool)
+	if !ok {
+		return s.readNetSnapshot(ctx)
+	}
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return NetSnapshot{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return (&Store{q: tx}).readNetSnapshot(ctx)
+}
+
+func (s *Store) readNetSnapshot(ctx context.Context) (snap NetSnapshot, err error) {
+	rows, err := s.q.Query(ctx, "SELECT id, mgmt_slice FROM orgs WHERE mgmt_slice IS NOT NULL ORDER BY id")
+	if err != nil {
+		return snap, err
+	}
+	if snap.Orgs, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (o OrgNet, err error) {
+		err = r.Scan(&o.ID, &o.Slice)
+		return
+	}); err != nil {
+		return snap, err
+	}
+	if snap.Chassis, err = s.Chassis(ctx); err != nil {
+		return snap, err
+	}
+	rows, err = s.q.Query(ctx, "SELECT "+deviceColumns+" FROM devices ORDER BY ip")
+	if err != nil {
+		return snap, err
+	}
+	if snap.Devices, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Device, error) { return scanDevice(r) }); err != nil {
+		return snap, err
+	}
+	if snap.VMs, err = collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE mgmt_ip IS NOT NULL ORDER BY id")); err != nil {
+		return snap, err
+	}
+	rows, err = s.q.Query(ctx, "SELECT "+networkColumns+" FROM networks ORDER BY id")
+	if err != nil {
+		return snap, err
+	}
+	if snap.Networks, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Network, error) { return scanNetwork(r) }); err != nil {
+		return snap, err
+	}
+	rows, err = s.q.Query(ctx, "SELECT vm_id, network_id, ip FROM vm_networks ORDER BY vm_id, network_id")
+	if err != nil {
+		return snap, err
+	}
+	snap.NICs, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (n VMNIC, err error) {
+		err = r.Scan(&n.VMID, &n.NetworkID, &n.IP)
+		return
+	})
+	return snap, err
 }
