@@ -9,6 +9,7 @@ keeps a WebSocket connection to the hub, which pushes the desired VMs.
 - KVM: `/dev/kvm` must exist. In a VM, enable nested virtualization.
 - Root, or a user with `sudo`.
 - The hub's URL reachable from the host, and internet access for packages, Firecracker and the Ubuntu cloud image.
+- Outbound UDP to the gateway on port 51820 (the WireGuard underlay, see [network.md](network.md)).
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
 - Disk under `/var/lib/observatory-node`: about 5 GB for the image, plus each VM's root disk (sparse).
@@ -40,8 +41,8 @@ then connects with `wss://`.
 
 ## What the installer changes on the host
 
-- **Packages** (apt): `openvswitch-switch`, `ovn-host`, `wireguard-tools`, `qemu-utils`, `nftables`. OVS/OVN are not
-  used yet; they are installed so later networking needs no re-install.
+- **Packages** (apt): `openvswitch-switch`, `ovn-host`, `wireguard-tools`, `qemu-utils`, `nftables`;
+  `openvswitch-switch` and `ovn-controller` are enabled.
 - **Firecracker and jailer** (pinned version, checksum-verified from the Firecracker GitHub releases) in
   `/usr/local/bin/firecracker` and `/usr/local/bin/jailer`.
 - **nbd** kernel module, loaded now and at boot via `/etc/modules-load.d/observatory-node.conf`.
@@ -56,9 +57,26 @@ then connects with `wss://`.
   the credential), data in `/var/lib/observatory-node` (`vms/`, `images/`).
 - **systemd unit** `observatory-node.service`, enabled and started; logs with `journalctl -u observatory-node`.
 
+## Underlay
+
+On its first connection the node sends its WireGuard public key and a certificate request; the hub assigns it an
+address in `10.198.0.0/16` and returns the underlay config. The node then writes and manages:
+
+- `/etc/wireguard/wg-underlay.conf` (`wg-quick@wg-underlay`, enabled), a tunnel to the gateway's UDP port 51820;
+- `/etc/ovn/ovn-ca.pem` and `/etc/ovn/ovn-chassis-cert.pem`, with the key in `/var/lib/observatory-node/vms/ovn-key.pem`;
+  the WireGuard key is `/var/lib/observatory-node/vms/chassis.key`;
+- the OVS `system-id` (the node id), `ovn-remote=ssl:10.198.0.1:6642`, Geneve encapsulation over the underlay address,
+  and restarts `ovn-controller` when this changes.
+
+Each VM's management and network NICs are taps on `br-int`. The chassis cert is valid for one year; the hub renews
+it while the node is connected once less than 30 days are left.
+
+## VM addresses
+
 Each VM gets a NAT address in `192.168.64.0/24`, shown as its IP in the GUI. It is reachable only from the node
 host, e.g. `ssh ubuntu@192.168.64.2` with a key from your profile. VMs boot the Ubuntu 24.04 cloud image; set
-`"firecracker": {"imageURL": "..."}` in `node.json` to use another one.
+`"firecracker": {"imageURL": "..."}` in `node.json` to use another one. Each VM also gets a management address in
+its org's slice, reachable from devices as `<vm>.internal` ([network.md](network.md)).
 
 ## Re-enroll
 
@@ -69,6 +87,9 @@ this revokes the old credential at once and disconnects it; it shows `offline` u
 keeps its id and its VMs, which are reconciled when it reconnects.
 
 Use this after a lost or leaked credential, or to move the node to another hub URL.
+
+Nodes installed before the VM network existed must be re-installed this way: the new binary sends its underlay keys on
+register and joins the gateway. Their VMs get the management NIC on their next start.
 
 ## Remove
 
