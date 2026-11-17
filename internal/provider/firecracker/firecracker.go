@@ -4,7 +4,9 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,19 +110,50 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 		linuxvm.DetachAll(f.Spec.ID, dir, nbds)
 		return nil, err
 	}
-	// The jail path can exceed the 107-byte unix socket limit, so the socket is reached through its directory's fd.
-	sockDir, err := os.Open(filepath.Dir(sock))
+	js, err := openJailSock(sock)
 	if err != nil {
 		proc.Kill()
 		return nil, err
 	}
-	go func() { <-proc.Done(); sockDir.Close() }()
+	go func() { <-proc.Done(); js.close() }()
 	// Firecracker has no ACPI power-off and would idle forever after a halt.
 	go proc.KillOnConsole("System halted")
 	for _, id := range nbds {
 		go p.nbd.Watch(f.Spec.ID, dir, id, proc.Done())
 	}
-	return &instance{Process: proc, sock: sock, api: apiAt(fmt.Sprintf("/proc/self/fd/%d/%s", sockDir.Fd(), filepath.Base(sock)))}, nil
+	return &instance{Process: proc, sock: sock, api: fcAPI{dial: js.dial}}, nil
+}
+
+// jailSock reaches the API socket through its directory's fd, as the jail path can exceed the 107-byte unix socket limit.
+type jailSock struct {
+	mu   sync.Mutex
+	dir  *os.File
+	name string
+}
+
+func openJailSock(sock string) (*jailSock, error) {
+	d, err := os.Open(filepath.Dir(sock))
+	if err != nil {
+		return nil, err
+	}
+	return &jailSock{dir: d, name: filepath.Base(sock)}, nil
+}
+
+// dial holds the lock so close cannot free the fd number for another VM's jail mid-dial.
+func (s *jailSock) dial(ctx context.Context) (net.Conn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dir == nil {
+		return nil, errors.New("VM has stopped")
+	}
+	return (&net.Dialer{}).DialContext(ctx, "unix", fmt.Sprintf("/proc/self/fd/%d/%s", s.dir.Fd(), s.name))
+}
+
+func (s *jailSock) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dir.Close()
+	s.dir = nil
 }
 
 // spawnJailed starts Firecracker under the jailer; files holds the kernel, the initrd and then the drives.

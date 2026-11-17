@@ -110,6 +110,13 @@ func TestAPIFault(t *testing.T) {
 	}
 }
 
+func TestAPIFaultWithoutMessage(t *testing.T) {
+	api, _ := fakeAPI(t, http.StatusInternalServerError, "boom")
+	if err := api.Pause(); err == nil || !strings.HasSuffix(err.Error(), ": boom") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestAPIBalloonStats(t *testing.T) {
 	api, reqs := fakeAPI(t, http.StatusOK, `{"target_pages":0,"total_memory":4096,"available_memory":1024}`)
 	st, err := api.BalloonStats()

@@ -403,12 +403,12 @@ func TestSnapshotRestore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	sockDir, err := os.Open(jailRoot(dir))
+	js, err := openJailSock(sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sockDir.Close()
-	api = apiAt(fmt.Sprintf("/proc/self/fd/%d/fc.sock", sockDir.Fd()))
+	defer js.close()
+	api = fcAPI{dial: js.dial}
 	start := time.Now()
 	if err := api.LoadSnapshot("/vmstate", "/mem", []netOverride{{IfaceID: "eth0", HostDevName: linuxvm.TapName(f.Spec.ID, 0)}}); err != nil {
 		t.Fatal(err)
@@ -425,5 +425,28 @@ func TestSnapshotRestore(t *testing.T) {
 		t.Fatal(err)
 	} else {
 		t.Logf("balloon stats after restore: %+v", stats)
+	}
+}
+
+// A stopped instance's API must not reach the VM that reuses its socket directory's fd number.
+func TestStoppedInstanceAPIDoesNotReachOtherVM(t *testing.T) {
+	p := testProvider(t)
+	a := startVM(t, p, testVM("fcstalea"))
+	a.Kill()
+	<-a.Done()
+	b := startVM(t, p, testVM("fcstaleb"))
+	defer b.Kill()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if _, err := b.WaitIP(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.(*instance).api.CtrlAltDel(); err == nil {
+		t.Fatal("CtrlAltDel on a stopped instance succeeded")
+	}
+	select {
+	case <-b.Done():
+		t.Fatal("the other VM stopped")
+	case <-time.After(10 * time.Second):
 	}
 }

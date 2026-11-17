@@ -8,14 +8,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // fcAPI talks to Firecracker's control socket, dialing it anew for each request.
-type fcAPI struct{ dial func() (net.Conn, error) }
+type fcAPI struct {
+	dial func(context.Context) (net.Conn, error)
+}
 
 func apiAt(sock string) fcAPI {
-	return fcAPI{dial: func() (net.Conn, error) { return net.Dial("unix", sock) }}
+	return fcAPI{dial: func(ctx context.Context) (net.Conn, error) { return (&net.Dialer{}).DialContext(ctx, "unix", sock) }}
 }
 
 type netOverride struct {
@@ -95,7 +98,7 @@ func (a fcAPI) call(method, path string, in, out any, timeout time.Duration) err
 		req.Header.Set("Content-Type", "application/json")
 	}
 	client := http.Client{Transport: &http.Transport{DisableKeepAlives: true,
-		DialContext: func(context.Context, string, string) (net.Conn, error) { return a.dial() }}}
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return a.dial(ctx) }}}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
@@ -105,7 +108,10 @@ func (a fcAPI) call(method, path string, in, out any, timeout time.Duration) err
 		var fault struct {
 			Message string `json:"fault_message"`
 		}
-		json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&fault)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if json.Unmarshal(b, &fault) != nil || fault.Message == "" {
+			fault.Message = strings.TrimSpace(string(b))
+		}
 		return fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, fault.Message)
 	}
 	if out != nil {
