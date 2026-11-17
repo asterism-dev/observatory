@@ -13,6 +13,7 @@ export interface NodeInfo {
   canUpdate: boolean
   canDelete: boolean
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
+  quarantined: boolean
 }
 
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const

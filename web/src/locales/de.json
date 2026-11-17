@@ -244,6 +244,8 @@
       "offline": "Offline"
     },
     "underlay": "Underlay-Adresse",
+    "quarantined": "Unter Quarantäne",
+    "quarantinedHelp": "Dieser Node hat einen Netzwerk-Port eines anderen Nodes belegt. Das Gateway hat seinen Underlay-Verkehr gesperrt. Erzeuge seine Zugangsdaten neu und installiere ihn erneut, um ihn freizugeben.",
     "registered": "Registriert",
     "handshake": "Letzter Handshake",
     "yes": "Ja",

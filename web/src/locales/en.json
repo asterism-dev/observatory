@@ -244,6 +244,8 @@
       "offline": "Offline"
     },
     "underlay": "Underlay address",
+    "quarantined": "Quarantined",
+    "quarantinedHelp": "This node held a network port of another node. The gateway cut its underlay traffic. Regenerate its credential and re-install it to release it.",
     "registered": "Registered",
     "handshake": "Last handshake",
     "yes": "Yes",

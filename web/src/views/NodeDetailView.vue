@@ -111,7 +111,9 @@ watch(
     <p><router-link :to="`/orgs/${org.id}/nodes`">{{ t('nav.nodes') }}</router-link></p>
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="node">
-      <h1>{{ node.name }} <Badge :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Badge></h1>
+      <h1>{{ node.name }} <Badge :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Badge>
+        <Badge v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Badge></h1>
+      <p v-if="node.quarantined" role="alert">{{ t('nodes.quarantinedHelp') }}</p>
       <form v-if="node.canUpdate" class="row" @submit.prevent="rename">
         <TextInput v-model="name" :aria-label="t('nodes.name')" />
         <Button type="submit" :disabled="busy || !name.trim() || name.trim() === node.name">{{ t('nodes.rename') }}</Button>
