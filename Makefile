@@ -15,7 +15,7 @@ idp-down:
 idp-bootstrap:
 	sh deploy/dev/zitadel/bootstrap.sh
 
-hub: web
+hub: web node
 	go build -o bin/hub ./cmd/hub
 
 cli:

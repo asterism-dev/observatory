@@ -8,14 +8,18 @@ import (
 )
 
 type config struct {
-	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID string
-	SecretsKey                                                       seal.Key
+	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary string
+	SecretsKey                                                                   seal.Key
 }
 
 func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{Listen: getenv("OBSERVATORY_LISTEN")}
 	if cfg.Listen == "" {
 		cfg.Listen = ":8090"
+	}
+	cfg.NodeBinary = getenv("OBSERVATORY_NODE_BINARY")
+	if cfg.NodeBinary == "" {
+		cfg.NodeBinary = "bin/observatory-node-linux-amd64"
 	}
 	var missing []string
 	required := func(dst *string, key string) {

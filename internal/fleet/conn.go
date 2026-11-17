@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -44,6 +45,10 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// The hijacked connection would otherwise keep the server's per-request deadlines.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 	ws, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return

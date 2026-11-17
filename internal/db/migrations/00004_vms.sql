@@ -18,8 +18,13 @@ CREATE TABLE vms (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT
   UNIQUE (org_id, name),
   CHECK ((user_id IS NULL) <> (team_id IS NULL)));
 CREATE INDEX vms_node ON vms (node_id);
+ALTER TABLE audit_log DROP CONSTRAINT audit_log_actor_kind_check;
+ALTER TABLE audit_log ADD CONSTRAINT audit_log_actor_kind_check CHECK (actor_kind IN ('user','vm','system','node'));
 
 -- +goose Down
+DELETE FROM audit_log WHERE actor_kind = 'node';
+ALTER TABLE audit_log DROP CONSTRAINT audit_log_actor_kind_check;
+ALTER TABLE audit_log ADD CONSTRAINT audit_log_actor_kind_check CHECK (actor_kind IN ('user','vm','system'));
 DROP TABLE vms;
 DROP TABLE ssh_keys;
 DROP TABLE nodes;

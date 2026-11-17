@@ -15,6 +15,7 @@ type ActorKind string
 const (
 	ActorUser   ActorKind = "user"
 	ActorVM     ActorKind = "vm"
+	ActorNode   ActorKind = "node"
 	ActorSystem ActorKind = "system"
 )
 
@@ -59,6 +60,7 @@ const (
 	ActionEnvMove             = "env:move"
 	ActionEnvDelete           = "env:delete"
 	ActionNodeCreate          = "node:create"
+	ActionNodeUpdate          = "node:update"
 	ActionNodeEnroll          = "node:enroll"
 	ActionNodeRevoke          = "node:revoke"
 	ActionNodeDelete          = "node:delete"

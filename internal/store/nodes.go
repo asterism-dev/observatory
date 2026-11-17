@@ -166,3 +166,16 @@ func (s *Store) DeleteNode(ctx context.Context, org, id uuid.UUID) error {
 	}
 	return nil
 }
+
+func (s *Store) RenameNode(ctx context.Context, org, id uuid.UUID, name string) error {
+	tag, err := s.q.Exec(ctx, "UPDATE nodes SET name = $3 WHERE org_id = $1 AND id = $2", org, id, name)
+	switch {
+	case isUniqueViolation(err):
+		return ErrConflict
+	case err != nil:
+		return err
+	case tag.RowsAffected() == 0:
+		return ErrNotFound
+	}
+	return nil
+}
