@@ -6,17 +6,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
 import InstallCommand from '@/components/InstallCommand.vue'
-import { gb, stateTones, type NodeInfo } from '@/composables/nodes'
+import { gb, stateTones, vmTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
-
-interface Vm {
-  id: string
-  name: string
-  state: string
-  cpus: number
-  memoryMB: number
-  node: { id: string }
-}
 
 const { t, d } = useI18n()
 const route = useRoute()
@@ -25,7 +16,7 @@ const { org } = useOrg()
 
 const nodeId = computed(() => String(route.params.nodeId))
 const node = ref<NodeInfo | null>(null)
-const vms = ref<Vm[]>([])
+const vms = ref<VmInfo[]>([])
 const name = ref('')
 const error = ref('')
 const busy = ref(false)
@@ -34,10 +25,10 @@ const command = ref('')
 const confirmDelete = ref(false)
 
 const vmColumns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('nodes.name') },
-  { key: 'state', label: t('nodes.state') },
-  { key: 'cpus', label: t('nodes.cpu') },
-  { key: 'memory', label: t('nodes.memory') },
+  { key: 'name', label: t('vms.name') },
+  { key: 'state', label: t('vms.state') },
+  { key: 'cpus', label: t('vms.cpu') },
+  { key: 'memory', label: t('vms.memory') },
 ])
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -56,7 +47,7 @@ async function load() {
     return
   }
   try {
-    const res = await api<{ vms: Vm[] }>(`/api/orgs/${id}/vms`)
+    const res = await api<{ vms: VmInfo[] }>(`/api/orgs/${id}/vms`)
     vms.value = res.vms.filter((v) => v.node.id === nodeId.value)
   } catch {
     // Listing VMs needs its own permission; the section just stays empty.
@@ -142,6 +133,8 @@ watch(
 
       <h2>{{ t('nodes.vms') }}</h2>
       <Table :columns="vmColumns" :rows="vms" row-key="id">
+        <template #cell-name="{ row }"><router-link :to="`/orgs/${org.id}/vms/${row.id}`">{{ row.name }}</router-link></template>
+        <template #cell-state="{ row }"><Badge :tone="vmTones[row.state as VmInfo['state']]">{{ t(`vms.states.${row.state}`) }}</Badge></template>
         <template #cell-memory="{ row }">{{ gb(row.memoryMB) }} GB</template>
         <template #empty>{{ t('nodes.noVms') }}</template>
       </Table>

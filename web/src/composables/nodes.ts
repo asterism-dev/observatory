@@ -17,3 +17,23 @@ export interface NodeInfo {
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const
 
 export const gb = (mb: number) => (mb / 1024).toFixed(1)
+
+export interface VmInfo {
+  id: string
+  name: string
+  owner: { kind: 'user' | 'team'; id: string; name: string }
+  node: { id: string; name: string }
+  state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
+  error?: string
+  ip?: string
+  cpus: number
+  memoryMB: number
+  diskGB: number
+  createdAt: string
+  canPower: boolean
+  canDelete: boolean
+}
+
+export const vmTones = { running: 'success', starting: 'warning', pending: 'warning', stopped: 'muted', error: 'danger', unknown: 'muted' } as const
+
+export const powerActions = (state: VmInfo['state']) => (state === 'running' ? ['shutdown', 'stop'] : ['start'])

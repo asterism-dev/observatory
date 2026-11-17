@@ -241,5 +241,46 @@
       "online": "Online",
       "offline": "Offline"
     }
+  },
+  "vms": {
+    "subtitle": "Virtuelle Maschinen auf deinen Nodes.",
+    "create": "VM erstellen",
+    "createTitle": "VM erstellen",
+    "name": "Name",
+    "owner": "Besitzer",
+    "node": "Node",
+    "state": "Status",
+    "cpu": "vCPUs",
+    "memory": "Speicher",
+    "disk": "Festplatte",
+    "ip": "IP-Adresse",
+    "ipHint": "nur vom Node erreichbar",
+    "created": "Erstellt",
+    "ownerMe": "Ich",
+    "ownerTeam": "Team {name}",
+    "hintUser": "Die VM erhält deine SSH-Schlüssel und Variablen.",
+    "hintTeam": "Die VM erhält die SSH-Schlüssel der Teammitglieder und die Team-Variablen.",
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit Buchstabe oder Ziffer beginnen; max. 63 Zeichen.",
+    "invalidRange": "Zwischen {min} und {max}.",
+    "start": "Starten",
+    "shutdown": "Herunterfahren",
+    "stop": "Stoppen",
+    "delete": "Löschen",
+    "deleteTitle": "VM löschen",
+    "deleteBody": "{name} löschen? Die Festplatte wird entfernt und das kann nicht rückgängig gemacht werden.",
+    "empty": "Noch keine VMs.",
+    "tab": {
+      "all": "Alle",
+      "mine": "Meine",
+      "teams": "Teams"
+    },
+    "states": {
+      "pending": "Ausstehend",
+      "starting": "Startet",
+      "running": "Läuft",
+      "stopped": "Gestoppt",
+      "error": "Fehler",
+      "unknown": "Unbekannt"
+    }
   }
 }

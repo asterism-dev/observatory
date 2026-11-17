@@ -23,6 +23,8 @@ import OrgSettingsLayout from '@/views/org/OrgSettingsLayout.vue'
 import OrgSettingsView from '@/views/org/OrgSettingsView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
 import ProfileView from '@/views/ProfileView.vue'
+import VMDetailView from '@/views/VMDetailView.vue'
+import VMsView from '@/views/VMsView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -39,7 +41,8 @@ export const router = createRouter({
     { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
     { path: '/orgs/:orgId/nodes', component: NodesView, meta: { title: 'nav.nodes' } },
     { path: '/orgs/:orgId/nodes/:nodeId', component: NodeDetailView },
-    { path: '/orgs/:orgId/vms', component: PlaceholderView, meta: { title: 'nav.vms' } },
+    { path: '/orgs/:orgId/vms', component: VMsView, meta: { title: 'nav.vms' } },
+    { path: '/orgs/:orgId/vms/:vmId', component: VMDetailView },
     { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
     {
       path: '/orgs/:orgId',

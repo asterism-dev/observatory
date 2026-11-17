@@ -241,5 +241,46 @@
       "online": "Online",
       "offline": "Offline"
     }
+  },
+  "vms": {
+    "subtitle": "Virtual machines running on your nodes.",
+    "create": "Create VM",
+    "createTitle": "Create VM",
+    "name": "Name",
+    "owner": "Owner",
+    "node": "Node",
+    "state": "State",
+    "cpu": "vCPUs",
+    "memory": "Memory",
+    "disk": "Disk",
+    "ip": "IP address",
+    "ipHint": "reachable from the node only",
+    "created": "Created",
+    "ownerMe": "Me",
+    "ownerTeam": "Team {name}",
+    "hintUser": "The VM gets your SSH keys and variables.",
+    "hintTeam": "The VM gets the team members' SSH keys and the team variables.",
+    "invalidName": "Lowercase letters, digits and hyphens; must start with a letter or digit; max 63 characters.",
+    "invalidRange": "Between {min} and {max}.",
+    "start": "Start",
+    "shutdown": "Shut down",
+    "stop": "Stop",
+    "delete": "Delete",
+    "deleteTitle": "Delete VM",
+    "deleteBody": "Delete {name}? Its disk is removed and this cannot be undone.",
+    "empty": "No VMs yet.",
+    "tab": {
+      "all": "All",
+      "mine": "Mine",
+      "teams": "Teams"
+    },
+    "states": {
+      "pending": "Pending",
+      "starting": "Starting",
+      "running": "Running",
+      "stopped": "Stopped",
+      "error": "Error",
+      "unknown": "Unknown"
+    }
   }
 }
