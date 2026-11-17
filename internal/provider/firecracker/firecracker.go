@@ -147,6 +147,10 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		return nil, "", err
 	}
 	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid), nbds, uid, removeJail)
+	// Without a management NIC the NAT address is the only one the VM has.
+	if err == nil && proc.IP == "" {
+		proc.IP = ip
+	}
 	return proc, filepath.Join(jailRoot(dir), "fc.sock"), err
 }
 

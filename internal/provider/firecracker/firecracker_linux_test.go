@@ -140,9 +140,13 @@ func TestStartStopVM(t *testing.T) {
 	inst := startVM(t, p, f)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	if _, err := inst.WaitIP(ctx); err != nil {
+	ip, err := inst.WaitIP(ctx)
+	if err != nil {
 		inst.Kill()
 		t.Fatalf("WaitIP: %v", err)
+	}
+	if want, _ := linuxvm.AllocNATIP(p.VMsDir, f.Spec.ID); ip != want {
+		t.Errorf("WaitIP = %q, want the NAT address %q", ip, want)
 	}
 	if err := inst.Stop(); err != nil {
 		t.Fatal(err)
