@@ -46,6 +46,7 @@ const (
 	ActionTeamDelete          = "team:delete"
 	ActionTeamMemberSet       = "team:member-set"
 	ActionTeamMemberRemove    = "team:member-remove"
+	ActionTeamLeave           = "team:leave"
 	ActionRoleCreate          = "role:create"
 	ActionRoleUpdate          = "role:update"
 	ActionRoleDelete          = "role:delete"

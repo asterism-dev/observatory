@@ -31,7 +31,7 @@ func TestBuiltinRoles(t *testing.T) {
 		{OrgID: org, UserID: admin, Role: "admin"},
 		{OrgID: org, UserID: member, Role: "member"},
 	}})
-	memberActs := []string{"member:read", "team:read", "role:read", "limit:read"}
+	memberActs := []string{"member:read", "team:read", "team:leave", "role:read", "limit:read"}
 	want := map[uuid.UUID]func(act string) bool{
 		owner:  func(string) bool { return true },
 		admin:  func(act string) bool { return act != "member:set-role" },
@@ -206,7 +206,7 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("*"); len(got) != len(Catalog) {
 		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog))
 	}
-	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members"}
+	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
 		t.Errorf("team:*: got %v", got)
 	}

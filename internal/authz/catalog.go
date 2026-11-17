@@ -58,6 +58,7 @@ var Catalog = []Permission{
 	{"team:update", ObjTeams + "/*"},
 	{"team:delete", ObjTeams + "/*"},
 	{"team:manage-members", ObjTeams + "/*"},
+	{"team:leave", ObjTeams + "/*"},
 	{"role:read", ObjRoles},
 	{"role:write", ObjRoles},
 	{"role:bind", ObjRoles},
@@ -71,6 +72,7 @@ func BuiltinRules(key string) []Rule {
 	member := []Rule{
 		{Allow, ObjMembers, "member:read"},
 		{Allow, ObjTeams + "*", "team:read"},
+		{Allow, ObjTeams + "*", "team:leave"},
 		{Allow, ObjRoles, "role:read"},
 		{Allow, ObjLimits, "limit:read"},
 	}

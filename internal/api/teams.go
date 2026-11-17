@@ -101,6 +101,7 @@ func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 		"canManageMembers": e.Allowed(sub, m.Org.ID, obj, "team:manage-members"),
 		"canUpdate":        e.Allowed(sub, m.Org.ID, obj, store.ActionTeamUpdate),
 		"canDelete":        e.Allowed(sub, m.Org.ID, obj, store.ActionTeamDelete),
+		"canLeave":         e.Allowed(sub, m.Org.ID, obj, store.ActionTeamLeave),
 	})
 }
 
@@ -214,7 +215,14 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
-	m, id, ok := h.teamAction(w, r, "team:manage-members")
+	p, _ := auth.PrincipalFrom(r.Context())
+	// Leaving needs team:leave instead of team:manage-members; the own-deny guard below still applies.
+	leaving := r.PathValue("user") == p.User.ID.String()
+	act, auditAct := "team:manage-members", store.ActionTeamMemberRemove
+	if leaving {
+		act, auditAct = store.ActionTeamLeave, store.ActionTeamLeave
+	}
+	m, id, ok := h.teamAction(w, r, act)
 	if !ok {
 		return
 	}
@@ -222,37 +230,45 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
 	obj := authz.TeamObject(id) + "/members/" + user.String()
 	var (
-		denied   bool
-		guardErr error
+		denied, leaveDenied bool
+		guardErr            error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
 		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
 		if err != nil {
 			return err
 		}
-		if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
-			return err
-		} else if denied {
-			return errForbidden
-		}
-		// Removing someone from a team lifts its deny rules from them, which only org owners and admins may do.
-		if !privileged(cur.Role) {
-			if guardErr = teamCarriesDeny(r, tx, e, m.Org.ID, id); guardErr != nil {
-				return guardErr
+		if leaving {
+			if leaveDenied = !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.TeamObject(id), store.ActionTeamLeave); leaveDenied {
+				return errForbidden
+			}
+		} else {
+			if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
+				return err
+			} else if denied {
+				return errForbidden
+			}
+			// Removing someone from a team lifts its deny rules from them, which only org owners and admins may do.
+			if !privileged(cur.Role) {
+				if guardErr = teamCarriesDeny(r, tx, e, m.Org.ID, id); guardErr != nil {
+					return guardErr
+				}
 			}
 		}
 		if guardErr = guardOwnDenies(r.Context(), tx, cur, authz.UserSubject(p.User.ID), func() error { return tx.RemoveTeamMember(r.Context(), m.Org.ID, id, user) }); guardErr != nil {
 			return guardErr
 		}
-		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionTeamMemberRemove, obj, store.ResultAllowed))
+		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, auditAct, obj, store.ResultAllowed))
 	}) {
 		if denied {
 			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
 		}
-		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamMemberRemove, obj, guardErr)
+		if leaveDenied {
+			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamLeave)
+		}
+		h.auditGuardDenial(r, m.Org.ID, auditAct, obj, guardErr)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

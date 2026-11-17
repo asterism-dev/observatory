@@ -36,7 +36,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `org:update` | `org/settings` |
 | `member:read`, `member:invite`, `member:remove`, `member:set-role` | `org/members` |
 | `team:read`, `team:create` | `org/teams` |
-| `team:update`, `team:delete`, `team:manage-members` | `org/teams/*` |
+| `team:update`, `team:delete`, `team:manage-members`, `team:leave` | `org/teams/*` |
 | `role:read`, `role:write`, `role:bind` | `org/roles` |
 | `limit:read`, `limit:set` | `org/limits` |
 | `audit:read` | `org/audit` |
@@ -47,9 +47,9 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 
 | Permission | member | admin | owner |
 |---|---|---|---|
-| `member:read`, `team:read`, `role:read`, `limit:read` | yes | yes | yes |
+| `member:read`, `team:read`, `team:leave`, `role:read`, `limit:read` | yes | yes | yes |
 | `org:update`, `member:invite`, `member:remove` | | yes | yes |
-| `team:*` (create, update, delete, manage members) | | yes | yes |
+| `team:*` (create, update, delete, manage members, leave) | | yes | yes |
 | `role:write`, `role:bind`, `limit:set`, `audit:read` | | yes | yes |
 | `member:set-role` | | | yes |
 
@@ -91,6 +91,10 @@ requires being owner (or holding `member:set-role`). At accept time the creator 
 A team has members, some of whom are team admins. Team admins manage membership of their team but cannot
 demote or remove a peer team admin; that needs `team:update`. Binding a role to a team gives it to every
 member.
+
+Members leave a team themselves with `team:leave`, which every member has by default; an org can forbid it
+with a deny rule (e.g. `deny team:leave@org/teams/*`, or one team only). Leaving never lifts a deny that
+reaches you through the team, unless you are an owner.
 
 ## Limits
 

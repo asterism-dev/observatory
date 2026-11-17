@@ -501,7 +501,7 @@ func TestTeamDenyEscape(t *testing.T) {
 	if rec := e.do("DELETE", teamMemberPath(org, team, admin), adminTok); rec.Code != 403 {
 		t.Fatalf("leave deny team: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit(store.ActionTeamMemberRemove); len(es) != 1 || es[0].Result != store.ResultDenied || !strings.Contains(es[0].Details["error"].(string), "deny audit:read@org/audit") {
+	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultDenied || !strings.Contains(es[0].Details["error"].(string), "deny audit:read@org/audit") {
 		t.Fatalf("leave audit: %+v", es)
 	}
 	if rec := e.do("DELETE", teamPath(org, team), adminTok); rec.Code != 403 {

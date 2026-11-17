@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -295,5 +296,63 @@ func TestTeamAdminCannotChangePeerAdmin(t *testing.T) {
 	}
 	if rec := e.do("DELETE", teamMemberPath(org, team, lead), bossTok); rec.Code != 204 {
 		t.Fatalf("org admin removes: %d", rec.Code)
+	}
+}
+
+func TestTeamLeave(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	member, memberTok := e.user("bob")
+	lead, leadTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, member, store.RoleMember)
+	e.addMember(org, lead, store.RoleMember)
+	team := e.createTeam(ownerTok, org, "ops")
+	for _, m := range []struct {
+		u     store.User
+		admin string
+	}{{member, "false"}, {lead, "true"}} {
+		if rec := e.send("PUT", teamMemberPath(org, team, m.u), ownerTok, `{"admin":`+m.admin+`}`); rec.Code != 204 {
+			t.Fatalf("add: %d", rec.Code)
+		}
+	}
+
+	if rec := e.do("DELETE", teamMemberPath(org, team, lead), memberTok); rec.Code != 403 {
+		t.Fatalf("remove other without manage-members: %d", rec.Code)
+	}
+	var detail struct{ CanLeave bool }
+	decode(t, e.do("GET", teamPath(org, team), memberTok), &detail)
+	if !detail.CanLeave {
+		t.Fatal("member should be able to leave by default")
+	}
+	if rec := e.do("DELETE", teamMemberPath(org, team, member), memberTok); rec.Code != 204 {
+		t.Fatalf("leave: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultAllowed || es[0].ActorID != member.ID.String() {
+		t.Fatalf("leave audit: %+v", es)
+	}
+	// A team admin may leave too, although demoting a team admin otherwise needs team:update.
+	if rec := e.do("DELETE", teamMemberPath(org, team, lead), leadTok); rec.Code != 204 {
+		t.Fatalf("team admin leaves: %d %s", rec.Code, rec.Body.String())
+	}
+
+	noLeave := e.createRole(ownerTok, org, `{"name":"stay","rules":[{"effect":"deny","object":"org/teams/*","action":"team:leave"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(member.ID), noLeave)
+	if rec := e.send("PUT", teamMemberPath(org, team, member), ownerTok, `{"admin":false}`); rec.Code != 204 {
+		t.Fatalf("re-add: %d", rec.Code)
+	}
+	decode(t, e.do("GET", teamPath(org, team), memberTok), &detail)
+	if detail.CanLeave {
+		t.Fatal("canLeave despite deny")
+	}
+	if rec := e.do("DELETE", teamMemberPath(org, team, member), memberTok); rec.Code != 403 {
+		t.Fatalf("leave under deny: %d", rec.Code)
+	}
+	if es := e.audit(store.ActionTeamLeave); es[0].Result != store.ResultDenied {
+		t.Fatalf("denied leave audit: %+v", es)
+	}
+	var n int
+	if err := e.pool.QueryRow(t.Context(), `SELECT count(*) FROM team_members WHERE team_id = $1 AND user_id = $2`, team, member.ID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("still member: %d %v", n, err)
 	}
 }

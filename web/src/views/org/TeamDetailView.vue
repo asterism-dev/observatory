@@ -21,6 +21,7 @@ interface Team {
   canManageMembers: boolean
   canUpdate: boolean
   canDelete: boolean
+  canLeave: boolean
 }
 interface OrgMember {
   id: string
@@ -148,14 +149,12 @@ watch(
       <Table :columns="columns" :rows="team.members" row-key="id">
         <template #cell-admin="{ row }"><Badge v-if="row.admin">{{ t('teams.admin') }}</Badge></template>
         <template #cell-actions="{ row }">
-          <template v-if="team.canManageMembers">
-            <Button size="sm" :disabled="busy" @click="setMember(row.id, !row.admin)">
-              {{ row.admin ? t('teams.demote') : t('teams.promote') }}
-            </Button>
-            <Button variant="danger" size="sm" :disabled="busy" @click="removeMember(row.id)">
-              {{ row.id === me?.user.id ? t('members.leave') : t('members.remove') }}
-            </Button>
-          </template>
+          <Button v-if="team.canManageMembers" size="sm" :disabled="busy" @click="setMember(row.id, !row.admin)">
+            {{ row.admin ? t('teams.demote') : t('teams.promote') }}
+          </Button>
+          <Button v-if="row.id === me?.user.id ? team.canLeave : team.canManageMembers" variant="danger" size="sm" :disabled="busy" @click="removeMember(row.id)">
+            {{ row.id === me?.user.id ? t('members.leave') : t('members.remove') }}
+          </Button>
         </template>
         <template #empty>{{ t('teams.noMembers') }}</template>
       </Table>
