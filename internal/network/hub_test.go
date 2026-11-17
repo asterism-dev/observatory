@@ -119,7 +119,8 @@ func TestUnderlay(t *testing.T) {
 	if again.Address != u.Address || again.Cert == "" || again.CACert == "" {
 		t.Fatalf("re-issue %+v, first %+v", again, u)
 	}
-	for name, key := range map[string]string{"empty": "", "garbage": "nope", "short": "AAAA"} {
+	for name, key := range map[string]string{"empty": "", "garbage": "nope", "short": "AAAA",
+		"embedded newline": pub[:20] + "\n" + pub[20:], "trailing newline": pub + "\n", "crlf": pub[:20] + "\r\n" + pub[20:]} {
 		if _, err := h.Underlay(ctx, n, key, csrPEM(csrDER(t, "x"))); err == nil {
 			t.Errorf("chassis key %s accepted", name)
 		}

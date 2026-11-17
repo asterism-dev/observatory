@@ -27,3 +27,9 @@ func Public(priv string) (string, error) {
 	}
 	return base64.StdEncoding.EncodeToString(k.PublicKey().Bytes()), nil
 }
+
+// Valid reports whether k is a canonical WireGuard key: base64 of 32 bytes that re-encodes to itself, so no stray \r or \n slips through the decoder.
+func Valid(k string) bool {
+	b, err := base64.StdEncoding.DecodeString(k)
+	return err == nil && len(b) == 32 && base64.StdEncoding.EncodeToString(b) == k
+}

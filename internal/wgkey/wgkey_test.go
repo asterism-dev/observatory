@@ -26,3 +26,15 @@ func TestGenerateAndPublic(t *testing.T) {
 		t.Fatal("want error for invalid key")
 	}
 }
+
+func TestValid(t *testing.T) {
+	_, pub, _ := Generate()
+	if !Valid(pub) {
+		t.Fatalf("generated key %q rejected", pub)
+	}
+	for _, k := range []string{"", "nope", "AAAA", pub + "\n", pub[:20] + "\n" + pub[20:], pub[:20] + "\r\n" + pub[20:], " " + pub, pub[:43] + "=="} {
+		if Valid(k) {
+			t.Errorf("%q accepted", k)
+		}
+	}
+}
