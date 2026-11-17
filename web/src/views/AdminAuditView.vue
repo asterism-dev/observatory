@@ -42,17 +42,19 @@ const tones = { allowed: 'success', denied: 'warning', failed: 'danger' } as con
 let applied = new URLSearchParams()
 
 async function load(more: boolean) {
-  if (!more) {
-    applied = new URLSearchParams()
-    if (actor.value) applied.set('actor', actor.value)
-    if (action.value) applied.set('action', action.value)
-    if (from.value) applied.set('from', new Date(from.value).toISOString())
-    if (to.value) applied.set('to', new Date(to.value).toISOString())
-  }
-  const q = new URLSearchParams(applied)
-  if (more && next.value !== null) q.set('before', String(next.value))
   try {
+    const q = new URLSearchParams()
+    if (more) {
+      applied.forEach((v, k) => q.set(k, v))
+      if (next.value !== null) q.set('before', String(next.value))
+    } else {
+      if (actor.value) q.set('actor', actor.value)
+      if (action.value) q.set('action', action.value)
+      if (from.value) q.set('from', new Date(from.value).toISOString())
+      if (to.value) q.set('to', new Date(to.value).toISOString())
+    }
     const res = await api<{ entries: Entry[]; next: number | null }>(`/api/admin/audit?${q}`)
+    if (!more) applied = new URLSearchParams(q)
     entries.value = more ? [...entries.value, ...res.entries] : res.entries
     next.value = res.next
     error.value = ''
