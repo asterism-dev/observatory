@@ -133,18 +133,28 @@ func TestGuardBindings(t *testing.T) {
 		c := strings.Join(args, " ")
 		calls = append(calls, c)
 		switch {
-		case c == "ovn-sbctl --bare --columns=_uuid find chassis name=hub-gw":
-			return "ch-gw\n", nil
-		case strings.Contains(c, "list port_binding"):
+		case strings.Contains(c, "list chassis"):
+			return "ch-a,node-a\nch-b,node-b\nch-gw,hub-gw\n", nil
+		case strings.Contains(c, "ovn-nbctl") && strings.Contains(c, "list logical_switch_port"):
 			return strings.Join([]string{
-				"u1,vm1-mgmt,ch-a,ch-a,,",     // bound where requested
-				"u2,vm2-mgmt,ch-b,ch-a,,",     // foreign claim
-				"u3,vm3-mgmt,,ch-a,,",         // unbound
-				"u4,cr-lrp-transit,ch-gw,,,",  // gateway port on hub-gw
-				"u5,cr-lrp-transit2,ch-b,,,",  // gateway port claimed by a node
-				"u6,vm6-mgmt,ch-a,ch-a,ch-b,", // additional chassis not requested
-				"u7,vm7-mgmt,ch-a,ch-a,ch-b,ch-b",
-				"u8,patch-lr,,,,",
+				"vm1-mgmt,requested-chassis=node-a", "vm2-mgmt,requested-chassis=node-a", "vm3-mgmt,requested-chassis=node-a",
+				"vm6-mgmt,requested-chassis=node-a", `vm7-mgmt,"requested-chassis=node-a,node-b"`, "vm9-mgmt,requested-chassis=node-a",
+				`vm10-mgmt,"requested-chassis=node-a,node-b"`, "mgmt-lr,router-port=lrp", "gw0,requested-chassis=hub-gw",
+			}, "\n") + "\n", nil
+		case strings.Contains(c, "list port_binding"):
+			// SB options are chassis-writable, so they are not even read.
+			return strings.Join([]string{
+				"u1,vm1-mgmt,ch-a,",        // bound where requested
+				"u2,vm2-mgmt,ch-b,",        // foreign claim, e.g. via a spoofed hostname
+				"u3,vm3-mgmt,,",            // unbound
+				"u4,cr-lrp-transit,ch-gw,", // gateway port on hub-gw
+				"u5,cr-lrp-transit2,ch-b,", // gateway port claimed by a node
+				"u6,vm6-mgmt,ch-a,ch-b",    // additional chassis not requested
+				"u7,vm7-mgmt,ch-a,ch-b",    // requested additional chassis
+				"u8,mgmt-lr,,",
+				"u9,vm9-mgmt,ch-gone,",          // chassis row without a name
+				"u10,vm10-mgmt,ch-a,ch-gw ch-b", // one additional chassis not requested
+				"u11,gw0,ch-gw,",
 			}, "\n") + "\n", nil
 		}
 		return "", nil
@@ -153,7 +163,7 @@ func TestGuardBindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt" {
+	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt,vm9-mgmt,vm10-mgmt" {
 		t.Fatalf("rebound %v", got)
 	}
 	var clears []string
@@ -161,11 +171,16 @@ func TestGuardBindings(t *testing.T) {
 		if strings.Contains(c, " clear ") {
 			clears = append(clears, c)
 		}
+		if strings.Contains(c, "requested_chassis") {
+			t.Errorf("trusts the SB requested_chassis column: %s", c)
+		}
 	}
 	want := []string{
 		"ovn-sbctl clear port_binding u2 chassis",
 		"ovn-sbctl clear port_binding u5 chassis",
 		"ovn-sbctl clear port_binding u6 additional_chassis",
+		"ovn-sbctl clear port_binding u9 chassis",
+		"ovn-sbctl clear port_binding u10 additional_chassis",
 	}
 	if strings.Join(clears, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("clears %v", clears)

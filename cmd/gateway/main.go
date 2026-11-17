@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -248,32 +249,71 @@ func sslConfigured(getSSL, key, cert, ca string) bool {
 		strings.Contains(getSSL, "CA Certificate: "+ca+"\n")
 }
 
-// guardBindings clears bindings a node may not hold: a foreign chassis, any non-hub-gw chassis on unrequested (gateway) ports, unrequested additional chassis.
-func guardBindings(run runner) ([]string, error) {
-	gw, err := run("ovn-sbctl", "--bare", "--columns=_uuid", "find", "chassis", "name=hub-gw")
+func sbRows(run runner, table, columns string) ([][]string, error) {
+	out, err := run("ovn-sbctl", "--format=csv", "--data=bare", "--no-headings", "--columns="+columns, "list", table)
 	if err != nil {
-		return nil, fmt.Errorf("ovn-sbctl find chassis hub-gw: %w", err)
+		return nil, fmt.Errorf("ovn-sbctl list %s: %w", table, err)
 	}
-	gw = strings.TrimSpace(gw)
-	out, err := run("ovn-sbctl", "--format=csv", "--data=bare", "--no-headings",
-		"--columns=_uuid,logical_port,chassis,requested_chassis,additional_chassis,requested_additional_chassis", "list", "port_binding")
+	rows, err := parseCSV(out, len(strings.Split(columns, ",")))
 	if err != nil {
-		return nil, fmt.Errorf("ovn-sbctl list port_binding: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", table, err)
+	}
+	return rows, nil
+}
+
+func parseCSV(out string, fields int) ([][]string, error) {
+	r := csv.NewReader(strings.NewReader(out))
+	r.FieldsPerRecord = fields
+	return r.ReadAll()
+}
+
+// guardBindings checks chassis names against the NB requested-chassis option (hub-gw when unset); SB copies are chassis-writable or resolved by a chassis-set hostname.
+func guardBindings(run runner) ([]string, error) {
+	out, err := run("ovn-nbctl", "--format=csv", "--data=bare", "--no-headings", "--columns=name,options", "list", "logical_switch_port")
+	if err != nil {
+		return nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
+	}
+	lsps, err := parseCSV(out, 2)
+	if err != nil {
+		return nil, fmt.Errorf("parse logical_switch_port: %w", err)
+	}
+	requested := map[string][]string{}
+	for _, l := range lsps {
+		for _, o := range strings.Fields(l[1]) {
+			if v, ok := strings.CutPrefix(o, "requested-chassis="); ok {
+				requested[l[0]] = strings.Split(v, ",")
+			}
+		}
+	}
+	chassis, err := sbRows(run, "chassis", "_uuid,name")
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, c := range chassis {
+		names[c[0]] = c[1]
+	}
+	bindings, err := sbRows(run, "port_binding", "_uuid,logical_port,chassis,additional_chassis")
+	if err != nil {
+		return nil, err
 	}
 	var rebound []string
 	var errs []error
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(strings.TrimSpace(line), ",")
-		if len(f) != 6 {
-			continue
+	for _, f := range bindings {
+		uuid, port, ch, add := f[0], f[1], f[2], f[3]
+		req, ok := requested[port]
+		if !ok {
+			req = []string{"hub-gw"}
 		}
-		uuid, port, ch, req, add, reqAdd := f[0], f[1], f[2], f[3], f[4], f[5]
 		var cols []string
-		if ch != "" && ((req != "" && ch != req) || (req == "" && ch != gw)) {
+		if ch != "" && names[ch] != req[0] {
 			cols = append(cols, "chassis")
 		}
-		if add != "" && reqAdd == "" {
-			cols = append(cols, "additional_chassis")
+		for _, a := range strings.Fields(add) {
+			if !slices.Contains(req[1:], names[a]) {
+				cols = append(cols, "additional_chassis")
+				break
+			}
 		}
 		if len(cols) == 0 {
 			continue
@@ -287,7 +327,7 @@ func guardBindings(run runner) ([]string, error) {
 			cleared = true
 		}
 		if cleared {
-			log.Printf("cleared binding of port %s (%s): chassis %s, additional %s, requested %s", port, strings.Join(cols, ","), ch, add, req)
+			log.Printf("cleared binding of port %s (%s): chassis %s, additional %s, requested %s", port, strings.Join(cols, ","), names[ch], add, strings.Join(req, ","))
 			rebound = append(rebound, port)
 		}
 	}
