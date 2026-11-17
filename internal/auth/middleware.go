@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -47,6 +48,7 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			return
 		}
 		if err != nil {
+			slog.Error("session lookup", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
@@ -57,6 +59,7 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 		}
 		user, err := h.Store.User(r.Context(), sess.UserID)
 		if err != nil {
+			slog.Error("load session user", "user", sess.UserID, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

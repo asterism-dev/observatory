@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -60,10 +61,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	ip, ua := RequestMeta(r)
 	http.SetCookie(w, h.cookie(oidcCookie, "", "/auth", -1))
 	fail := func(reason string) {
-		_ = h.Store.Audit(r.Context(), store.AuditEntry{
+		if err := h.Store.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
 			IP: ip, UserAgent: ua, Details: map[string]any{"reason": reason},
-		})
+		}); err != nil {
+			slog.Error("audit failed login", "reason", reason, "ip", ip, "err", err)
+		}
 		http.Error(w, "login failed", http.StatusBadRequest)
 	}
 
@@ -85,6 +88,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 
 	token, err := h.startSession(r.Context(), id, ip, ua)
 	if err != nil {
+		slog.Error("start session", "subject", id.Subject, "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -141,6 +145,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
+		slog.Error("logout", "session", p.Session.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
