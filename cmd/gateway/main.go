@@ -81,6 +81,9 @@ func main() {
 			if err != nil {
 				log.Print(err)
 			}
+			if err := guardMACBindings(run); err != nil {
+				log.Print(err)
+			}
 			reboundMu.Lock()
 			for _, p := range ports {
 				rebound[p] = true
@@ -332,6 +335,37 @@ func guardBindings(run runner) ([]string, error) {
 		}
 	}
 	return rebound, errors.Join(errs...)
+}
+
+// guardMACBindings deletes lr-gw neighbor entries that do not match the address plan; any chassis may write MAC_Binding.
+func guardMACBindings(run runner) error {
+	rows, err := sbRows(run, "mac_binding", "_uuid,logical_port,ip,mac")
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, f := range rows {
+		uuid, port, ip, mac := f[0], f[1], f[2], strings.ToLower(f[3])
+		var ok bool
+		switch {
+		case port == "lrp-transit":
+			ok = ip == gw0IP && mac == gw0MAC
+		case strings.HasPrefix(port, "lrp-mgmt-"):
+			a, err := netip.ParseAddr(ip)
+			ok = err == nil && a.Is4() && mac == netaddr.MAC(a)
+		default:
+			continue
+		}
+		if ok {
+			continue
+		}
+		if _, err := run("ovn-sbctl", "destroy", "mac_binding", uuid); err != nil {
+			errs = append(errs, fmt.Errorf("delete mac binding %s on %s: %w", ip, port, err))
+			continue
+		}
+		log.Printf("deleted mac binding %s %s on %s", ip, mac, port)
+	}
+	return errors.Join(errs...)
 }
 
 func observe(run runner) proto.GatewayStatus {

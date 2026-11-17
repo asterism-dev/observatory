@@ -187,6 +187,40 @@ func TestGuardBindings(t *testing.T) {
 	}
 }
 
+func TestGuardMACBindings(t *testing.T) {
+	var calls []string
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		calls = append(calls, c)
+		if strings.Contains(c, "list mac_binding") {
+			return strings.Join([]string{
+				"m1,lrp-mgmt-a,10.64.0.10,02:0a:40:00:00:0a",
+				"m2,lrp-mgmt-a,10.64.0.11,02:0a:40:00:00:0a", // another VM's MAC
+				"m3,lrp-transit,10.199.0.2,02:00:00:c7:00:02",
+				"m4,lrp-transit,10.199.0.2,02:0a:c7:00:00:02",
+				"m5,lrp-mgmt-b,10.64.16.10,02:0A:40:00:10:0A",
+				"m6,lrp-transit,10.199.0.3,02:00:00:c7:00:02",
+				"m7,vm-net,10.210.0.10,02:00:00:00:00:01", // not on lr-gw
+				"m8,lrp-mgmt-a,nope,02:0a:40:00:00:0a",
+			}, "\n") + "\n", nil
+		}
+		return "", nil
+	}
+	if err := guardMACBindings(run); err != nil {
+		t.Fatal(err)
+	}
+	var del []string
+	for _, c := range calls {
+		if strings.Contains(c, "destroy") {
+			del = append(del, c)
+		}
+	}
+	want := "ovn-sbctl destroy mac_binding m2\novn-sbctl destroy mac_binding m4\novn-sbctl destroy mac_binding m6\novn-sbctl destroy mac_binding m8"
+	if strings.Join(del, "\n") != want {
+		t.Fatalf("destroyed %v", del)
+	}
+}
+
 func TestApplySBSkipsUnchangedConfig(t *testing.T) {
 	dir := t.TempDir()
 	key, cert, ca := filepath.Join(dir, "sb-key.pem"), filepath.Join(dir, "sb-cert.pem"), filepath.Join(dir, "sb-ca.pem")

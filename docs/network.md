@@ -106,8 +106,10 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
 
 - The southbound DB is reachable only over SSL. Each node's ovn-controller uses a client cert (CN = node id) signed by
   the hub's OVN CA and connects with the `ovn-controller` RBAC role, so it can change only its own chassis rows.
-- Every VM port carries `requested-chassis=<node id>`. The gateway clears any binding by another chassis within one
-  poll (2 s) and reports it; the hub logs `gateway cleared chassis bindings`.
+- Every VM port carries `requested-chassis=<node id>`. The gateway clears any binding by a chassis whose name (its
+  cert CN) is not that node id within one poll (2 s) and reports it; the hub logs `gateway cleared chassis bindings`.
+  The chassis hostname, which a node sets itself, is never trusted.
+- The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
 - The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway.
 
 ## Known limits
@@ -121,3 +123,6 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
 - The southbound server cert is valid as long as the OVN CA (10 years) and is not rotated.
 - Chassis certs are valid for one year; the hub re-signs a connected node's cert when less than 30 days are left.
 - DNS over TCP shares the gateway's limit of 256 concurrent requests with UDP.
+- OVN's `ovn-controller` RBAC leaves some southbound tables writable by every chassis (e.g. `MAC_Binding`,
+  `FDB`, `IGMP_Group`, `Controller_Event`). The gateway repairs only `MAC_Binding` on `lr-gw`; a malicious node can
+  still disturb these tables, which at worst disrupts traffic but never grants access across orgs.

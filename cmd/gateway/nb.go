@@ -15,6 +15,8 @@ type runner func(args ...string) (string, error)
 const (
 	devicePool = "10.192.0.0/16"
 	gatewayDNS = "10.192.0.1"
+	gw0MAC     = "02:00:00:c7:00:02"
+	gw0IP      = "10.199.0.2"
 )
 
 var dhcpTagRe = regexp.MustCompile(`obs-(org|network)=([^\s",}]+)`)
@@ -99,10 +101,10 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		{"lsp-set-addresses", "transit-lr", "router"},
 		{"lsp-set-options", "transit-lr", "router-port=lrp-transit"},
 		{m, "lsp-add", "ls-transit", "gw0"},
-		{"lsp-set-addresses", "gw0", "02:00:00:c7:00:02 10.199.0.2"},
+		{"lsp-set-addresses", "gw0", gw0MAC + " " + gw0IP},
 		{"lsp-set-options", "gw0", "requested-chassis=hub-gw"},
 		{"lrp-set-gateway-chassis", "lrp-transit", "hub-gw", "1"},
-		{m, "lr-route-add", "lr-gw", devicePool, "10.199.0.2"},
+		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
 	}
 	wantLS := map[string]bool{"ls-transit": true}
 	wantLSP := map[string]bool{"gw0": true}
