@@ -30,8 +30,22 @@ func nodeAssets(mux *http.ServeMux, binaryPath string) {
 	mux.HandleFunc("GET /node/observatory-node", func(w http.ResponseWriter, r *http.Request) {
 		// A large download must outlive the server's write timeout.
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+		f, err := os.Open(binaryPath)
+		if err != nil {
+			slog.Error("open node binary", "path", binaryPath, "err", err)
+			http.Error(w, "node binary unavailable", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		fi, err := f.Stat()
+		if err != nil {
+			slog.Error("stat node binary", "path", binaryPath, "err", err)
+			http.Error(w, "node binary unavailable", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
-		http.ServeFile(w, r, binaryPath)
+		// Hiding the *os.File avoids sendfile, whose headers some macOS network filters drop (client sees HTTP/0.9).
+		http.ServeContent(w, r, "", fi.ModTime(), struct{ io.ReadSeeker }{f})
 	})
 	mux.HandleFunc("GET /node/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
