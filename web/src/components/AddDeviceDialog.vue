@@ -17,6 +17,8 @@ const config = ref('')
 const qr = ref('')
 const busy = ref(false)
 const error = ref('')
+const qrError = ref(false)
+const copyError = ref(false)
 
 watch(
   () => props.open,
@@ -26,6 +28,8 @@ watch(
     config.value = ''
     qr.value = ''
     error.value = ''
+    qrError.value = false
+    copyError.value = false
   },
 )
 
@@ -38,9 +42,12 @@ async function create() {
       body: JSON.stringify({ name: name.value.trim() }),
     })
     deviceName.value = res.device.name
-    qr.value = await QRCode.toString(res.config, { type: 'svg', margin: 1 })
     config.value = res.config
     emit('created')
+    qr.value = await QRCode.toString(res.config, { type: 'svg', margin: 1 }).catch(() => {
+      qrError.value = true
+      return ''
+    })
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -48,7 +55,14 @@ async function create() {
   }
 }
 
-const copy = () => navigator.clipboard.writeText(config.value)
+async function copy() {
+  copyError.value = false
+  try {
+    await navigator.clipboard.writeText(config.value)
+  } catch {
+    copyError.value = true
+  }
+}
 
 function download() {
   const url = URL.createObjectURL(new Blob([config.value], { type: 'text/plain' }))
@@ -70,7 +84,9 @@ function download() {
         <Button size="sm" @click="download">{{ t('devices.download') }}</Button>
         <Button size="sm" @click="copy"><Copy :size="14" /> {{ t('devices.copy') }}</Button>
       </div>
-      <div class="qr" role="img" :aria-label="t('devices.qr')" v-html="qr" />
+      <p v-if="copyError" role="alert">{{ t('devices.copyFailed') }}</p>
+      <p v-if="qrError" role="alert">{{ t('devices.qrFailed') }}</p>
+      <div v-else class="qr" role="img" :aria-label="t('devices.qr')" v-html="qr" />
     </template>
     <TextInput v-else v-model="name" :aria-label="t('devices.name')" :placeholder="t('devices.name')" @keydown.enter="name.trim() && !busy && create()" />
     <p v-if="error" role="alert">{{ error }}</p>
