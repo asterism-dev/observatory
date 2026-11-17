@@ -17,6 +17,8 @@
     "teams": "Teams",
     "roles": "Roles",
     "limits": "Limits",
+    "adminOrgs": "Admin: organizations",
+    "adminUsers": "Admin: users",
     "orgAudit": "Audit"
   },
   "theme": {
@@ -147,5 +149,11 @@
     "unlimited": "Unlimited",
     "required": "Enter a value or select unlimited",
     "invalid": "Use a whole number, 0 or more"
+  },
+  "admin": {
+    "members": "Members",
+    "created": "Created",
+    "personal": "Personal",
+    "platformAdmin": "Platform admin"
   }
 }

@@ -31,7 +31,8 @@ const workspaces = computed(() =>
   (me.value?.orgs ?? []).map((o) => ({ id: o.id, name: o.name, label: initials(o.name) })),
 )
 
-const orgId = computed(() => (route.params.orgId as string | undefined) ?? '')
+// Admin routes reuse :orgId for orgs the admin need not belong to.
+const orgId = computed(() => (route.path.startsWith('/admin/') ? '' : ((route.params.orgId as string | undefined) ?? '')))
 
 const orgError = ref('')
 
@@ -81,7 +82,13 @@ const orgNav = computed(() =>
 const navItems = computed(() => [
   ...orgNav.value,
   { path: '/profile', label: t('nav.profile') },
-  ...(me.value?.user.platformAdmin ? [{ path: '/admin/audit', label: t('nav.audit') }] : []),
+  ...(me.value?.user.platformAdmin
+    ? [
+        { path: '/admin/orgs', label: t('nav.adminOrgs') },
+        { path: '/admin/users', label: t('nav.adminUsers') },
+        { path: '/admin/audit', label: t('nav.audit') },
+      ]
+    : []),
 ])
 
 const activePath = computed(() => navItems.value.find((i) => route.path === i.path || route.path.startsWith(i.path + '/'))?.path ?? route.path)

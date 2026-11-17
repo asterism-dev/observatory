@@ -3,6 +3,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
+import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
+import AdminOrgView from '@/views/admin/AdminOrgView.vue'
+import AdminUsersView from '@/views/admin/AdminUsersView.vue'
 import LoginView from '@/views/LoginView.vue'
 import InviteView from '@/views/InviteView.vue'
 import OrgAuditView from '@/views/org/OrgAuditView.vue'
@@ -30,6 +33,9 @@ export const router = createRouter({
     { path: '/orgs/:orgId/limits', component: LimitsView },
     { path: '/orgs/:orgId/audit', component: OrgAuditView },
     { path: '/invite/:token', component: InviteView },
+    { path: '/admin/orgs', component: AdminOrgsView, meta: { platformAdmin: true } },
+    { path: '/admin/orgs/:orgId', component: AdminOrgView, meta: { platformAdmin: true } },
+    { path: '/admin/users', component: AdminUsersView, meta: { platformAdmin: true } },
     { path: '/admin/audit', component: AdminAuditView, meta: { platformAdmin: true } },
   ],
 })
