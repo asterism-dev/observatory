@@ -16,7 +16,7 @@ org the caller is not a member of returns `404`.
 | `team:<id>` | every member of the team |
 | `role:<owner\|admin\|member\|id>` | a built-in or custom role |
 
-**Objects** have three pattern forms, `*` only ever as the whole last segment:
+**Objects** have four pattern forms, `*` only ever as the whole last segment:
 
 | Form | Example | Matches |
 |---|---|---|
@@ -67,6 +67,8 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 
 - Only org owners and admins may write deny rules. Only they may edit, delete, bind or unbind roles that
   carry denies (directly or inherited), or remove people from a team bound to such a role.
+- Removing a member from the org drops their bindings and teams, so removing someone a deny applies to
+  also needs an owner or admin.
 - **Escalation rule:** nobody can grant, through role rules, parents or bindings, a permission they do not
   hold themselves (and are not blocked from by their own denies). Violations return `403` and are audited.
 - Removing a binding, or editing or deleting a role, in a way that lifts a deny currently applying to
