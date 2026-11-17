@@ -81,9 +81,9 @@ func run(ctx context.Context, cmd string, args []string) error {
 	}
 	switch cmd {
 	case "login":
-		fs := flag.NewFlagSet("login", flag.ContinueOnError)
-		hub := fs.String("hub", firstNonEmpty(saved.Hub, defaultHub), "hub URL")
-		if err := fs.Parse(args); err != nil {
+		flags := flag.NewFlagSet("login", flag.ContinueOnError)
+		hub := flags.String("hub", firstNonEmpty(saved.Hub, defaultHub), "hub URL")
+		if err := flags.Parse(args); err != nil {
 			return err
 		}
 		return login(ctx, strings.TrimRight(*hub, "/"), path, os.Stdout)
