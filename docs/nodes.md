@@ -10,6 +10,7 @@ keeps a WebSocket connection to the hub, which pushes the desired VMs.
 - Root, or a user with `sudo`.
 - The hub's URL reachable from the host, and internet access for packages, Firecracker and the Ubuntu cloud image.
 - Outbound UDP to the gateway on port 51820 (the WireGuard underlay, see [network.md](network.md)).
+- The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
 - Disk under `/var/lib/observatory-node`: about 5 GB for the image, plus each VM's root disk (sparse).
@@ -51,6 +52,8 @@ then connects with `wss://`.
 - **IP forwarding** via `/etc/sysctl.d/90-observatory-node.conf`.
 - **NAT** for `192.168.64.0/24`: nftables table `ip vmm` in `/etc/nftables.d/observatory-node.nft`, included from
   `/etc/nftables.conf`; the `nftables` service is enabled. Other tables (e.g. Docker's) are left alone.
+  The same table drops traffic from `vmm0` to the underlay (`10.198.0.0/16`), so VMs cannot reach the gateway's
+  services (southbound DB, storage exports) or other nodes through their node.
 - **Docker hosts:** the service adds `DOCKER-USER` rules accepting traffic from and back to `vmm0`, so Docker's
   forward policy does not block the VMs.
 - **Node binary** in `/usr/local/bin/observatory-node`, config in `/etc/observatory-node/node.json` (mode 0600, holds
@@ -78,6 +81,14 @@ host, e.g. `ssh ubuntu@192.168.64.2` with a key from your profile. VMs boot the 
 `"firecracker": {"imageURL": "..."}` in `node.json` to use another one. Each VM also gets a management address in
 its org's slice, reachable from devices as `<vm>.internal` ([network.md](network.md)).
 
+## Disks
+
+Disks attached to a VM ([disks.md](disks.md)) are connected with `qemu-nbd` to `/dev/nbdN` on the node and passed to
+Firecracker as extra drives (`vdb`, `vdc`, … in attach order). `qemu-nbd` connects over the underlay to
+`10.198.0.1:<port>` with TLS-PSK; the key is in `<vm dir>/nbd-<disk id>-tls/keys.psk` (0600). If the storage server
+goes away, `qemu-nbd` holds the guest's I/O and reconnects for up to 7 days. The node reports the disks it still uses,
+which lets the hub release a detached disk; while the node is offline its detached disks stay `releasing`.
+
 ## Re-enroll
 
 Running the installer again is safe: it updates packages, Firecracker and the binary, and keeps `node.json` settings,
@@ -90,6 +101,10 @@ Use this after a lost or leaked credential, or to move the node to another hub U
 
 Nodes installed before the VM network existed must be re-installed this way: the new binary sends its underlay keys on
 register and joins the gateway. Their VMs get the management NIC on their next start.
+
+Nodes installed before disks existed must be re-installed too: only the new installer adds the nftables rules that keep
+VMs off the underlay (`vmm0` → `10.198.0.0/16` dropped). Without them a guest can reach the storage exports (it still
+needs the export key) and the southbound DB through its node.
 
 ## Remove
 

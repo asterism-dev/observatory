@@ -35,7 +35,7 @@ make gateway-up      # gateway-down stops both
 
 Nodes and devices reach the gateway on UDP 51820/51821 at `OBSERVATORY_GATEWAY_HOST`, so use a LAN address rather
 than `localhost` in `OBSERVATORY_PUBLIC_URL` then. [docs/network.md](docs/network.md) covers the address plan, the
-gateway, devices, networks and the isolation model.
+gateway, devices, networks and the isolation model; [docs/disks.md](docs/disks.md) covers disks and the storage server.
 
 Open <http://localhost:5173>. The first user to log in becomes platform admin.
 With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.
