@@ -92,3 +92,22 @@ func TestAuthConfig(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestCheckAZP(t *testing.T) {
+	for _, c := range []struct {
+		aud     []string
+		azp     string
+		wantErr bool
+	}{
+		{[]string{"cli"}, "", false},
+		{[]string{"cli"}, "cli", false},
+		{[]string{"cli", "web", "project"}, "cli", false},
+		{[]string{"cli"}, "web", true},
+		{[]string{"cli", "web", "project"}, "web", true},
+		{[]string{"cli", "web", "project"}, "", true},
+	} {
+		if err := checkAZP(c.aud, c.azp, "cli"); (err != nil) != c.wantErr {
+			t.Errorf("aud %v azp %q: err %v", c.aud, c.azp, err)
+		}
+	}
+}
