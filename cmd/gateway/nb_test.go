@@ -286,3 +286,27 @@ func TestReconcileNBOrgTransactions(t *testing.T) {
 	f.txWith(t, "--may-exist lr-add lr-gw")
 	f.txWith(t, "lsp-del old-mgmt")
 }
+
+func TestReconcileNBRouterAddressOnlyForOwnOrg(t *testing.T) {
+	st, out := twoOrgs()
+	st.Devices = []proto.GatewayDevice{{IP: "10.192.0.10", OrgID: orgA}, {IP: "10.192.0.11", OrgID: orgA}}
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	hub := f.txWith(t, "--may-exist lr-add lr-gw")
+	var acls []string
+	for _, c := range hub {
+		if strings.Contains(c, "acl-") {
+			acls = append(acls, c)
+		}
+	}
+	want := []string{
+		"acl-del ls-transit",
+		`acl-add ls-transit from-lport 1002 inport == "gw0" && ip4.dst == 10.64.0.1 && ip4.src == {10.192.0.10, 10.192.0.11} allow`,
+		`acl-add ls-transit from-lport 1001 inport == "gw0" && ip4.dst == {10.64.0.1, 10.64.16.1} drop`,
+	}
+	if strings.Join(acls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("transit ACLs:\n%s", strings.Join(acls, "\n"))
+	}
+}

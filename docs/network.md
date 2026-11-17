@@ -89,6 +89,7 @@ the org deletes their devices in it; deleting a device cuts its traffic within o
 - VMs cannot reach each other on the management network, and cannot open connections to devices.
 - Each org has its own switch (`ls-mgmt-<org>`) and port group; ACLs allow traffic to a VM only from its allowed
   devices and the gateway. Port security pins every port to its MAC and IP.
+- A device reaches only its own org's router address (`<slice>.1`); ACLs on `ls-transit` drop the other orgs'.
 - DNS picks the view by source address: a device or a VM management address sees only its own org's names
   (`<vm>.internal`, `<vm>.<network>.internal`); any other source gets REFUSED for `*.internal`. Other names are
   forwarded upstream.

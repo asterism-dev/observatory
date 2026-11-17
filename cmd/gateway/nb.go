@@ -191,7 +191,7 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		{"lrp-set-gateway-chassis", "lrp-transit", "hub-gw", "1"},
 		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
 	}
-	if err := tx(hub); err != nil {
+	if err := tx(append(hub, transitACLs(s)...)); err != nil {
 		return errors.Join(append(errs, err)...)
 	}
 
@@ -205,6 +205,33 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// transitACLs let a device reach only its own org's router address; lr-gw would answer on all of them.
+func transitACLs(s proto.GatewayState) [][]string {
+	devices := map[string][]string{}
+	for _, d := range s.Devices {
+		devices[d.OrgID] = append(devices[d.OrgID], d.IP)
+	}
+	acls := [][]string{{"acl-del", "ls-transit"}}
+	var routers []string
+	for _, o := range s.Orgs {
+		slice, err := parseSubnet(o.Slice)
+		if err != nil {
+			continue
+		}
+		r := netaddr.Router(slice).String()
+		routers = append(routers, r)
+		if d := devices[o.ID]; len(d) > 0 {
+			acls = append(acls, []string{"acl-add", "ls-transit", "from-lport", "1002",
+				fmt.Sprintf(`inport == "gw0" && ip4.dst == %s && ip4.src == {%s}`, r, strings.Join(d, ", ")), "allow"})
+		}
+	}
+	if len(routers) > 0 {
+		acls = append(acls, []string{"acl-add", "ls-transit", "from-lport", "1001",
+			fmt.Sprintf(`inport == "gw0" && ip4.dst == {%s}`, strings.Join(routers, ", ")), "drop"})
+	}
+	return acls
 }
 
 // orgCmds is one org's transaction, so a new port is never visible without port security, port group membership and the default-drop ACLs.
