@@ -74,13 +74,14 @@ Success: a person can register, lands in their own org, invites others, org and 
 
 ### Authentication
 
-- **The hub is an OIDC relying party; Zitadel is the bundled IdP** (chosen over Better Auth, which is a TypeScript library needing a second runtime with its own org model, and over building auth into the hub).
-- Zitadel only answers *who* someone is. Orgs, membership, roles, permissions and audit live in observatory.
+- **The hub is an OIDC relying party; the IdP is external and pluggable.** observatory does not ship an IdP in its stack, so operators can use Zitadel, Keycloak or any other OIDC provider. Zitadel is the reference IdP used in development (chosen over Better Auth, which is a TypeScript library needing a second runtime with its own org model, and over building auth into the hub).
+- **IdP requirements:** OIDC discovery, authorization code flow with PKCE for a public web client, device authorization grant (RFC 8628) for a public CLI client, and `sub`, `email`, `name` available from the ID token or the userinfo endpoint. Registration via `prompt=create` is used when the IdP supports it; otherwise registration is up to the IdP's login page.
+- The IdP only answers *who* someone is. Orgs, membership, roles, permissions and audit live in observatory.
 - Browser: OIDC authorization code + PKCE; the hub then sets its own session cookie.
 - CLI: OIDC device authorization flow (`observatory login`), `observatory whoami`. My call: only these two commands in this project.
-- Registration and passkeys/2FA happen in Zitadel's login UI.
-- VM accounts will get hub-issued tokens, never Zitadel accounts.
-- Development: Zitadel in a local Compose stack at `localhost:8080`, `ExternalSecure: false`. The hub must reach Zitadel under the same issuer URL as the browser (fine with the hub on the host; use `127.0.0.1.sslip.io` if the hub runs in a container). Production: own domain with HTTPS, config change only.
+- Registration and passkeys/2FA happen in the IdP's login UI.
+- VM accounts will get hub-issued tokens, never IdP accounts.
+- Development: Zitadel in its own, separate Compose project (not part of observatory's stack) at `localhost:8080`, `ExternalSecure: false`. The hub must reach the IdP under the same issuer URL as the browser (fine with the hub on the host; use `127.0.0.1.sslip.io` if the hub runs in a container). Production: own domain with HTTPS, config change only.
 
 ### Other calls (mine)
 
@@ -89,7 +90,7 @@ Success: a person can register, lands in their own org, invites others, org and 
 - **Leaving an org** (after boxd): a member can't be removed while they still own resources in that org; they must be transferred or deleted first.
 - **Platform admin bootstrap:** the first user to log in to an installation becomes platform admin.
 - **Invitations:** org admin creates an invite link (expiring, single use) and hands it over themselves; no mail sending in observatory.
-- **Database:** Postgres, one instance shared with Zitadel (separate databases). Replaces the PoC's JSON files.
+- **Database:** Postgres, observatory's own (the IdP brings its own storage). Replaces the PoC's JSON files.
 - **Code:** a new Go hub in this repo; the PoC is ported later, not copied now. The UI is built with Vite and embedded in the Go binary as in the PoC (`web/embed.go`).
 - **UI stack:** Vue 3, vue-router, vue-i18n (de + en as in the PoC), `@asterism-dev/lumen` (installed from GitHub tag), no Tailwind/daisyUI. Theme toggle via lumen's `data-theme`.
 - **Limits fields:** vCPU, RAM, disk GB, VM count.
@@ -98,14 +99,14 @@ Success: a person can register, lands in their own org, invites others, org and 
 - **A share** binds one role to one principal on exactly one resource. Sharing requires `<type>:share` on that resource; the owner always holds it.
 - **Escalation guard:** resource patterns in rules are restricted to three forms: everything of an owner (`<owner>/*`), all of a type (`<owner>/<type>/*`), one resource (`<owner>/<type>/<id>`). Action globs are expanded against the catalog. Coverage is then a prefix check plus a set check, no general glob-subsumption. Only org admins may write deny rules.
 - **User limits** are per membership (user × org).
-- **CLI credential:** after the device flow the CLI exchanges the Zitadel token for a hub-issued token, so CLI sessions can be listed and revoked in the profile. VM accounts later use the same token mechanism.
+- **CLI credential:** after the device flow the CLI exchanges the IdP's tokens for a hub-issued token, so CLI sessions can be listed and revoked in the profile. VM accounts later use the same token mechanism.
 
 ## Approaches considered
 
 | Area | Options | Picked | Why |
 |---|---|---|---|
 | Authorization engine | Hand-written AWS-IAM-style evaluator; **Casbin**; Cedar (`cedar-go`); SpiceDB/OpenFGA | Casbin | User's choice: mature, role inheritance built in, deny-override, glob/key matching, multi-tenant domains. Cedar-go lacks templates and full schema validation; Zanzibar systems are a separate service without wildcard/deny semantics. |
-| Identity | **Zitadel via OIDC**; Better Auth sidecar; auth inside the hub | Zitadel | Go, self-hostable, device flow, passkeys, federation later; hub stays IdP-agnostic so a tenant can bring its own SSO later. |
+| Identity | **External OIDC IdP (Zitadel as reference)**; Better Auth sidecar; auth inside the hub | External OIDC IdP | Operators pick their IdP (Zitadel, Keycloak, ...); Zitadel for dev: Go, self-hostable, device flow, passkeys. Hub stays IdP-agnostic, which also keeps per-org SSO possible later. |
 
 ## Authorization model
 
@@ -150,7 +151,7 @@ Policy changes go through the hub API, are stored via a Casbin Postgres adapter,
 ## UI
 
 ```
-Public          Login · Register (→ Zitadel) · Accept invitation
+Public          Login · Register (→ IdP) · Accept invitation
 Every user      Org switcher · Profile (name, sessions incl. CLI)
 Org admin       Org settings · Members (invite, remove, role) · Teams (members, team admins, limits) · Roles (custom,
                 inheritance, allow/deny rules) · Limits per user and team · Shares · Org audit log
