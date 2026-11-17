@@ -687,6 +687,28 @@ func TestStartFailsWhenStorageUnreachable(t *testing.T) {
 	}
 }
 
+// The storage server applies a new export up to one poll after the node gets the attachment.
+func TestBootRetriesUntilStorageListens(t *testing.T) {
+	fastRestarts(t, 50*time.Millisecond, 50*time.Millisecond, 50*time.Millisecond, 5*time.Second)
+	a, p := newReconcileAgent(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 1, att("d1", "/data", addr))})
+	waitState(t, a, "a", proto.StateError, 1)
+	if ln, err = net.Listen("tcp", addr); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	waitState(t, a, "a", proto.StateRunning, 1)
+	if p.instance("a") == nil {
+		t.Fatal("not started")
+	}
+}
+
 func TestDestroyKeepsDisksInUseUntilInstanceExits(t *testing.T) {
 	old := killWait
 	killWait = 50 * time.Millisecond

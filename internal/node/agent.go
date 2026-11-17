@@ -302,34 +302,39 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 		report(proto.VMStatus{ID: id, State: proto.StateStopped})
 		return
 	}
-	if err := checkStorage(f); err != nil {
+	var inst Instance
+	// A new export listens only after the storage server's next poll, so an unreachable storage is retried like an exit.
+	reason := checkStorage(f)
+	if reason != nil {
 		close(e.booted)
-		report(proto.VMStatus{ID: id, State: proto.StateError, Error: err.Error()})
-		return
+		report(proto.VMStatus{ID: id, State: proto.StateError, Error: reason.Error()})
+	} else {
+		// A same-generation push (new keys or variables) may have arrived while preparing.
+		a.mu.Lock()
+		f.Boot = e.file.Boot
+		a.mu.Unlock()
+		var err error
+		if inst, err = a.Provider.Start(f, dir); err != nil {
+			fail("start", err)
+			return
+		}
+		a.mu.Lock()
+		e.inst = inst
+		a.mu.Unlock()
+		close(e.booted)
 	}
-	// A same-generation push (new keys or variables) may have arrived while preparing.
-	a.mu.Lock()
-	f.Boot = e.file.Boot
-	a.mu.Unlock()
-	inst, err := a.Provider.Start(f, dir)
-	if err != nil {
-		fail("start", err)
-		return
-	}
-	a.mu.Lock()
-	e.inst = inst
-	a.mu.Unlock()
-	close(e.booted)
 
 	failures := 0
 	for {
-		ranAt := time.Now()
-		a.watch(ctx, e, id, inst)
-		ran := time.Since(ranAt)
-		if ran >= quick {
-			failures = 0
+		if inst != nil {
+			ranAt := time.Now()
+			a.watch(ctx, e, id, inst)
+			ran := time.Since(ranAt)
+			if ran >= quick {
+				failures = 0
+			}
+			reason = fmt.Errorf("exited after %s", ran.Round(time.Second))
 		}
-		reason := fmt.Errorf("exited after %s", ran.Round(time.Second))
 		a.mu.Lock()
 		ok := a.restartable(ctx, e)
 		a.mu.Unlock()
@@ -348,6 +353,7 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 			}
 			// Counted up front; a run longer than quick resets it.
 			failures++
+			var err error
 			inst, err = a.restart(ctx, e)
 			if err != nil {
 				reason = err
