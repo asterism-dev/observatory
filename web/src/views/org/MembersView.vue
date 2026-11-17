@@ -24,7 +24,7 @@ interface Invite {
 const { t, d } = useI18n()
 const router = useRouter()
 const { me, load: loadMe } = useMe()
-const { org, can } = useOrg()
+const { org, can, reload } = useOrg()
 
 const members = ref<Member[]>([])
 const invites = ref<Invite[]>([])
@@ -60,13 +60,24 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
   if (!org.value) return
-  const base = `/api/orgs/${org.value.id}`
+  const id = org.value.id
+  const base = `/api/orgs/${id}`
   try {
-    members.value = await api<Member[]>(`${base}/members`)
-    invites.value = canInvite.value ? await api<Invite[]>(`${base}/invites`) : []
+    const ms = await api<Member[]>(`${base}/members`)
+    const invs = canInvite.value ? await api<Invite[]>(`${base}/invites`) : []
+    // Org switched while loading.
+    if (id !== org.value?.id) return
+    members.value = ms
+    invites.value = invs
   } catch (e) {
-    error.value = message(e)
+    if (id === org.value?.id) error.value = message(e)
   }
+}
+
+async function refreshAfterChange(self: boolean) {
+  if (self) await loadMe()
+  await reload()
+  await refresh()
 }
 
 async function run(fn: () => Promise<unknown>) {
@@ -86,7 +97,7 @@ const memberUrl = (m: Member) => `/api/orgs/${org.value?.id}/members/${m.id}`
 const setRole = (m: Member, role: string) =>
   run(async () => {
     await api(memberUrl(m), { method: 'PATCH', body: JSON.stringify({ role }) })
-    await refresh()
+    await refreshAfterChange(isSelf(m))
   })
 
 function remove() {
@@ -98,7 +109,7 @@ function remove() {
     if (isSelf(m)) {
       await loadMe()
       await router.push('/')
-    } else await refresh()
+    } else await refreshAfterChange(false)
   })
 }
 

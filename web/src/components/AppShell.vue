@@ -33,7 +33,24 @@ const workspaces = computed(() =>
 
 const orgId = computed(() => (route.params.orgId as string | undefined) ?? '')
 
-watch(orgId, (id) => id && loadOrg(id).catch(() => router.replace('/')), { immediate: true })
+const orgError = ref('')
+
+watch(
+  orgId,
+  async (id) => {
+    orgError.value = ''
+    if (!id) return
+    if (me.value?.orgs.some((o) => o.id === id)) selectOrg(id)
+    try {
+      await loadOrg(id)
+    } catch (e) {
+      if (id !== orgId.value) return
+      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) router.replace('/')
+      else orgError.value = e instanceof Error ? e.message : String(e)
+    }
+  },
+  { immediate: true },
+)
 
 function switchOrg(id: string) {
   selectOrg(id)
@@ -103,7 +120,10 @@ const userMenu = (): MenuItem[] => [
         <ListItem v-for="item in navItems" :key="item.path" :value="item.path">{{ item.label }}</ListItem>
       </List>
     </aside>
-    <main class="content"><slot /></main>
+    <main class="content">
+      <p v-if="orgError" role="alert">{{ orgError }}</p>
+      <slot />
+    </main>
     <CreateOrgDialog v-model:open="creating" @created="onCreated" />
   </div>
 </template>
