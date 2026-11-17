@@ -32,6 +32,8 @@ export interface VmInfo {
   dnsName: string
   networks: { id: string; name: string; ip: string; dnsName: string }[]
   canNetwork: boolean
+  disks: { id: string; name: string; mountPath: string; sizeGB: number; state: string; error?: string }[]
+  canDisks: boolean
   cpus: number
   memoryMB: number
   diskGB: number

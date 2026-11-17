@@ -346,6 +346,23 @@
     "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
     "restart": "Speichern und neu starten"
   },
+  "vmDisks": {
+    "section": "Disks",
+    "none": "Keine Disks angehängt.",
+    "change": "Disks ändern",
+    "changeTitle": "Disks ändern",
+    "add": "Disk hinzufügen",
+    "noneAvailable": "Keine weiteren Disks verfügbar. Nur bereite, nicht angehängte Disks mit demselben Besitzer wie die VM können angehängt werden.",
+    "mountPath": "Mount-Pfad",
+    "remove": "Entfernen",
+    "invalidPath": "Absoluten Pfad ohne abschließenden Schrägstrich und Sonderzeichen verwenden.",
+    "reservedPath": "Dieser Pfad ist reserviert.",
+    "duplicatePath": "Mount-Pfade müssen eindeutig sein.",
+    "save": "Speichern",
+    "restartTitle": "VM neu starten",
+    "restartBody": "{name} läuft und wird neu gestartet, um die Disk-Änderung zu übernehmen.",
+    "restart": "Speichern und neu starten"
+  },
   "disks": {
     "subtitle": "Persistente Disks, die du an VMs anhängen kannst.",
     "create": "Disk erstellen",

@@ -346,6 +346,23 @@
     "restartBody": "{name} is running and restarts to apply the network change.",
     "restart": "Save and restart"
   },
+  "vmDisks": {
+    "section": "Disks",
+    "none": "No disks attached.",
+    "change": "Change disks",
+    "changeTitle": "Change disks",
+    "add": "Add disk",
+    "noneAvailable": "No more disks available. Only ready, unattached disks with the same owner as the VM can be attached.",
+    "mountPath": "Mount path",
+    "remove": "Remove",
+    "invalidPath": "Use an absolute path without trailing slash or special characters.",
+    "reservedPath": "This path is reserved.",
+    "duplicatePath": "Mount paths must be unique.",
+    "save": "Save",
+    "restartTitle": "Restart VM",
+    "restartBody": "{name} is running and restarts to apply the disk change.",
+    "restart": "Save and restart"
+  },
   "disks": {
     "subtitle": "Persistent disks that you can attach to VMs.",
     "create": "Create disk",

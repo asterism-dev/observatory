@@ -33,8 +33,8 @@ watch(
     error.value = ''
     try {
       teams.value = await api(`/api/orgs/${props.orgId}/teams`)
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+    } catch {
+      teams.value = []
     }
   },
 )
