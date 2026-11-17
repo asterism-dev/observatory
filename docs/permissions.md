@@ -23,6 +23,7 @@ org the caller is not a member of returns `404`.
 | exact | `org/teams` | that object |
 | per type | `org/teams/*` | every object of that type |
 | per resource | `org/teams/<id>` | one resource |
+| whole scope | `org/*`, `user:<id>/*` | everything in the org or under that user |
 
 Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. IDs must be canonical UUIDs.
 
@@ -73,14 +74,14 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 
 ## Owners
 
-- An org may have several owners. Only owners promote to or demote from `admin` or `owner`.
+- An org may have several owners. Only owners (or holders of `member:set-role`, which an owner can grant via a custom role) promote to or demote from `admin` or `owner`.
 - The last owner cannot be demoted, removed or leave.
-- Personal orgs are single-member: no invitations, no leaving, no renaming away from personal status.
+- Personal orgs are single-member and fixed: no invitations, role changes, removal, leaving or renaming.
 
 ## Invitations
 
 A link with a single-use token, valid 7 days; the hub sends no mail. Inviting as `admin` or `owner`
-requires being owner. At accept time the creator must still be a member and still hold `member:invite`
+requires being owner (or holding `member:set-role`). At accept time the creator must still be a member and still hold `member:invite`
 (plus `member:set-role` for admin/owner invites); otherwise the invite is invalid and must be reissued.
 
 ## Teams
@@ -92,7 +93,8 @@ member.
 ## Limits
 
 Fields: vCPU, RAM (MB), disk (GB), VM count; `null` is unlimited. Set per org by platform admins, per team
-and per member by org admins (`limit:set`). They are configuration only and not enforced yet.
+and per member by org admins (`limit:set`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
+team or member limit (both return `400` "limit exceeds org limit"). Limits are configuration only and not enforced yet.
 
 ## Platform admins
 
