@@ -12,10 +12,9 @@ import (
 	"strings"
 )
 
-// InitOptions are the node.json fields the installer sets; zero values leave a field as it is.
 type InitOptions struct {
-	Path, HubURL, Credential, Name, Provider, UnderlayEndpoint string
-	UnderlayMTU, MemoryMB                                      int
+	Path, HubURL, NodeID, Credential string
+	MemoryMB                         int
 }
 
 // InitConfig creates node.json or updates only the given fields, keeping every other key (paths, provider sections) as written.
@@ -24,8 +23,8 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	if err != nil {
 		return err
 	}
-	if o.Credential == "" || o.Name == "" || o.Provider == "" {
-		return errors.New("credential, name and provider are required")
+	if o.Credential == "" || o.NodeID == "" {
+		return errors.New("node id and credential are required")
 	}
 	doc := map[string]json.RawMessage{}
 	b, err := os.ReadFile(o.Path)
@@ -42,19 +41,9 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 		return err
 	}
 	for _, set := range []func() error{
-		func() error { return setJSON(doc, "nodeId", o.Name) },
-		func() error { return setJSON(doc, "provider", o.Provider) },
+		func() error { return setJSON(doc, "nodeId", o.NodeID) },
+		func() error { return setJSON(doc, "provider", "firecracker") },
 		func() error { return setNested(doc, "hub", map[string]any{"url": connect, "credential": o.Credential}) },
-		func() error {
-			u := map[string]any{}
-			if o.UnderlayEndpoint != "" {
-				u["endpoint"] = o.UnderlayEndpoint
-			}
-			if o.UnderlayMTU != 0 {
-				u["mtu"] = o.UnderlayMTU
-			}
-			return setNested(doc, "underlay", u)
-		},
 		func() error {
 			if o.MemoryMB == 0 {
 				return nil
@@ -117,15 +106,15 @@ func setNested(doc map[string]json.RawMessage, key string, values map[string]any
 	return setJSON(doc, key, obj)
 }
 
-// ReadCredential reads the hub credential from r (the installer pipes it in so it never appears on a command line).
-func ReadCredential(r io.Reader) (string, error) {
+// ReadSecret reads one secret from r (the installer pipes the enrollment token in so it never appears on a command line).
+func ReadSecret(r io.Reader) (string, error) {
 	b, err := io.ReadAll(io.LimitReader(r, 4096))
 	if err != nil {
 		return "", err
 	}
 	t := strings.TrimSpace(string(b))
 	if t == "" {
-		return "", errors.New("no credential on stdin")
+		return "", errors.New("nothing on stdin")
 	}
 	return t, nil
 }

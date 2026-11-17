@@ -13,4 +13,4 @@ func newProvider(cfg node.Config) (node.Provider, error) {
 	return nil, fmt.Errorf("unknown provider %q for this OS", cfg.Provider)
 }
 
-func dataDir(home string) string { return filepath.Join(home, ".vm-manager") }
+func dataDir(home string) string { return filepath.Join(home, ".observatory-node") }

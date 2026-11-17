@@ -16,4 +16,4 @@ func newProvider(cfg node.Config) (node.Provider, error) {
 	}
 }
 
-func dataDir(string) string { return "/var/lib/vm-manager" }
+func dataDir(string) string { return "/var/lib/observatory-node" }

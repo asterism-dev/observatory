@@ -23,8 +23,8 @@ func readJSON(t *testing.T, path string) map[string]any {
 
 func TestInitConfigCreates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "etc", "node.json")
-	o := InitOptions{Path: path, HubURL: "http://h:8080", Credential: "secret-token", Name: "n1", Provider: "firecracker", MemoryMB: 1500}
-	if err := InitConfig(o, "/var/lib/vm-manager/vms", "/var/lib/vm-manager/images"); err != nil {
+	o := InitOptions{Path: path, HubURL: "http://h:8080", Credential: "secret-token", NodeID: "n1", MemoryMB: 1500}
+	if err := InitConfig(o, "/var/lib/observatory-node/vms", "/var/lib/observatory-node/images"); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
@@ -34,7 +34,7 @@ func TestInitConfigCreates(t *testing.T) {
 	hub := m["hub"].(map[string]any)
 	paths := m["paths"].(map[string]any)
 	if m["nodeId"] != "n1" || m["provider"] != "firecracker" || hub["url"] != "ws://h:8080/api/nodes/connect" || hub["credential"] != "secret-token" ||
-		paths["vms"] != "/var/lib/vm-manager/vms" || paths["images"] != "/var/lib/vm-manager/images" ||
+		paths["vms"] != "/var/lib/observatory-node/vms" || paths["images"] != "/var/lib/observatory-node/images" ||
 		m["capacity"].(map[string]any)["memoryMB"] != float64(1500) {
 		t.Fatalf("config = %v", m)
 	}
@@ -50,7 +50,7 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	o := InitOptions{Path: path, HubURL: "https://hub.example:8443", Credential: "new", Name: "n1", Provider: "vz", UnderlayMTU: 1200}
+	o := InitOptions{Path: path, HubURL: "https://hub.example:8443", Credential: "new", NodeID: "n1"}
 	if err := InitConfig(o, "/x/vms", "/x/images"); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 	if c := m["capacity"].(map[string]any); c["cpus"] != float64(3) || c["memoryMB"] != float64(999) {
 		t.Fatalf("capacity changed: %v", c)
 	}
-	if m["vz"].(map[string]any)["imageURL"] != "http://img" || m["custom"] == nil || m["underlay"].(map[string]any)["mtu"] != float64(1200) {
+	if m["vz"].(map[string]any)["imageURL"] != "http://img" || m["custom"] == nil {
 		t.Fatalf("other keys lost: %v", m)
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
@@ -75,19 +75,48 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 
 func TestInitConfigRejectsBadHub(t *testing.T) {
 	for _, hub := range []string{"ftp://x:1", "http://x", "x:8080", ""} {
-		o := InitOptions{Path: filepath.Join(t.TempDir(), "n.json"), HubURL: hub, Credential: "t", Name: "n", Provider: "vz"}
+		o := InitOptions{Path: filepath.Join(t.TempDir(), "n.json"), HubURL: hub, Credential: "t", NodeID: "n"}
 		if err := InitConfig(o, "a", "b"); err == nil {
 			t.Errorf("%q accepted", hub)
 		}
 	}
 }
 
-func TestInitCredentialFromStdin(t *testing.T) {
-	cred, err := ReadCredential(strings.NewReader("secret-token\n"))
+func TestReadSecret(t *testing.T) {
+	cred, err := ReadSecret(strings.NewReader("secret-token\n"))
 	if err != nil || cred != "secret-token" {
 		t.Fatalf("got %q, %v", cred, err)
 	}
-	if _, err := ReadCredential(strings.NewReader("")); err == nil {
+	if _, err := ReadSecret(strings.NewReader("")); err == nil {
 		t.Fatal("empty stdin accepted")
+	}
+}
+
+func TestInitConfigKeepsPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.json")
+	first := InitOptions{Path: path, HubURL: "http://h:1", NodeID: "n1", Credential: "c1"}
+	if err := InitConfig(first, "/a/vms", "/a/images"); err != nil {
+		t.Fatal(err)
+	}
+	m := readJSON(t, path)
+	m["firecracker"] = map[string]any{"kernel": "/k"}
+	b, _ := json.Marshal(m)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := InitOptions{Path: path, HubURL: "https://h2:2", NodeID: "n2", Credential: "c2"}
+	if err := InitConfig(second, "/b/vms", "/b/images"); err != nil {
+		t.Fatal(err)
+	}
+	m = readJSON(t, path)
+	hub := m["hub"].(map[string]any)
+	if m["nodeId"] != "n2" || hub["url"] != "wss://h2:2/api/nodes/connect" || hub["credential"] != "c2" {
+		t.Fatalf("hub not replaced: %v", m)
+	}
+	if m["paths"].(map[string]any)["vms"] != "/a/vms" || m["firecracker"].(map[string]any)["kernel"] != "/k" {
+		t.Fatalf("sections lost: %v", m)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o", st.Mode().Perm())
 	}
 }
