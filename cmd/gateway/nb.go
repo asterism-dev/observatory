@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -86,102 +87,45 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		return uuid, err
 	}
 
+	tx := func(cmds [][]string) error {
+		args := []string{"ovn-nbctl"}
+		for i, c := range cmds {
+			if i > 0 {
+				args = append(args, "--")
+			}
+			args = append(args, c...)
+		}
+		if _, err := run(args...); err != nil {
+			return fmt.Errorf("ovn-nbctl transaction: %w", err)
+		}
+		return nil
+	}
+
 	pgs, err := names("port_group")
 	if err != nil {
 		return err
 	}
 
-	m := "--may-exist"
-	cmds := [][]string{
-		{m, "lr-add", "lr-gw"},
-		{m, "ls-add", "ls-transit"},
-		{m, "lrp-add", "lr-gw", "lrp-transit", "02:00:00:c7:00:01", "10.199.0.1/30"},
-		{m, "lsp-add", "ls-transit", "transit-lr"},
-		{"lsp-set-type", "transit-lr", "router"},
-		{"lsp-set-addresses", "transit-lr", "router"},
-		{"lsp-set-options", "transit-lr", "router-port=lrp-transit"},
-		{m, "lsp-add", "ls-transit", "gw0"},
-		{"lsp-set-addresses", "gw0", gw0MAC + " " + gw0IP},
-		{"lsp-set-options", "gw0", "requested-chassis=hub-gw"},
-		{"lrp-set-gateway-chassis", "lrp-transit", "hub-gw", "1"},
-		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
-	}
+	// Wanted names come from the state alone, so a skipped org keeps its objects.
 	wantLS := map[string]bool{"ls-transit": true}
 	wantLSP := map[string]bool{"gw0": true}
 	wantLRP := map[string]bool{"lrp-transit": true}
 	wantPG := map[string]bool{}
 	wantTag := map[string]bool{}
-	addPort := func(sw, dhcp string, p proto.GatewayPort) {
-		wantLSP[p.Name] = true
-		addr := p.MAC + " " + p.IP
-		cmds = append(cmds,
-			[]string{m, "lsp-add", sw, p.Name},
-			[]string{"lsp-set-addresses", p.Name, addr},
-			[]string{"lsp-set-port-security", p.Name, addr},
-			[]string{"lsp-set-dhcpv4-options", p.Name, dhcp},
-			[]string{"lsp-set-options", p.Name, "requested-chassis=" + p.Chassis})
-	}
 	for _, o := range s.Orgs {
-		slice, err := parseSubnet(o.Slice)
-		if err != nil {
-			return fmt.Errorf("org %s: %w", o.ID, err)
-		}
-		router := netaddr.Router(slice).String()
-		mac := netaddr.MAC(netaddr.Router(slice))
-		sw, lrp, lsp, pg := "ls-mgmt-"+o.ID, "lrp-mgmt-"+o.ID, "mgmt-lr-"+o.ID, pgName(o.ID)
-		tag := "obs-org=" + o.ID
-		dhcp, err := dhcpRow(slice.String(), tag)
-		if err != nil {
-			return err
-		}
-		wantLS[sw], wantLRP[lrp], wantPG[pg], wantTag[tag] = true, true, true, true
-		cmds = append(cmds,
-			[]string{m, "ls-add", sw},
-			[]string{m, "lrp-add", "lr-gw", lrp, mac, fmt.Sprintf("%s/%d", router, slice.Bits())},
-			[]string{m, "lsp-add", sw, lsp},
-			[]string{"lsp-set-type", lsp, "router"},
-			[]string{"lsp-set-addresses", lsp, "router"},
-			[]string{"lsp-set-options", lsp, "router-port=" + lrp},
-			[]string{"dhcp-options-set-options", dhcp, "server_id=" + router, "server_mac=" + mac, "lease_time=3600",
-				"router=" + router, fmt.Sprintf("mtu=%d", s.GuestMTU), "classless_static_route={" + devicePool + "," + router + "}"})
-		members := []string{}
+		wantLS["ls-mgmt-"+o.ID], wantLRP["lrp-mgmt-"+o.ID], wantPG[pgName(o.ID)], wantTag["obs-org="+o.ID] = true, true, true, true
 		for _, p := range o.Ports {
-			addPort(sw, dhcp, p)
-			members = append(members, p.Name)
+			wantLSP[p.Name] = true
 		}
-		if !pgs[pg] {
-			cmds = append(cmds, []string{"pg-add", pg})
-		}
-		if len(members) > 0 {
-			cmds = append(cmds, append([]string{"pg-set-ports", pg}, members...))
-		} else {
-			cmds = append(cmds, []string{"clear", "port_group", pg, "ports"})
-		}
-		cmds = append(cmds, orgACLs(pg, router, o.Ports)...)
-
 		for _, n := range o.Networks {
-			subnet, err := parseSubnet(n.Subnet)
-			if err != nil {
-				return fmt.Errorf("network %s: %w", n.ID, err)
-			}
-			nsw, ntag := "ls-net-"+n.ID, "obs-network="+n.ID
-			ndhcp, err := dhcpRow(subnet.String(), ntag)
-			if err != nil {
-				return err
-			}
-			wantLS[nsw], wantTag[ntag] = true, true
-			server := netaddr.Router(subnet)
-			cmds = append(cmds,
-				[]string{m, "ls-add", nsw},
-				[]string{"dhcp-options-set-options", ndhcp, "server_id=" + server.String(), "server_mac=" + netaddr.MAC(server),
-					"lease_time=3600", fmt.Sprintf("mtu=%d", s.GuestMTU)})
+			wantLS["ls-net-"+n.ID], wantTag["obs-network="+n.ID] = true, true
 			for _, p := range n.Ports {
-				addPort(nsw, ndhcp, p)
+				wantLSP[p.Name] = true
 			}
 		}
 	}
 
-	// Stale objects are deleted in the same transaction, ports before their switches.
+	// Stale objects go first, ports before their switches, so a reused address never collides with a leftover port.
 	var stale [][]string
 	ports, err := read("--format=csv", "--data=bare", "--no-headings", "--columns=name,type", "list", "logical_switch_port")
 	if err != nil {
@@ -225,18 +169,110 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 			stale = append(stale, []string{"dhcp-options-del", uuid})
 		}
 	}
-	cmds = append(cmds, stale...)
-
-	// One transaction so a new port is never visible without port security, port group membership and the default-drop ACLs.
-	args := []string{"ovn-nbctl"}
-	for i, c := range cmds {
-		if i > 0 {
-			args = append(args, "--")
+	var errs []error
+	if len(stale) > 0 {
+		if err := tx(stale); err != nil {
+			errs = append(errs, fmt.Errorf("stale objects: %w", err))
 		}
-		args = append(args, c...)
 	}
-	if _, err := run(args...); err != nil {
-		return fmt.Errorf("ovn-nbctl transaction: %w", err)
+
+	m := "--may-exist"
+	hub := [][]string{
+		{m, "lr-add", "lr-gw"},
+		{m, "ls-add", "ls-transit"},
+		{m, "lrp-add", "lr-gw", "lrp-transit", "02:00:00:c7:00:01", "10.199.0.1/30"},
+		{m, "lsp-add", "ls-transit", "transit-lr"},
+		{"lsp-set-type", "transit-lr", "router"},
+		{"lsp-set-addresses", "transit-lr", "router"},
+		{"lsp-set-options", "transit-lr", "router-port=lrp-transit"},
+		{m, "lsp-add", "ls-transit", "gw0"},
+		{"lsp-set-addresses", "gw0", gw0MAC + " " + gw0IP},
+		{"lsp-set-options", "gw0", "requested-chassis=hub-gw"},
+		{"lrp-set-gateway-chassis", "lrp-transit", "hub-gw", "1"},
+		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
 	}
-	return nil
+	if err := tx(hub); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+
+	for _, o := range s.Orgs {
+		cmds, err := orgCmds(o, s.GuestMTU, pgs[pgName(o.ID)], dhcpRow)
+		if err == nil {
+			err = tx(cmds)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("org %s: %w", o.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// orgCmds is one org's transaction, so a new port is never visible without port security, port group membership and the default-drop ACLs.
+func orgCmds(o proto.GatewayOrg, mtu int, pgExists bool, dhcpRow func(cidr, tag string) (string, error)) ([][]string, error) {
+	slice, err := parseSubnet(o.Slice)
+	if err != nil {
+		return nil, err
+	}
+	m := "--may-exist"
+	var cmds [][]string
+	addPort := func(sw, dhcp string, p proto.GatewayPort) {
+		addr := p.MAC + " " + p.IP
+		cmds = append(cmds,
+			[]string{m, "lsp-add", sw, p.Name},
+			[]string{"lsp-set-addresses", p.Name, addr},
+			[]string{"lsp-set-port-security", p.Name, addr},
+			[]string{"lsp-set-dhcpv4-options", p.Name, dhcp},
+			[]string{"lsp-set-options", p.Name, "requested-chassis=" + p.Chassis})
+	}
+	router := netaddr.Router(slice).String()
+	mac := netaddr.MAC(netaddr.Router(slice))
+	sw, lrp, lsp, pg := "ls-mgmt-"+o.ID, "lrp-mgmt-"+o.ID, "mgmt-lr-"+o.ID, pgName(o.ID)
+	dhcp, err := dhcpRow(slice.String(), "obs-org="+o.ID)
+	if err != nil {
+		return nil, err
+	}
+	cmds = append(cmds,
+		[]string{m, "ls-add", sw},
+		[]string{m, "lrp-add", "lr-gw", lrp, mac, fmt.Sprintf("%s/%d", router, slice.Bits())},
+		[]string{m, "lsp-add", sw, lsp},
+		[]string{"lsp-set-type", lsp, "router"},
+		[]string{"lsp-set-addresses", lsp, "router"},
+		[]string{"lsp-set-options", lsp, "router-port=" + lrp},
+		[]string{"dhcp-options-set-options", dhcp, "server_id=" + router, "server_mac=" + mac, "lease_time=3600",
+			"router=" + router, fmt.Sprintf("mtu=%d", mtu), "classless_static_route={" + devicePool + "," + router + "}"})
+	members := []string{}
+	for _, p := range o.Ports {
+		addPort(sw, dhcp, p)
+		members = append(members, p.Name)
+	}
+	if !pgExists {
+		cmds = append(cmds, []string{"pg-add", pg})
+	}
+	if len(members) > 0 {
+		cmds = append(cmds, append([]string{"pg-set-ports", pg}, members...))
+	} else {
+		cmds = append(cmds, []string{"clear", "port_group", pg, "ports"})
+	}
+	cmds = append(cmds, orgACLs(pg, router, o.Ports)...)
+
+	for _, n := range o.Networks {
+		subnet, err := parseSubnet(n.Subnet)
+		if err != nil {
+			return nil, fmt.Errorf("network %s: %w", n.ID, err)
+		}
+		nsw := "ls-net-" + n.ID
+		ndhcp, err := dhcpRow(subnet.String(), "obs-network="+n.ID)
+		if err != nil {
+			return nil, err
+		}
+		server := netaddr.Router(subnet)
+		cmds = append(cmds,
+			[]string{m, "ls-add", nsw},
+			[]string{"dhcp-options-set-options", ndhcp, "server_id=" + server.String(), "server_mac=" + netaddr.MAC(server),
+				"lease_time=3600", fmt.Sprintf("mtu=%d", mtu)})
+		for _, p := range n.Ports {
+			addPort(nsw, ndhcp, p)
+		}
+	}
+	return cmds, nil
 }

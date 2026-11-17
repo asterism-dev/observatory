@@ -18,24 +18,43 @@ func (f *fakeRun) run(args ...string) (string, error) {
 	return f.out[c], nil
 }
 
-// transactions are the ovn-nbctl invocations that mutate; reconcileNB must issue exactly one.
+// transactions are the ovn-nbctl invocations that mutate, other than creating DHCP rows.
 func (f *fakeRun) transactions() []string {
 	var m []string
 	for _, c := range f.cmds {
-		if strings.Contains(c, " lr-add ") {
+		if !strings.HasPrefix(c, "ovn-nbctl --bare ") && !strings.HasPrefix(c, "ovn-nbctl --format=") && !strings.HasPrefix(c, "ovn-nbctl dhcp-options-create ") {
 			m = append(m, c)
 		}
 	}
 	return m
 }
 
+// tx returns the commands of all transactions.
 func (f *fakeRun) tx(t *testing.T) []string {
 	t.Helper()
-	tx := f.transactions()
-	if len(tx) != 1 {
-		t.Fatalf("want one transaction, got %d:\n%s", len(tx), strings.Join(f.cmds, "\n"))
+	var cmds []string
+	for _, tx := range f.transactions() {
+		cmds = append(cmds, strings.Split(strings.TrimPrefix(tx, "ovn-nbctl "), " -- ")...)
 	}
-	return strings.Split(strings.TrimPrefix(tx[0], "ovn-nbctl "), " -- ")
+	if len(cmds) == 0 {
+		t.Fatalf("no transaction:\n%s", strings.Join(f.cmds, "\n"))
+	}
+	return cmds
+}
+
+// txWith returns the one transaction containing cmd.
+func (f *fakeRun) txWith(t *testing.T, cmd string) []string {
+	t.Helper()
+	var found [][]string
+	for _, tx := range f.transactions() {
+		if c := strings.Split(strings.TrimPrefix(tx, "ovn-nbctl "), " -- "); has(c, cmd) {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d transactions with %q:\n%s", len(found), cmd, strings.Join(f.cmds, "\n"))
+	}
+	return found[0]
 }
 
 const (
@@ -214,13 +233,56 @@ func TestReconcileNBCreatesMissingDHCPOptions(t *testing.T) {
 	}
 }
 
-func TestReconcileNBRejectsBadSlice(t *testing.T) {
-	f := &fakeRun{out: map[string]string{}}
-	st := proto.GatewayState{GuestMTU: 1300, Orgs: []proto.GatewayOrg{{ID: orgA, Slice: "nope"}}}
-	if err := reconcileNB(f.run, st); err == nil {
-		t.Fatal("bad slice accepted")
+func TestReconcileNBSkipsBadOrg(t *testing.T) {
+	st, out := twoOrgs()
+	st.Orgs[0].Slice = "nope"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err == nil || !strings.Contains(err.Error(), orgA) {
+		t.Fatalf("err %v", err)
 	}
-	if len(f.transactions()) != 0 {
-		t.Fatal("transaction run despite bad state")
+	tx := f.tx(t)
+	if !has(tx, "--may-exist ls-add ls-mgmt-"+orgB) || !has(tx, "--may-exist lr-add lr-gw") {
+		t.Fatalf("good org not applied: %v", tx)
 	}
+	for _, c := range tx {
+		if strings.Contains(c, "ls-mgmt-"+orgA) || strings.Contains(c, "vma-mgmt") || strings.HasPrefix(c, "ls-del") || strings.HasPrefix(c, "lsp-del") {
+			t.Errorf("bad org touched: %s", c)
+		}
+	}
+}
+
+func TestReconcileNBOrgTransactions(t *testing.T) {
+	st, out := twoOrgs()
+	out["ovn-nbctl --format=csv --data=bare --no-headings --columns=name,type list logical_switch_port"] = "old-mgmt,"
+	var cmds []string
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		cmds = append(cmds, c)
+		if strings.Contains(c, " ls-add ls-mgmt-"+orgA) {
+			return "", errTest
+		}
+		return out[c], nil
+	}
+	if err := reconcileNB(run, st); err == nil || !strings.Contains(err.Error(), orgA) {
+		t.Fatalf("err %v", err)
+	}
+	f := &fakeRun{cmds: cmds}
+	b := f.txWith(t, "--may-exist ls-add ls-mgmt-"+orgB)
+	for _, want := range []string{"--may-exist lsp-add ls-mgmt-" + orgB + " vmb-mgmt", "pg-set-ports pg_bbbbbbbb_0000_0000_0000_00000000000b vmb-mgmt",
+		"acl-add pg_bbbbbbbb_0000_0000_0000_00000000000b from-lport 1001 inport == @pg_bbbbbbbb_0000_0000_0000_00000000000b && ip4 drop"} {
+		if !has(b, want) {
+			t.Errorf("org B transaction missing %q", want)
+		}
+	}
+	for _, c := range b {
+		if strings.Contains(c, orgA) || strings.Contains(c, "vma") || strings.Contains(c, " lr-add ") || strings.HasPrefix(c, "lsp-del ") {
+			t.Errorf("org B transaction carries %s", c)
+		}
+	}
+	a := f.txWith(t, "--may-exist ls-add ls-mgmt-"+orgA)
+	if !has(a, "lsp-set-port-security vma-mgmt 02:0a:40:00:00:0a 10.64.0.10") || !has(a, "acl-del pg_aaaaaaaa_0000_0000_0000_00000000000a") {
+		t.Errorf("org A port without its ACLs: %v", a)
+	}
+	f.txWith(t, "--may-exist lr-add lr-gw")
+	f.txWith(t, "lsp-del old-mgmt")
 }
