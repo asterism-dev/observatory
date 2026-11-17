@@ -67,6 +67,15 @@ func (f *Fleet) noteDiskErrors(c *conn, st proto.VMStatus) {
 	}
 }
 
+// dropDiskErrors forgets the disk errors of c's VMs that are not in keep; f.mu must be held.
+func (f *Fleet) dropDiskErrors(c *conn, keep map[string]bool) {
+	for id := range c.vms {
+		if u, err := uuid.Parse(id); err == nil && !keep[id] {
+			delete(f.diskErrs, u)
+		}
+	}
+}
+
 func (f *Fleet) Online(node uuid.UUID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -88,6 +97,9 @@ func (f *Fleet) Disconnect(node uuid.UUID) {
 	f.mu.Lock()
 	c := f.conns[node]
 	delete(f.conns, node)
+	if c != nil {
+		f.dropDiskErrors(c, nil)
+	}
 	f.mu.Unlock()
 	if c != nil {
 		c.sess.Close()
@@ -110,6 +122,7 @@ func (f *Fleet) detach(c *conn) {
 	defer f.mu.Unlock()
 	if f.conns[c.node] == c {
 		delete(f.conns, c.node)
+		f.dropDiskErrors(c, nil)
 	}
 }
 

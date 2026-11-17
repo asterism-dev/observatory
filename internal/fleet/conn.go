@@ -213,6 +213,7 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			vms[d.Spec.ID] = true
 		}
 		f.mu.Lock()
+		f.dropDiskErrors(c, vms)
 		c.vms = vms
 		f.mu.Unlock()
 		// Register statuses arrive before the node's VMs are known; any later status is newer.

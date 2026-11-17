@@ -964,3 +964,30 @@ func TestDiskErrorsFromStatus(t *testing.T) {
 	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Disks: []proto.Disk{{Name: id}}}})
 	waitFor(t, func() bool { return len(e.f.DiskErrors(v.ID)) == 0 })
 }
+
+func TestDiskErrorsDroppedWithVMOrNode(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
+	kept := e.vm(e.org.ID, n.ID, "kept", &e.owner, nil)
+	node := e.connect(cred)
+	node.desired()
+	for _, vm := range []store.VM{gone, kept} {
+		node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: vm.ID.String(), State: proto.StateRunning,
+			Disks: []proto.Disk{{Name: "d", Error: "NBD connection lost"}}}})
+	}
+	waitFor(t, func() bool { return len(e.f.DiskErrors(gone.ID)) == 1 && len(e.f.DiskErrors(kept.ID)) == 1 })
+	if err := e.s.DeleteVM(ctx, e.org.ID, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	node.desired()
+	if len(e.f.DiskErrors(gone.ID)) != 0 || len(e.f.DiskErrors(kept.ID)) != 1 {
+		t.Fatalf("after delete: gone %v kept %v", e.f.DiskErrors(gone.ID), e.f.DiskErrors(kept.ID))
+	}
+	e.f.Disconnect(n.ID)
+	if got := e.f.DiskErrors(kept.ID); len(got) != 0 {
+		t.Fatalf("after disconnect: %v", got)
+	}
+}
