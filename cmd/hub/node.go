@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ func nodeAssets(mux *http.ServeMux, binaryPath string) {
 	sum, err := fileSHA256(binaryPath)
 	if err != nil {
 		slog.Warn("node binary unavailable, /node downloads disabled", "path", binaryPath, "err", err)
+		mux.HandleFunc("GET /node/", http.NotFound)
 		return
 	}
 	mux.HandleFunc("GET /node/observatory-node", func(w http.ResponseWriter, r *http.Request) {
@@ -38,10 +40,14 @@ func nodeAssets(mux *http.ServeMux, binaryPath string) {
 }
 
 func fileSHA256(path string) (string, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

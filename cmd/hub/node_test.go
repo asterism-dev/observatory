@@ -36,6 +36,7 @@ func TestNodeAssets(t *testing.T) {
 	}
 
 	missing := http.NewServeMux()
+	missing.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
 	nodeAssets(missing, filepath.Join(t.TempDir(), "absent"))
 	if get(missing, "/node/observatory-node").Code != 404 || get(missing, "/node/SHA256SUMS").Code != 404 || get(missing, "/node/install.sh").Code != 200 {
 		t.Fatal("missing binary handling")
