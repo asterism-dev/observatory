@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -268,5 +269,78 @@ func TestOrgKeyNotPlain(t *testing.T) {
 	plain, err := seal.Open(testKey(1), nonce, wrapped, org.ID[:])
 	if err != nil || len(plain) != 32 || bytes.Equal(plain, wrapped[:32]) {
 		t.Fatalf("unwrap: %v", err)
+	}
+}
+
+func TestResolveEnv(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, team := newEnvStore(t)
+	uid := u.User.ID
+	other := login(t, s, "env-other").User.ID
+	for _, c := range []struct {
+		kind  store.EnvKind
+		scope store.EnvScope
+		owner *uuid.UUID
+		name  string
+		value string
+	}{
+		{store.EnvPlain, store.EnvScopeOrg, nil, "ORG", "o"},
+		{store.EnvSecret, store.EnvScopeOrg, nil, "SHARED_ORG", "org"},
+		{store.EnvPlain, store.EnvScopeTeam, &team.ID, "TEAM", "t"},
+		{store.EnvSecret, store.EnvScopeTeam, &team.ID, "SHARED_ORG", "team"},
+		{store.EnvSecret, store.EnvScopeUser, &uid, "MINE", "m"},
+		{store.EnvPlain, store.EnvScopeUser, &uid, "SHARED_ORG", "user"},
+		{store.EnvSecret, store.EnvScopeUser, &other, "THEIRS", "x"},
+	} {
+		mustCreateEnv(t, s, envVar(org, uid, c.kind, c.scope, c.owner, c.name), c.value)
+	}
+	policy, err := s.PolicySnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := authz.New(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq := func(got, want map[string]string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("got %v want %v", got, want)
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Fatalf("got %v want %v", got, want)
+			}
+		}
+	}
+
+	got, err := s.ResolveEnv(ctx, e, org.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(got, map[string]string{"ORG": "o", "SHARED_ORG": "user", "MINE": "m"})
+
+	got, err = s.ResolveEnv(ctx, e, org.ID, authz.TeamSubject(team.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(got, map[string]string{"ORG": "o", "SHARED_ORG": "team", "TEAM": "t"})
+
+	denied := policy
+	denied.Roles = []authz.CustomRole{{ID: uuid.New(), OrgID: org.ID, Name: "no-org-env",
+		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjEnv, Action: "env:use"}}}}
+	denied.Bindings = []authz.Binding{{OrgID: org.ID, Subject: authz.UserSubject(uid), RoleID: denied.Roles[0].ID}}
+	de, err := authz.New(denied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ResolveEnv(ctx, de, org.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(got, map[string]string{"MINE": "m", "SHARED_ORG": "user"})
+
+	if _, err := s.ResolveEnv(ctx, e, org.ID, "vm:"+uuid.NewString()); err == nil {
+		t.Fatal("vm owner accepted")
 	}
 }

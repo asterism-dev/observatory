@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
@@ -200,4 +203,62 @@ func envWriteResult(rows int64, err error) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ResolveEnv returns the decrypted variables owner (a user or team subject) may use; the narrowest scope wins per name.
+func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID, owner string) (map[string]string, error) {
+	scope, idStr, ok := strings.Cut(owner, ":")
+	id, idErr := uuid.Parse(idStr)
+	if !ok || idErr != nil || (scope != "user" && scope != "team") {
+		return nil, fmt.Errorf("unsupported env owner %q", owner)
+	}
+	ownScope, ownObj := EnvScopeUser, authz.UserEnvObject(id)
+	if scope == "team" {
+		ownScope, ownObj = EnvScopeTeam, authz.TeamEnvObject(id)
+	}
+	orgOK := e.Allowed(owner, org, authz.ObjEnv, "env:use")
+	ownOK := e.Allowed(owner, org, ownObj, "env:use")
+	if !orgOK && !ownOK {
+		return map[string]string{}, nil
+	}
+	rows, err := s.q.Query(ctx, `
+		SELECT id, scope, name, nonce, ciphertext FROM env_vars
+		WHERE org_id = $1 AND (scope = 'org' OR (scope = $2 AND coalesce(team_id, user_id) = $3))`, org, ownScope, id)
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		id        uuid.UUID
+		scope     EnvScope
+		name      string
+		nonce, ct []byte
+	}
+	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (x row, err error) {
+		err = r.Scan(&x.id, &x.scope, &x.name, &x.nonce, &x.ct)
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.orgKey(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, pass := range []EnvScope{EnvScopeOrg, ownScope} {
+		if (pass == EnvScopeOrg && !orgOK) || (pass == ownScope && !ownOK) {
+			continue
+		}
+		for _, r := range list {
+			if r.scope != pass {
+				continue
+			}
+			plain, err := seal.Open(key, r.nonce, r.ct, envAAD(org, r.id))
+			if err != nil {
+				return nil, fmt.Errorf("decrypt env var %s: %w", r.id, err)
+			}
+			out[r.name] = string(plain)
+		}
+	}
+	return out, nil
 }
