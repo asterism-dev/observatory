@@ -49,7 +49,7 @@ only when the node will not come back soon or the VM no longer matters. Deleting
 
 `cmd/storage` runs one per hub. It keeps one file per disk, `<disk id>.img`, in `/disks`, polls the hub every 2 s
 (`GET /api/storage/state`) and reports after each poll (`POST /api/storage/status`). Each poll runs in this order:
-apply the state (create, copy, grow, delete files; disk files are built in `.partial/` and renamed), start or stop the
+apply the state (create, grow, delete files, start copies; disk files are built in `.partial/` and renamed), start or stop the
 NBD exports, scan the directory, report. A deletion is therefore always reported after the file is gone, so the hub
 never purges a disk whose file is still there.
 
@@ -73,8 +73,9 @@ Disk files live in the `disks` volume:
   Copies are then reflinks: they take no time of their own (a 10 GB disk with 1 GB of data was `ready` 1.5 s
   after the request, i.e. on the next poll) and share blocks with their source until either is written.
   On other filesystems (ext4) copies fall back to a sparse copy that reads the whole source; a 10 GB disk with 1 GB
-  of data took about 8 s in testing. A copy runs inside the storage server's poll, so
-  other changes (new exports, deletions) wait until it is done.
+  of data took about 8 s in testing, and a multi-TB disk takes hours. Copies run in the background, so exports,
+  other disks and status reports carry on meanwhile; the copy stays `creating` until it is done. Use XFS or btrfs
+  in production.
 - **Used space:** the "used" figure per disk is the file's allocated bytes. Blocks shared between reflinked copies are
   counted for each copy, so the sum over all disks can exceed what the volume really uses; check `df` on the volume
   for the truth.

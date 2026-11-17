@@ -2,13 +2,16 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -20,6 +23,12 @@ const (
 )
 
 var clone = cloneFile
+
+// Copies run outside Apply because a sparse copy of a large disk takes hours.
+var (
+	copiesMu sync.Mutex
+	copies   = map[string]context.CancelFunc{} // disk file path -> cancel of its running copy
+)
 
 type Dir struct{ Path string }
 
@@ -34,9 +43,14 @@ func (d Dir) Apply(disks []proto.StorageDisk, deleted []string) error {
 			errs = append(errs, fmt.Errorf("delete %q: not a plain file name", id))
 			continue
 		}
+		copiesMu.Lock()
+		if cancel, ok := copies[d.File(id)]; ok {
+			cancel()
+		}
 		if err := os.Remove(d.File(id)); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, fmt.Errorf("delete %s: %w", id, err))
 		}
+		copiesMu.Unlock()
 	}
 	for _, disk := range disks {
 		if !plainName(disk.ID) || (disk.CopyFrom != "" && !plainName(disk.CopyFrom)) {
@@ -71,18 +85,38 @@ func (d Dir) ensure(disk proto.StorageDisk) error {
 	if !disk.Create {
 		return nil // the hub shows the disk as missing
 	}
-
-	var src *os.File
-	if disk.CopyFrom != "" {
-		var err error
-		if src, err = os.Open(d.File(disk.CopyFrom)); os.IsNotExist(err) {
-			return nil // source not there yet, retried on the next Apply
-		} else if err != nil {
-			return err
-		}
-		defer src.Close()
+	if disk.CopyFrom == "" {
+		return d.build(context.Background(), path, nil, disk.SizeBytes)
 	}
 
+	copiesMu.Lock()
+	defer copiesMu.Unlock()
+	if _, running := copies[path]; running {
+		return nil
+	}
+	src, err := os.Open(d.File(disk.CopyFrom))
+	if os.IsNotExist(err) {
+		return nil // source not there yet, retried on the next Apply
+	} else if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	copies[path] = cancel
+	go func() {
+		defer src.Close()
+		err := d.build(ctx, path, src, disk.SizeBytes)
+		copiesMu.Lock()
+		delete(copies, path)
+		copiesMu.Unlock()
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("disks: disk %s: copy: %v", disk.ID, err)
+		}
+	}()
+	return nil
+}
+
+// build writes a sparse file of size at path, with src's data if src is set; a cancelled ctx leaves no file.
+func (d Dir) build(ctx context.Context, path string, src *os.File, size int64) error {
 	// nbdkit exports every file in the dir, so build elsewhere and rename.
 	partial := filepath.Join(d.Path, partialDir, filepath.Base(path))
 	dst, err := os.OpenFile(partial, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
@@ -91,11 +125,11 @@ func (d Dir) ensure(disk proto.StorageDisk) error {
 	}
 	if src != nil {
 		if clone(dst, src) != nil {
-			err = copySparse(dst, src, disk.SizeBytes)
+			err = copySparse(ctx, dst, src, size)
 		}
 	}
 	if err == nil {
-		err = dst.Truncate(disk.SizeBytes)
+		err = dst.Truncate(size)
 	}
 	// Without it a crash after the rename could leave a file with the copied data missing.
 	if err == nil {
@@ -104,9 +138,15 @@ func (d Dir) ensure(disk proto.StorageDisk) error {
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
+	// Under copiesMu, so a delete either cancels before the rename or removes the renamed file.
+	copiesMu.Lock()
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err == nil {
 		err = os.Rename(partial, path)
 	}
+	copiesMu.Unlock()
 	if err != nil {
 		os.Remove(partial)
 		return err
@@ -125,9 +165,12 @@ func syncDir(path string) error {
 }
 
 // copySparse is the fallback for filesystems without reflink.
-func copySparse(dst, src *os.File, limit int64) error {
+func copySparse(ctx context.Context, dst, src *os.File, limit int64) error {
 	buf, zero := make([]byte, chunkSize), make([]byte, chunkSize)
 	for off := int64(0); off < limit; off += chunkSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		want := buf[:min(int64(chunkSize), limit-off)]
 		n, err := src.ReadAt(want, off)
 		if err != nil && err != io.EOF {

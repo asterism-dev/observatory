@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -71,6 +73,7 @@ func TestApplyCopies(t *testing.T) {
 	f.WriteAt([]byte("middle"), 512<<20)
 	f.Close()
 	apply(t, d, []proto.StorageDisk{{ID: "a", SizeBytes: 1 << 30, Create: true}, {ID: "b", SizeBytes: 1 << 30, CopyFrom: "a", Create: true}}, nil)
+	waitCopies(t)
 	p := filepath.Join(d.Path, "b.img")
 	f, _ = os.Open(p)
 	defer f.Close()
@@ -92,6 +95,7 @@ func TestApplyCopyMissingSourceSkips(t *testing.T) {
 	}
 	apply(t, d, []proto.StorageDisk{{ID: "a", SizeBytes: 1 << 20, Create: true}}, nil)
 	apply(t, d, []proto.StorageDisk{b}, nil)
+	waitCopies(t)
 	if _, err := os.Stat(filepath.Join(d.Path, "b.img")); err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +196,7 @@ func TestCopyFallsBackWhenCloneUnsupported(t *testing.T) {
 	f.WriteAt([]byte("data"), 2<<20)
 	f.Close()
 	apply(t, d, []proto.StorageDisk{{ID: "b", SizeBytes: 3 << 20, CopyFrom: "a", Create: true}}, nil)
+	waitCopies(t)
 	got, err := os.ReadFile(filepath.Join(d.Path, "b.img"))
 	want, _ := os.ReadFile(src)
 	if err != nil || !bytes.Equal(got, want) {
@@ -211,7 +216,64 @@ func TestCopyUsesClone(t *testing.T) {
 	d := Dir{t.TempDir()}
 	os.WriteFile(filepath.Join(d.Path, "a.img"), []byte("data"), 0o644)
 	apply(t, d, []proto.StorageDisk{{ID: "b", SizeBytes: 1 << 20, CopyFrom: "a", Create: true}}, nil)
+	waitCopies(t)
 	if size, _ := stat(t, filepath.Join(d.Path, "b.img")); calls != 1 || size != 1<<20 {
 		t.Fatalf("calls %d size %d", calls, size)
+	}
+}
+
+func waitCopies(t *testing.T) {
+	t.Helper()
+	for range 200 {
+		copiesMu.Lock()
+		n := len(copies)
+		copiesMu.Unlock()
+		if n == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("copies still running")
+}
+
+// A sparse copy of a large disk takes hours; the poll loop must keep exporting and reporting meanwhile.
+func TestApplyDoesNotWaitForCopies(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int32
+	withClone(t, func(dst, src *os.File) error { calls.Add(1); <-release; return nil })
+	d := Dir{t.TempDir()}
+	os.WriteFile(filepath.Join(d.Path, "a.img"), []byte("data"), 0o644)
+	b := []proto.StorageDisk{{ID: "b", SizeBytes: 1 << 20, CopyFrom: "a", Create: true}}
+	done := make(chan struct{})
+	go func() { apply(t, d, b, nil); apply(t, d, b, nil); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("Apply waited for the copy")
+	}
+	if _, err := os.Stat(filepath.Join(d.Path, "b.img")); !os.IsNotExist(err) {
+		t.Fatalf("b.img before the copy finished: %v", err)
+	}
+	close(release)
+	waitCopies(t)
+	if size, _ := stat(t, filepath.Join(d.Path, "b.img")); calls.Load() != 1 || size != 1<<20 {
+		t.Fatalf("calls %d size %d", calls.Load(), size)
+	}
+}
+
+func TestDeleteCancelsRunningCopy(t *testing.T) {
+	release := make(chan struct{})
+	withClone(t, func(dst, src *os.File) error { <-release; return nil })
+	d := Dir{t.TempDir()}
+	os.WriteFile(filepath.Join(d.Path, "a.img"), []byte("data"), 0o644)
+	apply(t, d, []proto.StorageDisk{{ID: "b", SizeBytes: 1 << 20, CopyFrom: "a", Create: true}}, nil)
+	apply(t, d, nil, []string{"b"})
+	close(release)
+	waitCopies(t)
+	for _, p := range []string{filepath.Join(d.Path, "b.img"), filepath.Join(d.Path, partialDir, "b.img")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s after delete: %v", p, err)
+		}
 	}
 }
