@@ -79,6 +79,18 @@ func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
 		return p, err
 	}
 
+	rows, err = q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM disks WHERE deleted_at IS NULL`)
+	if err != nil {
+		return p, err
+	}
+	p.Disks, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (d authz.DiskRef, err error) {
+		err = r.Scan(&d.OrgID, &d.ID, &d.UserID, &d.TeamID)
+		return
+	})
+	if err != nil {
+		return p, err
+	}
+
 	if p.Roles, err = readRoles(ctx, q, nil); err != nil {
 		return p, err
 	}
