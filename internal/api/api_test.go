@@ -11,22 +11,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
 type env struct {
 	t     *testing.T
+	pool  *pgxpool.Pool
 	store *store.Store
+	z     *authz.Service
 	h     http.Handler
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	s := store.New(dbtest.New(t))
+	pool := dbtest.New(t)
+	s := store.New(pool)
+	z, err := authz.NewService(context.Background(), s.PolicySnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
-	return &env{t: t, store: s, h: New(s, a)}
+	return &env{t: t, pool: pool, store: s, z: z, h: New(s, a, z)}
 }
 
 // user logs an identity in and returns the user and a fresh session token.
@@ -50,7 +60,11 @@ func (e *env) session(u store.User) string {
 }
 
 func (e *env) do(method, path, token string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, nil)
+	return e.send(method, path, token, "")
+}
+
+func (e *env) send(method, path, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	e.h.ServeHTTP(rec, req)
@@ -231,7 +245,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a))
+	mux.Handle("/api/", New(e.store, a, e.z))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

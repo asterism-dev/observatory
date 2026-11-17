@@ -39,6 +39,10 @@ make test
 
 Tests need the dev Postgres (`OBSERVATORY_TEST_DATABASE_URL`, set by `make test`).
 
+## Permissions
+
+[docs/permissions.md](docs/permissions.md) describes roles, rules, teams, limits and platform admins.
+
 ## Design
 
 [docs/superpowers/specs/2026-11-17-iam-foundation-design.md](docs/superpowers/specs/2026-11-17-iam-foundation-design.md)
