@@ -3,6 +3,7 @@ package authz
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -75,17 +76,59 @@ func TestEffectiveRulesIncludesParents(t *testing.T) {
 			Rules: []Rule{childRule, {Deny, ObjMembers, "member:read"}}},
 		{ID: foreign, OrgID: other, Rules: []Rule{{Allow, ObjSettings, "org:update"}}},
 	}})
-	got := e.EffectiveRules([]string{child.String(), foreign.String(), "bogus"}, org)
+	got, err := e.EffectiveRules([]string{child.String()}, org)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := append([]Rule{childRule, baseRule}, BuiltinRules("member")...)
-	for _, r := range want {
-		if !slices.Contains(got, r) {
-			t.Errorf("missing %v", r)
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v (no deny)", got, want)
+	}
+	if got, err := e.EffectiveRules([]string{"owner"}, org); err != nil || !slices.Equal(got, BuiltinRules("owner")) {
+		t.Errorf("owner: got %v, %v", got, err)
+	}
+	for _, key := range []string{"bogus", foreign.String(), strings.ToUpper(base.String()), uuid.NewString()} {
+		if _, err := e.EffectiveRules([]string{"member", key}, org); err == nil {
+			t.Errorf("%q: want error", key)
 		}
 	}
-	if len(got) != len(want) {
-		t.Errorf("got %v, want %v (no deny, no foreign-org role)", got, want)
+}
+
+func TestCanGrantRole(t *testing.T) {
+	org := uuid.New()
+	admin, member, adminRole := uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: org, UserID: admin, Role: "admin"},
+			{OrgID: org, UserID: member, Role: "member"},
+		},
+		Roles: []CustomRole{{ID: adminRole, OrgID: org, Parents: []string{"admin"},
+			Rules: []Rule{{Allow, ObjMembers, "member:set-role"}}}},
+	})
+	own := []Rule{{Allow, ObjMembers, "member:read"}}
+	tests := []struct {
+		name    string
+		actor   uuid.UUID
+		isAdmin bool
+		parents []string
+		want    error
+	}{
+		{"member, parent member", member, false, []string{"member"}, nil},
+		{"member, parent admin", member, false, []string{"admin"}, ErrEscalation},
+		{"admin, parent admin", admin, true, []string{"admin"}, nil},
+		{"admin, parent with member:set-role", admin, true, []string{adminRole.String()}, ErrEscalation},
+		{"admin, parent owner", admin, true, []string{"owner"}, ErrEscalation},
+		{"unknown parent", admin, true, []string{uuid.NewString()}, ErrInvalidPattern},
 	}
-	if got := e.EffectiveRules([]string{"owner"}, org); !slices.Equal(got, BuiltinRules("owner")) {
-		t.Errorf("owner: got %v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := e.CanGrantRole(UserSubject(tt.actor), org, tt.isAdmin, own, tt.parents)
+			if tt.want == nil && err != nil || tt.want != nil && !errors.Is(err, tt.want) {
+				t.Errorf("got %v, want %v", err, tt.want)
+			}
+		})
+	}
+	if err := e.CanHold(UserSubject(admin), org, []Rule{{Allow, ObjTeams, "nope:*"}}); !errors.Is(err, ErrInvalidPattern) {
+		t.Errorf("CanHold unknown action: got %v", err)
 	}
 }
