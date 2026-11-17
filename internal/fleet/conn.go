@@ -18,6 +18,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
+// desiredRetry is how long a node waits for another desired list after building one failed.
+var desiredRetry = 5 * time.Second
+
 type conn struct {
 	node, org uuid.UUID
 	sess      *yamux.Session
@@ -132,6 +135,7 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder) {
 		desired, err := f.desired(ctx, c.org, c.node)
 		if err != nil {
 			slog.Error("build desired list", "node", c.node, "err", err)
+			time.AfterFunc(desiredRetry, c.kick)
 			continue
 		}
 		seq++

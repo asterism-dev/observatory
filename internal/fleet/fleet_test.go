@@ -347,6 +347,31 @@ func TestDeletedVariableDropped(t *testing.T) {
 	}
 }
 
+func TestDesiredRetriedAfterBuildFailure(t *testing.T) {
+	old := *fleet.DesiredRetry
+	*fleet.DesiredRetry = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.DesiredRetry = old })
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	node := e.connect(cred)
+	first := node.desired()
+	// Sealed under another master key, the variable makes building the list fail until it is deleted.
+	bad, err := e.s.WithMasterKey(seal.Key{2}).CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeOrg, Name: "BAD", CreatedBy: e.owner, UpdatedBy: e.owner}, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	time.Sleep(100 * time.Millisecond)
+	if err := e.s.DeleteEnvVar(ctx, bad); err != nil {
+		t.Fatal(err)
+	}
+	if m := node.desired(); m.Seq <= first.Seq {
+		t.Fatalf("seq %d after %d", m.Seq, first.Seq)
+	}
+}
+
 func TestVMDeletedWhileOfflineAbsentOnReconnect(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
