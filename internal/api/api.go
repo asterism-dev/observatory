@@ -62,6 +62,11 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
 	mux.HandleFunc("GET /api/orgs/{org}/limits", h.getLimits)
 	mux.HandleFunc("PUT /api/orgs/{org}/limits/{scope}", h.setScopeLimits)
+	mux.HandleFunc("GET /api/orgs/{org}/env", h.listEnv)
+	mux.HandleFunc("POST /api/orgs/{org}/env", h.createEnv)
+	mux.HandleFunc("PATCH /api/orgs/{org}/env/{id}", h.updateEnv)
+	mux.HandleFunc("POST /api/orgs/{org}/env/{id}/move", h.moveEnv)
+	mux.HandleFunc("DELETE /api/orgs/{org}/env/{id}", h.deleteEnv)
 	return a.Require(mux)
 }
 
