@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,15 +31,16 @@ type VM struct {
 	Provisioned       bool
 	State             proto.VMState
 	Error, IP         string
+	MgmtIP            netip.Addr
 	CreatedBy         uuid.UUID
 	CreatedAt         time.Time
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.CreatedBy, &v.CreatedAt)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -120,10 +122,14 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 				return ErrLimitExceeded
 			}
 		}
+		mgmtIP, err := tx.nextMgmtIP(ctx, v.OrgID)
+		if err != nil {
+			return err
+		}
 		out, err = scanVM(tx.q.QueryRow(ctx, `
-			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING `+vmColumns,
-			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy))
+			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING `+vmColumns,
+			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}

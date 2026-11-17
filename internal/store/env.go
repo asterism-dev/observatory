@@ -115,7 +115,7 @@ func (s *Store) CheckMasterKey(ctx context.Context) error {
 		return ErrNoMasterKey
 	}
 	var other bool
-	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM org_keys WHERE master_key_id <> $1)", s.master.ID()).Scan(&other); err != nil {
+	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM org_keys WHERE master_key_id <> $1) OR EXISTS (SELECT 1 FROM hub_secrets WHERE key_id <> $1)", s.master.ID()).Scan(&other); err != nil {
 		return err
 	}
 	if other {

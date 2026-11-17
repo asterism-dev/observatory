@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -21,22 +22,23 @@ var ErrEnrollInvalid = errors.New("invalid enroll token")
 const enrollTTL = 24 * time.Hour
 
 type Node struct {
-	ID, OrgID uuid.UUID
-	Name      string
-	Enrolled  bool
-	CPUs      int
-	MemoryMB  int
-	Machine   json.RawMessage
-	Version   string
-	LastSeen  *time.Time
-	CreatedBy uuid.UUID
-	CreatedAt time.Time
+	ID, OrgID  uuid.UUID
+	Name       string
+	Enrolled   bool
+	CPUs       int
+	MemoryMB   int
+	Machine    json.RawMessage
+	Version    string
+	LastSeen   *time.Time
+	UnderlayIP netip.Addr
+	CreatedBy  uuid.UUID
+	CreatedAt  time.Time
 }
 
-const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
 
 func scanNode(row pgx.Row) (n Node, err error) {
-	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.CreatedBy, &n.CreatedAt)
+	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.CreatedBy, &n.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
