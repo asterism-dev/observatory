@@ -23,8 +23,8 @@ const { t } = useI18n()
 const { org, can } = useOrg()
 
 const orgLimits = ref<Limits>(unlimited)
-const teams = ref<(Named & { limits: Limits })[]>([])
-const members = ref<(Named & { limits: Limits })[]>([])
+const teams = ref<(Named & { limits: Limits; valid: boolean })[]>([])
+const members = ref<(Named & { limits: Limits; valid: boolean })[]>([])
 const busy = ref('')
 const error = ref('')
 
@@ -41,8 +41,8 @@ async function refresh() {
     // Org switched while loading.
     if (id !== org.value?.id) return
     orgLimits.value = ls.org
-    teams.value = ts.map((x) => ({ id: x.id, name: x.name, limits: ls.teams[x.id] ?? { ...unlimited } }))
-    members.value = ms.map((x) => ({ id: x.id, name: x.name || x.email, limits: ls.members[x.id] ?? { ...unlimited } }))
+    teams.value = ts.map((x) => ({ id: x.id, name: x.name, limits: ls.teams[x.id] ?? { ...unlimited }, valid: true }))
+    members.value = ms.map((x) => ({ id: x.id, name: x.name || x.email, limits: ls.members[x.id] ?? { ...unlimited }, valid: true }))
   } catch (e) {
     if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
   }
@@ -83,11 +83,11 @@ watch(
       <h2>{{ t(`limits.${group.key}`) }}</h2>
       <section v-for="row in group.rows" :key="row.id" class="scope">
         <h3>{{ row.name }}</h3>
-        <LimitFields v-model="row.limits" :disabled="!can('limit:set') || !!busy" />
+        <LimitFields v-model="row.limits" v-model:valid="row.valid" :disabled="!can('limit:set') || !!busy" />
         <Button
           v-if="can('limit:set')"
           variant="accent"
-          :disabled="!!busy"
+          :disabled="!!busy || !row.valid"
           @click="save(`${group.prefix}:${row.id}`, row.limits)"
         >
           {{ t('org.save') }}

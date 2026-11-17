@@ -84,6 +84,8 @@ const navItems = computed(() => [
   ...(me.value?.user.platformAdmin ? [{ path: '/admin/audit', label: t('nav.audit') }] : []),
 ])
 
+const activePath = computed(() => navItems.value.find((i) => route.path === i.path || route.path.startsWith(i.path + '/'))?.path ?? route.path)
+
 async function signOut() {
   try {
     await api('/auth/logout', { method: 'POST' })
@@ -123,7 +125,7 @@ const userMenu = (): MenuItem[] => [
           <Button variant="ghost" size="sm">{{ me?.user.name || me?.user.email }}</Button>
         </Menu>
       </div>
-      <List :model-value="route.path" :aria-label="t('nav.label')" @update:model-value="(p) => p && router.push(p)">
+      <List :model-value="activePath" :aria-label="t('nav.label')" @update:model-value="(p) => p && router.push(p)">
         <ListItem v-for="item in navItems" :key="item.path" :value="item.path">{{ item.label }}</ListItem>
       </List>
     </aside>

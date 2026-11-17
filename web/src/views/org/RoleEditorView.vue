@@ -8,6 +8,7 @@ import { api } from '@/api'
 import { useOrg } from '@/composables/useOrg'
 
 interface Rule {
+  uid: number
   effect: 'allow' | 'deny'
   object: string
   action: string
@@ -38,6 +39,8 @@ const description = ref('')
 const parents = ref<string[]>([])
 const rules = ref<Rule[]>([])
 const addParent = ref('')
+let nextUid = 0
+const withUid = (r: Omit<Rule, 'uid'>): Rule => ({ ...r, uid: nextUid++ })
 const searches = ref<Record<string, string>>({})
 const busy = ref(false)
 const error = ref('')
@@ -90,7 +93,7 @@ async function load() {
     name.value = r?.name ?? ''
     description.value = r?.description ?? ''
     parents.value = [...(r?.parents ?? [])]
-    rules.value = (r?.rules ?? []).map((x) => ({ ...x }))
+    rules.value = (r?.rules ?? []).map(withUid)
     if (roleId.value !== 'new' && !r) error.value = t('roles.notFound')
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
@@ -102,7 +105,7 @@ async function save() {
   error.value = ''
   const isNew = roleId.value === 'new'
   try {
-    const body = { name: name.value.trim(), description: description.value, rules: rules.value, parents: parents.value }
+    const body = { name: name.value.trim(), description: description.value, rules: rules.value.map(({ effect, object, action }) => ({ effect, object, action })), parents: parents.value }
     await api(`/api/orgs/${org.value?.id}/roles${isNew ? '' : `/${roleId.value}`}`, {
       method: isNew ? 'POST' : 'PUT',
       body: JSON.stringify(body),
@@ -157,25 +160,25 @@ watch(
     </template>
 
     <h2>{{ t('roles.rules') }}</h2>
-    <div v-for="(rule, i) in rules" :key="i" class="rule">
+    <div v-for="(rule, i) in rules" :key="rule.uid" class="rule">
       <SegmentedControl v-model="rule.effect" :options="effectOptions" :disabled="readonly" />
       <Combobox
         v-model="rule.object"
-        v-model:search="searches[`o${i}`]"
-        :items="suggestions(objects, `o${i}`)"
+        v-model:search="searches[`o${rule.uid}`]"
+        :items="suggestions(objects, `o${rule.uid}`)"
         :placeholder="t('roles.object')"
         :disabled="readonly"
       />
       <Combobox
         v-model="rule.action"
-        v-model:search="searches[`a${i}`]"
-        :items="suggestions(actions, `a${i}`)"
+        v-model:search="searches[`a${rule.uid}`]"
+        :items="suggestions(actions, `a${rule.uid}`)"
         :placeholder="t('audit.action')"
         :disabled="readonly"
       />
       <Button v-if="!readonly" size="sm" variant="danger" @click="rules.splice(i, 1)">{{ t('roles.removeRule') }}</Button>
     </div>
-    <Button v-if="!readonly" @click="rules.push({ effect: 'allow', object: '', action: '' })">{{ t('roles.addRule') }}</Button>
+    <Button v-if="!readonly" @click="rules.push(withUid({ effect: 'allow', object: '', action: '' }))">{{ t('roles.addRule') }}</Button>
 
     <div class="actions">
       <Button @click="router.push(`/orgs/${org.id}/roles`)">{{ t('roles.back') }}</Button>

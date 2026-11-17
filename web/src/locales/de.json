@@ -144,6 +144,8 @@
     "ramMb": "RAM (MB)",
     "diskGb": "Disk (GB)",
     "vmCount": "VMs",
-    "unlimited": "Unbegrenzt"
+    "unlimited": "Unbegrenzt",
+    "required": "Wert eingeben oder unbegrenzt wählen",
+    "invalid": "Ganze Zahl ab 0 verwenden"
   }
 }
