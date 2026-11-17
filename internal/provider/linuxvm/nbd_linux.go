@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
@@ -88,21 +90,59 @@ func DetachNBD(vmDir, diskID string) error {
 		return err
 	}
 	if dev := strings.TrimSpace(string(b)); NBDConnected(dev) {
-		if err := chassisconf.Run("qemu-nbd", "--disconnect", dev); err != nil {
+		if err := stopNBD(dev); err != nil {
 			return err
-		}
-		// The kernel tears the device down asynchronously; a restart must not find it half-connected.
-		for i := 0; NBDConnected(dev); i++ {
-			if i == 50 {
-				return fmt.Errorf("%s still connected 5s after disconnect", dev)
-			}
-			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	if err := os.RemoveAll(nbdKeyDir(vmDir, diskID)); err != nil {
 		return err
 	}
-	return os.Remove(NBDRecord(vmDir, diskID))
+	// A forced detach from Kill may race the VMM's own exit path.
+	if err := os.Remove(NBDRecord(vmDir, diskID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// nbdStopWait bounds the wait after each signal to qemu-nbd.
+var nbdStopWait = 10 * time.Second
+
+// stopNBD ends the qemu-nbd serving dev. Not qemu-nbd --disconnect: with the server gone it can hang in D state for the reconnect delay.
+func stopNBD(dev string) error {
+	pid, err := nbdClientPID(dev)
+	if err != nil {
+		return fmt.Errorf("%s: client pid: %w", dev, err)
+	}
+	// SIGTERM closes the export cleanly; a qemu-nbd stuck reconnecting drops the device but keeps running, and after SIGKILL the kernel fails pending I/O.
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if err := syscall.Kill(pid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+		for deadline := time.Now().Add(nbdStopWait); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			if !NBDConnected(dev) && errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%s: qemu-nbd %d still running after SIGKILL", dev, pid)
+}
+
+// nbdClientPID returns the process of the thread that holds dev (sysfs names the thread).
+func nbdClientPID(dev string) (int, error) {
+	b, err := os.ReadFile(filepath.Join("/sys/block", filepath.Base(dev), "pid"))
+	if err != nil {
+		return 0, err
+	}
+	status, err := os.ReadFile(filepath.Join("/proc", strings.TrimSpace(string(b)), "status"))
+	if err != nil {
+		return 0, err
+	}
+	for line := range strings.Lines(string(status)) {
+		if v, ok := strings.CutPrefix(line, "Tgid:"); ok {
+			return strconv.Atoi(strings.TrimSpace(v))
+		}
+	}
+	return 0, errors.New("no Tgid")
 }
 
 // NBDWatch mirrors lost NBD connections into Err.
