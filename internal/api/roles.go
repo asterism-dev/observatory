@@ -1,0 +1,398 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/store"
+)
+
+var errLiftsOwnDeny = errors.New("only an org owner can lift a deny rule that applies to you")
+
+type ruleJSON struct {
+	Effect authz.Effect `json:"effect"`
+	Object string       `json:"object"`
+	Action string       `json:"action"`
+}
+
+func toRulesJSON(rules []authz.Rule) []ruleJSON {
+	out := make([]ruleJSON, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, ruleJSON(r))
+	}
+	return out
+}
+
+type roleJSON struct {
+	ID          uuid.UUID  `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Rules       []ruleJSON `json:"rules"`
+	Parents     []string   `json:"parents"`
+}
+
+func toRoleJSON(r authz.CustomRole) roleJSON {
+	parents := r.Parents
+	if parents == nil {
+		parents = []string{}
+	}
+	return roleJSON{r.ID, r.Name, r.Description, toRulesJSON(r.Rules), parents}
+}
+
+type bindingJSON struct {
+	ID        uuid.UUID `json:"id"`
+	Subject   string    `json:"subject"`
+	RoleID    uuid.UUID `json:"roleId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (h *api) catalog(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:read") {
+		return
+	}
+	type permJSON struct {
+		Action string `json:"action"`
+		Object string `json:"object"`
+	}
+	out := make([]permJSON, 0, len(authz.Catalog))
+	for _, p := range authz.Catalog {
+		out = append(out, permJSON(p))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *api) listRoles(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:read") {
+		return
+	}
+	roles, err := h.store.Roles(r.Context(), m.Org.ID)
+	if err != nil {
+		serverError(w, "roles", err)
+		return
+	}
+	out := []any{}
+	for _, key := range []string{"owner", "admin", "member"} {
+		out = append(out, map[string]any{"key": key, "name": strings.ToUpper(key[:1]) + key[1:], "builtin": true, "rules": toRulesJSON(authz.BuiltinRules(key))})
+	}
+	for _, cr := range roles {
+		out = append(out, toRoleJSON(cr))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func readRoleBody(w http.ResponseWriter, r *http.Request) (authz.CustomRole, bool) {
+	var body struct {
+		Name, Description string
+		Rules             []ruleJSON
+		Parents           []string
+	}
+	if !readJSON(w, r, &body) {
+		return authz.CustomRole{}, false
+	}
+	name, ok := validName(body.Name)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid name")
+		return authz.CustomRole{}, false
+	}
+	if store.SanitizeText(body.Description) != body.Description {
+		writeError(w, http.StatusBadRequest, "invalid description")
+		return authz.CustomRole{}, false
+	}
+	rules := make([]authz.Rule, 0, len(body.Rules))
+	for _, rj := range body.Rules {
+		rules = append(rules, authz.Rule(rj))
+	}
+	return authz.CustomRole{Name: name, Description: body.Description, Rules: rules, Parents: body.Parents}, true
+}
+
+// expandRules stores action wildcards as the concrete catalog actions they match today, so later catalog additions aren't granted silently.
+func expandRules(rules []authz.Rule) []authz.Rule {
+	out := []authz.Rule{}
+	for _, r := range rules {
+		for _, a := range authz.ExpandActions(r.Action) {
+			if x := (authz.Rule{Effect: r.Effect, Object: r.Object, Action: a}); !slices.Contains(out, x) {
+				out = append(out, x)
+			}
+		}
+	}
+	return out
+}
+
+func (h *api) createRole(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+		return
+	}
+	role, ok := readRoleBody(w, r)
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	if err := h.z.Enforcer().CanGrantRole(authz.UserSubject(p.User.ID), m.Org.ID, privileged(m.Role), role.Rules, role.Parents); err != nil {
+		h.guardFailed(w, r, m.Org.ID, store.ActionRoleCreate, authz.ObjRoles, err)
+		return
+	}
+	role.Rules = expandRules(role.Rules)
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if role, err = tx.CreateRole(r.Context(), m.Org.ID, role); err != nil {
+			return err
+		}
+		e := auditEntry(r, &m.Org.ID, store.ActionRoleCreate, authz.RoleObject(role.ID), store.ResultAllowed)
+		e.Details = map[string]any{"name": role.Name}
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	writeJSON(w, http.StatusCreated, toRoleJSON(role))
+}
+
+func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+		return
+	}
+	id, ok := pathID(w, r, "role")
+	if !ok {
+		return
+	}
+	role, ok := readRoleBody(w, r)
+	if !ok {
+		return
+	}
+	role.ID = id
+	p, _ := auth.PrincipalFrom(r.Context())
+	e, actor, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.RoleObject(id)
+	err := e.CanGrantRole(actor, m.Org.ID, privileged(m.Role), role.Rules, role.Parents)
+	if err == nil && !privileged(m.Role) {
+		err = carriesDeny(e, m.Org.ID, id)
+	}
+	if err != nil {
+		h.guardFailed(w, r, m.Org.ID, store.ActionRoleUpdate, obj, err)
+		return
+	}
+	role.Rules = expandRules(role.Rules)
+	var denied error
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.UpdateRole(r.Context(), m.Org.ID, role); err != nil {
+			return err
+		}
+		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+			return denied
+		}
+		ae := auditEntry(r, &m.Org.ID, store.ActionRoleUpdate, obj, store.ResultAllowed)
+		ae.Details = map[string]any{"name": role.Name}
+		return tx.Audit(r.Context(), ae)
+	}) {
+		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleUpdate, obj, denied)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+		return
+	}
+	id, ok := pathID(w, r, "role")
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	e, actor, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.RoleObject(id)
+	if !privileged(m.Role) {
+		if err := carriesDeny(e, m.Org.ID, id); err != nil {
+			h.guardFailed(w, r, m.Org.ID, store.ActionRoleDelete, obj, err)
+			return
+		}
+	}
+	var denied error
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.DeleteRole(r.Context(), m.Org.ID, id); err != nil {
+			return err
+		}
+		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+			return denied
+		}
+		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionRoleDelete, obj, store.ResultAllowed))
+	}) {
+		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleDelete, obj, denied)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) listBindings(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+		return
+	}
+	bs, err := h.store.Bindings(r.Context(), m.Org.ID)
+	if err != nil {
+		serverError(w, "bindings", err)
+		return
+	}
+	out := make([]bindingJSON, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, bindingJSON(b))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *api) bind(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+		return
+	}
+	var body struct {
+		Subject string    `json:"subject"`
+		RoleID  uuid.UUID `json:"roleId"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	e, obj := h.z.Enforcer(), authz.RoleObject(body.RoleID)
+	// Bindings only reference custom roles; the guard rejects anything else as an invalid parent.
+	err := e.CanGrantRole(authz.UserSubject(p.User.ID), m.Org.ID, privileged(m.Role), nil, []string{body.RoleID.String()})
+	if err == nil && !privileged(m.Role) {
+		err = carriesDeny(e, m.Org.ID, body.RoleID)
+	}
+	if err != nil {
+		h.guardFailed(w, r, m.Org.ID, store.ActionRoleBind, obj, err)
+		return
+	}
+	var b store.BindingRow
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if b, err = tx.Bind(r.Context(), m.Org.ID, body.Subject, body.RoleID); err != nil {
+			return err
+		}
+		ae := auditEntry(r, &m.Org.ID, store.ActionRoleBind, obj, store.ResultAllowed)
+		ae.Details = map[string]any{"subject": b.Subject, "binding": b.ID.String()}
+		return tx.Audit(r.Context(), ae)
+	}) {
+		return
+	}
+	writeJSON(w, http.StatusCreated, bindingJSON(b))
+}
+
+func (h *api) unbind(w http.ResponseWriter, r *http.Request) {
+	m, ok := h.orgFromPath(w, r)
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	e, actor := h.z.Enforcer(), authz.UserSubject(p.User.ID)
+	var (
+		b      store.BindingRow
+		denied error
+	)
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if b, err = tx.Unbind(r.Context(), m.Org.ID, id); err != nil {
+			return err
+		}
+		if !privileged(m.Role) {
+			if denied = carriesDeny(e, m.Org.ID, b.RoleID); denied != nil {
+				return denied
+			}
+		}
+		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+			return denied
+		}
+		ae := auditEntry(r, &m.Org.ID, store.ActionRoleUnbind, authz.RoleObject(b.RoleID), store.ResultAllowed)
+		ae.Details = map[string]any{"subject": b.Subject, "binding": b.ID.String()}
+		return tx.Audit(r.Context(), ae)
+	}) {
+		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleUnbind, authz.RoleObject(b.RoleID), denied)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// carriesDeny fails with ErrDenyNotAllowed if role or its ancestors hold deny rules: only org owners and admins may change or assign those.
+func carriesDeny(e *authz.Enforcer, org, role uuid.UUID) error {
+	denies, err := e.DenyRulesFor(authz.RoleSubject(role.String()), org)
+	if err != nil {
+		return err
+	}
+	if len(denies) > 0 {
+		return authz.ErrDenyNotAllowed
+	}
+	return nil
+}
+
+// checkOwnDenies fails with errLiftsOwnDeny if tx's pending policy drops a deny rule that applies to the caller under before; owners are exempt.
+func checkOwnDenies(ctx context.Context, tx *store.Store, before *authz.Enforcer, m store.Membership, actor string) error {
+	if m.Role == store.RoleOwner {
+		return nil
+	}
+	had, err := before.DenyRulesFor(actor, m.Org.ID)
+	if err != nil || len(had) == 0 {
+		return err
+	}
+	p, err := tx.PolicySnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	after, err := authz.New(p)
+	if err != nil {
+		return invalidPolicyError{err}
+	}
+	has, err := after.DenyRulesFor(actor, m.Org.ID)
+	if err != nil {
+		return err
+	}
+	for _, d := range had {
+		if !slices.Contains(has, d) {
+			return errLiftsOwnDeny
+		}
+	}
+	return nil
+}
+
+func isGuardDenial(err error) bool {
+	return errors.Is(err, authz.ErrEscalation) || errors.Is(err, authz.ErrDenyNotAllowed) || errors.Is(err, errLiftsOwnDeny)
+}
+
+// auditGuardDenial writes a denied audit row naming why, if err is a guard denial.
+func (h *api) auditGuardDenial(r *http.Request, org uuid.UUID, act, obj string, err error) {
+	if !isGuardDenial(err) {
+		return
+	}
+	e := auditEntry(r, &org, act, obj, store.ResultDenied)
+	e.Details = map[string]any{"error": err.Error()}
+	if aerr := h.store.Audit(r.Context(), e); aerr != nil {
+		slog.Error("audit denied guard", "org", org, "action", act, "err", aerr)
+	}
+}
+
+// guardFailed answers a failed escalation guard: invalid input is 400, a missing permission 403 with a denied audit row.
+func (h *api) guardFailed(w http.ResponseWriter, r *http.Request, org uuid.UUID, act, obj string, err error) {
+	switch {
+	case errors.Is(err, authz.ErrInvalidPattern):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case isGuardDenial(err):
+		h.auditGuardDenial(r, org, act, obj, err)
+		writeError(w, http.StatusForbidden, err.Error())
+	default:
+		serverError(w, "escalation guard", err)
+	}
+}

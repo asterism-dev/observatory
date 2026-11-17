@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -109,5 +110,104 @@ func TestPolicySnapshotSeesOwnTransaction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRoleStore(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := New(pool)
+	var org, orgB, user, outsider, team, teamB uuid.UUID
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(pool.QueryRow(ctx, `INSERT INTO users (subject,email,name) VALUES ('s','e','n') RETURNING id`).Scan(&user))
+	must(pool.QueryRow(ctx, `INSERT INTO users (subject,email,name) VALUES ('o','o','o') RETURNING id`).Scan(&outsider))
+	must(pool.QueryRow(ctx, `INSERT INTO orgs (name) VALUES ('a') RETURNING id`).Scan(&org))
+	must(pool.QueryRow(ctx, `INSERT INTO orgs (name) VALUES ('b') RETURNING id`).Scan(&orgB))
+	mustExec(ctx, t, pool, `INSERT INTO memberships (org_id,user_id,role) VALUES ($1,$2,'member'), ($3,$4,'owner')`, org, user, orgB, outsider)
+	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'t') RETURNING id`, org).Scan(&team))
+	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'t') RETURNING id`, orgB).Scan(&teamB))
+
+	rules := []authz.Rule{{Effect: authz.Allow, Object: "org/audit", Action: "audit:read"}, {Effect: authz.Deny, Object: "org/teams/*", Action: "team:delete"}}
+	a, err := s.CreateRole(ctx, org, authz.CustomRole{Name: "a", Description: "d", Rules: rules, Parents: []string{"member"}})
+	must(err)
+	if a.ID == uuid.Nil || a.OrgID != org {
+		t.Fatalf("created: %+v", a)
+	}
+	if _, err := s.CreateRole(ctx, org, authz.CustomRole{Name: "a"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	b, err := s.CreateRole(ctx, org, authz.CustomRole{Name: "b", Parents: []string{a.ID.String()}})
+	must(err)
+	foreign, err := s.CreateRole(ctx, orgB, authz.CustomRole{Name: "f"})
+	must(err)
+	if _, err := s.CreateRole(ctx, org, authz.CustomRole{Name: "c", Parents: []string{foreign.ID.String()}}); !errors.Is(err, ErrInvalidParent) {
+		t.Fatalf("foreign parent: %v", err)
+	}
+	for _, parent := range []uuid.UUID{a.ID, b.ID} {
+		if err := s.UpdateRole(ctx, org, authz.CustomRole{ID: a.ID, Name: "a", Parents: []string{parent.String()}}); !errors.Is(err, ErrConflict) {
+			t.Fatalf("cycle via %s: %v", parent, err)
+		}
+	}
+	if err := s.UpdateRole(ctx, org, authz.CustomRole{ID: foreign.ID, Name: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update foreign: %v", err)
+	}
+	must(s.UpdateRole(ctx, org, authz.CustomRole{ID: b.ID, Name: "b2", Rules: rules[:1], Parents: []string{"admin"}}))
+	got, err := s.Role(ctx, org, b.ID)
+	must(err)
+	if got.Name != "b2" || len(got.Rules) != 1 || len(got.Parents) != 1 || got.Parents[0] != "admin" {
+		t.Fatalf("updated: %+v", got)
+	}
+	if _, err := s.Role(ctx, org, foreign.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign role: %v", err)
+	}
+	roles, err := s.Roles(ctx, org)
+	must(err)
+	if len(roles) != 2 || roles[0].ID != a.ID || len(roles[0].Rules) != 2 || roles[0].Rules[1] != rules[1] {
+		t.Fatalf("roles: %+v", roles)
+	}
+
+	bu, err := s.Bind(ctx, org, authz.UserSubject(user), a.ID)
+	must(err)
+	if _, err := s.Bind(ctx, org, authz.TeamSubject(team), a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Bind(ctx, org, authz.UserSubject(user), a.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate binding: %v", err)
+	}
+	for _, sub := range []string{authz.UserSubject(outsider), authz.TeamSubject(teamB), "bogus", "user:" + user.String() + " "} {
+		if _, err := s.Bind(ctx, org, sub, a.ID); !errors.Is(err, ErrNotMember) {
+			t.Fatalf("bind %q: %v", sub, err)
+		}
+	}
+	if _, err := s.Bind(ctx, org, authz.UserSubject(user), foreign.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign role binding: %v", err)
+	}
+	bs, err := s.Bindings(ctx, org)
+	must(err)
+	if len(bs) != 2 || bs[0].ID != bu.ID || bs[0].Subject != authz.UserSubject(user) || bs[0].RoleID != a.ID {
+		t.Fatalf("bindings: %+v", bs)
+	}
+	if _, err := s.Unbind(ctx, orgB, bu.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unbind via other org: %v", err)
+	}
+	removed, err := s.Unbind(ctx, org, bu.ID)
+	must(err)
+	if removed.RoleID != a.ID || removed.Subject != authz.UserSubject(user) {
+		t.Fatalf("unbound: %+v", removed)
+	}
+	if err := s.DeleteRole(ctx, orgB, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete via other org: %v", err)
+	}
+	must(s.DeleteRole(ctx, org, a.ID))
+	if bs, _ := s.Bindings(ctx, org); len(bs) != 0 {
+		t.Fatalf("bindings survive role delete: %+v", bs)
+	}
+	if err := s.DeleteRole(ctx, org, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete again: %v", err)
 	}
 }

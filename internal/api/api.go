@@ -47,6 +47,14 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}", h.deleteTeam)
 	mux.HandleFunc("PUT /api/orgs/{org}/teams/{team}/members/{user}", h.setTeamMember)
 	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}/members/{user}", h.removeTeamMember)
+	mux.HandleFunc("GET /api/orgs/{org}/catalog", h.catalog)
+	mux.HandleFunc("GET /api/orgs/{org}/roles", h.listRoles)
+	mux.HandleFunc("POST /api/orgs/{org}/roles", h.createRole)
+	mux.HandleFunc("PUT /api/orgs/{org}/roles/{role}", h.updateRole)
+	mux.HandleFunc("DELETE /api/orgs/{org}/roles/{role}", h.deleteRole)
+	mux.HandleFunc("GET /api/orgs/{org}/bindings", h.listBindings)
+	mux.HandleFunc("POST /api/orgs/{org}/bindings", h.bind)
+	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
 	return a.Require(mux)
 }
 
