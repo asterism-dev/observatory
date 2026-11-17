@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -410,5 +411,41 @@ func TestInviteNeedsCreatorStillAllowed(t *testing.T) {
 	// A creator who still holds the rights: the invite works.
 	if code := accept(e.invite(org, ownerTok, "admin")); code != 200 {
 		t.Fatalf("valid creator: %d", code)
+	}
+}
+
+// Removing a member drops their bindings; a re-invite would come back deny-free, so only owners/admins may do it.
+func TestRemoveMemberCarryingDeny(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	admin, adminTok := e.user("bob")
+	remover, removerTok := e.user("carol")
+	restricted, _ := e.user("dave")
+	plain, _ := e.user("erin")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, admin, store.RoleAdmin)
+	for _, u := range []store.User{remover, restricted, plain} {
+		e.addMember(org, u, store.RoleMember)
+	}
+	removerRole := e.createRole(ownerTok, org, `{"name":"remover","rules":[{"effect":"allow","object":"org/members","action":"member:remove"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(remover.ID), removerRole)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(restricted.ID), denying)
+
+	if rec := e.do("DELETE", memberPath(org, restricted), removerTok); rec.Code != 403 {
+		t.Fatalf("remove restricted: %d %s", rec.Code, rec.Body.String())
+	}
+	es := e.audit(store.ActionMemberRemove)
+	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != remover.ID.String() || es[0].Resource != "org/members/"+restricted.ID.String() {
+		t.Fatalf("denied audit: %+v", es)
+	}
+	if e.role(org, restricted) != store.RoleMember || e.bindingCount(org) != 2 {
+		t.Fatal("restricted member removed")
+	}
+	if rec := e.do("DELETE", memberPath(org, plain), removerTok); rec.Code != 204 {
+		t.Fatalf("remove plain: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("DELETE", memberPath(org, restricted), adminTok); rec.Code != 204 {
+		t.Fatalf("admin removes restricted: %d %s", rec.Code, rec.Body.String())
 	}
 }

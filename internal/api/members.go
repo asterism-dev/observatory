@@ -111,16 +111,31 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var removeErr error
+	var removeErr, denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
+		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		if err != nil {
+			return err
+		}
 		// The target's role is only stable under the lock, so the extra check for admins/owners happens here.
 		current, err := tx.LockMember(r.Context(), m.Org.ID, target)
 		if err != nil {
 			return err
 		}
-		if !leaving && privileged(current) && !h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
+		if !leaving && privileged(current) && !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
 			removeErr = errForbidden
 			return removeErr
+		}
+		// Removal drops the target's bindings and teams, lifting their denies, which only owners and admins may do.
+		if !leaving && !privileged(cur.Role) {
+			ds, err := e.DenyRulesFor(authz.UserSubject(target), m.Org.ID)
+			if err != nil {
+				return err
+			}
+			if len(ds) > 0 {
+				denied = denyRuleError{authz.ErrDenyNotAllowed, ds[0]}
+				return denied
+			}
 		}
 		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {
 			return err
@@ -130,6 +145,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		if removeErr != nil {
 			h.auditDenied(r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole)
 		}
+		h.auditGuardDenial(r, m.Org.ID, action, "org/members/"+target.String(), denied)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
