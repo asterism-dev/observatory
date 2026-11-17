@@ -25,7 +25,9 @@
     "vms": "VMs",
     "orgSettings": "Organization settings",
     "platformSettings": "Platform settings",
-    "general": "General"
+    "general": "General",
+    "newOrg": "New organization",
+    "userMenu": "Account menu"
   },
   "theme": {
     "system": "Theme: system",
