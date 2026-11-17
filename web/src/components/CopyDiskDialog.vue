@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 
-const props = defineProps<{ open: boolean; orgId: string; diskId: string; diskName: string }>()
+const props = defineProps<{ open: boolean; orgId: string; diskId: string; diskName: string; unsettled: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; copied: [] }>()
 
 const { t } = useI18n()
@@ -70,6 +70,7 @@ async function copy() {
         <Select v-model="owner" :options="ownerOptions" :aria-label="t('disks.owner')" />
       </label>
       <small>{{ t('disks.copyHint') }}</small>
+      <p v-if="unsettled" role="alert">{{ t('disks.copyUnsettled') }}</p>
     </div>
     <p v-else role="status">{{ t('disks.copyWarning') }} ({{ warning }})</p>
     <p v-if="error" role="alert">{{ error }}</p>

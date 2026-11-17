@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Button, Dialog, Select, TextInput } from '@asterism-dev/lumen'
+import { Button, Dialog, NumberInput, Select, TextInput } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import type { VmInfo } from '@/composables/nodes'
+import { useMe } from '@/composables/useMe'
 
 interface Disk {
   id: string
@@ -24,12 +25,15 @@ const props = defineProps<{ open: boolean; orgId: string; vm: VmInfo }>()
 const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>()
 
 const { t } = useI18n()
+const { me } = useMe()
 const disks = ref<Disk[]>([])
 const rows = ref<{ diskId: string; mountPath: string }[]>([])
 const toAdd = ref('')
 const confirming = ref(false)
 const busy = ref(false)
 const error = ref('')
+const newName = ref('')
+const newSizeGB = ref<number | null>(10)
 
 watch(
   () => props.open,
@@ -38,14 +42,20 @@ watch(
     confirming.value = false
     error.value = ''
     toAdd.value = ''
+    newName.value = ''
+    newSizeGB.value = 10
     rows.value = props.vm.disks.map((d) => ({ diskId: d.id, mountPath: d.mountPath }))
-    try {
-      disks.value = (await api<{ disks: Disk[] }>(`/api/orgs/${props.orgId}/disks`)).disks
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
-    }
+    await loadDisks()
   },
 )
+
+async function loadDisks() {
+  try {
+    disks.value = (await api<{ disks: Disk[] }>(`/api/orgs/${props.orgId}/disks`)).disks
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
 
 const name = (id: string) => disks.value.find((d) => d.id === id)?.name ?? props.vm.disks.find((d) => d.id === id)?.name ?? id
 
@@ -80,7 +90,35 @@ function pathError(r: { mountPath: string }) {
   if (!mountPattern.test(p) || p.split('/').some((s) => s === '.' || s === '..')) return t('vmDisks.invalidPath')
   if (reservedPaths.includes(p) || reservedTrees.some((x) => p === x || p.startsWith(`${x}/`))) return t('vmDisks.reservedPath')
   if (rows.value.filter((x) => x.mountPath === p).length > 1) return t('vmDisks.duplicatePath')
+  if (rows.value.some((x) => p.startsWith(`${x.mountPath}/`) || x.mountPath.startsWith(`${p}/`))) return t('vmDisks.nestedPath')
   return ''
+}
+
+// A new disk gets the VM's owner; for another user's VM it would be the caller's and could not be attached.
+const canCreate = computed(() => props.vm.owner.kind === 'team' || props.vm.owner.id === me.value?.user.id)
+const newNameInvalid = computed(() => !/^[a-z][a-z0-9-]{0,30}$/.test(newName.value))
+const newSizeInvalid = computed(() => newSizeGB.value === null || !Number.isInteger(newSizeGB.value) || newSizeGB.value < 1 || newSizeGB.value > 4096)
+
+async function createDisk() {
+  busy.value = true
+  error.value = ''
+  try {
+    const d = await api<{ id: string }>(`/api/orgs/${props.orgId}/disks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: newName.value,
+        owner: props.vm.owner.kind === 'team' ? { kind: 'team', teamId: props.vm.owner.id } : { kind: 'user' },
+        sizeGB: newSizeGB.value,
+      }),
+    })
+    await loadDisks()
+    add(d.id)
+    newName.value = ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
 }
 
 const invalid = computed(() => rows.value.some((r) => pathError(r)) || rows.value.length > maxDisks)
@@ -103,7 +141,8 @@ async function save(restartAllowed: boolean) {
   }
 }
 
-const submit = () => (props.vm.state === 'running' ? (confirming.value = true) : save(false))
+// The hub requires restartAllowed by desired power, which can be running while the VM is still starting or in error.
+const submit = () => (props.vm.power === 'running' ? (confirming.value = true) : save(false))
 </script>
 
 <template>
@@ -126,6 +165,13 @@ const submit = () => (props.vm.state === 'running' ? (confirming.value = true) :
         <Select v-model="toAdd" :options="options" :aria-label="t('vmDisks.add')" @update:model-value="(v: string) => add(v)" />
       </label>
       <small v-if="!options.length">{{ t('vmDisks.noneAvailable') }}</small>
+      <div v-if="canCreate && rows.length < maxDisks">
+        <TextInput v-model="newName" :placeholder="t('disks.name')" :aria-label="t('disks.name')" :invalid="!!newName && newNameInvalid" />
+        <NumberInput v-model="newSizeGB" :aria-label="t('disks.size')" />
+        <Button size="sm" :disabled="busy || newNameInvalid || newSizeInvalid" @click="createDisk">{{ t('vmDisks.createAndAdd') }}</Button>
+        <small v-if="newName && newNameInvalid" role="alert">{{ t('disks.invalidName') }}</small>
+        <small v-if="newSizeInvalid" role="alert">{{ t('disks.invalidSize') }}</small>
+      </div>
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>

@@ -142,6 +142,7 @@ watch(
       :org-id="org.id"
       :disk-id="copying?.id ?? ''"
       :disk-name="copying?.name ?? ''"
+      :unsettled="!!copying && (!!copying.attachment || ['releasing', 'creating', 'growing'].includes(copying.state))"
       @update:open="(o) => !o && (copying = null)"
       @copied="refresh"
     />

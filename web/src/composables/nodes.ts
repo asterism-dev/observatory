@@ -26,6 +26,7 @@ export interface VmInfo {
   owner: { kind: 'user' | 'team'; id: string; name: string }
   node: { id: string; name: string }
   state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
+  power: 'running' | 'stopped'
   error?: string
   ip?: string
   mgmtIP?: string
