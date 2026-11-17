@@ -20,6 +20,7 @@ MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,62})")
 
 lock = threading.Lock()
+slots = threading.BoundedSemaphore(4)
 
 
 def run(*args, env=None):
@@ -68,7 +69,10 @@ def nics():
 
 
 def set_macs(macs):
-    for name, mac in zip(nics(), macs):
+    names = nics()
+    if macs and len(macs) != len(names):
+        raise ValueError("got %d macs for %d nics" % (len(macs), len(names)))
+    for name, mac in zip(names, macs):
         run("ip", "link", "set", "dev", name, "down")
         run("ip", "link", "set", "dev", name, "address", mac)
         run("ip", "link", "set", "dev", name, "up")
@@ -148,7 +152,7 @@ def parse(line):
     if not isinstance(raw, dict) or not isinstance(raw.get("op"), str):
         raise ValueError("bad request")
     t, macs, entropy = raw.get("time", 0), raw.get("macs") or [], raw.get("entropy") or ""
-    if not isinstance(t, int) or t < 0:
+    if type(t) is not int or t < 0:
         raise ValueError("bad time")
     if not isinstance(macs, list) or len(macs) > 16 or not all(isinstance(m, str) and MAC.fullmatch(m) for m in macs):
         raise ValueError("bad macs")
@@ -164,8 +168,10 @@ def handle(conn):
             buf = b""
             while b"\n" not in buf:
                 chunk = conn.recv(4096)
-                if not chunk or len(buf) + len(chunk) > MAX_REQUEST:
-                    return
+                if not chunk:
+                    raise ValueError("incomplete request")
+                if len(buf) + len(chunk) > MAX_REQUEST:
+                    raise ValueError("request too large")
                 buf += chunk
             req = parse(buf.split(b"\n", 1)[0])
             op = OPS.get(req["op"])
@@ -180,13 +186,16 @@ def handle(conn):
                         op(req)
                 reply = {"ok": True}
         except subprocess.CalledProcessError as e:
-            reply = {"ok": False, "error": "%s failed: %s" % (e.cmd[0], e.stderr.decode(errors="replace").strip()[-500:])}
+            err = e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+            reply = {"ok": False, "error": "%s failed: %s" % (e.cmd[0], err.strip()[-500:])}
         except Exception as e:
             reply = {"ok": False, "error": str(e)[:500] or type(e).__name__}
         try:
             conn.sendall(json.dumps(reply).encode() + b"\n")
         except OSError:
             pass
+        finally:
+            slots.release()
 
 
 def main():
@@ -199,7 +208,11 @@ def main():
         s.bind((socket.VMADDR_CID_ANY, PORT))
     s.listen(8)
     while True:
-        conn, _ = s.accept()
+        conn, addr = s.accept()
+        # With vsock_loopback loaded, guest users could connect as CID 1 or 3; only the host (CID 2) may drive the agent.
+        if (not path and addr[0] != socket.VMADDR_CID_HOST) or not slots.acquire(blocking=False):
+            conn.close()
+            continue
         threading.Thread(target=handle, args=(conn,), daemon=True).start()
 
 

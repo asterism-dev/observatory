@@ -69,4 +69,9 @@ func TestCallGuestProtocol(t *testing.T) {
 	if err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
 		t.Fatal("expected an error without OK")
 	}
+
+	uds, _ = fakeVsock(t, "FAILURE\n", "")
+	if err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
+		t.Fatal("expected an error for a non-OK handshake")
+	}
 }

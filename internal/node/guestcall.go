@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const GuestAgentPort = 1050
@@ -24,6 +25,11 @@ type GuestRequest struct {
 
 // CallGuest sends req to the guest agent through Firecracker's vsock uds and waits for its reply.
 func CallGuest(ctx context.Context, uds string, req GuestRequest) error {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+	}
 	c, err := dialUnix(ctx, uds)
 	if err != nil {
 		return err
@@ -31,9 +37,8 @@ func CallGuest(ctx context.Context, uds string, req GuestRequest) error {
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
-	if d, ok := ctx.Deadline(); ok {
-		c.SetDeadline(d)
-	}
+	d, _ := ctx.Deadline()
+	c.SetDeadline(d)
 	b, err := json.Marshal(req)
 	if err != nil {
 		return err

@@ -63,15 +63,19 @@ type agentReply struct {
 
 func callAgent(t *testing.T, sock, req string) agentReply {
 	t.Helper()
+	return callAgentRaw(t, sock, []byte(req+"\n"))
+}
+
+func callAgentRaw(t *testing.T, sock string, req []byte) agentReply {
+	t.Helper()
 	c, err := net.Dial("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(30 * time.Second))
-	if _, err := c.Write([]byte(req + "\n")); err != nil {
-		t.Fatal(err)
-	}
+	// The agent may stop reading an oversized request before it is fully written.
+	go c.Write(req)
 	line, err := bufio.NewReader(c).ReadBytes('\n')
 	if err != nil {
 		t.Fatal(err)
@@ -124,5 +128,22 @@ func TestAgentUnknownOp(t *testing.T) {
 	sock := startAgent(t, t.TempDir())
 	if r := callAgent(t, sock, `{"op":"rm"}`); r.OK || r.Error != "unknown op" {
 		t.Fatalf("reply = %+v", r)
+	}
+}
+
+func TestAgentRejectsBadRequests(t *testing.T) {
+	sock := startAgent(t, t.TempDir())
+	for _, tc := range []struct{ req, err string }{
+		{`{"op":"takeoff","macs":["02:00:00:00:00:0G"]}`, "bad macs"},
+		{`{"op":"takeoff","entropy":"!!"}`, ""},
+		{`{"op":"resume","time":true}`, "bad time"},
+		{`{"op":"resume","time":-1}`, "bad time"},
+	} {
+		if r := callAgent(t, sock, tc.req); r.OK || !strings.Contains(r.Error, tc.err) {
+			t.Fatalf("%s: reply = %+v, want error %q", tc.req, r, tc.err)
+		}
+	}
+	if r := callAgentRaw(t, sock, []byte(strings.Repeat("x", 70<<10)+"\n")); r.OK || r.Error != "request too large" {
+		t.Fatalf("oversized: reply = %+v", r)
 	}
 }

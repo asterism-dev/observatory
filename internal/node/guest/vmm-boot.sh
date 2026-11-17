@@ -66,7 +66,7 @@ PY
 changed=
 mkdir -p "$root/usr/local/lib/vmm" "$root/etc/systemd/system"
 cp "$seed/vmm-agent.py" "$root/usr/local/lib/vmm/vmm-agent.py.new"
-printf '[Unit]\nDescription=vmm guest agent\n\n[Service]\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-agent.py\nRestart=always\n\n[Install]\nWantedBy=multi-user.target\n' >"$root/etc/systemd/system/vmm-agent.service.new"
+printf '[Unit]\nDescription=vmm guest agent\n\n[Service]\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-agent.py\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' >"$root/etc/systemd/system/vmm-agent.service.new"
 for f in "$root/usr/local/lib/vmm/vmm-agent.py" "$root/etc/systemd/system/vmm-agent.service"; do
 	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod 644 "$f.new" && mv "$f.new" "$f" && changed=1; fi
 done
