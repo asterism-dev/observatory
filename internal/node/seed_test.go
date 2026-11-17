@@ -77,6 +77,23 @@ func TestSeedBootRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSeedKeysTrimmed(t *testing.T) {
+	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one@host\n", "", "  \n", "ssh-rsa BB\nssh-rsa CC", " ssh-rsa DD two\r\n"}}}, PrimaryNet{})
+	if got := string(files["vmm-authorized-keys"]); got != "ssh-ed25519 AAAA one@host\nssh-rsa DD two\n" {
+		t.Fatalf("vmm-authorized-keys = %q", got)
+	}
+}
+
+func TestSeedBootWithoutBootFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteSeedISO(dir, map[string][]byte{"user-data": []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := SeedBoot(dir); err != nil || got == nil || len(got.SSHPublicKeys) != 0 || len(got.Env) != 0 {
+		t.Fatalf("SeedBoot of a seed without boot files = %+v, %v", got, err)
+	}
+}
+
 func TestWriteSeedISOFailureKeepsOldSeed(t *testing.T) {
 	dir := t.TempDir()
 	old := filepath.Join(dir, SeedISO)
@@ -123,10 +140,10 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// sourcedEnv sources env.sh and reports A, B and C as a child process sees them.
+// sourcedEnv sources env.sh and reports A to E as a child process sees them.
 func sourcedEnv(t *testing.T, root string) string {
 	t.Helper()
-	out, err := exec.Command("sh", "-c", `. "$1"; exec sh -c 'printf "%s\0" "${A-unset}" "${B-unset}" "${C-unset}"'`, "sh", filepath.Join(root, "etc/vmm/env.sh")).Output()
+	out, err := exec.Command("sh", "-c", `. "$1"; exec sh -c 'printf "%s\0" "${A-unset}" "${B-unset}" "${C-unset}" "${D-unset}" "${E-unset}"'`, "sh", filepath.Join(root, "etc/vmm/env.sh")).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +174,8 @@ func TestBootFilesRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := []string{"ssh-ed25519 AAAA one@host", "ssh-rsa BBBB two@host"}
-	env := map[string]string{"A": "x\ny", "B": `it's $HOME \ "q" =`, "C": ""}
+	// pam_env cuts D at the # and splits E at its line buffer, so both stay out of /etc/environment.
+	env := map[string]string{"A": "x\ny", "B": `it's $HOME \ "q" =`, "C": "", "D": "x#y", "E": strings.Repeat("a", 1001) + "X=injected"}
 	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: keys, Env: env}}, PrimaryNet{})
 	for _, name := range []string{"vmm-boot.sh", "vmm-env", "vmm-authorized-keys"} {
 		if _, ok := files[name]; !ok {
@@ -175,7 +193,7 @@ func TestBootFilesRoundTrip(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, "etc/profile.d/vmm-env.sh")); !strings.Contains(got, "/etc/vmm/env.sh") {
 		t.Fatalf("profile.d/vmm-env.sh = %q", got)
 	}
-	if got, want := sourcedEnv(t, root), "x\ny\x00"+env["B"]+"\x00\x00"; got != want {
+	if got, want := sourcedEnv(t, root), "x\ny\x00"+env["B"]+"\x00\x00x#y\x00"+env["E"]+"\x00"; got != want {
 		t.Fatalf("env.sh sets %q, want %q", got, want)
 	}
 	environment := readFile(t, filepath.Join(root, "etc/environment"))
@@ -195,7 +213,7 @@ func TestBootFilesRoundTrip(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, "etc/vmm/authorized_keys")); got != keys[0]+"\n" {
 		t.Fatalf("authorized_keys after second boot = %q", got)
 	}
-	if got := sourcedEnv(t, root); got != "unset\x00unset\x00unset\x00" {
+	if got := sourcedEnv(t, root); got != strings.Repeat("unset\x00", 5) {
 		t.Fatalf("env.sh after second boot sets %q", got)
 	}
 	environment = readFile(t, filepath.Join(root, "etc/environment"))

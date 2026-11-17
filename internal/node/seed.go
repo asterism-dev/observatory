@@ -3,9 +3,12 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	diskfs "github.com/diskfs/go-diskfs"
@@ -29,7 +32,7 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 	var keys strings.Builder
 	for _, k := range boot.SSHPublicKeys {
 		// One key per line: a line break inside a key would smuggle in another one.
-		if !strings.ContainsAny(k, "\r\n") {
+		if k = strings.TrimSpace(k); k != "" && !strings.ContainsAny(k, "\r\n") {
 			keys.WriteString(k + "\n")
 		}
 	}
@@ -41,7 +44,7 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 	}
 }
 
-// ReadSeedFile returns one file of dir's seed.iso.
+// ReadSeedFile returns one file of dir's seed.iso; a missing file gives an error wrapping fs.ErrNotExist.
 func ReadSeedFile(dir, name string) ([]byte, error) {
 	d, err := diskfs.Open(filepath.Join(dir, SeedISO), diskfs.WithOpenMode(diskfs.ReadOnly))
 	if err != nil {
@@ -52,6 +55,14 @@ func ReadSeedFile(dir, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	entries, err := fs.ReadDir(".")
+	if err != nil {
+		return nil, err
+	}
+	// go-diskfs does not wrap fs.ErrNotExist itself.
+	if !slices.ContainsFunc(entries, func(e iofs.DirEntry) bool { return e.Name() == name }) {
+		return nil, fmt.Errorf("seed %s: %w", name, iofs.ErrNotExist)
+	}
 	f, err := fs.OpenFile("/"+name, os.O_RDONLY)
 	if err != nil {
 		return nil, err
@@ -61,16 +72,19 @@ func ReadSeedFile(dir, name string) ([]byte, error) {
 
 // SeedBoot recovers the keys and variables last written into dir's seed.iso, so a reseed without a pushed Boot keeps them.
 func SeedBoot(dir string) (*proto.Boot, error) {
+	var b proto.Boot
 	env, err := ReadSeedFile(dir, "vmm-env")
-	if err != nil {
+	switch {
+	case errors.Is(err, iofs.ErrNotExist):
+	case err != nil:
 		return nil, err
+	default:
+		if err := json.Unmarshal(env, &b.Env); err != nil {
+			return nil, err
+		}
 	}
 	keys, err := ReadSeedFile(dir, "vmm-authorized-keys")
-	if err != nil {
-		return nil, err
-	}
-	var b proto.Boot
-	if err := json.Unmarshal(env, &b.Env); err != nil {
+	if err != nil && !errors.Is(err, iofs.ErrNotExist) {
 		return nil, err
 	}
 	for k := range strings.Lines(string(keys)) {
