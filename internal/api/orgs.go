@@ -85,6 +85,8 @@ var storeErrorStatus = []struct {
 	{store.ErrInvalidParent, http.StatusBadRequest},
 	{errLiftsOwnDeny, http.StatusForbidden},
 	{authz.ErrDenyNotAllowed, http.StatusForbidden},
+	{authz.ErrEscalation, http.StatusForbidden},
+	{authz.ErrInvalidPattern, http.StatusBadRequest},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.

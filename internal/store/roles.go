@@ -150,8 +150,8 @@ func (s *Store) Role(ctx context.Context, orgID, roleID uuid.UUID) (authz.Custom
 	return roles[i], nil
 }
 
-// lockOrg serializes role graph changes in an org, so concurrent writes can't combine into a cycle or an over-deep chain.
-func (s *Store) lockOrg(ctx context.Context, orgID uuid.UUID) error {
+// LockOrg serializes role graph and team membership changes in an org, so concurrent writes can't combine into a cycle or an over-deep chain; take it first (org → memberships → team_members).
+func (s *Store) LockOrg(ctx context.Context, orgID uuid.UUID) error {
 	var one int
 	err := s.q.QueryRow(ctx, "SELECT 1 FROM orgs WHERE id = $1 FOR UPDATE", orgID).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -163,7 +163,7 @@ func (s *Store) lockOrg(ctx context.Context, orgID uuid.UUID) error {
 func (s *Store) CreateRole(ctx context.Context, orgID uuid.UUID, r authz.CustomRole) (authz.CustomRole, error) {
 	r.OrgID = orgID
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockOrg(ctx, orgID); err != nil {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
 			return err
 		}
 		err := tx.q.QueryRow(ctx, "INSERT INTO roles (org_id, name, description) VALUES ($1, $2, $3) RETURNING id", orgID, r.Name, r.Description).Scan(&r.ID)
@@ -184,7 +184,7 @@ func (s *Store) CreateRole(ctx context.Context, orgID uuid.UUID, r authz.CustomR
 func (s *Store) UpdateRole(ctx context.Context, orgID uuid.UUID, r authz.CustomRole) error {
 	r.OrgID = orgID
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockOrg(ctx, orgID); err != nil {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
 			return err
 		}
 		tag, err := tx.q.Exec(ctx, "UPDATE roles SET name = $3, description = $4 WHERE org_id = $1 AND id = $2", orgID, r.ID, r.Name, r.Description)
@@ -269,7 +269,7 @@ func (s *Store) DeleteRole(ctx context.Context, orgID, roleID uuid.UUID) error {
 func (s *Store) Bind(ctx context.Context, orgID uuid.UUID, subject string, roleID uuid.UUID) (BindingRow, error) {
 	b := BindingRow{Subject: subject, RoleID: roleID}
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockOrg(ctx, orgID); err != nil {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
 			return err
 		}
 		var one int

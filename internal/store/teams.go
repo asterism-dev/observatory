@@ -61,6 +61,9 @@ func (s *Store) RenameTeam(ctx context.Context, orgID, teamID uuid.UUID, name st
 // DeleteTeam also drops the team's memberships (cascade) and the role bindings whose subject is the team.
 func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
+			return err
+		}
 		tag, err := tx.q.Exec(ctx, "DELETE FROM teams WHERE org_id = $1 AND id = $2", orgID, teamID)
 		if err != nil {
 			return err
@@ -108,6 +111,9 @@ func (s *Store) TeamMembers(ctx context.Context, orgID, teamID uuid.UUID) ([]Tea
 
 func (s *Store) SetTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID, admin bool) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
+			return err
+		}
 		if _, err := tx.Team(ctx, orgID, teamID); err != nil {
 			return err
 		}
@@ -127,19 +133,24 @@ func (s *Store) SetTeamMember(ctx context.Context, orgID, teamID, userID uuid.UU
 }
 
 func (s *Store) RemoveTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, `
-		DELETE FROM team_members WHERE team_id = $2 AND user_id = $3
-		AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`, orgID, teamID, userID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.LockOrg(ctx, orgID); err != nil {
+			return err
+		}
+		tag, err := tx.q.Exec(ctx, `
+			DELETE FROM team_members WHERE team_id = $2 AND user_id = $3
+			AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`, orgID, teamID, userID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
-// LockTeamMember locks the user's team_members row and returns its admin flag; ErrNotFound if the user isn't in the team.
+// LockTeamMember locks the user's team_members row and returns its admin flag; ErrNotFound if the user isn't in the team. Take LockOrg first.
 func (s *Store) LockTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID) (bool, error) {
 	var admin bool
 	err := s.q.QueryRow(ctx, `

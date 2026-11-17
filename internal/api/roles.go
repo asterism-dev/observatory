@@ -18,6 +18,20 @@ import (
 
 var errLiftsOwnDeny = errors.New("only an org owner can lift a deny rule that applies to you")
 
+const maxRoleRules = 200
+
+// denyRuleError names the deny rule behind a P6/P9 denial; it unwraps to the sentinel.
+type denyRuleError struct {
+	err  error
+	rule authz.Rule
+}
+
+func (e denyRuleError) Error() string {
+	return e.err.Error() + ": " + string(e.rule.Effect) + " " + e.rule.Action + "@" + e.rule.Object
+}
+
+func (e denyRuleError) Unwrap() error { return e.err }
+
 type ruleJSON struct {
 	Effect authz.Effect `json:"effect"`
 	Object string       `json:"object"`
@@ -109,6 +123,10 @@ func readRoleBody(w http.ResponseWriter, r *http.Request) (authz.CustomRole, boo
 		writeError(w, http.StatusBadRequest, "invalid description")
 		return authz.CustomRole{}, false
 	}
+	if len(body.Rules) > maxRoleRules {
+		writeError(w, http.StatusBadRequest, "too many rules")
+		return authz.CustomRole{}, false
+	}
 	rules := make([]authz.Rule, 0, len(body.Rules))
 	for _, rj := range body.Rules {
 		rules = append(rules, authz.Rule(rj))
@@ -116,11 +134,15 @@ func readRoleBody(w http.ResponseWriter, r *http.Request) (authz.CustomRole, boo
 	return authz.CustomRole{Name: name, Description: body.Description, Rules: rules, Parents: body.Parents}, true
 }
 
-// expandRules stores action wildcards as the concrete catalog actions they match today, so later catalog additions aren't granted silently.
+// expandRules stores allow wildcards as the concrete catalog actions they match today, so later catalog additions aren't granted silently; deny wildcards stay as written so they keep covering new actions.
 func expandRules(rules []authz.Rule) []authz.Rule {
 	out := []authz.Rule{}
 	for _, r := range rules {
-		for _, a := range authz.ExpandActions(r.Action) {
+		actions := []string{r.Action}
+		if r.Effect == authz.Allow {
+			actions = authz.ExpandActions(r.Action)
+		}
+		for _, a := range actions {
 			if x := (authz.Rule{Effect: r.Effect, Object: r.Object, Action: a}); !slices.Contains(out, x) {
 				out = append(out, x)
 			}
@@ -185,10 +207,10 @@ func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
 	role.Rules = expandRules(role.Rules)
 	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.UpdateRole(r.Context(), m.Org.ID, role); err != nil {
+		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
 			return err
 		}
-		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+		if denied = guardOwnDenies(r.Context(), tx, m, actor, func() error { return tx.UpdateRole(r.Context(), m.Org.ID, role) }); denied != nil {
 			return denied
 		}
 		ae := auditEntry(r, &m.Org.ID, store.ActionRoleUpdate, obj, store.ResultAllowed)
@@ -220,10 +242,10 @@ func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 	var denied error
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.DeleteRole(r.Context(), m.Org.ID, id); err != nil {
+		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
 			return err
 		}
-		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+		if denied = guardOwnDenies(r.Context(), tx, m, actor, func() error { return tx.DeleteRole(r.Context(), m.Org.ID, id) }); denied != nil {
 			return denied
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionRoleDelete, obj, store.ResultAllowed))
@@ -305,16 +327,20 @@ func (h *api) unbind(w http.ResponseWriter, r *http.Request) {
 		denied error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		var err error
-		if b, err = tx.Unbind(r.Context(), m.Org.ID, id); err != nil {
+		if err := tx.LockOrg(r.Context(), m.Org.ID); err != nil {
 			return err
 		}
-		if !privileged(m.Role) {
-			if denied = carriesDeny(e, m.Org.ID, b.RoleID); denied != nil {
-				return denied
+		denied = guardOwnDenies(r.Context(), tx, m, actor, func() error {
+			var err error
+			if b, err = tx.Unbind(r.Context(), m.Org.ID, id); err != nil {
+				return err
 			}
-		}
-		if denied = checkOwnDenies(r.Context(), tx, e, m, actor); denied != nil {
+			if !privileged(m.Role) {
+				return carriesDeny(e, m.Org.ID, b.RoleID)
+			}
+			return nil
+		})
+		if denied != nil {
 			return denied
 		}
 		ae := auditEntry(r, &m.Org.ID, store.ActionRoleUnbind, authz.RoleObject(b.RoleID), store.ResultAllowed)
@@ -334,38 +360,46 @@ func carriesDeny(e *authz.Enforcer, org, role uuid.UUID) error {
 		return err
 	}
 	if len(denies) > 0 {
-		return authz.ErrDenyNotAllowed
+		return denyRuleError{authz.ErrDenyNotAllowed, denies[0]}
 	}
 	return nil
 }
 
-// checkOwnDenies fails with errLiftsOwnDeny if tx's pending policy drops a deny rule that applies to the caller under before; owners are exempt.
-func checkOwnDenies(ctx context.Context, tx *store.Store, before *authz.Enforcer, m store.Membership, actor string) error {
+// guardOwnDenies runs change in tx and fails with errLiftsOwnDeny if it drops a deny rule applying to the caller; owners are exempt. Take LockOrg first.
+func guardOwnDenies(ctx context.Context, tx *store.Store, m store.Membership, actor string, change func() error) error {
 	if m.Role == store.RoleOwner {
-		return nil
+		return change()
 	}
-	had, err := before.DenyRulesFor(actor, m.Org.ID)
-	if err != nil || len(had) == 0 {
-		return err
-	}
-	p, err := tx.PolicySnapshot(ctx)
+	had, err := ownDenies(ctx, tx, m.Org.ID, actor)
 	if err != nil {
 		return err
 	}
-	after, err := authz.New(p)
-	if err != nil {
-		return invalidPolicyError{err}
+	if err := change(); err != nil || len(had) == 0 {
+		return err
 	}
-	has, err := after.DenyRulesFor(actor, m.Org.ID)
+	has, err := ownDenies(ctx, tx, m.Org.ID, actor)
 	if err != nil {
 		return err
 	}
 	for _, d := range had {
 		if !slices.Contains(has, d) {
-			return errLiftsOwnDeny
+			return denyRuleError{errLiftsOwnDeny, d}
 		}
 	}
 	return nil
+}
+
+// ownDenies returns the deny rules applying to actor under tx's current policy.
+func ownDenies(ctx context.Context, tx *store.Store, org uuid.UUID, actor string) ([]authz.Rule, error) {
+	p, err := tx.PolicySnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	e, err := authz.New(p)
+	if err != nil {
+		return nil, invalidPolicyError{err}
+	}
+	return e.DenyRulesFor(actor, org)
 }
 
 func isGuardDenial(err error) bool {
