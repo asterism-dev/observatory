@@ -130,23 +130,27 @@ func (s *Store) EnvValue(ctx context.Context, v EnvVar) (string, error) {
 }
 
 func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVar, error) {
-	key, err := s.orgKey(ctx, v.OrgID)
+	err := s.InTx(ctx, func(tx *Store) error {
+		key, err := tx.orgKey(ctx, v.OrgID)
+		if err != nil {
+			return err
+		}
+		v.ID = uuid.New()
+		nonce, ct, err := seal.Seal(key, []byte(value), envAAD(v.OrgID, v.ID))
+		if err != nil {
+			return err
+		}
+		teamID, userID := envOwnerColumns(v)
+		err = tx.q.QueryRow(ctx, `
+			INSERT INTO env_vars (id, org_id, kind, scope, team_id, user_id, name, nonce, ciphertext, created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING created_at, updated_at`,
+			v.ID, v.OrgID, v.Kind, v.Scope, teamID, userID, v.Name, nonce, ct, v.CreatedBy).Scan(&v.CreatedAt, &v.UpdatedAt)
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return err
+	})
 	if err != nil {
-		return EnvVar{}, err
-	}
-	v.ID = uuid.New()
-	nonce, ct, err := seal.Seal(key, []byte(value), envAAD(v.OrgID, v.ID))
-	if err != nil {
-		return EnvVar{}, err
-	}
-	teamID, userID := envOwnerColumns(v)
-	err = s.q.QueryRow(ctx, `
-		INSERT INTO env_vars (id, org_id, kind, scope, team_id, user_id, name, nonce, ciphertext, created_by, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING created_at, updated_at`,
-		v.ID, v.OrgID, v.Kind, v.Scope, teamID, userID, v.Name, nonce, ct, v.CreatedBy).Scan(&v.CreatedAt, &v.UpdatedAt)
-	if isUniqueViolation(err) {
-		return EnvVar{}, ErrConflict
-	} else if err != nil {
 		return EnvVar{}, err
 	}
 	v.UpdatedBy = v.CreatedBy
