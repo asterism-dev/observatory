@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,8 +59,15 @@ func New(t testing.TB) *pgxpool.Pool {
 			return
 		}
 		defer conn.Close(ctx)
+		// Closed pool backends or an autovacuum worker may linger briefly; FORCE can't terminate the latter without superuser.
+		for range 5 {
+			if _, err := conn.Exec(ctx, "DROP DATABASE "+name); err == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 		if _, err := conn.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)"); err != nil {
-			t.Errorf("drop database: %v", err)
+			t.Logf("drop database %s (left behind): %v", name, err)
 		}
 	})
 
