@@ -26,8 +26,8 @@ func TestCanGrant(t *testing.T) {
 	})
 	var all []Rule
 	for _, p := range Catalog {
-		// Nobody holds every member's private env scope.
-		if p.Object != ObjUserEnv+"/*" {
+		// Nobody holds every member's private env scope, vm:connect or device:create on every object.
+		if p.Object != ObjUserEnv+"/*" && p.Action != "vm:connect" && p.Action != "device:create" {
 			all = append(all, Rule{Allow, p.Object, p.Action})
 		}
 	}

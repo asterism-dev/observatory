@@ -23,6 +23,9 @@ const (
 	ObjNodes    = "org/nodes"
 	ObjVMs      = "org/vms"
 	ObjTeamVMs  = "org/team-vms"
+
+	ObjUserDevices = "org/user-devices"
+	ObjNetworks    = "org/networks"
 )
 
 // Subjects; "vm:<id>" is reserved for VM identities.
@@ -46,6 +49,10 @@ func NodeObject(id uuid.UUID) string { return ObjNodes + "/" + id.String() }
 func VMObject(id uuid.UUID) string { return ObjVMs + "/" + id.String() }
 
 func TeamVMsObject(teamID uuid.UUID) string { return ObjTeamVMs + "/" + teamID.String() }
+
+func UserDevicesObject(user uuid.UUID) string { return ObjUserDevices + "/" + user.String() }
+
+func NetworkObject(id uuid.UUID) string { return ObjNetworks + "/" + id.String() }
 
 type Effect string
 
@@ -106,6 +113,15 @@ var Catalog = []Permission{
 	{"vm:read", ObjVMs + "/*"},
 	{"vm:power", ObjVMs + "/*"},
 	{"vm:delete", ObjVMs + "/*"},
+	{"vm:connect", ObjVMs + "/*"},
+	{"vm:network", ObjVMs + "/*"},
+	{"device:create", ObjUserDevices + "/*"},
+	{"device:list", ObjUserDevices + "/*"},
+	{"device:delete", ObjUserDevices + "/*"},
+	{"network:read", ObjNetworks},
+	{"network:create", ObjNetworks},
+	{"network:use", ObjNetworks + "/*"},
+	{"network:delete", ObjNetworks + "/*"},
 }
 
 // BuiltinRules returns the allow rules of a built-in role, or nil for an unknown key.
@@ -122,6 +138,9 @@ func BuiltinRules(key string) []Rule {
 		{Allow, ObjNodes + "/*", "node:read"},
 		{Allow, ObjNodes + "/*", "node:use"},
 		{Allow, ObjVMs, "vm:create"},
+		{Allow, ObjNetworks, "network:read"},
+		{Allow, ObjNetworks, "network:create"},
+		{Allow, ObjNetworks + "/*", "network:use"},
 	}
 	admin := append(member,
 		Rule{Allow, ObjSettings, "org:update"},
@@ -136,9 +155,15 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjTeamEnv + "/*", "env:*"},
 		Rule{Allow, ObjNodes, "node:*"},
 		Rule{Allow, ObjNodes + "/*", "node:*"},
-		Rule{Allow, ObjVMs, "vm:*"},
-		Rule{Allow, ObjVMs + "/*", "vm:*"},
-		Rule{Allow, ObjTeamVMs + "/*", "vm:*"},
+		// Explicit VM actions, never vm:*: admins must not gain vm:connect or future VM actions.
+		Rule{Allow, ObjTeamVMs + "/*", "vm:create"},
+		Rule{Allow, ObjVMs + "/*", "vm:read"},
+		Rule{Allow, ObjVMs + "/*", "vm:power"},
+		Rule{Allow, ObjVMs + "/*", "vm:delete"},
+		Rule{Allow, ObjVMs + "/*", "vm:network"},
+		Rule{Allow, ObjUserDevices + "/*", "device:list"},
+		Rule{Allow, ObjUserDevices + "/*", "device:delete"},
+		Rule{Allow, ObjNetworks + "/*", "network:delete"},
 	)
 	switch key {
 	case "member":

@@ -96,6 +96,9 @@ func New(p Policy) (*Enforcer, error) {
 		// Users may do everything with their own resources; org deny rules still win.
 		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
 		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
+		for _, act := range []string{"device:create", "device:list", "device:delete"} {
+			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
+		}
 	}
 	for _, tm := range p.TeamMembers {
 		u, org := UserSubject(tm.UserID), tm.OrgID.String()
@@ -117,17 +120,18 @@ func New(p Policy) (*Enforcer, error) {
 	}
 	for _, vm := range p.VMs {
 		obj, org := VMObject(vm.ID), vm.OrgID.String()
+		grant := func(sub string, acts ...string) {
+			for _, act := range acts {
+				rules = append(rules, []string{sub, org, obj, act, string(Allow)})
+			}
+		}
 		switch {
 		case vm.UserID != nil:
-			rules = append(rules, []string{UserSubject(*vm.UserID), org, obj, "vm:*", string(Allow)})
+			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:connect")
 		case vm.TeamID != nil:
-			sub := TeamSubject(*vm.TeamID)
-			rules = append(rules,
-				[]string{sub, org, obj, "vm:read", string(Allow)},
-				[]string{sub, org, obj, "vm:power", string(Allow)},
-			)
+			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect")
 			for _, admin := range teamAdmins[*vm.TeamID] {
-				rules = append(rules, []string{UserSubject(admin), org, obj, "vm:*", string(Allow)})
+				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network")
 			}
 		}
 	}
@@ -167,6 +171,25 @@ func (e *Enforcer) Allowed(sub string, org uuid.UUID, obj, act string) bool {
 		return false
 	}
 	return ok
+}
+
+// CanConnect holds only through the owner relation (user VM owner, owning team's members), never custom grants; denies still cut.
+func (e *Enforcer) CanConnect(user uuid.UUID, vm VMRef) bool {
+	switch {
+	case vm.UserID != nil:
+		if *vm.UserID != user {
+			return false
+		}
+	case vm.TeamID != nil:
+		if !slices.ContainsFunc(e.policy.TeamMembers, func(tm TeamMember) bool {
+			return tm.OrgID == vm.OrgID && tm.TeamID == *vm.TeamID && tm.UserID == user
+		}) {
+			return false
+		}
+	default:
+		return false
+	}
+	return e.Allowed(UserSubject(user), vm.OrgID, VMObject(vm.ID), "vm:connect")
 }
 
 // DenyRulesFor returns the deny rules of sub and of every team and role it reaches in org.
