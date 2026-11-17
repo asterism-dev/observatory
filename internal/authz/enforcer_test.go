@@ -167,31 +167,33 @@ func TestValidatePattern(t *testing.T) {
 	id := uuid.NewString()
 	cases := map[string]bool{
 		ObjSettings: true, ObjMembers: true, ObjTeams: true, ObjRoles: true, ObjLimits: true, ObjAudit: true,
-		"org/teams/*":            true,
-		"org/*":                  true,
-		"org/vm/*":               true,
-		"org/vm/abc":             true,
-		"user:" + id + "/*":      true,
-		"user:" + id + "/vm/*":   true,
-		"user:" + id + "/vm/abc": true,
-		"":                       false,
-		"*":                      false,
-		"org":                    false,
-		"org/":                   false,
-		"org/vm":                 false,
-		"org/vm*":                false,
-		"org/**":                 false,
-		"org/*/x":                false,
-		"org/vm/a*":              false,
-		"org/vm/a/b":             false,
-		"org//x":                 false,
-		"x/*":                    false,
-		"user:nope/*":            false,
-		"user:" + id:             false,
-		"user:" + id + "/":       false,
-		"user:" + id + "/vm":     false,
-		"user:" + id + "/vm/a/b": false,
-		"user:" + id + "/vm/*/x": false,
+		"org/teams/*":                        true,
+		"org/*":                              true,
+		"org/vm/*":                           true,
+		"org/vm/abc":                         true,
+		"user:" + id + "/*":                  true,
+		"user:" + id + "/vm/*":               true,
+		"user:" + id + "/vm/abc":             true,
+		"":                                   false,
+		"*":                                  false,
+		"org":                                false,
+		"org/":                               false,
+		"org/vm":                             false,
+		"org/vm*":                            false,
+		"org/**":                             false,
+		"org/*/x":                            false,
+		"org/vm/a*":                          false,
+		"org/vm/a/b":                         false,
+		"org//x":                             false,
+		"x/*":                                false,
+		"user:nope/*":                        false,
+		"user:" + strings.ToUpper(id) + "/*": false,
+		"user:{" + id + "}/*":                false,
+		"user:" + id:                         false,
+		"user:" + id + "/":                   false,
+		"user:" + id + "/vm":                 false,
+		"user:" + id + "/vm/a/b":             false,
+		"user:" + id + "/vm/*/x":             false,
 	}
 	for in, ok := range cases {
 		if err := ValidatePattern(in); (err == nil) != ok {
@@ -239,7 +241,11 @@ func TestDenyRulesFor(t *testing.T) {
 		},
 	})
 	var got []string
-	for _, r := range e.DenyRulesFor(UserSubject(u), org) {
+	rules, err := e.DenyRulesFor(UserSubject(u), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rules {
 		if r.Effect != Deny {
 			t.Errorf("non-deny rule returned: %+v", r)
 		}
@@ -250,7 +256,86 @@ func TestDenyRulesFor(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if got := e.DenyRulesFor(UserSubject(uuid.New()), org); len(got) != 0 {
+	if got, err := e.DenyRulesFor(UserSubject(uuid.New()), org); err != nil || len(got) != 0 {
 		t.Errorf("stranger: got %v", got)
+	}
+}
+
+// chainPolicy builds user→team→r1→…→rN with a deny on limit:set at rN, so the chain is n+1 hops long.
+func chainPolicy(n int) (Policy, uuid.UUID, uuid.UUID) {
+	org, u, team := uuid.New(), uuid.New(), uuid.New()
+	ids := make([]uuid.UUID, n)
+	for i := range ids {
+		ids[i] = uuid.New()
+	}
+	p := Policy{
+		Memberships: []MemberRole{{OrgID: org, UserID: u, Role: "admin"}},
+		TeamMembers: []TeamMember{{OrgID: org, TeamID: team, UserID: u}},
+		Bindings:    []Binding{{OrgID: org, Subject: TeamSubject(team), RoleID: ids[0]}},
+	}
+	for i, id := range ids {
+		cr := CustomRole{ID: id, OrgID: org}
+		if i+1 < n {
+			cr.Parents = []string{ids[i+1].String()}
+		} else {
+			cr.Rules = []Rule{{Effect: Deny, Object: ObjLimits, Action: "limit:set"}}
+		}
+		p.Roles = append(p.Roles, cr)
+	}
+	return p, org, u
+}
+
+func TestRoleDepth(t *testing.T) {
+	p, org, u := chainPolicy(MaxRoleDepth - 1)
+	e := mustNew(t, p)
+	if e.Allowed(UserSubject(u), org, ObjLimits, "limit:set") {
+		t.Error("deny at the deep end of a chain at the limit should win")
+	}
+	if rules, err := e.DenyRulesFor(UserSubject(u), org); err != nil || len(rules) != 1 {
+		t.Errorf("DenyRulesFor at the limit: %v, %v", rules, err)
+	}
+	p, _, _ = chainPolicy(MaxRoleDepth)
+	if _, err := New(p); err == nil {
+		t.Error("chain longer than MaxRoleDepth should fail")
+	}
+}
+
+func TestNewRejectsInvalidPolicy(t *testing.T) {
+	org, other, u, role, foreign := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	base := func() Policy {
+		return Policy{
+			Memberships: []MemberRole{{OrgID: org, UserID: u, Role: "member"}},
+			Roles:       []CustomRole{{ID: role, OrgID: org}, {ID: foreign, OrgID: other}},
+		}
+	}
+	cases := map[string]func(p *Policy){
+		"unknown membership role": func(p *Policy) { p.Memberships[0].Role = "root" },
+		"owner parent":            func(p *Policy) { p.Roles[0].Parents = []string{"owner"} },
+		"foreign-org parent":      func(p *Policy) { p.Roles[0].Parents = []string{foreign.String()} },
+		"unknown parent":          func(p *Policy) { p.Roles[0].Parents = []string{uuid.NewString()} },
+		"non-canonical parent":    func(p *Policy) { p.Roles[0].Parents = []string{strings.ToUpper(foreign.String())} },
+		"self cycle":              func(p *Policy) { p.Roles[0].Parents = []string{role.String()} },
+		"binding to foreign role": func(p *Policy) {
+			p.Bindings = []Binding{{OrgID: org, Subject: UserSubject(u), RoleID: foreign}}
+		},
+		"binding to unknown role": func(p *Policy) {
+			p.Bindings = []Binding{{OrgID: org, Subject: UserSubject(u), RoleID: uuid.New()}}
+		},
+		"binding with role subject": func(p *Policy) {
+			p.Bindings = []Binding{{OrgID: org, Subject: RoleSubject("admin"), RoleID: role}}
+		},
+		"binding with bad user id": func(p *Policy) {
+			p.Bindings = []Binding{{OrgID: org, Subject: "user:x", RoleID: role}}
+		},
+	}
+	if _, err := New(base()); err != nil {
+		t.Fatalf("base policy: %v", err)
+	}
+	for name, mutate := range cases {
+		p := base()
+		mutate(&p)
+		if _, err := New(p); err == nil {
+			t.Errorf("%s: want error", name)
+		}
 	}
 }

@@ -111,7 +111,8 @@ func ValidatePattern(obj string) error {
 		if !found {
 			return errPattern
 		}
-		if _, err := uuid.Parse(id); err != nil {
+		// Only the canonical form matches the objects built with id.String().
+		if parsed, err := uuid.Parse(id); err != nil || parsed.String() != id {
 			return errPattern
 		}
 	}
