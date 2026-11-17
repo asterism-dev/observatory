@@ -29,9 +29,9 @@
     "userMenu": "Account menu"
   },
   "theme": {
-    "system": "Theme: system",
-    "light": "Theme: light",
-    "dark": "Theme: dark"
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
   },
   "user": {
     "signOut": "Sign out"
@@ -51,7 +51,10 @@
     "revokeCurrent": "This is your current session; you will be signed out.",
     "cancel": "Cancel",
     "idpNote": "Passkeys and password are managed in your account at the identity provider.",
-    "idpLink": "Open identity provider"
+    "idpLink": "Open identity provider",
+    "preferences": "Preferences",
+    "language": "Language",
+    "theme": "Theme"
   },
   "audit": {
     "actor": "Actor",
