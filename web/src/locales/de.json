@@ -22,6 +22,7 @@
     "dashboard": "Dashboard",
     "nodes": "Nodes",
     "vms": "VMs",
+    "env": "Umgebung",
     "orgSettings": "Organisationseinstellungen",
     "platformSettings": "Plattformeinstellungen",
     "general": "Allgemein",
@@ -168,5 +169,35 @@
   },
   "placeholder": {
     "empty": "Hier gibt es noch nichts."
+  },
+  "env": {
+    "subtitle": "Variablen und Secrets, die in deine VMs injiziert werden.",
+    "add": "Hinzufügen",
+    "addTitle": "Variable hinzufügen",
+    "editTitle": "Variable bearbeiten",
+    "name": "Name",
+    "value": "Wert",
+    "unchanged": "unverändert",
+    "type": "Typ",
+    "scope": "Geltungsbereich",
+    "scopeOrg": "Org",
+    "scopeTeam": "Team",
+    "scopePrivate": "privat",
+    "makeSecret": "Als Secret speichern (versiegelt, nur schreibbar)",
+    "save": "Speichern",
+    "edit": "Bearbeiten",
+    "move": "Verschieben",
+    "moveTitle": "{name} verschieben",
+    "delete": "Löschen",
+    "deleteTitle": "Variable löschen",
+    "deleteBody": "{name} löschen? Das kann nicht rückgängig gemacht werden.",
+    "copy": "Wert kopieren",
+    "empty": "Noch keine Variablen.",
+    "tab": {
+      "all": "Alle",
+      "org": "Org",
+      "teams": "Teams",
+      "private": "Privat"
+    }
   }
 }

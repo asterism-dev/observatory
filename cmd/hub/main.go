@@ -54,7 +54,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	s := store.New(pool)
+	s := store.New(pool).WithMasterKey(cfg.SecretsKey)
+	if err := s.CheckMasterKey(ctx); err != nil {
+		return err
+	}
 	z, err := authz.NewService(ctx, s.PolicySnapshot)
 	if err != nil {
 		return err

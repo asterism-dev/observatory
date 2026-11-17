@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,7 +28,7 @@ func TestPolicySnapshot(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := New(pool)
-	var org, user, team, parent, child uuid.UUID
+	var org, user, team, emptyTeam, parent, child uuid.UUID
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
@@ -39,6 +40,7 @@ func TestPolicySnapshot(t *testing.T) {
 	mustExec(ctx, t, pool, `INSERT INTO memberships (org_id,user_id,role) VALUES ($1,$2,'admin')`, org, user)
 	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'t') RETURNING id`, org).Scan(&team))
 	mustExec(ctx, t, pool, `INSERT INTO team_members (team_id,user_id,admin) VALUES ($1,$2,true)`, team, user)
+	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'empty') RETURNING id`, org).Scan(&emptyTeam))
 	must(pool.QueryRow(ctx, `INSERT INTO roles (org_id,name,description) VALUES ($1,'parent','pd') RETURNING id`, org).Scan(&parent))
 	must(pool.QueryRow(ctx, `INSERT INTO roles (org_id,name) VALUES ($1,'child') RETURNING id`, org).Scan(&child))
 	mustExec(ctx, t, pool, `INSERT INTO role_rules (role_id,position,effect,object,action) VALUES
@@ -54,6 +56,9 @@ func TestPolicySnapshot(t *testing.T) {
 	}
 	if len(p.TeamMembers) != 1 || p.TeamMembers[0] != (authz.TeamMember{OrgID: org, TeamID: team, UserID: user, Admin: true}) {
 		t.Errorf("team members: %+v", p.TeamMembers)
+	}
+	if len(p.Teams) != 2 || !slices.Contains(p.Teams, authz.TeamRef{OrgID: org, ID: emptyTeam}) {
+		t.Errorf("teams: %+v", p.Teams)
 	}
 	if len(p.Bindings) != 1 || p.Bindings[0] != (authz.Binding{OrgID: org, Subject: authz.TeamSubject(team), RoleID: child}) {
 		t.Errorf("bindings: %+v", p.Bindings)

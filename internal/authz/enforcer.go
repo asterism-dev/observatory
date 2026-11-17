@@ -31,6 +31,10 @@ type TeamMember struct {
 	Admin                 bool
 }
 
+type TeamRef struct {
+	OrgID, ID uuid.UUID
+}
+
 type CustomRole struct {
 	ID, OrgID         uuid.UUID
 	Name, Description string
@@ -51,6 +55,8 @@ type Policy struct {
 	TeamMembers []TeamMember
 	Roles       []CustomRole
 	Bindings    []Binding
+	// Teams lists every team, including those without members, so team subjects get their env rules.
+	Teams []TeamRef
 }
 
 type Enforcer struct {
@@ -81,13 +87,23 @@ func New(p Policy) (*Enforcer, error) {
 		groups = append(groups, []string{u, RoleSubject(mr.Role), org})
 		// Users may do everything with their own resources; org deny rules still win.
 		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
+		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
 	}
 	for _, tm := range p.TeamMembers {
 		u, org := UserSubject(tm.UserID), tm.OrgID.String()
 		groups = append(groups, []string{u, TeamSubject(tm.TeamID), org})
 		if tm.Admin {
 			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "team:manage-members", string(Allow)})
+			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
 		}
+	}
+	for _, t := range p.Teams {
+		sub, org := TeamSubject(t.ID), t.OrgID.String()
+		rules = append(rules,
+			[]string{sub, org, TeamEnvObject(t.ID), "env:list", string(Allow)},
+			[]string{sub, org, TeamEnvObject(t.ID), "env:use", string(Allow)},
+			[]string{sub, org, ObjEnv, "env:use", string(Allow)},
+		)
 	}
 	for _, cr := range p.Roles {
 		sub, org := RoleSubject(cr.ID.String()), cr.OrgID.String()

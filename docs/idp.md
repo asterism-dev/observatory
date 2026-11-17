@@ -34,6 +34,7 @@ tokens out entirely.
 | `OBSERVATORY_OIDC_CLI_CLIENT_ID` | CLI client ID |
 | `OBSERVATORY_PUBLIC_URL` | public URL of the hub, see above |
 | `OBSERVATORY_DATABASE_URL` | Postgres connection string |
+| `OBSERVATORY_SECRETS_KEY` | master key for encrypted values, base64 of 32 random bytes (`openssl rand -base64 32`) |
 | `OBSERVATORY_LISTEN` | listen address, default `:8090` |
 
 ## Zitadel

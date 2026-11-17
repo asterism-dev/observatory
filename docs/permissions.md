@@ -40,6 +40,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `role:read`, `role:write`, `role:bind` | `org/roles` |
 | `limit:read`, `limit:set` | `org/limits` |
 | `audit:read` | `org/audit` |
+| `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
 
 ## Built-in roles
 
@@ -52,6 +53,8 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `team:*` (create, update, delete, manage members, leave) | | yes | yes |
 | `role:write`, `role:bind`, `limit:set`, `audit:read` | | yes | yes |
 | `member:set-role` | | | yes |
+| `env:list`, `env:use` on `org/env` | yes | yes | yes |
+| `env:*` on `org/env` and `org/team-env/*` | | yes | yes |
 
 ## Custom roles and bindings
 
@@ -95,6 +98,19 @@ member.
 Members leave a team themselves with `team:leave`, which every member has by default; an org can forbid it
 with a deny rule (e.g. `deny team:leave@org/teams/*`, or one team only). Leaving never lifts a deny that
 reaches you through the team, unless you are an owner.
+
+## Environment variables
+
+Variables (plain or secret) live in three scopes: the org (`org/env`), a team (`org/team-env/<team>`) and
+each member's private scope (`org/user-env/<user>`).
+
+- `env:list` lists names and metadata; `env:set` and `env:delete` manage variables; `env:use` lets a
+  subject's workloads receive the values. There is no action that reads a secret value back.
+- Team members get `env:list` and `env:use` on their team's scope; the team subject itself gets `env:use`
+  on `org/env` and its own scope. Team admins also get `env:set` and `env:delete` on their team.
+- A private scope is reachable only by its own user, who holds all four actions on it; no built-in role,
+  not even owner, covers another member's private scope. Deny rules still win, e.g.
+  `deny env:set@org/user-env/*`.
 
 ## Limits
 

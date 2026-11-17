@@ -78,6 +78,7 @@ var storeErrorStatus = []struct {
 	{store.ErrLastOwner, http.StatusConflict},
 	{store.ErrPersonalOrg, http.StatusConflict},
 	{store.ErrConflict, http.StatusConflict},
+	{store.ErrStale, http.StatusConflict},
 	{store.ErrNotMember, http.StatusBadRequest},
 	{store.ErrInviteInvalid, http.StatusBadRequest},
 	{store.ErrAlreadyMember, http.StatusConflict},

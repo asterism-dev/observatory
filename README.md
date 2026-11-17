@@ -19,6 +19,8 @@ npm --prefix web ci                # first time only
 npm --prefix web run dev           # Vite on :5173, proxies /api and /auth
 ```
 
+An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -base64 32)` appended.
+
 Open <http://localhost:5173>. The first user to log in becomes platform admin.
 With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.
 

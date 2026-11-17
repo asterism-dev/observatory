@@ -133,7 +133,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role
 	})
 }
 
-// RemoveMember also drops the user's team memberships, role bindings and limits in the org.
+// RemoveMember also drops the user's team memberships, role bindings, limits and private variables in the org.
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		current, err := tx.LockMember(ctx, orgID, userID)
@@ -151,6 +151,9 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", orgID, authz.UserSubject(userID)); err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, "DELETE FROM env_vars WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
 			return err
 		}
 		_, err = tx.q.Exec(ctx, "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID)
