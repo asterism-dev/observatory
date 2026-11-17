@@ -255,3 +255,45 @@ func TestDeleteTeamRemovesBindings(t *testing.T) {
 		t.Fatalf("bindings: %v", subjects)
 	}
 }
+
+func TestTeamAdminCannotChangePeerAdmin(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	lead, leadTok := e.user("bob")
+	peer, _ := e.user("carol")
+	boss, bossTok := e.user("dave")
+	org := e.createOrg(ownerTok, "Acme")
+	for _, u := range []store.User{lead, peer} {
+		e.addMember(org, u, store.RoleMember)
+	}
+	e.addMember(org, boss, store.RoleAdmin)
+	team := e.createTeam(ownerTok, org, "core")
+	for _, u := range []store.User{lead, peer} {
+		if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":true}`); rec.Code != 204 {
+			t.Fatalf("make admin: %d", rec.Code)
+		}
+	}
+	before := len(e.audit(store.ActionTeamUpdate))
+	if rec := e.send("PUT", teamMemberPath(org, team, peer), leadTok, `{"admin":false}`); rec.Code != 403 {
+		t.Fatalf("demote: %d", rec.Code)
+	}
+	if rec := e.do("DELETE", teamMemberPath(org, team, peer), leadTok); rec.Code != 403 {
+		t.Fatalf("remove: %d", rec.Code)
+	}
+	es := e.audit(store.ActionTeamUpdate)
+	if len(es) != before+2 || es[0].Result != store.ResultDenied || es[0].ActorID != lead.ID.String() || es[0].Resource != "org/teams/"+team.String() {
+		t.Fatalf("denied audit: %+v", es)
+	}
+	if ms, _ := e.store.TeamMembers(t.Context(), org, team); len(ms) != 2 || !ms[0].Admin || !ms[1].Admin {
+		t.Fatalf("members changed: %+v", ms)
+	}
+	if rec := e.send("PUT", teamMemberPath(org, team, peer), bossTok, `{}`); rec.Code != 400 {
+		t.Fatalf("missing admin: %d", rec.Code)
+	}
+	if rec := e.send("PUT", teamMemberPath(org, team, peer), bossTok, `{"admin":false}`); rec.Code != 204 {
+		t.Fatalf("org admin demotes: %d", rec.Code)
+	}
+	if rec := e.do("DELETE", teamMemberPath(org, team, lead), bossTok); rec.Code != 204 {
+		t.Fatalf("org admin removes: %d", rec.Code)
+	}
+}

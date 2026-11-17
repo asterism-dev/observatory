@@ -138,3 +138,15 @@ func (s *Store) RemoveTeamMember(ctx context.Context, orgID, teamID, userID uuid
 	}
 	return nil
 }
+
+// LockTeamMember locks the user's team_members row and returns its admin flag; ErrNotFound if the user isn't in the team.
+func (s *Store) LockTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID) (bool, error) {
+	var admin bool
+	err := s.q.QueryRow(ctx, `
+		SELECT tm.admin FROM team_members tm JOIN teams t ON t.id = tm.team_id
+		WHERE t.org_id = $1 AND t.id = $2 AND tm.user_id = $3 FOR UPDATE OF tm`, orgID, teamID, userID).Scan(&admin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return admin, err
+}

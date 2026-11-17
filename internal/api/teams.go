@@ -151,21 +151,35 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct{ Admin bool }
+	var body struct {
+		Admin *bool `json:"admin"`
+	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.Admin && !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate) {
+	if body.Admin == nil {
+		writeError(w, http.StatusBadRequest, "admin is required")
 		return
 	}
+	admin := *body.Admin
+	if admin && !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate) {
+		return
+	}
+	var denied bool
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.SetTeamMember(r.Context(), m.Org.ID, id, user, body.Admin); err != nil {
+		if denied = h.demotesTeamAdmin(r, tx, m.Org.ID, id, user); denied {
+			return errForbidden
+		}
+		if err := tx.SetTeamMember(r.Context(), m.Org.ID, id, user, admin); err != nil {
 			return err
 		}
 		e := auditEntry(r, &m.Org.ID, store.ActionTeamMemberSet, authz.TeamObject(id)+"/members/"+user.String(), store.ResultAllowed)
-		e.Details = map[string]any{"admin": body.Admin}
+		e.Details = map[string]any{"admin": admin}
 		return tx.Audit(r.Context(), e)
 	}) {
+		if denied {
+			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -180,12 +194,19 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var denied bool
 	if !h.commit(w, r, func(tx *store.Store) error {
+		if denied = h.demotesTeamAdmin(r, tx, m.Org.ID, id, user); denied {
+			return errForbidden
+		}
 		if err := tx.RemoveTeamMember(r.Context(), m.Org.ID, id, user); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionTeamMemberRemove, authz.TeamObject(id)+"/members/"+user.String(), store.ResultAllowed))
 	}) {
+		if denied {
+			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -202,4 +223,14 @@ func (h *api) teamAction(w http.ResponseWriter, r *http.Request, act string) (st
 		return m, uuid.Nil, false
 	}
 	return m, id, true
+}
+
+// demotesTeamAdmin reports whether the target is a team admin (read under lock) and the caller lacks team:update, which changing an admin requires.
+func (h *api) demotesTeamAdmin(r *http.Request, tx *store.Store, org, team, user uuid.UUID) bool {
+	admin, err := tx.LockTeamMember(r.Context(), org, team, user)
+	if err != nil || !admin {
+		return false
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	return !h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, authz.TeamObject(team), store.ActionTeamUpdate)
 }
