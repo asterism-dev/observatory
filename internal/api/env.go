@@ -223,6 +223,7 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": v.ID})
 }
 
@@ -274,6 +275,7 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.NotifyOrg(old.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -304,6 +306,7 @@ func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.NotifyOrg(old.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -320,5 +323,6 @@ func (h *api) deleteEnv(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }

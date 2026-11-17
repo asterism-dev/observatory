@@ -14,6 +14,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -30,6 +31,9 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet) http
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
+	mux.HandleFunc("GET /api/me/ssh-keys", h.listSSHKeys)
+	mux.HandleFunc("POST /api/me/ssh-keys", h.addSSHKey)
+	mux.HandleFunc("DELETE /api/me/ssh-keys/{id}", h.deleteSSHKey)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
 	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
 	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
@@ -75,6 +79,13 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet) http
 	mux.HandleFunc("PATCH /api/orgs/{org}/nodes/{id}", h.renameNode)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes/{id}/credential", h.regenerateNodeCredential)
 	mux.HandleFunc("DELETE /api/orgs/{org}/nodes/{id}", h.deleteNode)
+	mux.HandleFunc("GET /api/orgs/{org}/vms", h.listVMs)
+	mux.HandleFunc("POST /api/orgs/{org}/vms", h.createVM)
+	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}", h.getVM)
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/start", h.powerVM(proto.PowerRunning, ""))
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/shutdown", h.powerVM(proto.PowerStopped, proto.StopGraceful))
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/stop", h.powerVM(proto.PowerStopped, proto.StopHard))
+	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}", h.deleteVM)
 	return a.Require(mux)
 }
 

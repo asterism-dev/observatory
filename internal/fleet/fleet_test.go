@@ -447,3 +447,40 @@ func TestNoSecretsInLogs(t *testing.T) {
 		}
 	}
 }
+
+func TestTeamVMNeverGetsPrivateVariable(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeUser, OwnerID: &e.owner, Name: "PRIVATE", CreatedBy: e.owner, UpdatedBy: e.owner}, "mine-only"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeTeam, OwnerID: &team.ID, Name: "TEAM", CreatedBy: e.owner, UpdatedBy: e.owner}, "shared"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	teamVM := e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	userVM := e.vm(e.org.ID, n.ID, "user-vm", &e.owner, nil)
+
+	for _, d := range e.connect(cred).desired().Desired {
+		switch d.Spec.ID {
+		case teamVM.ID.String():
+			if _, ok := d.Boot.Env["PRIVATE"]; ok || d.Boot.Env["TEAM"] != "shared" {
+				t.Errorf("team VM env = %v", d.Boot.Env)
+			}
+		case userVM.ID.String():
+			if d.Boot.Env["PRIVATE"] != "mine-only" {
+				t.Errorf("user VM env = %v", d.Boot.Env)
+			}
+		}
+	}
+}

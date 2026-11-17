@@ -92,6 +92,7 @@ var storeErrorStatus = []struct {
 	{store.ErrLastPlatformAdmin, http.StatusConflict},
 	{store.ErrLimitExceeded, http.StatusConflict},
 	{store.ErrOwnsResources, http.StatusConflict},
+	{store.ErrInvalidKey, http.StatusBadRequest},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.
