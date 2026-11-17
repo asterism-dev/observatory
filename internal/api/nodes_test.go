@@ -118,6 +118,22 @@ func TestNodeLifecycleAndAudit(t *testing.T) {
 	}
 }
 
+func TestRegeneratePendingNodeAuditedAsUpdate(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	c := e.createNode(tok, org, "n1")
+	if rec := e.do("POST", nodesPath(org)+"/"+c.Node.ID+"/credential", tok); rec.Code != 200 {
+		t.Fatalf("credential: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit("node:revoke"); len(es) != 0 {
+		t.Fatalf("pending node audited as revoke: %+v", es)
+	}
+	if es := e.audit("node:update"); len(es) != 1 || es[0].Details["regenerated"] != true {
+		t.Fatalf("update audit: %+v", es)
+	}
+}
+
 func detailStrings(d map[string]any) []string {
 	var out []string
 	for _, v := range d {

@@ -195,7 +195,12 @@ func (h *api) regenerateNodeCredential(w http.ResponseWriter, r *http.Request) {
 		if token, err = tx.RegenerateNodeCredential(r.Context(), n.OrgID, n.ID); err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), nodeAudit(r, store.ActionNodeRevoke, n))
+		if n.Enrolled {
+			return tx.Audit(r.Context(), nodeAudit(r, store.ActionNodeRevoke, n))
+		}
+		e := nodeAudit(r, store.ActionNodeUpdate, n)
+		e.Details["regenerated"] = true
+		return tx.Audit(r.Context(), e)
 	}) {
 		return
 	}
