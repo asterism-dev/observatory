@@ -4,6 +4,8 @@ import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
 import EnvView from '@/views/EnvView.vue'
+import NodeDetailView from '@/views/NodeDetailView.vue'
+import NodesView from '@/views/NodesView.vue'
 import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
 import AdminOrgView from '@/views/admin/AdminOrgView.vue'
 import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
@@ -35,7 +37,8 @@ export const router = createRouter({
     { path: '/login', component: LoginView, meta: { public: true } },
     { path: '/profile', component: ProfileView },
     { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
-    { path: '/orgs/:orgId/nodes', component: PlaceholderView, meta: { title: 'nav.nodes' } },
+    { path: '/orgs/:orgId/nodes', component: NodesView, meta: { title: 'nav.nodes' } },
+    { path: '/orgs/:orgId/nodes/:nodeId', component: NodeDetailView },
     { path: '/orgs/:orgId/vms', component: PlaceholderView, meta: { title: 'nav.vms' } },
     { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
     {

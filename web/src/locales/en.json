@@ -208,5 +208,38 @@
       "teams": "Teams",
       "private": "Private"
     }
+  },
+  "nodes": {
+    "subtitle": "Machines that run your VMs.",
+    "add": "Add node",
+    "addTitle": "Add node",
+    "create": "Create",
+    "name": "Name",
+    "state": "State",
+    "version": "Version",
+    "cpu": "vCPUs used",
+    "memory": "Memory used",
+    "vms": "VMs",
+    "open": "Open",
+    "empty": "No nodes yet.",
+    "noVms": "No VMs on this node.",
+    "copy": "Copy command",
+    "done": "Done",
+    "installHint": "Run this command as root on the machine that should become a node.",
+    "tokenNote": "The token is single use and valid for 24 hours.",
+    "installTitle": "Install command",
+    "rename": "Rename",
+    "lastSeen": "Last seen",
+    "regenerate": "Regenerate credential",
+    "regenerateTitle": "Regenerate credential",
+    "regenerateBody": "The node disconnects until it is re-installed with the new command.",
+    "delete": "Delete",
+    "deleteTitle": "Delete node",
+    "deleteBody": "Delete {name}? This cannot be undone. Nodes that still host VMs cannot be deleted.",
+    "states": {
+      "pending": "Pending",
+      "online": "Online",
+      "offline": "Offline"
+    }
   }
 }

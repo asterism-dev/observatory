@@ -208,5 +208,38 @@
       "teams": "Teams",
       "private": "Privat"
     }
+  },
+  "nodes": {
+    "subtitle": "Maschinen, auf denen deine VMs laufen.",
+    "add": "Node hinzufügen",
+    "addTitle": "Node hinzufügen",
+    "create": "Erstellen",
+    "name": "Name",
+    "state": "Status",
+    "version": "Version",
+    "cpu": "vCPUs belegt",
+    "memory": "Speicher belegt",
+    "vms": "VMs",
+    "open": "Öffnen",
+    "empty": "Noch keine Nodes.",
+    "noVms": "Keine VMs auf diesem Node.",
+    "copy": "Befehl kopieren",
+    "done": "Fertig",
+    "installHint": "Führe diesen Befehl als root auf der Maschine aus, die ein Node werden soll.",
+    "tokenNote": "Das Token ist einmalig verwendbar und 24 Stunden gültig.",
+    "installTitle": "Installationsbefehl",
+    "rename": "Umbenennen",
+    "lastSeen": "Zuletzt gesehen",
+    "regenerate": "Zugangsdaten erneuern",
+    "regenerateTitle": "Zugangsdaten erneuern",
+    "regenerateBody": "Der Node trennt die Verbindung, bis er mit dem neuen Befehl neu installiert wird.",
+    "delete": "Löschen",
+    "deleteTitle": "Node löschen",
+    "deleteBody": "{name} löschen? Das kann nicht rückgängig gemacht werden. Nodes mit VMs können nicht gelöscht werden.",
+    "states": {
+      "pending": "Ausstehend",
+      "online": "Online",
+      "offline": "Offline"
+    }
   }
 }
