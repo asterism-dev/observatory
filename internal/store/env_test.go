@@ -274,7 +274,19 @@ func TestOrgKeyNotPlain(t *testing.T) {
 
 func TestResolveEnv(t *testing.T) {
 	ctx := context.Background()
-	s, u, org, team := newEnvStore(t)
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(testKey(1))
+	u := login(t, s, "env")
+	org := mustCreateOrg(t, s, "E", u.User.ID)
+	team, err := s.CreateTeam(ctx, org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	team2, err := s.CreateTeam(ctx, org.ID, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := mustCreateOrg(t, s, "Empty", u.User.ID)
 	uid := u.User.ID
 	other := login(t, s, "env-other").User.ID
 	for _, c := range []struct {
@@ -291,6 +303,7 @@ func TestResolveEnv(t *testing.T) {
 		{store.EnvSecret, store.EnvScopeUser, &uid, "MINE", "m"},
 		{store.EnvPlain, store.EnvScopeUser, &uid, "SHARED_ORG", "user"},
 		{store.EnvSecret, store.EnvScopeUser, &other, "THEIRS", "x"},
+		{store.EnvPlain, store.EnvScopeTeam, &team2.ID, "TEAM2", "t2"},
 	} {
 		mustCreateEnv(t, s, envVar(org, uid, c.kind, c.scope, c.owner, c.name), c.value)
 	}
@@ -339,6 +352,30 @@ func TestResolveEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	eq(got, map[string]string{"MINE": "m", "SHARED_ORG": "user"})
+
+	deniedOwn := policy
+	deniedOwn.Roles = []authz.CustomRole{{ID: uuid.New(), OrgID: org.ID, Name: "no-own-env",
+		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.UserEnvObject(uid), Action: "env:use"}}}}
+	deniedOwn.Bindings = []authz.Binding{{OrgID: org.ID, Subject: authz.UserSubject(uid), RoleID: deniedOwn.Roles[0].ID}}
+	oe, err := authz.New(deniedOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ResolveEnv(ctx, oe, org.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(got, map[string]string{"ORG": "o", "SHARED_ORG": "org"})
+
+	got, err = s.ResolveEnv(ctx, e, empty.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(got, map[string]string{})
+	var keys int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM org_keys WHERE org_id = $1", empty.ID).Scan(&keys); err != nil || keys != 0 {
+		t.Fatalf("org key created by read: %d %v", keys, err)
+	}
 
 	if _, err := s.ResolveEnv(ctx, e, org.ID, "vm:"+uuid.NewString()); err == nil {
 		t.Fatal("vm owner accepted")

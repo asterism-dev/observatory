@@ -240,11 +240,14 @@ func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	out := map[string]string{}
+	if len(list) == 0 {
+		return out, nil
+	}
 	key, err := s.orgKey(ctx, org)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{}
 	for _, pass := range []EnvScope{EnvScopeOrg, ownScope} {
 		if (pass == EnvScopeOrg && !orgOK) || (pass == ownScope && !ownOK) {
 			continue
