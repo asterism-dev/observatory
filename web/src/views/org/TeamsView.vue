@@ -69,7 +69,6 @@ watch(
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.teams') }}</h1>
     <p v-if="error" role="alert">{{ error }}</p>
     <form v-if="can('team:create')" class="row" @submit.prevent="create">
       <TextInput v-model="name" :placeholder="t('teams.name')" :aria-label="t('teams.name')" />

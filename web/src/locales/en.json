@@ -10,21 +10,28 @@
   },
   "nav": {
     "label": "Navigation",
-    "profile": "Profile",
+    "profile": "User settings",
     "audit": "Audit log",
     "members": "Members",
-    "settings": "Settings",
     "teams": "Teams",
     "roles": "Roles",
     "limits": "Limits",
-    "adminOrgs": "Admin: organizations",
-    "adminUsers": "Admin: users",
-    "orgAudit": "Audit"
+    "adminOrgs": "Organizations",
+    "adminUsers": "Users",
+    "orgAudit": "Audit",
+    "dashboard": "Dashboard",
+    "nodes": "Nodes",
+    "vms": "VMs",
+    "orgSettings": "Organization settings",
+    "platformSettings": "Platform settings",
+    "general": "General",
+    "newOrg": "New organization",
+    "userMenu": "Account menu"
   },
   "theme": {
-    "system": "Theme: system",
-    "light": "Theme: light",
-    "dark": "Theme: dark"
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
   },
   "user": {
     "signOut": "Sign out"
@@ -44,7 +51,9 @@
     "revokeCurrent": "This is your current session; you will be signed out.",
     "cancel": "Cancel",
     "idpNote": "Passkeys and password are managed in your account at the identity provider.",
-    "idpLink": "Open identity provider"
+    "idpLink": "Open identity provider",
+    "language": "Language",
+    "theme": "Theme"
   },
   "audit": {
     "actor": "Actor",
@@ -156,5 +165,8 @@
     "created": "Created",
     "personal": "Personal",
     "platformAdmin": "Platform admin"
+  },
+  "placeholder": {
+    "empty": "Nothing here yet."
   }
 }

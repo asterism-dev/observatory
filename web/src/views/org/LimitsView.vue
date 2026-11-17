@@ -74,7 +74,6 @@ watch(
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.limits') }}</h1>
     <p v-if="error" role="alert">{{ error }}</p>
     <h2>{{ t('limits.org') }}</h2>
     <LimitFields :model-value="orgLimits" disabled />

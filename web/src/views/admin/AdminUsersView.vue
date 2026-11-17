@@ -56,7 +56,6 @@ onMounted(() => load().catch((e) => (error.value = e instanceof Error ? e.messag
 </script>
 
 <template>
-  <h1>{{ t('nav.adminUsers') }}</h1>
   <p v-if="error" role="alert">{{ error }}</p>
   <Table :columns="columns" :rows="users" row-key="id">
     <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short' }) }}</template>

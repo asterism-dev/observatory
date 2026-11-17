@@ -10,21 +10,28 @@
   },
   "nav": {
     "label": "Navigation",
-    "profile": "Profil",
+    "profile": "Benutzereinstellungen",
     "audit": "Audit-Log",
     "members": "Mitglieder",
-    "settings": "Einstellungen",
     "teams": "Teams",
     "roles": "Rollen",
     "limits": "Limits",
-    "adminOrgs": "Admin: Organisationen",
-    "adminUsers": "Admin: Benutzer",
-    "orgAudit": "Audit"
+    "adminOrgs": "Organisationen",
+    "adminUsers": "Benutzer",
+    "orgAudit": "Audit",
+    "dashboard": "Dashboard",
+    "nodes": "Nodes",
+    "vms": "VMs",
+    "orgSettings": "Organisationseinstellungen",
+    "platformSettings": "Plattformeinstellungen",
+    "general": "Allgemein",
+    "newOrg": "Neue Organisation",
+    "userMenu": "Kontomenü"
   },
   "theme": {
-    "system": "Design: System",
-    "light": "Design: Hell",
-    "dark": "Design: Dunkel"
+    "system": "System",
+    "light": "Hell",
+    "dark": "Dunkel"
   },
   "user": {
     "signOut": "Abmelden"
@@ -44,7 +51,9 @@
     "revokeCurrent": "Das ist deine aktuelle Sitzung; du wirst abgemeldet.",
     "cancel": "Abbrechen",
     "idpNote": "Passkeys und Passwort verwaltest du in deinem Konto beim Identity Provider.",
-    "idpLink": "Identity Provider öffnen"
+    "idpLink": "Identity Provider öffnen",
+    "language": "Sprache",
+    "theme": "Design"
   },
   "audit": {
     "actor": "Akteur",
@@ -156,5 +165,8 @@
     "created": "Erstellt",
     "personal": "Persönlich",
     "platformAdmin": "Plattform-Admin"
+  },
+  "placeholder": {
+    "empty": "Hier gibt es noch nichts."
   }
 }

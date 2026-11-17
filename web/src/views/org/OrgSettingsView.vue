@@ -34,16 +34,26 @@ async function save() {
 
 <template>
   <template v-if="org">
-    <h1>{{ t('nav.settings') }}</h1>
     <p v-if="org.personal">{{ t('org.personalNote') }}</p>
-    <TextInput v-model="name" :aria-label="t('org.name')" :disabled="org.personal || !can('org:update') || busy" />
+    <div class="row">
+      <TextInput v-model="name" :aria-label="t('org.name')" :disabled="org.personal || !can('org:update') || busy" />
+      <Button
+        variant="accent"
+        :disabled="org.personal || !can('org:update') || busy || !name.trim() || name.trim() === org.name"
+        @click="save"
+      >
+        {{ t('org.save') }}
+      </Button>
+    </div>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Button
-      variant="accent"
-      :disabled="org.personal || !can('org:update') || busy || !name.trim() || name.trim() === org.name"
-      @click="save"
-    >
-      {{ t('org.save') }}
-    </Button>
   </template>
 </template>
+
+<style scoped>
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+</style>
