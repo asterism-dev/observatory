@@ -1,2 +1,8 @@
 !docs/superpowers/
 docs/superpowers/plans/
+deploy/dev/zitadel/.bootstrap/
+deploy/dev/hub.env
+bin/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
