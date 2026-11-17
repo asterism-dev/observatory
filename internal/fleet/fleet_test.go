@@ -75,7 +75,10 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fleet.New(s, z, h)
+	f, err := fleet.New(ctx, s, z, h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
 	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
@@ -906,6 +909,29 @@ func TestSeqMonotonicAcrossConnections(t *testing.T) {
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 	if got := e.connect(cred).desired().Seq; got <= last {
 		t.Fatalf("seq after reconnect %d, last before %d", got, last)
+	}
+}
+
+// A clock step back between hub runs must not let a new list's seq fall below a recorded release_seq.
+func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+	future := time.Now().Add(time.Hour).UnixNano()
+	if _, err := e.pool.Exec(ctx, "UPDATE disk_exports SET releasing = true, release_seq = $2 WHERE disk_id = $1", d.ID, future); err != nil {
+		t.Fatal(err)
+	}
+	f, err := fleet.New(ctx, e.s, e.z, e.h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f = f
+	e.srv = httptest.NewServer(http.HandlerFunc(f.ServeConnect))
+	t.Cleanup(e.srv.Close)
+	if got := e.connect(cred).desired().Seq; got <= uint64(future) {
+		t.Fatalf("seq %d not above release_seq %d", got, future)
 	}
 }
 

@@ -82,7 +82,10 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	f := fleet.New(s, z, nh)
+	f, err := fleet.New(ctx, s, z, nh)
+	if err != nil {
+		return err
+	}
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)

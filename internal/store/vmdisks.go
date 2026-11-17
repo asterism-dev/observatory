@@ -255,6 +255,13 @@ func (s *Store) MarkReleaseSeq(ctx context.Context, node uuid.UUID, disks []uuid
 	return err
 }
 
+// MaxReleaseSeq returns the highest recorded release_seq, 0 if none.
+func (s *Store) MaxReleaseSeq(ctx context.Context) (uint64, error) {
+	var seq int64
+	err := s.q.QueryRow(ctx, "SELECT COALESCE(MAX(release_seq), 0) FROM disk_exports").Scan(&seq)
+	return uint64(seq), err
+}
+
 // ConfirmReleases deletes the node's releasing exports it has applied (appliedSeq >= release_seq) and no longer uses.
 func (s *Store) ConfirmReleases(ctx context.Context, node uuid.UUID, inUse []uuid.UUID, appliedSeq uint64) ([]uuid.UUID, error) {
 	if inUse == nil {

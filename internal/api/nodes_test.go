@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -45,7 +44,7 @@ func tokenOf(cmd string) string { return cmd[strings.LastIndex(cmd, " ")+1:] }
 
 func (e *env) enroll(token string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	NodeEndpoints(mux, e.store, fleet.New(e.store, e.z, e.net))
+	NodeEndpoints(mux, e.store, e.newFleet())
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/nodes/enroll", strings.NewReader(`{"token":"`+token+`"}`)))
 	return rec

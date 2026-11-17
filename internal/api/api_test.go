@@ -49,10 +49,22 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fleet.New(s, z, nh)
+	f, err := fleet.New(context.Background(), s, z, nh)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	h, handler := newAPI(s, a, z, f, nh, dh)
 	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler}
+}
+
+func (e *env) newFleet() *fleet.Fleet {
+	e.t.Helper()
+	f, err := fleet.New(context.Background(), e.store, e.z, e.net)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return f
 }
 
 // user logs an identity in and returns the user and a fresh session token.
@@ -261,7 +273,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, fleet.New(e.store, e.z, e.net), e.net, e.disks))
+	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {
