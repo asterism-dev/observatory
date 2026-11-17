@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/wgkey"
 )
@@ -164,6 +167,33 @@ func TestRemoveMemberDeletesDevicesAPI(t *testing.T) {
 	if got := e.listDevices(ownerTok, org); len(got) != 0 {
 		t.Fatalf("devices remain: %+v", got)
 	}
+}
+
+type loginAuth struct{}
+
+func (loginAuth) AuthCodeURL(string, string, bool) string { return "" }
+
+func (loginAuth) Exchange(context.Context, string, string) (store.Identity, error) {
+	return store.Identity{}, nil
+}
+
+func (loginAuth) VerifyCLIToken(context.Context, string, string) (store.Identity, error) {
+	return store.Identity{Subject: "fresh", Email: "fresh@x.io", Name: "fresh"}, nil
+}
+
+func TestFreshLoginCanCreateDevice(t *testing.T) {
+	e := newEnv(t)
+	a := &auth.Handler{Store: e.store, Auth: loginAuth{}, Reload: e.z.Reload}
+	mux := http.NewServeMux()
+	a.Routes(mux)
+	req := httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(`{"idToken":"x","accessToken":"y"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var tok struct{ Token string }
+	decode(t, rec, &tok)
+	var me struct{ User struct{ ID uuid.UUID } }
+	decode(t, e.do("GET", "/api/me", tok.Token), &me)
+	e.createDevice(tok.Token, e.personalOrg(store.User{ID: me.User.ID}), "laptop")
 }
 
 func TestDeviceDuplicateName(t *testing.T) {

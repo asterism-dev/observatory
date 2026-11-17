@@ -73,7 +73,7 @@ func run() error {
 		return err
 	}
 	slog.Info("management addresses backfilled", "vms", filled)
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID}
+	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload}
 
 	dist, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
