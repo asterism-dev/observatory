@@ -7,3 +7,6 @@ import _ "embed"
 //
 //go:embed vmm-boot.sh
 var BootScript string
+
+//go:embed vmm-agent.py
+var AgentScript string
