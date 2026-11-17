@@ -96,6 +96,7 @@ var storeErrorStatus = []struct {
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
 	{store.ErrRestartRequired, http.StatusConflict},
+	{store.ErrInvalidSize, http.StatusBadRequest},
 	{store.ErrSubnetOverlap, http.StatusConflict},
 	{store.ErrAddressesExhausted, http.StatusConflict},
 	{netaddr.ErrInvalidSubnet, http.StatusBadRequest},

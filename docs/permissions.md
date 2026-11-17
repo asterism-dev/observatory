@@ -150,8 +150,8 @@ off. A custom role granting `vm:connect` has no effect on connecting in this ver
 holds `vm:connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`node:use`); only admins and owners
 add, rename or delete nodes.
 
-A member who still owns VMs cannot be removed from the org or leave it, and a team that owns VMs cannot be
-deleted (`409` "owns VMs").
+A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
+disks cannot be deleted (`409` "owns VMs or disks").
 
 ## Devices and networks
 
