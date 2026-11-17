@@ -174,15 +174,24 @@ func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power
 		WHERE id = $1 AND org_id = $2 RETURNING `+vmColumns, id, org, p, m))
 }
 
+// DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.
 func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, "DELETE FROM vms WHERE id = $1 AND org_id = $2", id, org)
-	if err != nil {
+	return s.InTx(ctx, func(tx *Store) error {
+		var one int
+		err := tx.q.QueryRow(ctx, "SELECT 1 FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", id, org).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, `
+			UPDATE disk_exports SET releasing = true, release_seq = NULL
+			WHERE disk_id IN (SELECT disk_id FROM vm_disks WHERE vm_id = $1)`, id); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, "DELETE FROM vms WHERE id = $1", id)
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	})
 }
 
 // SetVMStatus ignores VMs that are not on the reporting node.
