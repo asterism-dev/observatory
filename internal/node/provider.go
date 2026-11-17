@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 
+	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -15,6 +16,8 @@ type Provider interface {
 	Start(f VMFile, dir string) (Instance, error)
 	// Disks lists the block devices Start attaches, in attach order.
 	Disks(f VMFile, dir string) ([]proto.Disk, error)
+	StartChassis(ctx context.Context, c chassisconf.Config) error
+	StopChassis() error
 }
 
 type Instance interface {

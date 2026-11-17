@@ -103,6 +103,7 @@ grep -qs 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf ||
 	echo 'include "/etc/nftables.d/*.nft"' | $SUDO tee -a /etc/nftables.conf >/dev/null
 $SUDO systemctl enable nftables >/dev/null 2>&1
 $SUDO nft -f /etc/nftables.d/observatory-node.nft
+$SUDO systemctl enable --now openvswitch-switch ovn-controller >/dev/null 2>&1
 
 chmod +x "$TMP/observatory-node"
 say "enrolling the node"

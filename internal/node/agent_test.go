@@ -239,6 +239,87 @@ func TestAgentStopsVMsOnShutdown(t *testing.T) {
 	}
 }
 
+func TestAgentStartsChassisOnUnderlay(t *testing.T) {
+	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
+		a.ChassisKey, a.ChassisPrivateKey, a.OVNKeyFile = "pub-key", "priv-key", "/vms/ovn-key.pem"
+	})
+	eventually(t, "chassis started", func() bool { return len(env.provider.gotChassis()) > 0 })
+	if n := len(env.provider.gotChassis()); n != 1 {
+		t.Fatalf("StartChassis called %d times", n)
+	}
+	c := env.provider.gotChassis()[0]
+	u := env.hub.underlay
+	if c.Name != "n1" || c.PrivateKey != "priv-key" || c.Address != u.Address || c.HubKey != u.HubKey || c.SBRemote != u.SBRemote ||
+		c.Endpoint != u.Endpoint || c.CACert != u.CACert || c.Cert != u.Cert || c.KeyFile != "/vms/ovn-key.pem" || c.MTU != 1420 {
+		t.Fatalf("chassis = %+v", c)
+	}
+}
+
+func TestRegisterCarriesChassis(t *testing.T) {
+	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
+		a.ChassisKey, a.ChassisCSR = "pub-key", "CSR PEM"
+	})
+	if r := env.hub.registers()[0]; r.ChassisKey != "pub-key" || r.ChassisCSR != "CSR PEM" {
+		t.Fatalf("register = %+v", r)
+	}
+}
+
+func TestAgentStopsChassisAfterGuests(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.stop()
+	<-env.runDone
+	env.provider.mu.Lock()
+	defer env.provider.mu.Unlock()
+	if got := strings.Join(env.provider.events, ","); got != "prepare:dev,stop-guest,stop-chassis" {
+		t.Fatalf("events = %s", got)
+	}
+}
+
+func TestAgentSerializesChassisStarts(t *testing.T) {
+	env := startEnv(t, nil)
+	env.provider.block = make(chan struct{})
+	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.11/24"})
+	eventually(t, "first call", func() bool { return len(env.provider.gotChassis()) == 1 })
+	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.12/24"})
+	time.Sleep(100 * time.Millisecond)
+	close(env.provider.block)
+	eventually(t, "second call", func() bool { return len(env.provider.gotChassis()) == 2 })
+	if env.provider.maxInflight.Load() != 1 {
+		t.Fatalf("StartChassis calls overlapped")
+	}
+	if got := env.provider.gotChassis()[1].Address; got != "10.198.0.12/24" {
+		t.Fatalf("last call carries %q, want newest config", got)
+	}
+}
+
+func TestAgentStopChassisWaitsForInFlightStart(t *testing.T) {
+	env := startEnv(t, nil)
+	env.provider.block = make(chan struct{})
+	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.11/24"})
+	eventually(t, "start in flight", func() bool { return len(env.provider.gotChassis()) == 1 })
+	env.stop()
+	time.Sleep(100 * time.Millisecond)
+	env.provider.mu.Lock()
+	early := strings.Contains(strings.Join(env.provider.events, ","), "stop-chassis")
+	env.provider.mu.Unlock()
+	if early {
+		t.Fatal("StopChassis ran while StartChassis was in flight")
+	}
+	close(env.provider.block)
+	<-env.runDone
+	env.provider.mu.Lock()
+	defer env.provider.mu.Unlock()
+	if got := strings.Join(env.provider.events, ","); got != "start-begin,start-end,stop-chassis" {
+		t.Fatalf("events = %s", got)
+	}
+	env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.13/24"})
+	if len(env.provider.chassis) != 1 {
+		t.Fatal("chassis started after shutdown")
+	}
+}
+
 func TestAgentStatusCarriesDisks(t *testing.T) {
 	env := startEnv(t, nil)
 	vm := env.hub.create("dev")

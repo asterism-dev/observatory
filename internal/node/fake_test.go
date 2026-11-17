@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -62,6 +63,10 @@ type fakeProvider struct {
 	failPrepare  map[string]bool
 	failStart    map[string]bool
 	staleIP      map[string]bool
+	chassis      []chassisconf.Config
+	block        chan struct{} // when set, StartChassis waits for it to close
+	inflight     atomic.Int32
+	maxInflight  atomic.Int32
 	events       []string
 	failDisks    bool
 	failReseed   bool
@@ -88,6 +93,35 @@ func (p *fakeProvider) record(e string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, e)
+}
+
+func (p *fakeProvider) StartChassis(_ context.Context, c chassisconf.Config) error {
+	n := p.inflight.Add(1)
+	defer p.inflight.Add(-1)
+	if n > p.maxInflight.Load() {
+		p.maxInflight.Store(n)
+	}
+	p.mu.Lock()
+	p.chassis = append(p.chassis, c)
+	block := p.block
+	p.mu.Unlock()
+	p.record("start-begin")
+	if block != nil {
+		<-block
+	}
+	p.record("start-end")
+	return nil
+}
+
+func (p *fakeProvider) StopChassis() error {
+	p.record("stop-chassis")
+	return nil
+}
+
+func (p *fakeProvider) gotChassis() []chassisconf.Config {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]chassisconf.Config(nil), p.chassis...)
 }
 
 func newFakeProvider() *fakeProvider {

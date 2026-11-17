@@ -51,7 +51,7 @@ func TestLoadVMsMissingDir(t *testing.T) {
 
 func TestLoadVMsSkipsFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "node.json"), []byte("{}"), 0o600)
+	os.WriteFile(filepath.Join(dir, "chassis.key"), []byte("k"), 0o600)
 	if err := SaveVM(dir, VMFile{Spec: proto.VMSpec{ID: "a"}}); err != nil {
 		t.Fatal(err)
 	}

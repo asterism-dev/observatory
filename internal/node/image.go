@@ -149,7 +149,7 @@ ethernets:
 %s`, f.MAC, addressing)
 	netIdx := 0
 	for _, n := range f.Spec.NICs {
-		name, dns := "mgmt0", "    nameservers:\n      addresses: [10.201.0.1]\n      search: [\"~internal\"]\n"
+		name, dns := "mgmt0", "    nameservers:\n      addresses: [10.192.0.1]\n      search: [\"~internal\"]\n"
 		if n.Network != "mgmt" {
 			name, dns = fmt.Sprintf("net%d", netIdx), ""
 			netIdx++

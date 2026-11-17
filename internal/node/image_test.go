@@ -141,6 +141,19 @@ func TestCloudInitMgmtNIC(t *testing.T) {
 	}
 }
 
+func TestCloudInitMgmtDNS(t *testing.T) {
+	f := VMFile{Spec: proto.VMSpec{Name: "dev", NICs: []proto.NIC{{Network: "mgmt", MAC: "02:0a:c8:00:00:14"}}}, MAC: "7e:30:17:4e:4a:00"}
+	_, _, nc := CloudInit(f, PrimaryNet{})
+	for _, want := range []string{"addresses: [10.192.0.1]", `search: ["~internal"]`} {
+		if !strings.Contains(nc, want) {
+			t.Errorf("network-config missing %q:\n%s", want, nc)
+		}
+	}
+	if strings.Contains(nc, "10.201.0.1") {
+		t.Errorf("network-config still uses 10.201.0.1:\n%s", nc)
+	}
+}
+
 func TestCloudInitNetworkNICs(t *testing.T) {
 	f := VMFile{Spec: proto.VMSpec{Name: "dev", NICs: []proto.NIC{
 		{Network: "mgmt", MAC: "02:0a:c8:00:00:14"},
@@ -156,7 +169,7 @@ func TestCloudInitNetworkNICs(t *testing.T) {
 		t.Fatalf("network-config entries missing or out of order:\n%s", nc)
 	}
 	mgmt, net0, net1 := nc[mgmtAt:net0At], nc[net0At:net1At], nc[net1At:]
-	for _, want := range []string{`macaddress: "02:0a:c8:00:00:14"`, "nameservers:", "10.201.0.1", `"~internal"`} {
+	for _, want := range []string{`macaddress: "02:0a:c8:00:00:14"`, "nameservers:", "10.192.0.1", `"~internal"`} {
 		if !strings.Contains(mgmt, want) {
 			t.Errorf("mgmt0 missing %q:\n%s", want, nc)
 		}
