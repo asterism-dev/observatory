@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -25,10 +26,11 @@ type api struct {
 	publicURL *url.URL
 	fleet     *fleet.Fleet
 	network   *network.Hub
+	disks     *disks.Hub
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub) http.Handler {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n}
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub) http.Handler {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n, disks: d}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -95,6 +97,13 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 	mux.HandleFunc("GET /api/orgs/{org}/networks", h.listNetworks)
 	mux.HandleFunc("POST /api/orgs/{org}/networks", h.createNetwork)
 	mux.HandleFunc("DELETE /api/orgs/{org}/networks/{id}", h.deleteNetwork)
+	mux.HandleFunc("GET /api/orgs/{org}/disks", h.listDisks)
+	mux.HandleFunc("POST /api/orgs/{org}/disks", h.createDisk)
+	mux.HandleFunc("GET /api/orgs/{org}/disks/{id}", h.getDisk)
+	mux.HandleFunc("DELETE /api/orgs/{org}/disks/{id}", h.deleteDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/copy", h.copyDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/grow", h.growDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/release", h.releaseDisk)
 	return a.Require(mux)
 }
 

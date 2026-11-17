@@ -85,9 +85,10 @@ func run() error {
 	f := fleet.New(s, z, nh)
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
-	api.StorageEndpoints(mux, disks.New(s, cfg.StorageToken, f.NotifyOrg))
+	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
+	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary)
-	mux.Handle("/api/", api.New(s, a, z, f, nh))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
