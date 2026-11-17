@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -43,6 +44,9 @@ func TestCreateNetworkSubnets(t *testing.T) {
 		t.Fatalf("duplicate name: %v", err)
 	}
 	mustCreateNetwork(t, e.s, other.ID, e.user, "one", "")
+	if _, err := e.s.CreateNetwork(ctx, store.Network{OrgID: e.org.ID, Name: "bad", Subnet: netip.MustParsePrefix("10.64.0.0/24"), CreatedBy: e.user}); !errors.Is(err, netaddr.ErrInvalidSubnet) {
+		t.Fatalf("reserved subnet: %v", err)
+	}
 
 	got, err := e.s.Network(ctx, e.org.ID, n1.ID)
 	if err != nil || got.Subnet != n1.Subnet || got.Name != "one" || got.CreatedBy != e.user {

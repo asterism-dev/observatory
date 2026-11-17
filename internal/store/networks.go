@@ -52,13 +52,19 @@ func hasPgCode(err error, code string) bool {
 
 // CreateNetwork picks a free auto subnet when n.Subnet is zero; the exclusion constraint rejects overlaps across all orgs.
 func (s *Store) CreateNetwork(ctx context.Context, n Network) (Network, error) {
+	subnet := n.Subnet
+	if subnet.IsValid() {
+		var err error
+		if subnet, err = netaddr.ValidateSubnet(subnet.String()); err != nil {
+			return Network{}, err
+		}
+	}
 	var out Network
 	err := s.InTx(ctx, func(tx *Store) error {
-		subnet := n.Subnet
+		if err := tx.lockAddresses(ctx); err != nil {
+			return err
+		}
 		if !subnet.IsValid() {
-			if err := tx.lockAddresses(ctx); err != nil {
-				return err
-			}
 			rows, err := tx.q.Query(ctx, "SELECT subnet FROM networks")
 			if err != nil {
 				return err

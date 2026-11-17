@@ -36,11 +36,16 @@ func TestCreateDevice(t *testing.T) {
 	if d1.IP != netip.MustParseAddr("10.192.0.2") || d2.IP != netip.MustParseAddr("10.192.0.3") {
 		t.Fatalf("ips %s %s", d1.IP, d2.IP)
 	}
-	if slice, err := s.OrgSlice(ctx, orgA.ID); err != nil || !slice.IsValid() {
-		t.Fatalf("org A slice %s %v", slice, err)
+	var slice *netip.Prefix
+	if err := pool.QueryRow(ctx, "SELECT mgmt_slice FROM orgs WHERE id = $1", orgA.ID).Scan(&slice); err != nil || slice == nil {
+		t.Fatalf("org A slice %v %v", slice, err)
 	}
 	if _, err := s.CreateDevice(ctx, store.Device{OrgID: orgA.ID, UserID: a.User.ID, Name: "laptop", PublicKey: "k3"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate name: %v", err)
+	}
+	stranger := login(t, s, "c")
+	if _, err := s.CreateDevice(ctx, store.Device{OrgID: orgA.ID, UserID: stranger.User.ID, Name: "x", PublicKey: "k5"}); !errors.Is(err, store.ErrNotMember) {
+		t.Fatalf("non-member: %v", err)
 	}
 	d3 := mustCreateDevice(t, s, orgA.ID, b.User.ID, "laptop", "k4")
 	if d3.IP != netip.MustParseAddr("10.192.0.4") {

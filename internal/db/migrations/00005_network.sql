@@ -5,7 +5,8 @@ ALTER TABLE nodes ADD COLUMN chassis_key text, ADD COLUMN underlay_ip inet UNIQU
 CREATE TABLE devices (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL REFERENCES orgs(id),
   user_id uuid NOT NULL REFERENCES users(id), name text NOT NULL, public_key text UNIQUE NOT NULL,
   ip inet UNIQUE NOT NULL, last_handshake timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (org_id, user_id, name));
+  UNIQUE (org_id, user_id, name),
+  FOREIGN KEY (org_id, user_id) REFERENCES memberships (org_id, user_id) ON DELETE CASCADE);
 CREATE TABLE networks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL REFERENCES orgs(id),
   name text NOT NULL, subnet cidr NOT NULL, created_by uuid REFERENCES users(id),
   created_at timestamptz NOT NULL DEFAULT now(),

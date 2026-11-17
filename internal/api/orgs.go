@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -97,6 +98,7 @@ var storeErrorStatus = []struct {
 	{store.ErrRestartRequired, http.StatusConflict},
 	{store.ErrSubnetOverlap, http.StatusConflict},
 	{store.ErrAddressesExhausted, http.StatusConflict},
+	{netaddr.ErrInvalidSubnet, http.StatusBadRequest},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.
@@ -126,7 +128,7 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 			if errors.Is(err, se.err) {
 				msg := se.err.Error()
 				// These name the caller's own missing permission or bad input, which they need to fix the request.
-				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern {
+				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet {
 					msg = err.Error()
 				}
 				writeError(w, se.status, msg)

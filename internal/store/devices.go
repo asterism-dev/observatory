@@ -56,8 +56,11 @@ func (s *Store) CreateDevice(ctx context.Context, d Device) (Device, error) {
 		out, err = scanDevice(tx.q.QueryRow(ctx, `
 			INSERT INTO devices (org_id, user_id, name, public_key, ip) VALUES ($1, $2, $3, $4, $5)
 			RETURNING `+deviceColumns, d.OrgID, d.UserID, d.Name, d.PublicKey, ip))
-		if isUniqueViolation(err) {
+		switch {
+		case isUniqueViolation(err):
 			return ErrConflict
+		case hasPgCode(err, "23503"):
+			return ErrNotMember
 		}
 		return err
 	})
