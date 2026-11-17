@@ -29,7 +29,8 @@ With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localho
 A node is a Linux amd64 host that runs the VMs. Create one in the GUI (or `POST /api/orgs/{org}/nodes`) and run the
 returned install command on the host. The hub serves the installer and the node binary itself: `make node` builds
 `bin/observatory-node-linux-amd64`, or point `OBSERVATORY_NODE_BINARY` at another file. Without the binary, `/node/observatory-node`
-and `/node/SHA256SUMS` return 404.
+and `/node/SHA256SUMS` return 404. [docs/nodes.md](docs/nodes.md) covers requirements, what the installer changes on
+the host and re-enrolling.
 
 ## CLI
 
