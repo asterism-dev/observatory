@@ -40,7 +40,7 @@ watch(
     toAdd.value = ''
     rows.value = props.vm.disks.map((d) => ({ diskId: d.id, mountPath: d.mountPath }))
     try {
-      disks.value = await api<Disk[]>(`/api/orgs/${props.orgId}/disks`)
+      disks.value = (await api<{ disks: Disk[] }>(`/api/orgs/${props.orgId}/disks`)).disks
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }
