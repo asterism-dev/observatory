@@ -36,7 +36,7 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 		return proto.GatewayState{}, err
 	}
 	// Revocations reach the allow lists on the next successful authz reload, which may trail this snapshot.
-	e := h.authz.Enforcer()
+	connect := h.authz.Enforcer().ConnectChecker()
 	st := proto.GatewayState{
 		UnderlayKey: h.underlay.priv,
 		ClientsKey:  h.clients.priv,
@@ -71,7 +71,7 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 			continue
 		}
 		vms[vm.ID] = vm
-		o.Ports = append(o.Ports, port(vm.ID.String()+"-mgmt", vm, vm.MgmtIP, allowFrom(e, vm, devices[vm.OrgID])))
+		o.Ports = append(o.Ports, port(vm.ID.String()+"-mgmt", vm, vm.MgmtIP, allowFrom(connect, vm, devices[vm.OrgID])))
 		o.Records[strings.ToLower(vm.Name)+".internal"] = vm.MgmtIP.String()
 	}
 	type netRef struct {
@@ -106,11 +106,11 @@ func port(name string, vm store.VM, ip netip.Addr, allow []string) proto.Gateway
 }
 
 // allowFrom checks CanConnect once per user: a user VM only for its owner, a team VM for each user with a device in the org.
-func allowFrom(e *authz.Enforcer, vm store.VM, byUser map[uuid.UUID][]store.Device) []string {
+func allowFrom(c *authz.ConnectChecker, vm store.VM, byUser map[uuid.UUID][]store.Device) []string {
 	ref := authz.VMRef{OrgID: vm.OrgID, ID: vm.ID, UserID: vm.UserID, TeamID: vm.TeamID}
 	var out []string
 	add := func(user uuid.UUID) {
-		if e.CanConnect(user, ref) {
+		if c.CanConnect(user, ref) {
 			for _, d := range byUser[user] {
 				out = append(out, d.IP.String())
 			}
