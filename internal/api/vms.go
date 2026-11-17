@@ -437,7 +437,7 @@ func validateVMDisks(disks []store.VMDisk) error {
 		return fmt.Errorf("at most %d disks", maxVMDisks)
 	}
 	ids, paths := map[uuid.UUID]bool{}, map[string]bool{}
-	for _, d := range disks {
+	for i, d := range disks {
 		p := d.MountPath
 		if !mountPathPattern.MatchString(p) || path.Clean(p) != p {
 			return fmt.Errorf("invalid mount path %q", p)
@@ -447,6 +447,12 @@ func validateVMDisks(disks []store.VMDisk) error {
 		}
 		if ids[d.DiskID] || paths[p] {
 			return errors.New("duplicate disk or mount path")
+		}
+		// A disk mounted inside another would be hidden or shadowed depending on mount order.
+		if slices.ContainsFunc(disks[:i], func(o store.VMDisk) bool {
+			return strings.HasPrefix(p, o.MountPath+"/") || strings.HasPrefix(o.MountPath, p+"/")
+		}) {
+			return fmt.Errorf("mount path %q is nested in another", p)
 		}
 		ids[d.DiskID], paths[p] = true, true
 	}

@@ -250,6 +250,12 @@ func TestValidateVMDisks(t *testing.T) {
 	if validateVMDisks([]store.VMDisk{disk("/a"), disk("/a")}) == nil {
 		t.Error("duplicate path")
 	}
+	if validateVMDisks([]store.VMDisk{disk("/data/x"), disk("/data")}) == nil {
+		t.Error("nested path")
+	}
+	if validateVMDisks([]store.VMDisk{disk("/data"), disk("/data2")}) != nil {
+		t.Error("sibling path with a common prefix")
+	}
 	d := disk("/a")
 	if validateVMDisks([]store.VMDisk{d, {DiskID: d.DiskID, MountPath: "/b"}}) == nil {
 		t.Error("duplicate disk")
