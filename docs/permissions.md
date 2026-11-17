@@ -169,7 +169,9 @@ as `deny disk:delete@org/disks/*` also cover a member's own disks. Owner rights 
 - Owners of a user VM and admins of the owning team of a team VM get `vm:disks` on it (attach and detach).
 
 Org admins and owners may detach and delete any disk (`disk:read`, `disk:update`, `disk:delete`,
-`vm:disks`) but never get `disk:use`, so no action lets them read a member's disk contents.
+`vm:disks`) but never get `disk:use`, so no action lets them read a member's disk contents. An org admin can
+still add themselves to a team (`team:update`) and so gets `disk:use` on that team's disks, as with team VMs;
+user disks stay out of reach.
 
 ## Devices and networks
 

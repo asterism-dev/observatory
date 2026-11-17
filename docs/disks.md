@@ -29,7 +29,7 @@ Permissions are in [permissions.md](permissions.md#disks); the network path in [
   disappears from the API (limits and name are freed) at once; the row is purged once the storage server reports
   the file gone.
 - **Attach / detach:** `PUT /api/orgs/{org}/vms/{id}/disks` sets a VM's whole disk list (up to 8 disks, each with a
-  mount path; not `/`, not a system tree such as `/etc` or `/usr`, no duplicates). Only disks with the
+  mount path; not `/`, not a system tree such as `/etc` or `/usr`, no duplicates, none inside another). Only disks with the
   same owner as the VM can be attached; copy a disk to move data between owners. A running VM restarts, so the
   request needs `restartAllowed`; a stopped VM takes the change on its next start.
 - **Missing:** never recreated blank. A missing disk cannot be attached or copied; it becomes `ready` again when the
@@ -44,15 +44,15 @@ attached again, normally within a few seconds.
 
 If the node stays offline (or was deleted), a user with `disk:update` can **force release** a `releasing` disk. This
 deletes the export at once: the storage server kills the disk's NBD server, and the old node can never reconnect,
-because a later attach gets a new port and a new key. Writes the old VM had not flushed to storage are lost. Use it
+because a later attach gets a new key (the port may repeat). Writes the old VM had not flushed to storage are lost. Use it
 only when the node will not come back soon or the VM no longer matters. Deleting a node force-releases its disks.
 
 ## Storage server
 
 `cmd/storage` runs one per hub. It keeps one file per disk, `<disk id>.img`, in `/disks`, polls the hub every 2 s
 (`GET /api/storage/state`) and reports after each poll (`POST /api/storage/status`). Each poll runs in this order:
-apply the state (create, grow, delete files, start copies; disk files are built in `.partial/` and renamed), start or stop the
-NBD exports, scan the directory, report. A deletion is therefore always reported after the file is gone, so the hub
+apply the state (create, grow, delete files, start copies; disk files are built in `.partial/` and renamed), start or
+stop the NBD exports, scan the directory, report. A deletion is therefore always reported after the file is gone, so the hub
 never purges a disk whose file is still there.
 
 - It only creates disks the hub marks as new, grows but never shrinks, deletes only disks the hub lists as deleted,
@@ -99,7 +99,7 @@ Disk files live in the `disks` volume:
   `<vm dir>/nbd-<disk id>-tls/keys.psk` (both 0600), never in process arguments, logs, node status, API responses or
   audit rows.
 - **Fencing:** release confirmation or force release deletes the export; its `nbdkit` is killed and the key is gone.
-  A new attach uses a new port and a new key.
+  A new attach uses a new key; the port may repeat, since the lowest free one is taken.
 - **Encryption at rest is not built in.** Disk files are plain on the storage volume. If you need it, put the `disks`
   volume on an encrypted block device (LUKS). Disk traffic is encrypted in transit twice (WireGuard and TLS).
 
