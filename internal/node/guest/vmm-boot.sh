@@ -10,7 +10,8 @@ mkdir -p "$root/etc/vmm" "$root/etc/ssh/sshd_config.d" "$root/etc/profile.d"
 cp "$seed/vmm-authorized-keys" "$root/etc/vmm/authorized_keys.new" &&
 	chmod 644 "$root/etc/vmm/authorized_keys.new" &&
 	mv "$root/etc/vmm/authorized_keys.new" "$root/etc/vmm/authorized_keys"
-echo 'AuthorizedKeysFile .ssh/authorized_keys /etc/vmm/authorized_keys' >"$root/etc/ssh/sshd_config.d/50-vmm.conf"
+# Only for ubuntu: hub keys must never log in as root.
+printf 'Match User ubuntu\n\tAuthorizedKeysFile .ssh/authorized_keys /etc/vmm/authorized_keys\n' >"$root/etc/ssh/sshd_config.d/50-vmm.conf"
 echo 'if [ -r /etc/vmm/env.sh ]; then . /etc/vmm/env.sh; fi' >"$root/etc/profile.d/vmm-env.sh"
 
 python3 - "$seed/vmm-env" "$root" <<'PY'

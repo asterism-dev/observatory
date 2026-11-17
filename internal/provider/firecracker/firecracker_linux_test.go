@@ -78,28 +78,44 @@ func TestReseedKeepsSeedWithoutBoot(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	seed := filepath.Join(dir, node.SeedISO)
-	f.Boot = &proto.Boot{Env: map[string]string{"A": "one"}}
+	seedFile := func(name string) []byte {
+		t.Helper()
+		b, err := node.ReadSeedFile(dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	f.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one", "ssh-rsa BBBB two"}, Env: map[string]string{"A": "x\ny", "B": `it's $HOME \ "q"`}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(seed)
-	if err != nil {
-		t.Fatal(err)
-	}
+	env, keys := seedFile("vmm-env"), seedFile("vmm-authorized-keys")
+
 	f.Boot = nil
+	f.Spec.NICs = []proto.NIC{{Network: "mgmt", MAC: "02:0a:c8:00:00:0a"}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	if after, _ := os.ReadFile(seed); !bytes.Equal(before, after) {
-		t.Fatal("reseed without boot rewrote seed.iso")
+	if got := seedFile("vmm-env"); !bytes.Equal(got, env) {
+		t.Fatalf("vmm-env after nil-Boot reseed = %q, want %q", got, env)
 	}
+	if got := seedFile("vmm-authorized-keys"); !bytes.Equal(got, keys) {
+		t.Fatalf("vmm-authorized-keys after nil-Boot reseed = %q, want %q", got, keys)
+	}
+	if nc := seedFile("network-config"); !bytes.Contains(nc, []byte("02:0a:c8:00:00:0a")) {
+		t.Fatalf("new NIC missing from network-config:\n%s", nc)
+	}
+
 	f.Boot = &proto.Boot{Env: map[string]string{"A": "two"}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	if after, _ := os.ReadFile(seed); bytes.Equal(before, after) {
-		t.Fatal("reseed with boot kept the old seed.iso")
+	if got := seedFile("vmm-env"); string(got) != `{"A":"two"}` {
+		t.Fatalf("vmm-env after new Boot = %q", got)
+	}
+	if got := seedFile("vmm-authorized-keys"); len(got) != 0 {
+		t.Fatalf("vmm-authorized-keys after new Boot = %q", got)
 	}
 }
 

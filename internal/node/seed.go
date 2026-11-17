@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,44 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 		"network-config": []byte(networkConfig), "vmm-disks.sh": []byte(DiskScript(f)),
 		"vmm-boot.sh": []byte(guest.BootScript), "vmm-env": env, "vmm-authorized-keys": []byte(keys.String()),
 	}
+}
+
+// ReadSeedFile returns one file of dir's seed.iso.
+func ReadSeedFile(dir, name string) ([]byte, error) {
+	d, err := diskfs.Open(filepath.Join(dir, SeedISO), diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		return nil, err
+	}
+	defer d.Close()
+	fs, err := d.GetFilesystem(0)
+	if err != nil {
+		return nil, err
+	}
+	f, err := fs.OpenFile("/"+name, os.O_RDONLY)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(f)
+}
+
+// SeedBoot recovers the keys and variables last written into dir's seed.iso, so a reseed without a pushed Boot keeps them.
+func SeedBoot(dir string) (*proto.Boot, error) {
+	env, err := ReadSeedFile(dir, "vmm-env")
+	if err != nil {
+		return nil, err
+	}
+	keys, err := ReadSeedFile(dir, "vmm-authorized-keys")
+	if err != nil {
+		return nil, err
+	}
+	var b proto.Boot
+	if err := json.Unmarshal(env, &b.Env); err != nil {
+		return nil, err
+	}
+	for k := range strings.Lines(string(keys)) {
+		b.SSHPublicKeys = append(b.SSHPublicKeys, strings.TrimSuffix(k, "\n"))
+	}
+	return &b, nil
 }
 
 // WriteSeedISO builds beside dir/seed.iso and renames, so a failed build keeps the old seed bootable.

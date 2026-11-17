@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -52,6 +53,27 @@ func TestWriteSeedISORoundTrip(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("leftover files: %v", entries)
+	}
+}
+
+func TestSeedBootRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := SeedBoot(dir); err == nil {
+		t.Fatal("no error without a seed")
+	}
+	want := &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one", "ssh-rsa BBBB two"}, Env: map[string]string{"A": "x\ny", "B": `it's \ "q"`, "C": ""}}
+	if err := WriteSeedISO(dir, GuestSeedFiles(VMFile{Boot: want}, PrimaryNet{})); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SeedBoot(dir)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("SeedBoot = %+v, %v; want %+v", got, err, want)
+	}
+	if err := WriteSeedISO(dir, GuestSeedFiles(VMFile{}, PrimaryNet{})); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := SeedBoot(dir); err != nil || len(got.SSHPublicKeys) != 0 || len(got.Env) != 0 {
+		t.Fatalf("SeedBoot of an empty seed = %+v, %v", got, err)
 	}
 }
 
@@ -147,7 +169,7 @@ func TestBootFilesRoundTrip(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, "etc/vmm/authorized_keys")); got != keys[0]+"\n"+keys[1]+"\n" {
 		t.Fatalf("authorized_keys = %q", got)
 	}
-	if got := readFile(t, filepath.Join(root, "etc/ssh/sshd_config.d/50-vmm.conf")); !strings.Contains(got, "AuthorizedKeysFile .ssh/authorized_keys /etc/vmm/authorized_keys\n") {
+	if got := readFile(t, filepath.Join(root, "etc/ssh/sshd_config.d/50-vmm.conf")); got != "Match User ubuntu\n\tAuthorizedKeysFile .ssh/authorized_keys /etc/vmm/authorized_keys\n" {
 		t.Fatalf("50-vmm.conf = %q", got)
 	}
 	if got := readFile(t, filepath.Join(root, "etc/profile.d/vmm-env.sh")); !strings.Contains(got, "/etc/vmm/env.sh") {

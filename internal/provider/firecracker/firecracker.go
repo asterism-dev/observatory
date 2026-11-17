@@ -65,7 +65,11 @@ func (p *Provider) Reseed(_ context.Context, f node.VMFile, dir string) error {
 	// Without a pushed Boot (node restarted, hub not yet heard from) the existing seed holds the last pushed keys and variables.
 	if f.Boot == nil {
 		if _, err := os.Stat(filepath.Join(dir, node.SeedISO)); err == nil {
-			return nil
+			boot, err := node.SeedBoot(dir)
+			if err != nil {
+				return fmt.Errorf("read keys and variables from seed: %w", err)
+			}
+			f.Boot = boot
 		}
 	}
 	p.mu.Lock()
