@@ -29,7 +29,8 @@
     "general": "General",
     "newOrg": "New organization",
     "userMenu": "Account menu",
-    "networks": "Networks"
+    "networks": "Networks",
+    "disks": "Disks"
   },
   "theme": {
     "system": "System",
@@ -344,5 +345,47 @@
     "restartTitle": "Restart VM",
     "restartBody": "{name} is running and restarts to apply the network change.",
     "restart": "Save and restart"
+  },
+  "disks": {
+    "subtitle": "Persistent disks that you can attach to VMs.",
+    "create": "Create disk",
+    "createTitle": "Create disk",
+    "name": "Name",
+    "owner": "Owner",
+    "size": "Size (GB)",
+    "used": "Used",
+    "state": "State",
+    "attachedTo": "Attached to",
+    "empty": "No disks yet.",
+    "tab": {
+      "all": "All",
+      "mine": "Mine",
+      "teams": "Teams"
+    },
+    "states": {
+      "creating": "Creating",
+      "ready": "Ready",
+      "growing": "Growing",
+      "releasing": "Releasing",
+      "missing": "Missing"
+    },
+    "invalidName": "Use lowercase letters, digits and hyphens.",
+    "invalidSize": "Size must be between 1 and 4096 GB.",
+    "storageOffline": "Storage server offline. Disk changes are applied once it is back.",
+    "copy": "Copy",
+    "copyTitle": "Copy {name}",
+    "copyName": "Name of the copy",
+    "copyHint": "The copy is a full duplicate. Copying a disk that is in use may produce an inconsistent copy.",
+    "copyWarning": "The copy was created, but the source disk is in use or not settled, so the copy may not be consistent.",
+    "grow": "Grow",
+    "growTitle": "Grow {name}",
+    "growHint": "Disks can only grow. Enter a size larger than {size} GB.",
+    "growRestart": "Restart the attached VM if it is running to apply the new size",
+    "release": "Force release",
+    "releaseTitle": "Force release disk",
+    "releaseBody": "Force release {name} from its VM? Writes the VM has not flushed may be lost.",
+    "delete": "Delete",
+    "deleteTitle": "Delete disk",
+    "deleteBody": "Delete {name}? Its data is permanently lost."
   }
 }

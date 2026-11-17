@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
+import DisksView from '@/views/DisksView.vue'
 import DevicesView from '@/views/DevicesView.vue'
 import NetworksView from '@/views/NetworksView.vue'
 import EnvView from '@/views/EnvView.vue'
@@ -45,6 +46,7 @@ export const router = createRouter({
     { path: '/orgs/:orgId/nodes/:nodeId', component: NodeDetailView },
     { path: '/orgs/:orgId/vms', component: VMsView, meta: { title: 'nav.vms' } },
     { path: '/orgs/:orgId/vms/:vmId', component: VMDetailView },
+    { path: '/orgs/:orgId/disks', component: DisksView, meta: { title: 'nav.disks' } },
     { path: '/orgs/:orgId/networks', component: NetworksView, meta: { title: 'nav.networks' } },
     { path: '/orgs/:orgId/devices', component: DevicesView, meta: { title: 'nav.devices' } },
     { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
