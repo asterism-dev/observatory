@@ -31,16 +31,19 @@ func TestBuiltinRoles(t *testing.T) {
 		{OrgID: org, UserID: admin, Role: "admin"},
 		{OrgID: org, UserID: member, Role: "member"},
 	}})
-	memberActs := []string{"member:read", "team:read", "team:leave", "role:read", "limit:read"}
-	want := map[uuid.UUID]func(act string) bool{
-		owner:  func(string) bool { return true },
-		admin:  func(act string) bool { return act != "member:set-role" },
-		member: func(act string) bool { return slices.Contains(memberActs, act) },
+	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
+		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv}}
+	// No built-in role reaches other members' private env scopes.
+	userEnv := func(p Permission) bool { return p.Object == ObjUserEnv+"/*" }
+	want := map[uuid.UUID]func(p Permission) bool{
+		owner:  func(p Permission) bool { return !userEnv(p) },
+		admin:  func(p Permission) bool { return p.Action != "member:set-role" && !userEnv(p) },
+		member: func(p Permission) bool { return slices.Contains(memberPerms, p) },
 	}
 	names := map[uuid.UUID]string{owner: "owner", admin: "admin", member: "member"}
 	for u, allowed := range want {
 		for _, p := range Catalog {
-			if got := e.Allowed(UserSubject(u), org, concrete(p.Object), p.Action); got != allowed(p.Action) {
+			if got := e.Allowed(UserSubject(u), org, concrete(p.Object), p.Action); got != allowed(p) {
 				t.Errorf("%s %s@%s: got %v", names[u], p.Action, p.Object, got)
 			}
 		}
@@ -203,8 +206,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog) {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog))
+	if got := ExpandActions("*"); len(got) != len(Catalog)-8 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-8)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -337,5 +340,83 @@ func TestNewRejectsInvalidPolicy(t *testing.T) {
 		if _, err := New(p); err == nil {
 			t.Errorf("%s: want error", name)
 		}
+	}
+}
+
+func TestEnvPermissions(t *testing.T) {
+	org, otherOrg := uuid.New(), uuid.New()
+	owner, admin, member, teamMember, teamAdmin, denied := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	team, otherTeam, emptyTeam, denyRole := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: org, UserID: owner, Role: "owner"},
+			{OrgID: org, UserID: admin, Role: "admin"},
+			{OrgID: org, UserID: member, Role: "member"},
+			{OrgID: org, UserID: teamMember, Role: "member"},
+			{OrgID: org, UserID: teamAdmin, Role: "member"},
+			{OrgID: org, UserID: denied, Role: "member"},
+		},
+		TeamMembers: []TeamMember{
+			{OrgID: org, TeamID: team, UserID: teamMember},
+			{OrgID: org, TeamID: team, UserID: teamAdmin, Admin: true},
+		},
+		Teams: []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: otherTeam}, {OrgID: org, ID: emptyTeam}},
+		Roles: []CustomRole{{ID: denyRole, OrgID: org, Name: "no-env", Rules: []Rule{
+			{Effect: Deny, Object: ObjEnv, Action: "env:use"},
+			{Effect: Deny, Object: ObjUserEnv + "/*", Action: "env:set"},
+		}}},
+		Bindings: []Binding{{OrgID: org, Subject: UserSubject(denied), RoleID: denyRole}},
+	})
+	user := func(id uuid.UUID) string { return UserSubject(id) }
+	tests := []struct {
+		name     string
+		sub      string
+		org      uuid.UUID
+		obj, act string
+		want     bool
+	}{
+		{"member lists org env", user(member), org, ObjEnv, "env:list", true},
+		{"member uses org env", user(member), org, ObjEnv, "env:use", true},
+		{"member sets org env", user(member), org, ObjEnv, "env:set", false},
+		{"admin sets org env", user(admin), org, ObjEnv, "env:set", true},
+		{"admin deletes org env", user(admin), org, ObjEnv, "env:delete", true},
+		{"admin sets any team env", user(admin), org, TeamEnvObject(otherTeam), "env:set", true},
+		{"admin deletes any team env", user(admin), org, TeamEnvObject(otherTeam), "env:delete", true},
+		{"admin sets other user env", user(admin), org, UserEnvObject(member), "env:set", false},
+		{"owner sets org env", user(owner), org, ObjEnv, "env:set", true},
+		{"owner sets any team env", user(owner), org, TeamEnvObject(team), "env:set", true},
+		{"owner lists other user env", user(owner), org, UserEnvObject(member), "env:list", false},
+		{"member lists own user env", user(member), org, UserEnvObject(member), "env:list", true},
+		{"member sets own user env", user(member), org, UserEnvObject(member), "env:set", true},
+		{"member deletes own user env", user(member), org, UserEnvObject(member), "env:delete", true},
+		{"member uses own user env", user(member), org, UserEnvObject(member), "env:use", true},
+		{"member lists other user env", user(member), org, UserEnvObject(admin), "env:list", false},
+		{"member uses other user env", user(member), org, UserEnvObject(admin), "env:use", false},
+		{"team member lists own team env", user(teamMember), org, TeamEnvObject(team), "env:list", true},
+		{"team member uses own team env", user(teamMember), org, TeamEnvObject(team), "env:use", true},
+		{"team member lists other team env", user(teamMember), org, TeamEnvObject(otherTeam), "env:list", false},
+		{"team member sets own team env", user(teamMember), org, TeamEnvObject(team), "env:set", false},
+		{"team admin sets own team env", user(teamAdmin), org, TeamEnvObject(team), "env:set", true},
+		{"team admin deletes own team env", user(teamAdmin), org, TeamEnvObject(team), "env:delete", true},
+		{"team admin sets other team env", user(teamAdmin), org, TeamEnvObject(otherTeam), "env:set", false},
+		{"empty team uses org env", TeamSubject(emptyTeam), org, ObjEnv, "env:use", true},
+		{"empty team uses own team env", TeamSubject(emptyTeam), org, TeamEnvObject(emptyTeam), "env:use", true},
+		{"empty team uses other team env", TeamSubject(emptyTeam), org, TeamEnvObject(otherTeam), "env:use", false},
+		{"empty team sets own team env", TeamSubject(emptyTeam), org, TeamEnvObject(emptyTeam), "env:set", false},
+		{"deny env:use on org env", user(denied), org, ObjEnv, "env:use", false},
+		{"deny keeps env:list", user(denied), org, ObjEnv, "env:list", true},
+		{"deny env:set on own user env", user(denied), org, UserEnvObject(denied), "env:set", false},
+		{"cross-org org env", user(admin), otherOrg, ObjEnv, "env:use", false},
+		{"cross-org own user env", user(member), otherOrg, UserEnvObject(member), "env:list", false},
+		{"cross-org team env", user(teamAdmin), otherOrg, TeamEnvObject(team), "env:set", false},
+		{"cross-org team subject", TeamSubject(team), otherOrg, TeamEnvObject(team), "env:use", false},
+	}
+	for _, tt := range tests {
+		if got := e.Allowed(tt.sub, tt.org, tt.obj, tt.act); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+	if got := ExpandActions("env:*"); !reflect.DeepEqual(got, []string{"env:list", "env:set", "env:delete", "env:use"}) {
+		t.Errorf("env:*: got %v", got)
 	}
 }

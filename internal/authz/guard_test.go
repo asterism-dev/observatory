@@ -26,7 +26,10 @@ func TestCanGrant(t *testing.T) {
 	})
 	var all []Rule
 	for _, p := range Catalog {
-		all = append(all, Rule{Allow, p.Object, p.Action})
+		// Nobody holds every member's private env scope.
+		if p.Object != ObjUserEnv+"/*" {
+			all = append(all, Rule{Allow, p.Object, p.Action})
+		}
 	}
 	allow := func(obj, act string) []Rule { return []Rule{{Allow, obj, act}} }
 	deny := func(obj, act string) []Rule { return []Rule{{Deny, obj, act}} }
