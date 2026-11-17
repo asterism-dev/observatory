@@ -1,11 +1,53 @@
 {
-  "app": { "name": "Observatory" },
+  "app": {
+    "name": "Observatory"
+  },
   "login": {
     "intro": "Sign in to continue.",
     "signIn": "Sign in",
     "createAccount": "Create account"
   },
-  "nav": { "label": "Navigation", "profile": "Profile", "audit": "Audit log" },
-  "theme": { "system": "Theme: system", "light": "Theme: light", "dark": "Theme: dark" },
-  "user": { "signOut": "Sign out" }
+  "nav": {
+    "label": "Navigation",
+    "profile": "Profile",
+    "audit": "Audit log"
+  },
+  "theme": {
+    "system": "Theme: system",
+    "light": "Theme: light",
+    "dark": "Theme: dark"
+  },
+  "user": {
+    "signOut": "Sign out"
+  },
+  "profile": {
+    "admin": "Platform admin",
+    "sessions": "Sessions",
+    "kind": "Kind",
+    "userAgent": "User agent",
+    "ip": "IP",
+    "lastUsed": "Last used",
+    "expires": "Expires",
+    "current": "This session",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke session?",
+    "revokeBody": "The device using this session will be signed out.",
+    "revokeCurrent": "This is your current session; you will be signed out.",
+    "cancel": "Cancel",
+    "idpNote": "Passkeys and password are managed in your account at the identity provider.",
+    "idpLink": "Open identity provider"
+  },
+  "audit": {
+    "actor": "Actor",
+    "action": "Action",
+    "from": "From",
+    "to": "To",
+    "time": "Time",
+    "org": "Org",
+    "resource": "Resource",
+    "result": "Result",
+    "loadMore": "Load more",
+    "empty": "No entries",
+    "filter": "Filter"
+  }
 }

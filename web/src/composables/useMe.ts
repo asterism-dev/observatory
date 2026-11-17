@@ -36,6 +36,11 @@ async function load() {
   me.value = await api<Me>('/api/me')
 }
 
+function expire() {
+  me.value = null
+  location.assign('/login')
+}
+
 function selectOrg(id: string) {
   selectedId.value = id
   try {
@@ -46,5 +51,5 @@ function selectOrg(id: string) {
 }
 
 export function useMe() {
-  return { me, activeOrg, load, selectOrg }
+  return { me, activeOrg, load, expire, selectOrg }
 }
