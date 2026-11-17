@@ -185,12 +185,16 @@ watch(
 
     <template v-if="canInvite">
       <h2>{{ t('members.invitations') }}</h2>
-      <Select v-model="inviteRole" :options="roleOptions" :aria-label="t('members.role')" />
-      <Button variant="accent" :disabled="busy" @click="createInvite">{{ t('members.invite') }}</Button>
+      <div class="row">
+        <Select v-model="inviteRole" :options="roleOptions" :aria-label="t('members.role')" />
+        <Button variant="accent" :disabled="busy" @click="createInvite">{{ t('members.invite') }}</Button>
+      </div>
       <div v-if="link" ref="linkBox">
         <p>{{ t('members.linkOnce') }}</p>
-        <TextInput :model-value="link" :aria-label="t('members.link')" readonly @focus="($event.target as HTMLInputElement).select()" />
-        <Button @click="copyLink">{{ copied ? t('members.copied') : t('members.copy') }}</Button>
+        <div class="row">
+          <TextInput :model-value="link" :aria-label="t('members.link')" readonly @focus="($event.target as HTMLInputElement).select()" />
+          <Button @click="copyLink">{{ copied ? t('members.copied') : t('members.copy') }}</Button>
+        </div>
       </div>
       <Table :columns="inviteColumns" :rows="invites" row-key="id">
         <template #cell-role="{ row }"><Badge>{{ t(`role.${row.role}`) }}</Badge></template>
@@ -217,3 +221,12 @@ watch(
     </Dialog>
   </template>
 </template>
+
+<style scoped>
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+</style>

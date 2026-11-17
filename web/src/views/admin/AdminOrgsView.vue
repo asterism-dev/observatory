@@ -38,9 +38,19 @@ onMounted(async () => {
   <p v-if="error" role="alert">{{ error }}</p>
   <Table :columns="columns" :rows="orgs" row-key="id">
     <template #cell-name="{ row }">
-      <a :href="`/admin/orgs/${row.id}`" @click.prevent="router.push(`/admin/orgs/${row.id}`)">{{ row.name }}</a>
-      <Badge v-if="row.personal">{{ t('admin.personal') }}</Badge>
+      <span class="cell">
+        <a :href="`/admin/orgs/${row.id}`" @click.prevent="router.push(`/admin/orgs/${row.id}`)">{{ row.name }}</a>
+        <Badge v-if="row.personal">{{ t('admin.personal') }}</Badge>
+      </span>
     </template>
     <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short' }) }}</template>
   </Table>
 </template>
+
+<style scoped>
+.cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+</style>

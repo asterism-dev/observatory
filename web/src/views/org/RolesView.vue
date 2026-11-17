@@ -130,12 +130,14 @@ watch(
         {{ row.name }} <Badge v-if="row.builtin">{{ t('roles.builtin') }}</Badge>
       </template>
       <template #cell-actions="{ row }">
-        <Button size="sm" @click="router.push(`/orgs/${org!.id}/roles/${row.rid}`)">
-          {{ row.builtin || !can('role:write') ? t('roles.view') : t('roles.edit') }}
-        </Button>
-        <Button v-if="!row.builtin && can('role:write')" variant="danger" size="sm" @click="pendingDelete = row">
-          {{ t('roles.delete') }}
-        </Button>
+        <span class="cell">
+          <Button size="sm" @click="router.push(`/orgs/${org!.id}/roles/${row.rid}`)">
+            {{ row.builtin || !can('role:write') ? t('roles.view') : t('roles.edit') }}
+          </Button>
+          <Button v-if="!row.builtin && can('role:write')" variant="danger" size="sm" @click="pendingDelete = row">
+            {{ t('roles.delete') }}
+          </Button>
+        </span>
       </template>
     </Table>
 
@@ -176,5 +178,10 @@ watch(
   display: flex;
   gap: 8px;
   margin: 12px 0;
+}
+.cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>
