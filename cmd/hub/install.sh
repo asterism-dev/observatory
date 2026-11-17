@@ -5,7 +5,7 @@ set -eu
 FIRECRACKER_VERSION=v1.18.0
 
 usage() {
-	echo "usage: install.sh --hub http://HOST:PORT --token TOKEN|--token-stdin" >&2
+	echo "usage: install.sh --hub http://HOST:PORT --token TOKEN|--token-stdin [--memory-mb N]" >&2
 	exit 2
 }
 die() {
@@ -14,14 +14,15 @@ die() {
 }
 say() { echo "==> $*"; }
 
-HUB='' TOKEN=''
+HUB='' TOKEN='' MEMORY_MB=''
 while [ $# -gt 0 ]; do
 	case $1 in
-	--hub | --token)
+	--hub | --token | --memory-mb)
 		[ $# -ge 2 ] || usage
 		case $1 in
 		--hub) HUB=${2%/} ;;
 		--token) TOKEN=$2 ;;
+		--memory-mb) MEMORY_MB=$2 ;;
 		esac
 		shift 2
 		;;
@@ -102,8 +103,10 @@ $SUDO nft -f /etc/nftables.d/observatory-node.nft
 
 say "enrolling the node"
 $SUDO install -m 0755 "$TMP/observatory-node" /usr/local/bin/observatory-node
+set -- -config /etc/observatory-node/node.json -hub "$HUB" -token-stdin
+[ -z "$MEMORY_MB" ] || set -- "$@" -memory-mb "$MEMORY_MB"
 # The token goes in on stdin: sudo logs command lines.
-printf '%s\n' "$TOKEN" | $SUDO /usr/local/bin/observatory-node enroll -config /etc/observatory-node/node.json -hub "$HUB" -token-stdin
+printf '%s\n' "$TOKEN" | $SUDO /usr/local/bin/observatory-node enroll "$@"
 
 $SUDO tee /etc/systemd/system/observatory-node.service >/dev/null <<'UNIT'
 [Unit]
