@@ -19,6 +19,12 @@ provider works that offers:
 `<PUBLIC_URL>` is the URL users open in the browser: `http://localhost:5173`
 with the Vite dev server, `http://localhost:8090` with only the built hub.
 
+Put observatory's two clients in a dedicated IdP project or realm. Some IdPs
+(Zitadel among them) list every client of a project in the ID token's `aud`;
+the hub rejects CLI tokens whose `azp` names another client, or that carry
+several audiences without an `azp`, but a dedicated project keeps other apps'
+tokens out entirely.
+
 ## Hub environment
 
 | Variable | Meaning |
