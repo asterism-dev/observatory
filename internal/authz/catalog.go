@@ -20,6 +20,9 @@ const (
 	ObjEnv      = "org/env"
 	ObjTeamEnv  = "org/team-env"
 	ObjUserEnv  = "org/user-env"
+	ObjNodes    = "org/nodes"
+	ObjVMs      = "org/vms"
+	ObjTeamVMs  = "org/team-vms"
 )
 
 // Subjects; "vm:<id>" is reserved for VM identities.
@@ -36,6 +39,13 @@ func TeamEnvObject(id uuid.UUID) string { return ObjTeamEnv + "/" + id.String() 
 
 // UserEnvObject is a member's private env scope; no built-in role reaches it, only its user.
 func UserEnvObject(id uuid.UUID) string { return ObjUserEnv + "/" + id.String() }
+
+func NodeObject(id uuid.UUID) string { return ObjNodes + "/" + id.String() }
+
+// VMObject is org-scoped for user and team VMs alike, so org-wide rules cover every VM.
+func VMObject(id uuid.UUID) string { return ObjVMs + "/" + id.String() }
+
+func TeamVMsObject(teamID uuid.UUID) string { return ObjTeamVMs + "/" + teamID.String() }
 
 type Effect string
 
@@ -85,6 +95,17 @@ var Catalog = []Permission{
 	{"env:set", ObjUserEnv + "/*"},
 	{"env:delete", ObjUserEnv + "/*"},
 	{"env:use", ObjUserEnv + "/*"},
+	{"node:read", ObjNodes},
+	{"node:create", ObjNodes},
+	{"node:read", ObjNodes + "/*"},
+	{"node:update", ObjNodes + "/*"},
+	{"node:delete", ObjNodes + "/*"},
+	{"node:use", ObjNodes + "/*"},
+	{"vm:create", ObjVMs},
+	{"vm:create", ObjTeamVMs + "/*"},
+	{"vm:read", ObjVMs + "/*"},
+	{"vm:power", ObjVMs + "/*"},
+	{"vm:delete", ObjVMs + "/*"},
 }
 
 // BuiltinRules returns the allow rules of a built-in role, or nil for an unknown key.
@@ -97,6 +118,10 @@ func BuiltinRules(key string) []Rule {
 		{Allow, ObjLimits, "limit:read"},
 		{Allow, ObjEnv, "env:list"},
 		{Allow, ObjEnv, "env:use"},
+		{Allow, ObjNodes, "node:read"},
+		{Allow, ObjNodes + "/*", "node:read"},
+		{Allow, ObjNodes + "/*", "node:use"},
+		{Allow, ObjVMs, "vm:create"},
 	}
 	admin := append(member,
 		Rule{Allow, ObjSettings, "org:update"},
@@ -109,6 +134,11 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjAudit, "audit:read"},
 		Rule{Allow, ObjEnv, "env:*"},
 		Rule{Allow, ObjTeamEnv + "/*", "env:*"},
+		Rule{Allow, ObjNodes, "node:*"},
+		Rule{Allow, ObjNodes + "/*", "node:*"},
+		Rule{Allow, ObjVMs, "vm:*"},
+		Rule{Allow, ObjVMs + "/*", "vm:*"},
+		Rule{Allow, ObjTeamVMs + "/*", "vm:*"},
 	)
 	switch key {
 	case "member":

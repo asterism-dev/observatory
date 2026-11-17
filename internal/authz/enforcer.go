@@ -35,6 +35,12 @@ type TeamRef struct {
 	OrgID, ID uuid.UUID
 }
 
+// VMRef is a VM's owner: exactly one of UserID and TeamID is set.
+type VMRef struct {
+	OrgID, ID      uuid.UUID
+	UserID, TeamID *uuid.UUID
+}
+
 type CustomRole struct {
 	ID, OrgID         uuid.UUID
 	Name, Description string
@@ -57,6 +63,7 @@ type Policy struct {
 	Bindings    []Binding
 	// Teams lists every team, including those without members, so team subjects get their env rules.
 	Teams []TeamRef
+	VMs   []VMRef
 }
 
 type Enforcer struct {
@@ -77,6 +84,7 @@ func New(p Policy) (*Enforcer, error) {
 		return nil, err
 	}
 	var rules, groups [][]string
+	teamAdmins := map[uuid.UUID][]uuid.UUID{}
 	for _, key := range []string{"owner", "admin", "member"} {
 		for _, r := range BuiltinRules(key) {
 			rules = append(rules, []string{RoleSubject(key), allDomains, r.Object, r.Action, string(r.Effect)})
@@ -95,6 +103,8 @@ func New(p Policy) (*Enforcer, error) {
 		if tm.Admin {
 			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "team:manage-members", string(Allow)})
 			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "vm:create", string(Allow)})
+			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
 		}
 	}
 	for _, t := range p.Teams {
@@ -104,6 +114,22 @@ func New(p Policy) (*Enforcer, error) {
 			[]string{sub, org, TeamEnvObject(t.ID), "env:use", string(Allow)},
 			[]string{sub, org, ObjEnv, "env:use", string(Allow)},
 		)
+	}
+	for _, vm := range p.VMs {
+		obj, org := VMObject(vm.ID), vm.OrgID.String()
+		switch {
+		case vm.UserID != nil:
+			rules = append(rules, []string{UserSubject(*vm.UserID), org, obj, "vm:*", string(Allow)})
+		case vm.TeamID != nil:
+			sub := TeamSubject(*vm.TeamID)
+			rules = append(rules,
+				[]string{sub, org, obj, "vm:read", string(Allow)},
+				[]string{sub, org, obj, "vm:power", string(Allow)},
+			)
+			for _, admin := range teamAdmins[*vm.TeamID] {
+				rules = append(rules, []string{UserSubject(admin), org, obj, "vm:*", string(Allow)})
+			}
+		}
 	}
 	for _, cr := range p.Roles {
 		sub, org := RoleSubject(cr.ID.String()), cr.OrgID.String()

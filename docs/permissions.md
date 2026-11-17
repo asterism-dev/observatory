@@ -41,6 +41,10 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `limit:read`, `limit:set` | `org/limits` |
 | `audit:read` | `org/audit` |
 | `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
+| `node:read`, `node:create` | `org/nodes` |
+| `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
+| `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
+| `vm:read`, `vm:power`, `vm:delete` | `org/vms/*` |
 
 ## Built-in roles
 
@@ -55,6 +59,10 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `member:set-role` | | | yes |
 | `env:list`, `env:use` on `org/env` | yes | yes | yes |
 | `env:*` on `org/env` and `org/team-env/*` | | yes | yes |
+| `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
+| `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
+| `vm:create` on `org/vms` | yes | yes | yes |
+| `vm:*` on `org/vms`, `org/vms/*` and `org/team-vms/*` | | yes | yes |
 
 ## Custom roles and bindings
 
@@ -111,6 +119,19 @@ each member's private scope (`org/user-env/<user>`).
 - A private scope is reachable only by its own user, who holds all four actions on it; no built-in role,
   not even owner, covers another member's private scope. Deny rules still win, e.g.
   `deny env:set@org/user-env/*`.
+
+## Nodes and VMs
+
+Every VM object is org-scoped (`org/vms/<id>`), whether a user or a team owns it, so org-wide rules such
+as `deny vm:delete@org/vms/*` also cover a member's own VMs. Owner rights come from generated rules:
+
+- A user VM gives its user `vm:*` on that VM.
+- A team VM gives the team subject `vm:read` and `vm:power` on it, and each admin of that team `vm:*`.
+- Team admins also get `vm:create` on `org/team-vms/<team>`, so they create VMs for their own team only.
+
+Org admins and owners see, power and delete every VM through `vm:*` on `org/vms/*`; no action lets them
+look inside a VM. Members see every node and may place VMs on it (`node:use`); only admins and owners
+add, rename or delete nodes.
 
 ## Limits
 

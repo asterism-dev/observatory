@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -236,5 +237,32 @@ func TestVMOwnersCannotBeRemoved(t *testing.T) {
 	}
 	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPolicySnapshotLoadsVMs(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	u, err := e.s.CreateVM(ctx, e.vm("u", nil, 1, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tv, err := e.s.CreateVM(ctx, e.vm("t", &e.team.ID, 1, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := e.s.PolicySnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[uuid.UUID]authz.VMRef{}
+	for _, v := range p.VMs {
+		got[v.ID] = v
+	}
+	if r := got[u.ID]; r.OrgID != e.org.ID || r.UserID == nil || *r.UserID != e.user || r.TeamID != nil {
+		t.Errorf("user vm: %+v", r)
+	}
+	if r := got[tv.ID]; r.OrgID != e.org.ID || r.TeamID == nil || *r.TeamID != e.team.ID || r.UserID != nil {
+		t.Errorf("team vm: %+v", r)
 	}
 }
