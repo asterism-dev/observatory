@@ -78,8 +78,11 @@ func main() {
 	// caught holds offending chassis names until the hub has stored them; it then sends them back as quarantined.
 	caught := map[string]bool{}
 	go func() {
+		var lastClaims map[claim]bool
 		for range time.Tick(2 * time.Second) {
-			ports, offenders, err := guardBindings(run)
+			ports, claims, err := guardBindings(run)
+			var offenders []string
+			lastClaims, offenders = confirmClaims(lastClaims, claims)
 			if err != nil {
 				log.Print(err)
 			}
@@ -325,7 +328,23 @@ func parseCSV(out string, fields int) ([][]string, error) {
 }
 
 // guardBindings checks chassis names against the NB requested-chassis option (hub-gw when unset); SB copies are chassis-writable or resolved by a chassis-set hostname.
-func guardBindings(run runner) (rebound, offenders []string, err error) {
+// claim is a node bound to a port that NB explicitly requests for another chassis.
+type claim struct{ Port, Chassis string }
+
+// confirmClaims returns the chassis whose claim on the same port was also seen on the previous poll; one-off mismatches are delete and create races.
+func confirmClaims(last map[claim]bool, claims []claim) (map[claim]bool, []string) {
+	next := map[claim]bool{}
+	var offenders []string
+	for _, c := range claims {
+		if last[c] && !next[c] {
+			offenders = append(offenders, c.Chassis)
+		}
+		next[c] = true
+	}
+	return next, offenders
+}
+
+func guardBindings(run runner) (rebound []string, claims []claim, err error) {
 	out, err := run("ovn-nbctl", "--format=csv", "--data=bare", "--no-headings", "--columns=name,options", "list", "logical_switch_port")
 	if err != nil {
 		return nil, nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
@@ -357,10 +376,12 @@ func guardBindings(run runner) (rebound, offenders []string, err error) {
 	var errs []error
 	for _, f := range bindings {
 		uuid, port, ch, add := f[0], f[1], f[2], f[3]
-		req, ok := requested[port]
-		if !ok {
+		req, explicit := requested[port]
+		if !explicit {
 			req = []string{"hub-gw"}
 		}
+		// A port missing from NB may just be deleted or not yet created, so only explicit requests and gateway ports count as claims.
+		suspect := explicit || strings.HasPrefix(port, "cr-lrp-")
 		var cols, wrong []string
 		if ch != "" && names[ch] != req[0] {
 			cols, wrong = append(cols, "chassis"), append(wrong, names[ch])
@@ -374,8 +395,8 @@ func guardBindings(run runner) (rebound, offenders []string, err error) {
 			cols = append(cols, "additional_chassis")
 		}
 		for _, w := range wrong {
-			if w != "" {
-				offenders = append(offenders, w)
+			if suspect && w != "" && w != "hub-gw" {
+				claims = append(claims, claim{port, w})
 			}
 		}
 		if len(cols) == 0 {
@@ -394,7 +415,7 @@ func guardBindings(run runner) (rebound, offenders []string, err error) {
 			rebound = append(rebound, port)
 		}
 	}
-	return rebound, offenders, errors.Join(errs...)
+	return rebound, claims, errors.Join(errs...)
 }
 
 // guardMACBindings deletes lr-gw neighbor entries that do not match the address plan; any chassis may write MAC_Binding.

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,19 +156,21 @@ func TestGuardBindings(t *testing.T) {
 				"u9,vm9-mgmt,ch-gone,",          // chassis row without a name
 				"u10,vm10-mgmt,ch-a,ch-gw ch-b", // one additional chassis not requested
 				"u11,gw0,ch-gw,",
+				"u12,deleted-mgmt,ch-b,", // VM deleted: gone from NB, still bound in SB
 			}, "\n") + "\n", nil
 		}
 		return "", nil
 	}
-	got, offenders, err := guardBindings(run)
+	got, claims, err := guardBindings(run)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt,vm9-mgmt,vm10-mgmt" {
+	if strings.Join(got, ",") != "vm2-mgmt,cr-lrp-transit2,vm6-mgmt,vm9-mgmt,vm10-mgmt,deleted-mgmt" {
 		t.Fatalf("rebound %v", got)
 	}
-	if strings.Join(offenders, ",") != "node-b,node-b,node-b,hub-gw" {
-		t.Fatalf("offenders %v", offenders)
+	wantClaims := []claim{{"vm2-mgmt", "node-b"}, {"cr-lrp-transit2", "node-b"}, {"vm6-mgmt", "node-b"}}
+	if !slices.Equal(claims, wantClaims) {
+		t.Fatalf("claims %v", claims)
 	}
 	var clears []string
 	for _, c := range calls {
@@ -184,6 +187,7 @@ func TestGuardBindings(t *testing.T) {
 		"ovn-sbctl clear port_binding u6 additional_chassis",
 		"ovn-sbctl clear port_binding u9 chassis",
 		"ovn-sbctl clear port_binding u10 additional_chassis",
+		"ovn-sbctl clear port_binding u12 chassis",
 	}
 	if strings.Join(clears, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("clears %v", clears)
@@ -347,5 +351,62 @@ func TestApplyCleansChassisAfterQuarantineRules(t *testing.T) {
 	_ = apply(run, proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB}, t.TempDir())
 	if strings.Join(order, ",") != "nft,chassis-del" {
 		t.Fatalf("order %v", order)
+	}
+}
+
+// guardPolls runs the guard on successive SB snapshots, as the gateway loop does, and returns the confirmed offenders of each poll.
+func guardPolls(t *testing.T, nb string, polls ...string) [][]string {
+	t.Helper()
+	var last map[claim]bool
+	var out [][]string
+	for _, sb := range polls {
+		run := func(args ...string) (string, error) {
+			c := strings.Join(args, " ")
+			switch {
+			case strings.Contains(c, "list logical_switch_port"):
+				return nb, nil
+			case strings.Contains(c, "list chassis"):
+				return "ch-a,node-a\nch-b,node-b\nch-gw,hub-gw\n", nil
+			case strings.Contains(c, "list port_binding"):
+				return sb, nil
+			}
+			return "", nil
+		}
+		_, claims, err := guardBindings(run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var offenders []string
+		last, offenders = confirmClaims(last, claims)
+		out = append(out, offenders)
+	}
+	return out
+}
+
+func TestGuardQuarantineRaces(t *testing.T) {
+	nb := "vm1-mgmt,requested-chassis=node-a\ngw0,requested-chassis=hub-gw\n"
+	foreign := "u1,vm1-mgmt,ch-b,\n"
+	for _, c := range []struct {
+		name  string
+		nb    string
+		polls []string
+		want  string
+	}{
+		{"VM deleted, port gone from NB while still bound", "gw0,requested-chassis=hub-gw\n", []string{"u1,vm1-mgmt,ch-a,\n", "u1,vm1-mgmt,ch-a,\n"}, ""},
+		{"network detached, port gone from NB", nb, []string{"u5,vm1-net,ch-a,\n", "u5,vm1-net,ch-a,\n", "u5,vm1-net,ch-a,\n"}, ""},
+		{"VM created, SB ahead of the NB read", "", []string{"u1,vm1-mgmt,ch-a,\n", "u1,vm1-mgmt,ch-a,\n"}, ""},
+		{"single-poll mismatch", nb, []string{foreign, "u1,vm1-mgmt,ch-a,\n", foreign}, ""},
+		{"two-poll mismatch", nb, []string{foreign, foreign}, "node-b"},
+		{"two polls on different ports", nb + "vm2-mgmt,requested-chassis=node-a\n", []string{foreign, "u2,vm2-mgmt,ch-b,\n"}, ""},
+		{"gateway port claimed twice", nb, []string{"u3,cr-lrp-transit,ch-b,\n", "u3,cr-lrp-transit,ch-b,\n"}, "node-b"},
+		{"gw0 claimed twice", nb, []string{"u4,gw0,ch-b,\n", "u4,gw0,ch-b,\n"}, "node-b"},
+	} {
+		var got []string
+		for _, o := range guardPolls(t, c.nb, c.polls...) {
+			got = append(got, o...)
+		}
+		if strings.Join(got, ",") != c.want {
+			t.Errorf("%s: quarantined %v", c.name, got)
+		}
 	}
 }
