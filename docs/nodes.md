@@ -5,7 +5,7 @@ keeps a WebSocket connection to the hub, which pushes the desired VMs.
 
 ## Requirements
 
-- Linux on amd64 (x86_64) with systemd, `apt` (Debian 13 and Ubuntu 24.04 are tested) and `curl`.
+- Linux on amd64 (x86_64) with systemd, `apt` (tested on Debian 13; other apt-based distributions such as Ubuntu 24.04 should work but are untested) and `curl`.
 - KVM: `/dev/kvm` must exist. In a VM, enable nested virtualization.
 - Root, or a user with `sudo`.
 - The hub's URL reachable from the host, and internet access for packages, Firecracker and the Ubuntu cloud image.
