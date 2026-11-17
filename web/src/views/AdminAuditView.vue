@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Badge, Button, Table, TextInput, type TableColumn } from '@asterism-dev/lumen'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
@@ -28,23 +28,28 @@ const action = ref('')
 const from = ref('')
 const to = ref('')
 
-const columns: TableColumn[] = [
+const columns = computed<TableColumn[]>(() => [
   { key: 'at', label: t('audit.time') },
   { key: 'actorId', label: t('audit.actor') },
   { key: 'orgId', label: t('audit.org') },
   { key: 'action', label: t('audit.action') },
   { key: 'resource', label: t('audit.resource') },
   { key: 'result', label: t('audit.result') },
-]
+])
 
 const tones = { allowed: 'success', denied: 'warning', failed: 'danger' } as const
 
+let applied = new URLSearchParams()
+
 async function load(more: boolean) {
-  const q = new URLSearchParams()
-  if (actor.value) q.set('actor', actor.value)
-  if (action.value) q.set('action', action.value)
-  if (from.value) q.set('from', new Date(from.value).toISOString())
-  if (to.value) q.set('to', new Date(to.value).toISOString())
+  if (!more) {
+    applied = new URLSearchParams()
+    if (actor.value) applied.set('actor', actor.value)
+    if (action.value) applied.set('action', action.value)
+    if (from.value) applied.set('from', new Date(from.value).toISOString())
+    if (to.value) applied.set('to', new Date(to.value).toISOString())
+  }
+  const q = new URLSearchParams(applied)
   if (more && next.value !== null) q.set('before', String(next.value))
   try {
     const res = await api<{ entries: Entry[]; next: number | null }>(`/api/admin/audit?${q}`)

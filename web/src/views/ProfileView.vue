@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Badge, Button, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
@@ -26,14 +26,14 @@ const pending = ref<Session | null>(null)
 const busy = ref(false)
 const error = ref('')
 
-const columns: TableColumn[] = [
+const columns = computed<TableColumn[]>(() => [
   { key: 'kind', label: t('profile.kind') },
   { key: 'userAgent', label: t('profile.userAgent') },
   { key: 'ip', label: t('profile.ip') },
   { key: 'lastUsedAt', label: t('profile.lastUsed') },
   { key: 'expiresAt', label: t('profile.expires') },
   { key: 'actions', label: '' },
-]
+])
 
 const fmt = (v: string) => d(new Date(v), { dateStyle: 'short', timeStyle: 'short' })
 
