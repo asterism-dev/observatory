@@ -30,9 +30,10 @@ post() {
   esac
 }
 
-project_id=$(post /management/v1/projects '{"name":"observatory"}' | jq -r .id)
+resp=$(post /management/v1/projects '{"name":"observatory"}')
+project_id=$(printf %s "$resp" | jq -er .id)
 
-web_id=$(post "/management/v1/projects/$project_id/apps/oidc" '{
+resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
   "name":"observatory-web",
   "redirectUris":["http://localhost:5173/auth/callback","http://localhost:8090/auth/callback"],
   "postLogoutRedirectUris":["http://localhost:5173/","http://localhost:8090/"],
@@ -41,16 +42,18 @@ web_id=$(post "/management/v1/projects/$project_id/apps/oidc" '{
   "appType":"OIDC_APP_TYPE_USER_AGENT",
   "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
   "devMode":true,
-  "idTokenUserinfoAssertion":true}' | jq -r .clientId)
+  "idTokenUserinfoAssertion":true}')
+web_id=$(printf %s "$resp" | jq -er .clientId)
 
-cli_id=$(post "/management/v1/projects/$project_id/apps/oidc" '{
+resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
   "name":"observatory-cli",
   "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
   "grantTypes":["OIDC_GRANT_TYPE_DEVICE_CODE"],
   "appType":"OIDC_APP_TYPE_NATIVE",
   "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
   "devMode":true,
-  "idTokenUserinfoAssertion":true}' | jq -r .clientId)
+  "idTokenUserinfoAssertion":true}')
+cli_id=$(printf %s "$resp" | jq -er .clientId)
 
 cat > "$hub_env" <<ENV
 OBSERVATORY_OIDC_ISSUER=$api
