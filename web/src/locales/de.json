@@ -22,6 +22,7 @@
     "dashboard": "Dashboard",
     "nodes": "Nodes",
     "vms": "VMs",
+    "devices": "Geräte",
     "env": "Umgebung",
     "orgSettings": "Organisationseinstellungen",
     "platformSettings": "Plattformeinstellungen",
@@ -282,5 +283,26 @@
       "error": "Fehler",
       "unknown": "Unbekannt"
     }
+  },
+  "devices": {
+    "subtitle": "WireGuard-Geräte, die dich mit deinen VMs verbinden.",
+    "add": "Gerät hinzufügen",
+    "addTitle": "Gerät hinzufügen",
+    "name": "Name",
+    "address": "Adresse",
+    "handshake": "Letzter Handshake",
+    "owner": "Besitzer",
+    "create": "Erstellen",
+    "done": "Fertig",
+    "delete": "Löschen",
+    "deleteTitle": "Gerät löschen",
+    "deleteBody": "Gerät {name} löschen? Es verliert sofort den Zugriff.",
+    "empty": "Noch keine Geräte.",
+    "never": "Nie",
+    "configHint": "Importiere diese Konfiguration in deinen WireGuard-Client oder scanne den QR-Code mit der mobilen App.",
+    "configWarning": "Diese Konfiguration enthält den privaten Schlüssel und kann nicht erneut angezeigt werden.",
+    "download": "Herunterladen",
+    "copy": "Kopieren",
+    "qr": "QR-Code der WireGuard-Konfiguration"
   }
 }
