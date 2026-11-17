@@ -47,7 +47,7 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 		Orgs:        []proto.GatewayOrg{},
 	}
 	for _, c := range snap.Chassis {
-		st.Chassis = append(st.Chassis, proto.GatewayChassis{NodeID: c.NodeID.String(), OrgID: c.OrgID.String(), PublicKey: c.PublicKey, IP: c.IP.String()})
+		st.Chassis = append(st.Chassis, proto.GatewayChassis{NodeID: c.NodeID.String(), OrgID: c.OrgID.String(), PublicKey: c.PublicKey, IP: c.IP.String(), Quarantined: c.Quarantined})
 	}
 	devices := map[uuid.UUID]map[uuid.UUID][]store.Device{}
 	for _, d := range snap.Devices {
@@ -136,6 +136,21 @@ func allowFrom(c *authz.ConnectChecker, vm store.VM, byUser map[uuid.UUID][]stor
 func (h *Hub) SetStatus(ctx context.Context, st proto.GatewayStatus) error {
 	if err := h.store.SetDeviceHandshakes(ctx, st.Handshakes); err != nil {
 		return err
+	}
+	var ids []uuid.UUID
+	for _, s := range st.Quarantined {
+		if id, err := uuid.Parse(s); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > 0 {
+		added, err := h.store.QuarantineNodes(ctx, ids)
+		if err != nil {
+			return err
+		}
+		if len(added) > 0 {
+			slog.Warn("gateway quarantined nodes that held another node's port; re-enroll to release", "nodes", added)
+		}
 	}
 	chassis, err := h.store.Chassis(ctx)
 	if err != nil {

@@ -21,10 +21,11 @@ type GatewaySB struct {
 }
 
 type GatewayChassis struct {
-	NodeID    string `json:"nodeId"`
-	OrgID     string `json:"orgId"`
-	PublicKey string `json:"publicKey"`
-	IP        string `json:"ip"`
+	NodeID      string `json:"nodeId"`
+	OrgID       string `json:"orgId"`
+	PublicKey   string `json:"publicKey"`
+	IP          string `json:"ip"`
+	Quarantined bool   `json:"quarantined,omitempty"`
 }
 
 type GatewayDevice struct {
@@ -62,5 +63,7 @@ type GatewayStatus struct {
 	Handshakes map[string]time.Time `json:"handshakes"`
 	Chassis    []string             `json:"chassis"`
 	Rebound    []string             `json:"rebound"`
-	Version    string               `json:"version"`
+	// Quarantined lists nodes caught holding a port bound to another node.
+	Quarantined []string `json:"quarantined"`
+	Version     string   `json:"version"`
 }

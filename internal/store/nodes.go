@@ -31,14 +31,16 @@ type Node struct {
 	Version    string
 	LastSeen   *time.Time
 	UnderlayIP netip.Addr
-	CreatedBy  uuid.UUID
-	CreatedAt  time.Time
+	// Quarantined is set by the gateway and cleared only by re-enrollment.
+	Quarantined bool
+	CreatedBy   uuid.UUID
+	CreatedAt   time.Time
 }
 
-const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
 
 func scanNode(row pgx.Row) (n Node, err error) {
-	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.CreatedBy, &n.CreatedAt)
+	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -90,7 +92,7 @@ func (s *Store) EnrollNode(ctx context.Context, token string) (Node, string, err
 		return Node{}, "", err
 	}
 	n, err := scanNode(s.q.QueryRow(ctx, `
-		UPDATE nodes SET credential_hash = $2, enroll_hash = NULL, enroll_expires = NULL, enrolled_at = coalesce(enrolled_at, now())
+		UPDATE nodes SET credential_hash = $2, enroll_hash = NULL, enroll_expires = NULL, enrolled_at = coalesce(enrolled_at, now()), quarantined = false
 		WHERE enroll_hash = $1 AND enroll_expires > now()
 		RETURNING `+nodeColumns, hashToken(token), hashToken(secret)))
 	if errors.Is(err, ErrNotFound) {
@@ -180,4 +182,13 @@ func (s *Store) RenameNode(ctx context.Context, org, id uuid.UUID, name string) 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// QuarantineNodes marks the nodes quarantined and returns those that were not already.
+func (s *Store) QuarantineNodes(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.q.Query(ctx, "UPDATE nodes SET quarantined = true WHERE id = ANY($1) AND NOT quarantined RETURNING id", ids)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 }

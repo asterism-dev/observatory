@@ -234,6 +234,7 @@ type Chassis struct {
 	NodeID, OrgID uuid.UUID
 	PublicKey     string
 	IP            netip.Addr
+	Quarantined   bool
 }
 
 // NetSnapshot is everything the gateway state is built from, read at one point in time and sorted by id (devices by IP).
@@ -249,12 +250,12 @@ type NetSnapshot struct {
 func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) { return readChassis(ctx, s.q) }
 
 func readChassis(ctx context.Context, q querier) ([]Chassis, error) {
-	rows, err := q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
+	rows, err := q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip, quarantined FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (c Chassis, err error) {
-		err = r.Scan(&c.NodeID, &c.OrgID, &c.PublicKey, &c.IP)
+		err = r.Scan(&c.NodeID, &c.OrgID, &c.PublicKey, &c.IP, &c.Quarantined)
 		return
 	})
 }

@@ -29,6 +29,7 @@ type nodeJSON struct {
 	CanUpdate    bool          `json:"canUpdate"`
 	CanDelete    bool          `json:"canDelete"`
 	Underlay     *underlayJSON `json:"underlay"`
+	Quarantined  bool          `json:"quarantined"`
 }
 
 type underlayJSON struct {
@@ -48,7 +49,7 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		return nodeJSON{}, err
 	}
 	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, CPUs: n.CPUs, MemoryMB: n.MemoryMB,
-		LastSeen: n.LastSeen, VMCount: len(vms)}
+		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined}
 	if len(n.Machine) > 0 {
 		j.Machine = n.Machine
 	}

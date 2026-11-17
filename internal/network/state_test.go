@@ -486,6 +486,43 @@ func TestSetStatus(t *testing.T) {
 	}
 }
 
+func TestQuarantineUntilReenroll(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	quarantined := func() map[string]bool {
+		q := map[string]bool{}
+		for _, c := range f.state().Chassis {
+			q[c.NodeID] = c.Quarantined
+		}
+		return q
+	}
+	if err := f.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{f.nodeA.String(), "garbage", uuid.NewString()}}); err != nil {
+		t.Fatal(err)
+	}
+	if q := quarantined(); !q[f.nodeA.String()] || q[f.nodeB.String()] {
+		t.Fatalf("after report %v", q)
+	}
+	if err := f.h.SetStatus(ctx, proto.GatewayStatus{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := quarantined(); !q[f.nodeA.String()] {
+		t.Fatal("quarantine lifted without re-enrollment")
+	}
+	token, err := f.s.RegenerateNodeCredential(ctx, f.orgA, f.nodeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := quarantined(); !q[f.nodeA.String()] {
+		t.Fatal("quarantine lifted by regenerating the credential alone")
+	}
+	if _, _, err := f.s.EnrollNode(ctx, token); err != nil {
+		t.Fatal(err)
+	}
+	if q := quarantined(); q[f.nodeA.String()] {
+		t.Fatal("quarantine kept after re-enrollment")
+	}
+}
+
 // BenchmarkState builds the state for 200 devices and 500 VMs, half of them owned by a 50-member team.
 func BenchmarkState(b *testing.B) {
 	f := newFixture(b)
