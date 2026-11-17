@@ -89,7 +89,9 @@ func (h *api) createNetwork(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	writeJSON(w, http.StatusCreated, networkJSON{n.ID, n.Name, n.Subnet.String(), 0, true, true})
+	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.NetworkObject(n.ID)
+	writeJSON(w, http.StatusCreated, networkJSON{n.ID, n.Name, n.Subnet.String(), 0,
+		e.Allowed(sub, m.Org.ID, obj, "network:use"), e.Allowed(sub, m.Org.ID, obj, store.ActionNetworkDelete)})
 }
 
 func (h *api) deleteNetwork(w http.ResponseWriter, r *http.Request) {

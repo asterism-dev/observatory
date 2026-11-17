@@ -92,6 +92,18 @@ func TestNetworkCreate(t *testing.T) {
 	}
 }
 
+func TestNetworkCreateByMemberCannotDelete(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	n := e.createNetwork(bobTok, org, `{"name":"web"}`)
+	if !n.CanUse || n.CanDelete {
+		t.Fatalf("create response: %+v", n)
+	}
+}
+
 func TestVMNetworksRestart(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user("alice")
