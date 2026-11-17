@@ -13,7 +13,11 @@
     "profile": "Profile",
     "audit": "Audit log",
     "members": "Members",
-    "settings": "Settings"
+    "settings": "Settings",
+    "teams": "Teams",
+    "roles": "Roles",
+    "limits": "Limits",
+    "orgAudit": "Audit"
   },
   "theme": {
     "system": "Theme: system",
@@ -88,5 +92,58 @@
     "title": "Invitation",
     "accepting": "Accepting invitation...",
     "home": "Back to start"
+  },
+  "teams": {
+    "name": "Name",
+    "members": "Members",
+    "create": "Create team",
+    "open": "Open",
+    "empty": "No teams",
+    "admin": "Team admin",
+    "promote": "Make admin",
+    "demote": "Remove admin",
+    "noMembers": "No members",
+    "addMember": "Add member",
+    "add": "Add",
+    "delete": "Delete team",
+    "deleteTitle": "Delete team?",
+    "deleteBody": "{name} and its role bindings will be removed."
+  },
+  "roles": {
+    "create": "Create role",
+    "view": "View",
+    "edit": "Edit",
+    "delete": "Delete",
+    "builtin": "Built-in",
+    "builtinNote": "Built-in roles are read-only.",
+    "bindings": "Role bindings",
+    "subject": "Member or team",
+    "teamLabel": "Team: {name}",
+    "bind": "Bind",
+    "unbind": "Remove",
+    "noBindings": "No bindings",
+    "deleteTitle": "Delete role?",
+    "deleteBody": "{name} and its bindings will be removed.",
+    "description": "Description",
+    "parents": "Inherits from",
+    "addParent": "Add parent role",
+    "rules": "Rules",
+    "allow": "Allow",
+    "deny": "Deny",
+    "object": "Object",
+    "addRule": "Add rule",
+    "removeRule": "Remove",
+    "back": "Back",
+    "notFound": "Role not found"
+  },
+  "limits": {
+    "org": "Organization (set by platform admins)",
+    "teams": "Teams",
+    "members": "Members",
+    "vcpu": "vCPU",
+    "ramMb": "RAM (MB)",
+    "diskGb": "Disk (GB)",
+    "vmCount": "VMs",
+    "unlimited": "Unlimited"
   }
 }

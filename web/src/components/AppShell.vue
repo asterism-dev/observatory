@@ -69,6 +69,10 @@ const orgNav = computed(() =>
   orgId.value
     ? [
         { action: 'member:read', path: `/orgs/${orgId.value}/members`, label: t('nav.members') },
+        { action: 'team:read', path: `/orgs/${orgId.value}/teams`, label: t('nav.teams') },
+        { action: 'role:read', path: `/orgs/${orgId.value}/roles`, label: t('nav.roles') },
+        { action: 'limit:read', path: `/orgs/${orgId.value}/limits`, label: t('nav.limits') },
+        { action: 'audit:read', path: `/orgs/${orgId.value}/audit`, label: t('nav.orgAudit') },
         { action: 'org:update', path: `/orgs/${orgId.value}/settings`, label: t('nav.settings') },
       ].filter((i) => can(i.action))
     : [],

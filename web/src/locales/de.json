@@ -13,7 +13,11 @@
     "profile": "Profil",
     "audit": "Audit-Log",
     "members": "Mitglieder",
-    "settings": "Einstellungen"
+    "settings": "Einstellungen",
+    "teams": "Teams",
+    "roles": "Rollen",
+    "limits": "Limits",
+    "orgAudit": "Audit"
   },
   "theme": {
     "system": "Design: System",
@@ -88,5 +92,58 @@
     "title": "Einladung",
     "accepting": "Einladung wird angenommen...",
     "home": "Zurück zum Start"
+  },
+  "teams": {
+    "name": "Name",
+    "members": "Mitglieder",
+    "create": "Team erstellen",
+    "open": "Öffnen",
+    "empty": "Keine Teams",
+    "admin": "Team-Admin",
+    "promote": "Zum Admin machen",
+    "demote": "Admin entziehen",
+    "noMembers": "Keine Mitglieder",
+    "addMember": "Mitglied hinzufügen",
+    "add": "Hinzufügen",
+    "delete": "Team löschen",
+    "deleteTitle": "Team löschen?",
+    "deleteBody": "{name} und seine Rollenzuweisungen werden entfernt."
+  },
+  "roles": {
+    "create": "Rolle erstellen",
+    "view": "Ansehen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "builtin": "Eingebaut",
+    "builtinNote": "Eingebaute Rollen sind schreibgeschützt.",
+    "bindings": "Rollenzuweisungen",
+    "subject": "Mitglied oder Team",
+    "teamLabel": "Team: {name}",
+    "bind": "Zuweisen",
+    "unbind": "Entfernen",
+    "noBindings": "Keine Zuweisungen",
+    "deleteTitle": "Rolle löschen?",
+    "deleteBody": "{name} und ihre Zuweisungen werden entfernt.",
+    "description": "Beschreibung",
+    "parents": "Erbt von",
+    "addParent": "Elternrolle hinzufügen",
+    "rules": "Regeln",
+    "allow": "Erlauben",
+    "deny": "Verbieten",
+    "object": "Objekt",
+    "addRule": "Regel hinzufügen",
+    "removeRule": "Entfernen",
+    "back": "Zurück",
+    "notFound": "Rolle nicht gefunden"
+  },
+  "limits": {
+    "org": "Organisation (von Plattform-Admins gesetzt)",
+    "teams": "Teams",
+    "members": "Mitglieder",
+    "vcpu": "vCPU",
+    "ramMb": "RAM (MB)",
+    "diskGb": "Disk (GB)",
+    "vmCount": "VMs",
+    "unlimited": "Unbegrenzt"
   }
 }
