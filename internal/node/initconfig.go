@@ -12,6 +12,7 @@ import (
 	"strings"
 )
 
+// InitOptions are the node.json fields enrollment sets; a zero MemoryMB leaves capacity as it is.
 type InitOptions struct {
 	Path, HubURL, NodeID, Credential string
 	MemoryMB                         int

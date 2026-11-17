@@ -33,6 +33,9 @@ while [ $# -gt 0 ]; do
 	*) usage ;;
 	esac
 done
+case $MEMORY_MB in
+*[!0-9]*) die "--memory-mb must be a number, got '$MEMORY_MB'" ;;
+esac
 [ -n "$HUB" ] || usage
 [ -n "$TOKEN" ] || usage
 case $HUB in
@@ -101,12 +104,13 @@ grep -qs 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf ||
 $SUDO systemctl enable nftables >/dev/null 2>&1
 $SUDO nft -f /etc/nftables.d/observatory-node.nft
 
+chmod +x "$TMP/observatory-node"
 say "enrolling the node"
-$SUDO install -m 0755 "$TMP/observatory-node" /usr/local/bin/observatory-node
 set -- -config /etc/observatory-node/node.json -hub "$HUB" -token-stdin
 [ -z "$MEMORY_MB" ] || set -- "$@" -memory-mb "$MEMORY_MB"
 # The token goes in on stdin: sudo logs command lines.
-printf '%s\n' "$TOKEN" | $SUDO /usr/local/bin/observatory-node enroll "$@"
+printf '%s\n' "$TOKEN" | $SUDO "$TMP/observatory-node" enroll "$@"
+$SUDO install -m 0755 "$TMP/observatory-node" /usr/local/bin/observatory-node
 
 $SUDO tee /etc/systemd/system/observatory-node.service >/dev/null <<'UNIT'
 [Unit]
