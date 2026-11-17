@@ -227,12 +227,12 @@ func (s *Store) MarkReleaseSeq(ctx context.Context, node uuid.UUID, disks []uuid
 }
 
 // ConfirmReleases deletes the node's releasing exports it has applied (appliedSeq >= release_seq) and no longer uses.
-func (s *Store) ConfirmReleases(ctx context.Context, node uuid.UUID, inUse []string, appliedSeq uint64) ([]uuid.UUID, error) {
+func (s *Store) ConfirmReleases(ctx context.Context, node uuid.UUID, inUse []uuid.UUID, appliedSeq uint64) ([]uuid.UUID, error) {
 	if inUse == nil {
-		inUse = []string{}
+		inUse = []uuid.UUID{}
 	}
 	return collectIDs(s.q.Query(ctx, `
-		DELETE FROM disk_exports WHERE node_id = $1 AND releasing AND release_seq <= $3 AND disk_id::text <> ALL($2)
+		DELETE FROM disk_exports WHERE node_id = $1 AND releasing AND release_seq <= $3 AND disk_id <> ALL($2)
 		RETURNING disk_id`, node, inUse, appliedSeq))
 }
 

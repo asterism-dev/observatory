@@ -5,6 +5,8 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,12 +22,45 @@ type Fleet struct {
 	authz *authz.Service
 	net   *network.Hub
 
-	mu    sync.Mutex
-	conns map[uuid.UUID]*conn
+	// seq numbers every desired list hub-wide; starting at the clock keeps it increasing across hub restarts.
+	seq atomic.Uint64
+
+	mu       sync.Mutex
+	conns    map[uuid.UUID]*conn
+	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 }
 
 func New(s *store.Store, z *authz.Service, n *network.Hub) *Fleet {
-	return &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}}
+	f.seq.Store(uint64(time.Now().UnixNano()))
+	return f
+}
+
+// DiskErrors returns the VM's attachment errors by disk ID as its node last reported them; callers must not modify it.
+func (f *Fleet) DiskErrors(vm uuid.UUID) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.diskErrs[vm]
+}
+
+// noteDiskErrors keeps the disk errors of st, but only for a VM in c's last desired list.
+func (f *Fleet) noteDiskErrors(c *conn, st proto.VMStatus) {
+	id, err := uuid.Parse(st.ID)
+	errs := map[string]string{}
+	for _, d := range st.Disks {
+		if d.Error != "" {
+			errs[d.Name] = d.Error
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case err != nil || !c.vms[st.ID]:
+	case len(errs) == 0:
+		delete(f.diskErrs, id)
+	default:
+		f.diskErrs[id] = errs
+	}
 }
 
 func (f *Fleet) Online(node uuid.UUID) bool {
@@ -74,14 +109,24 @@ func (f *Fleet) detach(c *conn) {
 	}
 }
 
-func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.DesiredVM, error) {
+// desired builds the node's list and returns the releasing disks it no longer carries.
+func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.DesiredVM, []uuid.UUID, error) {
+	// Read first: a detach committed after this read is still in the list below, so its export is never marked by it.
+	releasing, err := f.store.ReleasingDisks(ctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
 	vms, err := f.store.VMsOnNode(ctx, node)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	atts, err := f.store.NodeAttachments(ctx, node)
+	if err != nil {
+		return nil, nil, err
 	}
 	nets, err := f.store.Networks(ctx, org)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rank := make(map[uuid.UUID]int, len(nets))
 	for i, n := range nets {
@@ -91,18 +136,18 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	for _, v := range vms {
 		boot, err := f.boot(ctx, org, v)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		nics, err := f.nics(ctx, v, rank)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, proto.DesiredVM{
-			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics},
+			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 		})
 	}
-	return out, nil
+	return out, releasing, nil
 }
 
 // nics lists the management NIC, then network NICs by network name (rank); names and MACs match the gateway's ports.

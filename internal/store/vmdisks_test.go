@@ -210,9 +210,9 @@ func TestConfirmReleases(t *testing.T) {
 	}
 	for _, c := range []struct {
 		applied uint64
-		inUse   []string
+		inUse   []uuid.UUID
 		want    int
-	}{{99, nil, 0}, {100, []string{d.ID.String()}, 0}, {100, nil, 1}} {
+	}{{99, nil, 0}, {100, []uuid.UUID{d.ID}, 0}, {100, nil, 1}} {
 		got, err := e.s.ConfirmReleases(ctx, e.node.ID, c.inUse, c.applied)
 		if err != nil || len(got) != c.want || (c.want == 1 && got[0] != d.ID) {
 			t.Fatalf("confirm(%d, %v) = %v, %v", c.applied, c.inUse, got, err)

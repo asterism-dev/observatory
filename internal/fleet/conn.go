@@ -32,6 +32,7 @@ var (
 type conn struct {
 	node, org uuid.UUID
 	sess      *yamux.Session
+	vms       map[string]bool // IDs of the VMs in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
 	wake chan struct{}
 }
@@ -83,7 +84,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("node did not register", "node", node.ID)
 		return
 	}
-	if err := f.register(ctx, node.ID, *m.Register); err != nil {
+	if err := f.register(ctx, node, *m.Register); err != nil {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
@@ -103,15 +104,39 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		if err := dec.Decode(&m); err != nil {
 			return
 		}
-		if m.Type == "status" && m.Status != nil {
+		switch {
+		case m.Type == "status" && m.Status != nil:
 			if err := f.store.SetVMStatus(ctx, node.ID, *m.Status); err != nil {
 				slog.Error("vm status", "node", node.ID, "vm", m.Status.ID, "err", err)
 			}
+			f.noteDiskErrors(c, *m.Status)
+		case m.Type == "disks":
+			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		}
 	}
 }
 
-func (f *Fleet) register(ctx context.Context, node uuid.UUID, reg proto.Register) error {
+// confirmReleases drops the node's releasing exports that inUse and appliedSeq, both from one node message, show it has let go of.
+func (f *Fleet) confirmReleases(ctx context.Context, node store.Node, inUse []string, appliedSeq uint64) {
+	ids := make([]uuid.UUID, 0, len(inUse))
+	for _, s := range inUse {
+		if id, err := uuid.Parse(s); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	released, err := f.store.ConfirmReleases(ctx, node.ID, ids, appliedSeq)
+	if err != nil {
+		slog.Error("confirm disk releases", "node", node.ID, "err", err)
+		return
+	}
+	if len(released) > 0 {
+		slog.Info("disk release confirmed", "node", node.ID, "disks", released)
+		f.NotifyOrg(node.OrgID)
+	}
+}
+
+func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) error {
+	node := n.ID
 	var machine json.RawMessage
 	if reg.Machine != nil {
 		var err error
@@ -128,6 +153,7 @@ func (f *Fleet) register(ctx context.Context, node uuid.UUID, reg proto.Register
 			return err
 		}
 	}
+	f.confirmReleases(ctx, n, reg.DisksInUse, reg.AppliedSeq)
 	return nil
 }
 
@@ -162,7 +188,6 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			return
 		}
 	}
-	var seq uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -177,13 +202,32 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			continue
 		case <-c.wake:
 		}
-		desired, err := f.desired(ctx, c.org, c.node)
+		desired, releasing, err := f.desired(ctx, c.org, c.node)
 		if err != nil {
 			slog.Error("build desired list", "node", c.node, "err", err)
 			time.AfterFunc(desiredRetry, c.kick)
 			continue
 		}
-		seq++
+		vms := make(map[string]bool, len(desired))
+		for _, d := range desired {
+			vms[d.Spec.ID] = true
+		}
+		f.mu.Lock()
+		c.vms = vms
+		f.mu.Unlock()
+		// Register statuses arrive before the node's VMs are known; any later status is newer.
+		for _, st := range reg.VMs {
+			f.noteDiskErrors(c, st)
+		}
+		reg.VMs = nil
+		seq := f.seq.Add(1)
+		// Marked before sending, or the node's answer could beat the mark; an unsent seq is harmless, every later list lacks the disk too.
+		if len(releasing) > 0 {
+			if err := f.store.MarkReleaseSeq(ctx, c.node, releasing, seq); err != nil {
+				slog.Error("mark disk release", "node", c.node, "err", err)
+				time.AfterFunc(desiredRetry, c.kick)
+			}
+		}
 		if err := enc.Encode(proto.Message{Type: "desired", Desired: desired, Seq: seq}); err != nil {
 			c.sess.Close()
 			return
