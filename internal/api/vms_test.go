@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -223,5 +226,182 @@ func TestVMPowerAndVisibility(t *testing.T) {
 	}
 	if got := e.listVMs(ownerTok, org).VMs; len(got) != 1 || !got[0].CanDelete {
 		t.Fatalf("admin list: %+v", got)
+	}
+}
+
+func TestValidateVMDisks(t *testing.T) {
+	disk := func(path string) store.VMDisk { return store.VMDisk{DiskID: uuid.New(), MountPath: path} }
+	for path, ok := range map[string]bool{
+		"/data": true, "/home/ubuntu/work": true, "/var/data": true, "/var/lib/foo": true,
+		"/": false, "/data/": false, "/a/../b": false, "/etc": false, "/etc/x": false, "/home/ubuntu": false,
+		"/home/ubuntu/.ssh/k": false, "/var": false, "/var/lib/cloud/x": false, "data": false, "": false, "/a b": false,
+	} {
+		if err := validateVMDisks([]store.VMDisk{disk(path)}); (err == nil) != ok {
+			t.Errorf("%q: %v", path, err)
+		}
+	}
+	var nine []store.VMDisk
+	for i := 0; i < 9; i++ {
+		nine = append(nine, disk("/d"+strconv.Itoa(i)))
+	}
+	if validateVMDisks(nine[:8]) != nil || validateVMDisks(nine) == nil {
+		t.Error("limit of 8")
+	}
+	if validateVMDisks([]store.VMDisk{disk("/a"), disk("/a")}) == nil {
+		t.Error("duplicate path")
+	}
+	d := disk("/a")
+	if validateVMDisks([]store.VMDisk{d, {DiskID: d.DiskID, MountPath: "/b"}}) == nil {
+		t.Error("duplicate disk")
+	}
+}
+
+type vmDisksTest struct {
+	Disks []struct {
+		ID, Name, MountPath, State, Error string
+		SizeGB                            int
+	}
+	CanDisks bool
+}
+
+func (e *env) setVMDisks(tok string, org uuid.UUID, vm string, restart bool, disks ...string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	items := []string{}
+	for i, d := range disks {
+		items = append(items, `{"diskId":"`+d+`","mountPath":"/d`+strconv.Itoa(i)+`"}`)
+	}
+	return e.send("PUT", vmsPath(org)+"/"+vm+"/disks", tok, `{"disks":[`+strings.Join(items, ",")+`],"restartAllowed":`+strconv.FormatBool(restart)+`}`)
+}
+
+func (e *env) stopVM(tok string, org uuid.UUID, vm string) {
+	e.t.Helper()
+	if rec := e.do("POST", vmsPath(org)+"/"+vm+"/stop", tok); rec.Code != 200 {
+		e.t.Fatalf("stop: %d", rec.Code)
+	}
+}
+
+func TestSetVMDisksAPI(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	team := e.createTeam(tok, org, "core")
+	e.makeTeamAdmin(tok, org, team, alice)
+	d := e.createDisk(tok, org, diskBody("data", userOwner(), 1))
+	td := e.createDisk(tok, org, diskBody("shared", teamOwner(team), 1))
+	v := e.createVM(tok, org, vmBody("dev", userOwner(), node))
+	e.stopVM(tok, org, v.ID)
+
+	rec := e.setVMDisks(tok, org, v.ID, false, d.ID)
+	var got vmDisksTest
+	decode(t, rec, &got)
+	if rec.Code != 200 || len(got.Disks) != 1 || got.Disks[0].MountPath != "/d0" || got.Disks[0].Name != "data" || got.Disks[0].SizeGB != 1 || !got.CanDisks {
+		t.Fatalf("attach: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit("vm:disks"); len(es) != 1 || es[0].Details["name"] != "dev" || es[0].Details["disks"].([]any)[0] != "data:/d0" {
+		t.Fatalf("audit: %+v", es)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 200 || len(e.audit("vm:disks")) != 1 {
+		t.Fatalf("same list: %d", rec.Code)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID, td.ID); rec.Code != 409 {
+		t.Fatalf("team disk on user VM: %d", rec.Code)
+	}
+	if rec := e.send("PUT", vmsPath(org)+"/"+v.ID+"/disks", tok, `{"disks":[{"diskId":"`+d.ID+`","mountPath":"/etc"}]}`); rec.Code != 400 {
+		t.Fatalf("reserved path: %d", rec.Code)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, false, uuid.NewString()); rec.Code != 404 {
+		t.Fatalf("unknown disk: %d", rec.Code)
+	}
+	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/start", tok); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, false); rec.Code != 409 {
+		t.Fatalf("running without flag: %d", rec.Code)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, true); rec.Code != 200 {
+		t.Fatalf("detach: %d", rec.Code)
+	}
+}
+
+func TestSetVMDisksMissingDisk(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	d := e.createDisk(tok, org, diskBody("data", userOwner(), 1))
+	v := e.createVM(tok, org, vmBody("dev", userOwner(), node))
+	e.markReady()
+	if err := e.disks.SetStatus(context.Background(), statusWithFiles()); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 409 {
+		t.Fatalf("missing disk: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVMDisksAuthorizationDenied(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	admin, adminTok := e.user("dave")
+	org := e.createOrg(ownerTok, "Acme")
+	for u, r := range map[store.User]store.Role{bob: store.RoleMember, carol: store.RoleMember, admin: store.RoleAdmin} {
+		e.addMember(org, u, r)
+	}
+	node := e.enrolledNode(ownerTok, org, "n1")
+	bobDisk := e.createDisk(bobTok, org, diskBody("data", userOwner(), 1))
+	bobVM := e.createVM(bobTok, org, vmBody("bobvm", userOwner(), node))
+	adminVM := e.createVM(adminTok, org, vmBody("adminvm", userOwner(), node))
+	e.stopVM(bobTok, org, bobVM.ID)
+	e.stopVM(adminTok, org, adminVM.ID)
+
+	before := e.deniedRows("vm:disks")
+	if rec := e.setVMDisks(carolTok, org, bobVM.ID, true); rec.Code != 403 || e.deniedRows("vm:disks") != before+1 {
+		t.Fatalf("other member on vm: %d", rec.Code)
+	}
+	if rec := e.setVMDisks(carolTok, org, uuid.NewString(), true); rec.Code != 404 {
+		t.Fatalf("unknown vm: %d", rec.Code)
+	}
+	before = e.deniedRows("disk:use")
+	if rec := e.setVMDisks(adminTok, org, adminVM.ID, true, bobDisk.ID); rec.Code != 403 || e.deniedRows("disk:use") != before+1 {
+		t.Fatalf("admin attaches member disk: %d", rec.Code)
+	}
+	if d := e.listDisks(bobTok, org)[0]; d.Attachment != nil {
+		t.Fatalf("attached despite denial: %+v", d)
+	}
+	if rec := e.setVMDisks(bobTok, org, bobVM.ID, false, bobDisk.ID); rec.Code != 200 {
+		t.Fatalf("owner attach: %d", rec.Code)
+	}
+	if rec := e.setVMDisks(adminTok, org, bobVM.ID, false); rec.Code != 200 {
+		t.Fatalf("admin detach: %d", rec.Code)
+	}
+	if es := e.audit("vm:disks"); es[0].Result != store.ResultAllowed || len(es[0].Details["disks"].([]any)) != 0 {
+		t.Fatalf("detach audit: %+v", es)
+	}
+}
+
+func TestVMDiskErrorShown(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	d := e.createDisk(tok, org, diskBody("data", userOwner(), 1))
+	v := e.createVM(tok, org, vmBody("dev", userOwner(), node))
+	e.stopVM(tok, org, v.ID)
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	e.api.diskErrors = func(vm uuid.UUID) map[string]string {
+		if vm.String() == v.ID {
+			return map[string]string{d.ID: "NBD connection lost"}
+		}
+		return nil
+	}
+	var got vmDisksTest
+	decode(t, e.do("GET", vmsPath(org)+"/"+v.ID, tok), &got)
+	if len(got.Disks) != 1 || got.Disks[0].Error != "NBD connection lost" || got.Disks[0].State != "creating" {
+		t.Fatalf("%+v", got)
 	}
 }

@@ -30,6 +30,7 @@ type env struct {
 	z     *authz.Service
 	net   *network.Hub
 	disks *disks.Hub
+	api   *api
 	h     http.Handler
 }
 
@@ -50,7 +51,8 @@ func newEnv(t *testing.T) *env {
 	}
 	f := fleet.New(s, z, nh)
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
-	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, h: New(s, a, z, f, nh, dh)}
+	h, handler := newAPI(s, a, z, f, nh, dh)
+	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler}
 }
 
 // user logs an identity in and returns the user and a fresh session token.

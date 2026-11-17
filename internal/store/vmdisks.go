@@ -25,6 +25,35 @@ type VMDisk struct {
 	MountPath string
 }
 
+func (s *Store) VMDisks(ctx context.Context, vm uuid.UUID) ([]VMDisk, error) {
+	rows, err := s.q.Query(ctx, "SELECT disk_id, mount_path FROM vm_disks WHERE vm_id = $1 ORDER BY position", vm)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[VMDisk])
+}
+
+// OrgVMDisks returns every VM's disks of the org by position.
+func (s *Store) OrgVMDisks(ctx context.Context, org uuid.UUID) (map[uuid.UUID][]VMDisk, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT vd.vm_id, vd.disk_id, vd.mount_path FROM vm_disks vd JOIN vms v ON v.id = vd.vm_id
+		WHERE v.org_id = $1 ORDER BY vd.vm_id, vd.position`, org)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID][]VMDisk{}
+	for rows.Next() {
+		var vm uuid.UUID
+		var d VMDisk
+		if err := rows.Scan(&vm, &d.DiskID, &d.MountPath); err != nil {
+			return nil, err
+		}
+		out[vm] = append(out[vm], d)
+	}
+	return out, rows.Err()
+}
+
 func diskExportAAD(disk uuid.UUID) []byte { return []byte("disk-export:" + disk.String()) }
 
 // SetVMDisks replaces the VM's disk list; every newly attached disk gets a fresh export (port and key) on the VM's node.

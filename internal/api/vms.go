@@ -2,8 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"path"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +51,17 @@ type vmJSON struct {
 	CanPower   bool           `json:"canPower"`
 	CanDelete  bool           `json:"canDelete"`
 	CanNetwork bool           `json:"canNetwork"`
+	Disks      []vmDiskJSON   `json:"disks"`
+	CanDisks   bool           `json:"canDisks"`
+}
+
+type vmDiskJSON struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	MountPath string    `json:"mountPath"`
+	SizeGB    int       `json:"sizeGB"`
+	State     string    `json:"state"`
+	Error     string    `json:"error,omitempty"`
 }
 
 type vmNICJSON struct {
@@ -60,13 +75,15 @@ type vmNICJSON struct {
 type vmNames struct {
 	users, teams, nodes, networks map[uuid.UUID]string
 	nics                          map[uuid.UUID][]store.VMNIC
+	vmDisks                       map[uuid.UUID][]store.VMDisk
+	disks                         map[uuid.UUID]store.Disk
 	teamList                      []store.Team
 	nodeList                      []store.Node
 }
 
 func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	ctx := r.Context()
-	n := vmNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}, networks: map[uuid.UUID]string{}, nics: map[uuid.UUID][]store.VMNIC{}}
+	n := vmNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}, networks: map[uuid.UUID]string{}, nics: map[uuid.UUID][]store.VMNIC{}, disks: map[uuid.UUID]store.Disk{}}
 	members, err := h.store.Members(ctx, org)
 	if err != nil {
 		return n, err
@@ -100,6 +117,16 @@ func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	for _, nic := range nics {
 		n.nics[nic.VMID] = append(n.nics[nic.VMID], nic)
 	}
+	if n.vmDisks, err = h.store.OrgVMDisks(ctx, org); err != nil {
+		return n, err
+	}
+	ds, err := h.store.Disks(ctx, org)
+	if err != nil {
+		return n, err
+	}
+	for _, d := range ds {
+		n.disks[d.ID] = d
+	}
 	return n, nil
 }
 
@@ -110,13 +137,21 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		StopMode: v.StopMode, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
-		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}}
+		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks),
+		DNSName:  v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}
 	for _, nic := range names.nics[v.ID] {
 		nn := names.networks[nic.NetworkID]
 		j.Networks = append(j.Networks, vmNICJSON{nic.NetworkID, nn, nic.IP.String(), v.Name + "." + nn + ".internal"})
+	}
+	if attached := names.vmDisks[v.ID]; len(attached) > 0 {
+		errs := h.diskErrors(v.ID)
+		for _, a := range attached {
+			d := names.disks[a.DiskID]
+			j.Disks = append(j.Disks, vmDiskJSON{a.DiskID, d.Name, a.MountPath, d.SizeGB, h.disks.Info(d).State, errs[a.DiskID.String()]})
+		}
 	}
 	if v.UserID != nil {
 		j.Owner = ownerJSON{"user", *v.UserID, names.users[*v.UserID]}
@@ -382,6 +417,114 @@ func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {
 		e.Details["networks"] = names
 		return tx.Audit(r.Context(), e)
 	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	h.writeVM(w, r, http.StatusOK, v)
+}
+
+const maxVMDisks = 8
+
+var (
+	mountPathPattern   = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)+$`)
+	reservedMountTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/lib/cloud", "/home/ubuntu/.ssh"}
+	reservedMountPaths = []string{"/home", "/home/ubuntu", "/root", "/var", "/var/lib"}
+	errDiskMissing     = fmt.Errorf("disk is missing from storage: %w", store.ErrConflict)
+)
+
+func validateVMDisks(disks []store.VMDisk) error {
+	if len(disks) > maxVMDisks {
+		return fmt.Errorf("at most %d disks", maxVMDisks)
+	}
+	ids, paths := map[uuid.UUID]bool{}, map[string]bool{}
+	for _, d := range disks {
+		p := d.MountPath
+		if !mountPathPattern.MatchString(p) || path.Clean(p) != p {
+			return fmt.Errorf("invalid mount path %q", p)
+		}
+		if slices.Contains(reservedMountPaths, p) || slices.ContainsFunc(reservedMountTrees, func(t string) bool { return p == t || strings.HasPrefix(p, t+"/") }) {
+			return fmt.Errorf("reserved mount path %q", p)
+		}
+		if ids[d.DiskID] || paths[p] {
+			return errors.New("duplicate disk or mount path")
+		}
+		ids[d.DiskID], paths[p] = true, true
+	}
+	return nil
+}
+
+func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, store.ActionVMDisks)
+	if !ok {
+		return
+	}
+	var body struct {
+		Disks          []store.VMDisk
+		RestartAllowed bool
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if err := validateVMDisks(body.Disks); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var denied uuid.UUID
+	if !h.commit(w, r, func(tx *store.Store) error {
+		// The org lock serializes with SetVMDisks, so the attached set read here is the one it replaces.
+		if err := tx.LockOrg(r.Context(), v.OrgID); err != nil {
+			return err
+		}
+		current, err := tx.VMDisks(r.Context(), v.ID)
+		if err != nil {
+			return err
+		}
+		p, _ := auth.PrincipalFrom(r.Context())
+		e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
+		for _, d := range body.Disks {
+			if slices.ContainsFunc(current, func(c store.VMDisk) bool { return c.DiskID == d.DiskID }) {
+				continue
+			}
+			disk, err := tx.Disk(r.Context(), v.OrgID, d.DiskID)
+			if err != nil {
+				return err
+			}
+			if !e.Allowed(sub, v.OrgID, authz.DiskObject(disk.ID), "disk:use") {
+				denied = disk.ID
+				return errForbidden
+			}
+			if h.disks.Info(disk).State == "missing" {
+				return errDiskMissing
+			}
+		}
+		updated, err := tx.SetVMDisks(r.Context(), v.OrgID, v.ID, body.Disks, body.RestartAllowed)
+		if err != nil {
+			return err
+		}
+		changed := updated.Generation != v.Generation
+		v = updated
+		if !changed {
+			return nil
+		}
+		all, err := tx.Disks(r.Context(), v.OrgID)
+		if err != nil {
+			return err
+		}
+		entries := []string{}
+		for _, d := range body.Disks {
+			for _, disk := range all {
+				if disk.ID == d.DiskID {
+					entries = append(entries, disk.Name+":"+d.MountPath)
+				}
+			}
+		}
+		ae := vmAudit(r, store.ActionVMDisks, v)
+		ae.Details["disks"] = entries
+		return tx.Audit(r.Context(), ae)
+	}) {
+		if denied != uuid.Nil {
+			h.auditDenied(r, v.OrgID, authz.DiskObject(denied), "disk:use")
+		}
 		return
 	}
 	h.fleet.NotifyOrg(v.OrgID)
