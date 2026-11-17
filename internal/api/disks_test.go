@@ -108,6 +108,7 @@ func TestAdminCannotCopyOrAttachMemberDisk(t *testing.T) {
 	if rec := e.send("POST", copyPath, adminTok, `{"name":"c","owner":{"kind":"user"}}`); rec.Code != 403 {
 		t.Fatalf("admin copy: %d", rec.Code)
 	}
+	e.markReady()
 	if rec := e.send("POST", copyPath, bobTok, `{"name":"c1","owner":{"kind":"user"}}`); rec.Code != 201 || strings.Contains(rec.Body.String(), `"warning"`) {
 		t.Fatalf("idle copy: %d %s", rec.Code, rec.Body.String())
 	}
@@ -287,4 +288,97 @@ func TestDiskResponsesHaveNoKeys(t *testing.T) {
 
 func statusWithFiles() proto.StorageStatus {
 	return proto.StorageStatus{Files: []proto.StorageFile{}, Version: "v"}
+}
+
+func (e *env) deniedRows(action string) int {
+	n := 0
+	for _, en := range e.audit(action) {
+		if en.Result == store.ResultDenied {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDiskAuthorizationDenied(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	admin, adminTok := e.user("dave")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.addMember(org, carol, store.RoleMember)
+	e.addMember(org, admin, store.RoleAdmin)
+	team := e.createTeam(ownerTok, org, "core")
+	d := e.createDisk(bobTok, org, diskBody("data", userOwner(), 1))
+	base := disksPath(org) + "/" + d.ID
+
+	if rec := e.send("POST", base+"/copy", adminTok, `{"name":"c","owner":{"kind":"user"}}`); rec.Code != 403 {
+		t.Fatalf("admin copy: %d", rec.Code)
+	}
+	if e.deniedRows("disk:use") != 1 {
+		t.Fatal("no denied row for admin copy")
+	}
+	if rec := e.send("POST", base+"/copy", bobTok, `{"name":"c","owner":`+teamOwner(team)+`}`); rec.Code != 403 {
+		t.Fatalf("team copy without create: %d", rec.Code)
+	}
+	if e.deniedRows("disk:create") != 1 {
+		t.Fatal("no denied row for team copy")
+	}
+
+	for _, c := range []struct{ method, path, body, action string }{
+		{"POST", base + "/grow", `{"sizeGB":2}`, "disk:update"},
+		{"POST", base + "/release", "", "disk:update"},
+		{"DELETE", base, "", "disk:delete"},
+	} {
+		before := e.deniedRows(c.action)
+		if rec := e.send(c.method, c.path, carolTok, c.body); rec.Code != 403 {
+			t.Fatalf("other member %s %s: %d", c.method, c.path, rec.Code)
+		}
+		if e.deniedRows(c.action) != before+1 {
+			t.Fatalf("no denied row for %s", c.path)
+		}
+	}
+}
+
+func TestDiskForeignOrgNotFound(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	_, otherTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	other := e.createOrg(otherTok, "Other")
+	d := e.createDisk(otherTok, other, diskBody("data", userOwner(), 1))
+	base := disksPath(org) + "/" + d.ID
+
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", base, ""},
+		{"POST", base + "/copy", `{"name":"c","owner":{"kind":"user"}}`},
+		{"POST", base + "/grow", `{"sizeGB":2}`},
+		{"POST", base + "/release", ""},
+		{"DELETE", base, ""},
+	} {
+		if rec := e.send(c.method, c.path, tok, c.body); rec.Code != 404 {
+			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
+		}
+	}
+}
+
+func TestCopyWarnsWhileSourceSettles(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	d := e.createDisk(tok, org, diskBody("data", userOwner(), 1))
+	path := disksPath(org) + "/" + d.ID + "/copy"
+	var got diskTest
+	rec := e.send("POST", path, tok, `{"name":"c1","owner":{"kind":"user"}}`)
+	decode(t, rec, &got)
+	if rec.Code != 201 || got.Warning == "" {
+		t.Fatalf("creating source: %d %s", rec.Code, rec.Body.String())
+	}
+	e.markReady()
+	rec = e.send("POST", path, tok, `{"name":"c2","owner":{"kind":"user"}}`)
+	if rec.Code != 201 || strings.Contains(rec.Body.String(), `"warning"`) {
+		t.Fatalf("ready source: %d %s", rec.Code, rec.Body.String())
+	}
 }
