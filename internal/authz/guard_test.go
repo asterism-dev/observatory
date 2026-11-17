@@ -96,9 +96,10 @@ func TestEffectiveRulesIncludesParents(t *testing.T) {
 
 func TestCanGrantRole(t *testing.T) {
 	org := uuid.New()
-	admin, member, adminRole := uuid.New(), uuid.New(), uuid.New()
+	owner, admin, member, adminRole := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	e := mustNew(t, Policy{
 		Memberships: []MemberRole{
+			{OrgID: org, UserID: owner, Role: "owner"},
 			{OrgID: org, UserID: admin, Role: "admin"},
 			{OrgID: org, UserID: member, Role: "member"},
 		},
@@ -117,8 +118,10 @@ func TestCanGrantRole(t *testing.T) {
 		{"member, parent admin", member, false, []string{"admin"}, ErrEscalation},
 		{"admin, parent admin", admin, true, []string{"admin"}, nil},
 		{"admin, parent with member:set-role", admin, true, []string{adminRole.String()}, ErrEscalation},
-		{"admin, parent owner", admin, true, []string{"owner"}, ErrEscalation},
+		{"admin, parent owner", admin, true, []string{"owner"}, ErrInvalidPattern},
 		{"unknown parent", admin, true, []string{uuid.NewString()}, ErrInvalidPattern},
+		{"owner, parent owner", owner, true, []string{"owner"}, ErrInvalidPattern},
+		{"owner, non-canonical parent", owner, true, []string{strings.ToUpper(adminRole.String())}, ErrInvalidPattern},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

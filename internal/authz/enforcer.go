@@ -160,11 +160,7 @@ func validate(p Policy) error {
 	}
 	for _, cr := range p.Roles {
 		for _, parent := range cr.Parents {
-			if parent == "member" || parent == "admin" {
-				continue
-			}
-			id, err := uuid.Parse(parent)
-			if err != nil || id.String() != parent || roleOrg[id] != cr.OrgID {
+			if !validParent(parent, cr.OrgID, roleOrg) {
 				return fmt.Errorf("authz: role %s has invalid parent %q", cr.ID, parent)
 			}
 		}
@@ -178,6 +174,19 @@ func validate(p Policy) error {
 		}
 	}
 	return nil
+}
+
+// validParent allows "member", "admin" or the canonical ID of a custom role in org; roleOrg maps role IDs to orgs.
+func validParent(parent string, org uuid.UUID, roleOrg map[uuid.UUID]uuid.UUID) bool {
+	if parent == "member" || parent == "admin" {
+		return true
+	}
+	id, err := uuid.Parse(parent)
+	if err != nil || id.String() != parent {
+		return false
+	}
+	o, ok := roleOrg[id]
+	return ok && o == org
 }
 
 func validSubject(s string) bool {

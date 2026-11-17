@@ -34,6 +34,15 @@ func (e *Enforcer) CanGrantRole(actor string, org uuid.UUID, isOrgAdmin bool, ru
 	if err := e.CanGrant(actor, org, isOrgAdmin, rules); err != nil {
 		return err
 	}
+	roleOrg := make(map[uuid.UUID]uuid.UUID, len(e.policy.Roles))
+	for _, cr := range e.policy.Roles {
+		roleOrg[cr.ID] = cr.OrgID
+	}
+	for _, parent := range parents {
+		if !validParent(parent, org, roleOrg) {
+			return fmt.Errorf("%w: parent %q", ErrInvalidPattern, parent)
+		}
+	}
 	inherited, err := e.EffectiveRules(parents, org)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidPattern, err)
