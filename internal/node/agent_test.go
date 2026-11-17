@@ -87,6 +87,26 @@ func TestAgentRestartsWhenGuestShutsDown(t *testing.T) {
 	})
 }
 
+func TestAgentRemovedKeyGoneAfterRestart(t *testing.T) {
+	fastRestarts(t, 10*time.Millisecond)
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.hub.setBoot(vm.ID, &proto.Boot{})
+	eventually(t, "boot applied", func() bool {
+		env.agent.mu.Lock()
+		defer env.agent.mu.Unlock()
+		b := env.agent.vms[vm.ID].file.Boot
+		return b != nil && len(b.SSHPublicKeys) == 0
+	})
+	first := env.provider.instance("dev")
+	first.guestShutdown()
+	eventually(t, "restarted", func() bool { return env.provider.instance("dev") != first })
+	if b := env.provider.startedBoot("dev"); b == nil || len(b.SSHPublicKeys) != 0 {
+		t.Fatalf("restart booted with %+v", b)
+	}
+}
+
 func TestAgentPrepareFails(t *testing.T) {
 	env := startEnv(t, func(_ *Agent, p *fakeProvider) { p.failPrepare["bad"] = true })
 	vm := env.hub.create("bad")

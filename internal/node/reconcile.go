@@ -50,6 +50,10 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 		var gen uint64
 		if ok {
 			gen = e.file.Generation
+			// Key and variable changes keep the generation; the new Boot applies at the next (re)start.
+			if !e.placeholder && d.Generation <= gen {
+				e.file.Boot = d.Boot
+			}
 		}
 		a.mu.Unlock()
 		switch {
@@ -79,12 +83,14 @@ func (a *Agent) sendDisks() {
 
 // resumeDeferred boots the restored VMs with disks that the hub still wants and deletes the rest.
 func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired []proto.DesiredVM) {
-	gens := make(map[string]uint64, len(desired))
+	byID := make(map[string]proto.DesiredVM, len(desired))
 	for _, d := range desired {
-		gens[d.Spec.ID] = d.Generation
+		byID[d.Spec.ID] = d
 	}
 	for _, f := range deferred {
-		gen, ok := gens[f.Spec.ID]
+		d, ok := byID[f.Spec.ID]
+		gen := d.Generation
+		f.Boot = d.Boot
 		switch {
 		case !ok:
 			if err := DeleteVMDir(a.VMsDir, f.Spec.ID); err != nil {

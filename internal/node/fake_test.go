@@ -70,7 +70,8 @@ type fakeProvider struct {
 	failDisks    bool
 	failReseed   bool
 	starts       map[string]int
-	bigRoot      bool // makes Disks report a different allocation, as if the guest wrote data
+	boots        map[string]*proto.Boot // Boot of the latest Start per VM
+	bigRoot      bool                   // makes Disks report a different allocation, as if the guest wrote data
 	afterPrepare func(dir string)
 }
 
@@ -159,9 +160,19 @@ func (p *fakeProvider) Start(f VMFile, _ string) (Instance, error) {
 		return nil, errors.New("start boom")
 	}
 	p.starts[f.Spec.Name]++
+	if p.boots == nil {
+		p.boots = map[string]*proto.Boot{}
+	}
+	p.boots[f.Spec.Name] = f.Boot
 	inst := &fakeInstance{p: p, done: make(chan struct{}), staleIP: p.staleIP[f.Spec.Name]}
 	p.started[f.Spec.Name] = inst
 	return inst, nil
+}
+
+func (p *fakeProvider) startedBoot(name string) *proto.Boot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.boots[name]
 }
 
 func (p *fakeProvider) instance(name string) *fakeInstance {

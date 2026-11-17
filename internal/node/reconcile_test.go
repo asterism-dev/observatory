@@ -460,10 +460,10 @@ func TestUpdateDesiredStoresBoot(t *testing.T) {
 		t.Fatalf("boot after create = %+v", boot)
 	}
 	first := p.instance("a")
-	d := dvNICs(proto.PowerRunning, 2, mgmtNIC)
+	// The hub bumps the generation only on power changes; key and variable changes keep it.
+	d := dvNICs(proto.PowerRunning, 1, mgmtNIC)
 	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 NEW"}, Env: map[string]string{"A": "secret"}}
 	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
-	waitState(t, a, "a", proto.StateRunning, 2)
 	a.mu.Lock()
 	boot = a.vms["a"].file.Boot
 	a.mu.Unlock()
@@ -472,6 +472,39 @@ func TestUpdateDesiredStoresBoot(t *testing.T) {
 	}
 	if p.instance("a") != first || p.hasEvent("stop-guest") || p.hasEvent("kill-guest") || p.hasEvent("reseed:a") {
 		t.Fatalf("boot-only change disturbed the VM: events = %v", p.gotEvents())
+	}
+}
+
+func TestRestartUsesSameGenerationBoot(t *testing.T) {
+	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	d := dv("a", "a", proto.PowerRunning, 1)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 OLD"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 NEW"}}
+	a.reconcile(context.Background(), 1, []proto.DesiredVM{d})
+	first := p.instance("a")
+	first.guestShutdown()
+	eventually(t, "restarted", func() bool { return p.instance("a") != first })
+	if b := p.startedBoot("a"); b == nil || !slices.Equal(b.SSHPublicKeys, []string{"ssh-ed25519 NEW"}) {
+		t.Fatalf("restart booted with %+v", b)
+	}
+}
+
+func TestFirstStartUsesBootPushedDuringPrepare(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	release := make(chan struct{})
+	p.afterPrepare = func(string) { <-release }
+	d := dv("a", "a", proto.PowerRunning, 1)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 OLD"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 NEW"}}
+	a.reconcile(context.Background(), 1, []proto.DesiredVM{d})
+	close(release)
+	waitState(t, a, "a", proto.StateRunning, 1)
+	if b := p.startedBoot("a"); b == nil || !slices.Equal(b.SSHPublicKeys, []string{"ssh-ed25519 NEW"}) {
+		t.Fatalf("first start booted with %+v", b)
 	}
 }
 

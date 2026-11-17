@@ -181,6 +181,14 @@ func (h *fakeHub) setPower(id string, power proto.Power, mode proto.StopMode) {
 	h.push()
 }
 
+// setBoot changes keys or variables; like the real hub it keeps the generation.
+func (h *fakeHub) setBoot(id string, boot *proto.Boot) {
+	h.mu.Lock()
+	h.vmsByID[id].Boot = boot
+	h.mu.Unlock()
+	h.push()
+}
+
 func (h *fakeHub) vm(id string) (hubVM, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

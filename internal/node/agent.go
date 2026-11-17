@@ -320,6 +320,10 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 		report(proto.VMStatus{ID: id, State: proto.StateError, Error: err.Error()})
 		return
 	}
+	// A same-generation push (new keys or variables) may have arrived while preparing.
+	a.mu.Lock()
+	f.Boot = e.file.Boot
+	a.mu.Unlock()
 	inst, err := a.Provider.Start(f, dir)
 	if err != nil {
 		fail("start", err)
