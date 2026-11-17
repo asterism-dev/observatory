@@ -16,6 +16,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
@@ -54,6 +55,10 @@ func run() error {
 		return err
 	}
 	s := store.New(pool)
+	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	if err != nil {
+		return err
+	}
 	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID}
 
 	dist, err := fs.Sub(web.Dist, "dist")
@@ -62,7 +67,7 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", api.New(s, a))
+	mux.Handle("/api/", api.New(s, a, z))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

@@ -11,18 +11,26 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/auth"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-type api struct{ store *store.Store }
+type api struct {
+	store *store.Store
+	z     *authz.Service
+}
 
-func New(s *store.Store, a *auth.Handler) http.Handler {
-	h := &api{store: s}
+func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
+	h := &api{store: s, z: z}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
+	mux.HandleFunc("POST /api/orgs", h.createOrg)
+	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
+	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
+	mux.HandleFunc("GET /api/orgs/{org}/audit", h.orgAudit)
 	return a.Require(mux)
 }
 
@@ -33,15 +41,9 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "memberships", err)
 		return
 	}
-	type orgJSON struct {
-		ID       uuid.UUID  `json:"id"`
-		Name     string     `json:"name"`
-		Personal bool       `json:"personal"`
-		Role     store.Role `json:"role"`
-	}
 	orgs := make([]orgJSON, 0, len(ms))
 	for _, m := range ms {
-		orgs = append(orgs, orgJSON{m.Org.ID, m.Org.Name, m.Org.Personal, m.Role})
+		orgs = append(orgs, toOrgJSON(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
@@ -119,6 +121,10 @@ func (h *api) adminAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.writeAuditPage(w, r, f)
+}
+
+func (h *api) writeAuditPage(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
 	entries, err := h.store.AuditEntries(r.Context(), f)
 	if err != nil {
 		serverError(w, "audit entries", err)
