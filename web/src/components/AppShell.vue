@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { Button, List, ListItem, Menu, WorkspaceRail, type MenuItem } from '@asterism-dev/lumen'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
-import { useMe } from '@/composables/useMe'
+import CreateOrgDialog from '@/components/CreateOrgDialog.vue'
+import { useMe, type Org } from '@/composables/useMe'
+import { useOrg } from '@/composables/useOrg'
 import { THEME_PREFERENCES, useTheme } from '@/composables/useTheme'
 import { LOCALES } from '@/i18n'
 
 const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { me, activeOrg, selectOrg } = useMe()
+const { me, activeOrg, selectOrg, load: loadMe } = useMe()
+const { can, load: loadOrg } = useOrg()
+const creating = ref(false)
 const { theme } = useTheme()
 
 const initials = (name: string) =>
@@ -27,7 +31,31 @@ const workspaces = computed(() =>
   (me.value?.orgs ?? []).map((o) => ({ id: o.id, name: o.name, label: initials(o.name) })),
 )
 
+const orgId = computed(() => (route.params.orgId as string | undefined) ?? '')
+
+watch(orgId, (id) => id && loadOrg(id).catch(() => router.replace('/')), { immediate: true })
+
+function switchOrg(id: string) {
+  selectOrg(id)
+  router.push(orgId.value ? route.path.replace(orgId.value, id) : `/orgs/${id}/members`)
+}
+
+async function onCreated(org: Org) {
+  await loadMe()
+  switchOrg(org.id)
+}
+
+const orgNav = computed(() =>
+  orgId.value
+    ? [
+        { action: 'member:read', path: `/orgs/${orgId.value}/members`, label: t('nav.members') },
+        { action: 'org:update', path: `/orgs/${orgId.value}/settings`, label: t('nav.settings') },
+      ].filter((i) => can(i.action))
+    : [],
+)
+
 const navItems = computed(() => [
+  ...orgNav.value,
   { path: '/profile', label: t('nav.profile') },
   ...(me.value?.user.platformAdmin ? [{ path: '/admin/audit', label: t('nav.audit') }] : []),
 ])
@@ -63,7 +91,7 @@ const userMenu = (): MenuItem[] => [
 
 <template>
   <div class="shell">
-    <WorkspaceRail :workspaces="workspaces" :active="activeOrg?.id ?? null" @select="selectOrg" />
+    <WorkspaceRail :workspaces="workspaces" :active="activeOrg?.id ?? null" @select="switchOrg" @add="creating = true" />
     <aside class="side">
       <div class="side__head">
         <strong>{{ activeOrg?.name }}</strong>
@@ -76,6 +104,7 @@ const userMenu = (): MenuItem[] => [
       </List>
     </aside>
     <main class="content"><slot /></main>
+    <CreateOrgDialog v-model:open="creating" @created="onCreated" />
   </div>
 </template>
 

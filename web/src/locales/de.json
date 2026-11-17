@@ -11,7 +11,9 @@
   "nav": {
     "label": "Navigation",
     "profile": "Profil",
-    "audit": "Audit-Log"
+    "audit": "Audit-Log",
+    "members": "Mitglieder",
+    "settings": "Einstellungen"
   },
   "theme": {
     "system": "Design: System",
@@ -50,5 +52,41 @@
     "loadMore": "Mehr laden",
     "empty": "Keine Einträge",
     "filter": "Filtern"
+  },
+  "role": {
+    "owner": "Eigentümer",
+    "admin": "Admin",
+    "member": "Mitglied"
+  },
+  "org": {
+    "createTitle": "Organisation erstellen",
+    "name": "Name",
+    "create": "Erstellen",
+    "save": "Speichern",
+    "personalNote": "Deine persönliche Organisation kann nicht umbenannt werden."
+  },
+  "members": {
+    "name": "Name",
+    "email": "E-Mail",
+    "role": "Rolle",
+    "joined": "Beigetreten",
+    "expires": "Läuft ab",
+    "remove": "Entfernen",
+    "leave": "Organisation verlassen",
+    "removeTitle": "Mitglied entfernen?",
+    "removeBody": "{name} verliert den Zugriff auf diese Organisation.",
+    "leaveTitle": "Organisation verlassen?",
+    "leaveBody": "Du verlierst den Zugriff auf diese Organisation.",
+    "invitations": "Einladungen",
+    "invite": "Einladung erstellen",
+    "linkOnce": "Kopiere diesen Link jetzt; er wird nur einmal angezeigt.",
+    "link": "Einladungslink",
+    "copy": "Kopieren",
+    "copied": "Kopiert"
+  },
+  "invite": {
+    "title": "Einladung",
+    "accepting": "Einladung wird angenommen...",
+    "home": "Zurück zum Start"
   }
 }

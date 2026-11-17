@@ -11,7 +11,9 @@
   "nav": {
     "label": "Navigation",
     "profile": "Profile",
-    "audit": "Audit log"
+    "audit": "Audit log",
+    "members": "Members",
+    "settings": "Settings"
   },
   "theme": {
     "system": "Theme: system",
@@ -50,5 +52,41 @@
     "loadMore": "Load more",
     "empty": "No entries",
     "filter": "Filter"
+  },
+  "role": {
+    "owner": "Owner",
+    "admin": "Admin",
+    "member": "Member"
+  },
+  "org": {
+    "createTitle": "Create organization",
+    "name": "Name",
+    "create": "Create",
+    "save": "Save",
+    "personalNote": "Your personal organization cannot be renamed."
+  },
+  "members": {
+    "name": "Name",
+    "email": "Email",
+    "role": "Role",
+    "joined": "Joined",
+    "expires": "Expires",
+    "remove": "Remove",
+    "leave": "Leave org",
+    "removeTitle": "Remove member?",
+    "removeBody": "{name} will lose access to this organization.",
+    "leaveTitle": "Leave organization?",
+    "leaveBody": "You will lose access to this organization.",
+    "invitations": "Invitations",
+    "invite": "Create invitation",
+    "linkOnce": "Copy this link now; it is shown only once.",
+    "link": "Invitation link",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "invite": {
+    "title": "Invitation",
+    "accepting": "Accepting invitation...",
+    "home": "Back to start"
   }
 }
