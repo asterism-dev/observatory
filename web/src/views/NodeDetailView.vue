@@ -125,6 +125,14 @@ watch(
         <dd>{{ gb(node.usedMemoryMB) }} / {{ gb(node.memoryMB) }} GB</dd>
         <dt>{{ t('nodes.lastSeen') }}</dt>
         <dd>{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</dd>
+        <template v-if="node.underlay">
+          <dt>{{ t('nodes.underlay') }}</dt>
+          <dd>{{ node.underlay.ip }}</dd>
+          <dt>{{ t('nodes.registered') }}</dt>
+          <dd>{{ node.underlay.registered ? t('nodes.yes') : t('nodes.no') }}</dd>
+          <dt>{{ t('nodes.handshake') }}</dt>
+          <dd>{{ node.underlay.lastHandshake ? d(new Date(node.underlay.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('nodes.never') }}</dd>
+        </template>
         <template v-for="[k, v] in machine" :key="k">
           <dt>{{ k }}</dt>
           <dd>{{ v }}</dd>

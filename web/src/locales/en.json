@@ -28,7 +28,8 @@
     "platformSettings": "Platform settings",
     "general": "General",
     "newOrg": "New organization",
-    "userMenu": "Account menu"
+    "userMenu": "Account menu",
+    "networks": "Networks"
   },
   "theme": {
     "system": "System",
@@ -241,7 +242,13 @@
       "pending": "Pending",
       "online": "Online",
       "offline": "Offline"
-    }
+    },
+    "underlay": "Underlay address",
+    "registered": "Registered",
+    "handshake": "Last handshake",
+    "yes": "Yes",
+    "no": "No",
+    "never": "Never"
   },
   "vms": {
     "subtitle": "Virtual machines running on your nodes.",
@@ -303,6 +310,37 @@
     "configWarning": "This configuration contains the private key and cannot be shown again.",
     "download": "Download",
     "copy": "Copy",
-    "qr": "WireGuard configuration QR code"
+    "qr": "WireGuard configuration QR code",
+    "copyFailed": "Copy failed.",
+    "qrFailed": "The QR code could not be generated; use the text configuration."
+  },
+  "networks": {
+    "subtitle": "Private networks that connect your VMs.",
+    "name": "Name",
+    "subnet": "Subnet",
+    "vmCount": "VMs",
+    "create": "Create network",
+    "createTitle": "Create network",
+    "subnetHint": "Empty = automatic /24",
+    "invalidName": "Lowercase letters, digits and hyphens; must start with a letter; max 31 characters.",
+    "delete": "Delete",
+    "deleteTitle": "Delete network",
+    "deleteBody": "Delete network {name}?",
+    "deleteBlocked": "Detach all VMs first.",
+    "empty": "No networks yet.",
+    "mgmt": "Management address",
+    "dns": "DNS name",
+    "ssh": "SSH",
+    "copy": "Copy",
+    "copyFailed": "Copy failed.",
+    "section": "Networks",
+    "none": "Not attached to any network.",
+    "change": "Change networks",
+    "changeTitle": "Change networks",
+    "noneAvailable": "No networks available.",
+    "save": "Save",
+    "restartTitle": "Restart VM",
+    "restartBody": "{name} is running and restarts to apply the network change.",
+    "restart": "Save and restart"
   }
 }

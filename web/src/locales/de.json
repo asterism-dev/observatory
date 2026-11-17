@@ -28,7 +28,8 @@
     "platformSettings": "Plattformeinstellungen",
     "general": "Allgemein",
     "newOrg": "Neue Organisation",
-    "userMenu": "Kontomenü"
+    "userMenu": "Kontomenü",
+    "networks": "Netzwerke"
   },
   "theme": {
     "system": "System",
@@ -241,7 +242,13 @@
       "pending": "Ausstehend",
       "online": "Online",
       "offline": "Offline"
-    }
+    },
+    "underlay": "Underlay-Adresse",
+    "registered": "Registriert",
+    "handshake": "Letzter Handshake",
+    "yes": "Ja",
+    "no": "Nein",
+    "never": "Nie"
   },
   "vms": {
     "subtitle": "Virtuelle Maschinen auf deinen Nodes.",
@@ -303,6 +310,37 @@
     "configWarning": "Diese Konfiguration enthält den privaten Schlüssel und kann nicht erneut angezeigt werden.",
     "download": "Herunterladen",
     "copy": "Kopieren",
-    "qr": "QR-Code der WireGuard-Konfiguration"
+    "qr": "QR-Code der WireGuard-Konfiguration",
+    "copyFailed": "Kopieren fehlgeschlagen.",
+    "qrFailed": "Der QR-Code konnte nicht erzeugt werden; nutze die Textkonfiguration."
+  },
+  "networks": {
+    "subtitle": "Private Netzwerke, die deine VMs verbinden.",
+    "name": "Name",
+    "subnet": "Subnetz",
+    "vmCount": "VMs",
+    "create": "Netzwerk erstellen",
+    "createTitle": "Netzwerk erstellen",
+    "subnetHint": "Leer = automatisches /24",
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit einem Buchstaben beginnen; max. 31 Zeichen.",
+    "delete": "Löschen",
+    "deleteTitle": "Netzwerk löschen",
+    "deleteBody": "Netzwerk {name} löschen?",
+    "deleteBlocked": "Zuerst alle VMs trennen.",
+    "empty": "Noch keine Netzwerke.",
+    "mgmt": "Verwaltungsadresse",
+    "dns": "DNS-Name",
+    "ssh": "SSH",
+    "copy": "Kopieren",
+    "copyFailed": "Kopieren fehlgeschlagen.",
+    "section": "Netzwerke",
+    "none": "Mit keinem Netzwerk verbunden.",
+    "change": "Netzwerke ändern",
+    "changeTitle": "Netzwerke ändern",
+    "noneAvailable": "Keine Netzwerke verfügbar.",
+    "save": "Speichern",
+    "restartTitle": "VM neu starten",
+    "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
+    "restart": "Speichern und neu starten"
   }
 }
