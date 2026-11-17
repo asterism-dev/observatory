@@ -149,8 +149,9 @@ func TestEnvVarUpdateKeepsValue(t *testing.T) {
 	ctx := context.Background()
 	s, u, org, team := newEnvStore(t)
 	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "A"), "keep")
+	old := v
 	v.Name, v.Kind = "B", store.EnvSecret
-	if err := s.UpdateEnvVar(ctx, v, nil); err != nil {
+	if err := s.UpdateEnvVar(ctx, old, v, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := mustEnvVar(t, s, org.ID, v.ID)
@@ -161,15 +162,16 @@ func TestEnvVarUpdateKeepsValue(t *testing.T) {
 		t.Fatalf("%q %v", val, err)
 	}
 	nv := "new"
-	if err := s.UpdateEnvVar(ctx, got, &nv); err != nil {
+	if err := s.UpdateEnvVar(ctx, got, got, &nv); err != nil {
 		t.Fatal(err)
 	}
 	if val, err := s.EnvValue(ctx, got); err != nil || val != "new" {
 		t.Fatalf("%q %v", val, err)
 	}
 
-	got.Scope, got.OwnerID = store.EnvScopeTeam, &team.ID
-	if err := s.MoveEnvVar(ctx, got); err != nil {
+	target := got
+	target.Scope, target.OwnerID = store.EnvScopeTeam, &team.ID
+	if err := s.MoveEnvVar(ctx, got, target); err != nil {
 		t.Fatal(err)
 	}
 	moved := mustEnvVar(t, s, org.ID, v.ID)
@@ -182,12 +184,61 @@ func TestEnvVarUpdateKeepsValue(t *testing.T) {
 	if _, err := s.CreateEnvVar(ctx, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "B"), "x"); err != nil {
 		t.Fatal(err)
 	}
-	moved.Scope, moved.OwnerID = store.EnvScopeOrg, nil
-	if err := s.MoveEnvVar(ctx, moved); !errors.Is(err, store.ErrConflict) {
+	back := moved
+	back.Scope, back.OwnerID = store.EnvScopeOrg, nil
+	if err := s.MoveEnvVar(ctx, moved, back); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("move onto existing: %v", err)
 	}
-	if err := s.UpdateEnvVar(ctx, store.EnvVar{ID: uuid.New(), OrgID: org.ID, Name: "Z", Kind: store.EnvPlain, UpdatedBy: u.User.ID}, nil); !errors.Is(err, store.ErrNotFound) {
+	missing := store.EnvVar{ID: uuid.New(), OrgID: org.ID, Name: "Z", Kind: store.EnvPlain, Scope: store.EnvScopeOrg, UpdatedBy: u.User.ID}
+	if err := s.UpdateEnvVar(ctx, missing, missing, nil); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestEnvVarStaleWrites(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, team := newEnvStore(t)
+	plain := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "A"), "a")
+
+	// Request 1 turns the var into a secret; request 2 loaded it while still plain and renames it afterwards.
+	secret := plain
+	secret.Kind = store.EnvSecret
+	nv := "sealed"
+	if err := s.UpdateEnvVar(ctx, plain, secret, &nv); err != nil {
+		t.Fatal(err)
+	}
+	renamed := plain
+	renamed.Name = "B"
+	if err := s.UpdateEnvVar(ctx, plain, renamed, nil); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale kind update: %v", err)
+	}
+	if got := mustEnvVar(t, s, org.ID, plain.ID); got.Kind != store.EnvSecret || got.Name != "A" {
+		t.Fatalf("stale update changed the var: %+v", got)
+	}
+
+	cur := mustEnvVar(t, s, org.ID, plain.ID)
+	inTeam := cur
+	inTeam.Scope, inTeam.OwnerID = store.EnvScopeTeam, &team.ID
+	if err := s.MoveEnvVar(ctx, cur, inTeam); err != nil {
+		t.Fatal(err)
+	}
+	// cur still claims org scope, which the permission checks were made against.
+	toUser := cur
+	toUser.Scope, toUser.OwnerID = store.EnvScopeUser, &u.User.ID
+	if err := s.MoveEnvVar(ctx, cur, toUser); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale move: %v", err)
+	}
+	if err := s.UpdateEnvVar(ctx, cur, cur, &nv); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale scope update: %v", err)
+	}
+	if err := s.DeleteEnvVar(ctx, cur); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale delete: %v", err)
+	}
+	if got := mustEnvVar(t, s, org.ID, plain.ID); got.Scope != store.EnvScopeTeam || *got.OwnerID != team.ID {
+		t.Fatalf("stale writes changed the var: %+v", got)
+	}
+	if err := s.DeleteEnvVar(ctx, inTeam); err != nil {
+		t.Fatalf("current delete: %v", err)
 	}
 }
 
@@ -239,7 +290,7 @@ func TestDeleteTeamDeletesTeamEnv(t *testing.T) {
 	if _, err := s.EnvVar(ctx, org.ID, v.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("%v", err)
 	}
-	if err := s.DeleteEnvVar(ctx, org.ID, v.ID); !errors.Is(err, store.ErrNotFound) {
+	if err := s.DeleteEnvVar(ctx, v); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("delete missing: %v", err)
 	}
 }

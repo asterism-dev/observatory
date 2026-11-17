@@ -227,10 +227,11 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.envFromPath(w, r)
-	if !ok || !h.authorize(w, r, v.OrgID, envObject(v.Scope, v.OwnerID), store.ActionEnvSet) {
+	old, ok := h.envFromPath(w, r)
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), store.ActionEnvSet) {
 		return
 	}
+	v := old
 	var body struct {
 		Name, Value *string
 		Kind        *store.EnvKind
@@ -264,7 +265,7 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	v.UpdatedBy = p.User.ID
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.UpdateEnvVar(r.Context(), v, body.Value); err != nil {
+		if err := tx.UpdateEnvVar(r.Context(), old, v, body.Value); err != nil {
 			return err
 		}
 		e := envAudit(r, store.ActionEnvSet, v)
@@ -277,8 +278,8 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.envFromPath(w, r)
-	if !ok || !h.authorize(w, r, v.OrgID, envObject(v.Scope, v.OwnerID), store.ActionEnvDelete) {
+	old, ok := h.envFromPath(w, r)
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), store.ActionEnvDelete) {
 		return
 	}
 	var body struct {
@@ -288,14 +289,15 @@ func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	owner, ok := h.envTarget(w, r, v.OrgID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, v.OrgID, envObject(body.Scope, owner), store.ActionEnvSet) {
+	owner, ok := h.envTarget(w, r, old.OrgID, body.Scope, body.TeamID)
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(body.Scope, owner), store.ActionEnvSet) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
+	v := old
 	v.Scope, v.OwnerID, v.UpdatedBy = body.Scope, owner, p.User.ID
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.MoveEnvVar(r.Context(), v); err != nil {
+		if err := tx.MoveEnvVar(r.Context(), old, v); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), envAudit(r, store.ActionEnvMove, v))
@@ -311,7 +313,7 @@ func (h *api) deleteEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.DeleteEnvVar(r.Context(), v.OrgID, v.ID); err != nil {
+		if err := tx.DeleteEnvVar(r.Context(), v); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), envAudit(r, store.ActionEnvDelete, v))

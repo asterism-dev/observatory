@@ -160,49 +160,68 @@ func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVa
 	return v, nil
 }
 
-// UpdateEnvVar sets name, kind and updated_by from v; a nil value keeps the stored ciphertext.
-func (s *Store) UpdateEnvVar(ctx context.Context, v EnvVar, value *string) error {
+// ErrStale means the variable changed since the caller loaded and authorized it.
+var ErrStale = errors.New("changed concurrently, reload")
+
+// envGuard matches a row only while it still has the scope, owner and kind of old, the state the caller checked.
+const envGuard = "org_id = $1 AND id = $2 AND scope = $3 AND team_id IS NOT DISTINCT FROM $4 AND user_id IS NOT DISTINCT FROM $5 AND kind = $6"
+
+func envGuardArgs(old EnvVar, rest ...any) []any {
+	teamID, userID := envOwnerColumns(old)
+	return append([]any{old.OrgID, old.ID, old.Scope, teamID, userID, old.Kind}, rest...)
+}
+
+// UpdateEnvVar sets name, kind and updated_by from v if the row still matches old; a nil value keeps the stored ciphertext.
+func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) error {
 	var nonce, ct []byte
 	if value != nil {
-		key, err := s.orgKey(ctx, v.OrgID)
+		key, err := s.orgKey(ctx, old.OrgID)
 		if err != nil {
 			return err
 		}
-		if nonce, ct, err = seal.Seal(key, []byte(*value), envAAD(v.OrgID, v.ID)); err != nil {
+		if nonce, ct, err = seal.Seal(key, []byte(*value), envAAD(old.OrgID, old.ID)); err != nil {
 			return err
 		}
 	}
 	tag, err := s.q.Exec(ctx, `
-		UPDATE env_vars SET name = $3, kind = $4, updated_by = $5, updated_at = now(),
-		  nonce = coalesce($6, nonce), ciphertext = coalesce($7, ciphertext)
-		WHERE org_id = $1 AND id = $2`, v.OrgID, v.ID, v.Name, v.Kind, v.UpdatedBy, nonce, ct)
-	return envWriteResult(tag.RowsAffected(), err)
+		UPDATE env_vars SET name = $7, kind = $8, updated_by = $9, updated_at = now(),
+		  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext)
+		WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct)...)
+	return s.envWriteResult(ctx, old, tag.RowsAffected(), err)
 }
 
-// MoveEnvVar sets scope and owner from v; the value is not re-encrypted since the AAD has no scope.
-func (s *Store) MoveEnvVar(ctx context.Context, v EnvVar) error {
+// MoveEnvVar sets scope and owner from v if the row still matches old; the value is not re-encrypted since the AAD has no scope.
+func (s *Store) MoveEnvVar(ctx context.Context, old, v EnvVar) error {
 	teamID, userID := envOwnerColumns(v)
 	tag, err := s.q.Exec(ctx, `
-		UPDATE env_vars SET scope = $3, team_id = $4, user_id = $5, updated_by = $6, updated_at = now()
-		WHERE org_id = $1 AND id = $2`, v.OrgID, v.ID, v.Scope, teamID, userID, v.UpdatedBy)
-	return envWriteResult(tag.RowsAffected(), err)
+		UPDATE env_vars SET scope = $7, team_id = $8, user_id = $9, updated_by = $10, updated_at = now()
+		WHERE `+envGuard, envGuardArgs(old, v.Scope, teamID, userID, v.UpdatedBy)...)
+	return s.envWriteResult(ctx, old, tag.RowsAffected(), err)
 }
 
-func (s *Store) DeleteEnvVar(ctx context.Context, org, id uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, "DELETE FROM env_vars WHERE org_id = $1 AND id = $2", org, id)
-	return envWriteResult(tag.RowsAffected(), err)
+// DeleteEnvVar deletes old if the row still matches it.
+func (s *Store) DeleteEnvVar(ctx context.Context, old EnvVar) error {
+	tag, err := s.q.Exec(ctx, "DELETE FROM env_vars WHERE "+envGuard, envGuardArgs(old)...)
+	return s.envWriteResult(ctx, old, tag.RowsAffected(), err)
 }
 
-func envWriteResult(rows int64, err error) error {
+func (s *Store) envWriteResult(ctx context.Context, old EnvVar, rows int64, err error) error {
 	switch {
 	case isUniqueViolation(err):
 		return ErrConflict
 	case err != nil:
 		return err
-	case rows == 0:
-		return ErrNotFound
+	case rows > 0:
+		return nil
 	}
-	return nil
+	var exists bool
+	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM env_vars WHERE org_id = $1 AND id = $2)", old.OrgID, old.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return ErrStale
+	}
+	return ErrNotFound
 }
 
 // ResolveEnv returns the decrypted variables owner (a user or team subject) may use; the narrowest scope wins per name.
