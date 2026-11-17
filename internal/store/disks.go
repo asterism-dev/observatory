@@ -131,7 +131,7 @@ func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, res
 		if err := tx.checkLimits(ctx, org, d.UserID, d.TeamID, Limits{DiskGB: &delta}); err != nil {
 			return err
 		}
-		if _, err := tx.q.Exec(ctx, "UPDATE disks SET size_gb = $2 WHERE id = $1", id, sizeGB); err != nil {
+		if _, err := tx.q.Exec(ctx, "UPDATE disks SET size_gb = $2, grow_restart = grow_restart OR $3 WHERE id = $1", id, sizeGB, restartAllowed); err != nil {
 			return err
 		}
 		out, err = tx.Disk(ctx, org, id)
@@ -255,10 +255,14 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 				return err
 			}
 		}
+		// A running VM restarts only for a first-time ready disk (it cannot have booted without it) or a grow with restart consent.
 		if orgs, err = collectIDs(tx.q.Query(ctx, `
-			WITH ready AS (UPDATE disks SET ready_gb = size_gb WHERE id IN (SELECT d.id `+grown+` AND d.org_id = ANY($3)) RETURNING id)
-			UPDATE vms v SET generation = generation + 1 FROM vm_disks vd
-			WHERE vd.vm_id = v.id AND vd.disk_id IN (SELECT id FROM ready) RETURNING v.org_id`, ids, sizes, candidates)); err != nil {
+			WITH ready AS (
+				UPDATE disks n SET ready_gb = n.size_gb, grow_restart = false FROM disks o
+				WHERE o.id = n.id AND n.id IN (SELECT d.id `+grown+` AND d.org_id = ANY($3))
+				RETURNING n.id, o.ready_gb = 0 OR o.grow_restart AS restart)
+			UPDATE vms v SET generation = generation + 1 FROM vm_disks vd JOIN ready r ON r.id = vd.disk_id
+			WHERE vd.vm_id = v.id AND (r.restart OR v.power = 'stopped') RETURNING v.org_id`, ids, sizes, candidates)); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "UPDATE disks SET copy_from = NULL WHERE id = ANY($1) AND copy_from IS NOT NULL", ids); err != nil {

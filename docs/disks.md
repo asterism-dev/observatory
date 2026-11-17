@@ -22,7 +22,9 @@ Permissions are in [permissions.md](permissions.md#disks); the network path in [
 - **Copy:** a new disk with the source's size, a new name and owner. Needs `disk:use` on the source. Copying an attached
   or releasing disk is allowed; the copy is then only crash-consistent (the API returns a warning).
 - **Grow:** larger only. The new size reaches the VM on its next start: an attached running VM is restarted, so the
-  request needs `restartAllowed`. The guest's filesystem is grown on boot.
+  request needs `restartAllowed`. The guest's filesystem is grown on boot. The restart waits until the storage server
+  has grown the file; a VM that was stopped at grow time and started before that is not restarted, it gets the new
+  size on its next stop and start.
 - **Delete:** only when the disk is not attached, not releasing and not the source of a pending copy. The disk
   disappears from the API (limits and name are freed) at once; the row is purged once the storage server reports
   the file gone.

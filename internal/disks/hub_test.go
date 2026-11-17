@@ -195,6 +195,53 @@ func TestGrowReadyBumpsVM(t *testing.T) {
 	}
 }
 
+// A VM started after a grow without restart consent must not be restarted when the grown file appears.
+func TestGrowRestartsOnlyWithConsent(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	gen := func(id uuid.UUID) uint64 {
+		v, err := e.s.VM(ctx, e.org, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.Generation
+	}
+	var vms []store.VM
+	var ds []store.Disk
+	for _, name := range []string{"started", "consent"} {
+		vm, err := e.s.CreateVM(ctx, store.VM{OrgID: e.org, NodeID: e.node, UserID: &e.user, Name: name, CPUs: 1, MemoryMB: 1, DiskGB: 1, CreatedBy: e.user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := e.disk(t, name, 10, nil)
+		if _, _, err := e.s.SetVMDisks(ctx, e.org, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); err != nil {
+			t.Fatal(err)
+		}
+		vms, ds = append(vms, vm), append(ds, d)
+	}
+	e.report(t, file(ds[0], 10), file(ds[1], 10))
+	if _, err := e.s.SetVMPower(ctx, e.org, vms[0].ID, proto.PowerStopped, proto.StopHard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.GrowDisk(ctx, e.org, ds[0].ID, 20, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.SetVMPower(ctx, e.org, vms[0].ID, proto.PowerRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.GrowDisk(ctx, e.org, ds[1].ID, 20, true); err != nil {
+		t.Fatal(err)
+	}
+	started, consent := gen(vms[0].ID), gen(vms[1].ID)
+	e.report(t, file(ds[0], 20), file(ds[1], 20))
+	if got := gen(vms[0].ID); got != started {
+		t.Errorf("started vm restarted without consent: generation %d -> %d", started, got)
+	}
+	if got := gen(vms[1].ID); got != consent+1 {
+		t.Errorf("vm with consent: generation %d -> %d", consent, got)
+	}
+}
+
 func TestDeletedDiskPurged(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
