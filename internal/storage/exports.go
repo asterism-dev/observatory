@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,7 +47,9 @@ func (e *Exports) Apply(want []proto.StorageExport) []proto.StorageExportStatus 
 		// keys of a previous run belong to nbdkits that died with it
 		stale, _ := filepath.Glob(filepath.Join(e.KeyDir, "*.psk"))
 		for _, f := range stale {
-			os.Remove(f)
+			if err := os.Remove(f); err != nil {
+				log.Printf("remove stale export key %s: %v", filepath.Base(f), errors.Unwrap(err))
+			}
 		}
 	}
 	wanted := map[string]proto.StorageExport{}
