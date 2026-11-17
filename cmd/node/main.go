@@ -50,7 +50,7 @@ func main() {
 	}
 	a := &node.Agent{
 		ChassisKey: chassisPub, ChassisPrivateKey: chassisPriv, UnderlayEndpoint: cfg.Underlay.Endpoint, UnderlayMTU: cfg.Underlay.MTU,
-		HubURL: cfg.Hub.URL, Token: cfg.Hub.Token, NodeID: cfg.NodeID, VMsDir: cfg.Paths.VMs,
+		HubURL: cfg.Hub.URL, Credential: cfg.Hub.Credential, NodeID: cfg.NodeID, VMsDir: cfg.Paths.VMs,
 		CPUs: cfg.Capacity.CPUs, MemoryMB: cfg.Capacity.MemoryMB, Provider: provider,
 		Config: public, Machine: node.MachineInfo(),
 		Version: version.Version,
@@ -67,20 +67,20 @@ func runInit(args []string, home string) error {
 	var o node.InitOptions
 	fs.StringVar(&o.Path, "config", filepath.Join(home, ".vm-manager", "node.json"), "path to node config")
 	fs.StringVar(&o.HubURL, "hub", "", "hub address, http://host:port")
-	fs.StringVar(&o.Token, "token", "", "hub token")
-	tokenStdin := fs.Bool("token-stdin", false, "read the hub token from stdin")
+	fs.StringVar(&o.Credential, "credential", "", "node credential")
+	credentialStdin := fs.Bool("credential-stdin", false, "read the node credential from stdin")
 	fs.StringVar(&o.Name, "name", "", "node name")
 	fs.StringVar(&o.Provider, "provider", "", "hypervisor")
 	fs.StringVar(&o.UnderlayEndpoint, "underlay-endpoint", "", "hub WireGuard endpoint host:port")
 	fs.IntVar(&o.UnderlayMTU, "underlay-mtu", 0, "WireGuard MTU")
 	fs.IntVar(&o.MemoryMB, "memory-mb", 0, "memory offered to VMs")
 	fs.Parse(args)
-	if *tokenStdin {
-		t, err := node.ReadToken(os.Stdin)
+	if *credentialStdin {
+		c, err := node.ReadCredential(os.Stdin)
 		if err != nil {
 			return err
 		}
-		o.Token = t
+		o.Credential = c
 	}
 	dir := dataDir(home)
 	return node.InitConfig(o, filepath.Join(dir, "vms"), filepath.Join(dir, "images"))

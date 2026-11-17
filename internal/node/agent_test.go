@@ -25,7 +25,7 @@ func startEnv(t *testing.T, prep func(a *Agent, p *fakeProvider)) *testEnv {
 	t.Helper()
 	h := newFakeHub(t)
 	p := newFakeProvider()
-	a := &Agent{HubURL: h.url(), Token: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: h.url(), Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
 	if prep != nil {
 		prep(a, p)
 	}
@@ -38,6 +38,13 @@ func startEnv(t *testing.T, prep func(a *Agent, p *fakeProvider)) *testEnv {
 	})
 	eventually(t, "node online", func() bool { return len(h.registers()) > 0 })
 	return &testEnv{hub: h, agent: a, provider: p, stop: cancel, runDone: done}
+}
+
+func TestConnectSendsCredential(t *testing.T) {
+	env := startEnv(t, nil)
+	if got := env.hub.authHeaders(); got[0] != "Bearer tok" {
+		t.Fatalf("Authorization = %q", got)
+	}
 }
 
 func TestAgentRegistersProvider(t *testing.T) {
@@ -114,7 +121,7 @@ func TestAgentWithChangedNodeIDKeepsVMs(t *testing.T) {
 	<-env.runDone
 
 	p := newFakeProvider()
-	a := &Agent{HubURL: env.agent.HubURL, Token: "tok", NodeID: "renamed", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: env.agent.HubURL, Credential: "tok", NodeID: "renamed", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
@@ -166,7 +173,7 @@ func TestAgentBootsFromCacheWithoutHub(t *testing.T) {
 	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
 	ln.Close()
 	p := newFakeProvider()
-	a := &Agent{HubURL: unreachable, Token: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
 	stopped := cachedVM("s1", "sleepy")
 	stopped.Power = proto.PowerStopped
 	SaveVM(a.VMsDir, cachedVM("g1", "good"))
@@ -364,7 +371,7 @@ func TestAgentRebuildAfterDirMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := env.agent
-	restarted := &Agent{HubURL: old.HubURL, Token: old.Token, NodeID: old.NodeID, VMsDir: old.VMsDir, CPUs: old.CPUs, MemoryMB: old.MemoryMB, Provider: env.provider}
+	restarted := &Agent{HubURL: old.HubURL, Credential: old.Credential, NodeID: old.NodeID, VMsDir: old.VMsDir, CPUs: old.CPUs, MemoryMB: old.MemoryMB, Provider: env.provider}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { restarted.Run(ctx); close(done) }()

@@ -1,9 +1,11 @@
 package node
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	diskfs "github.com/diskfs/go-diskfs"
 	"github.com/diskfs/go-diskfs/disk"
@@ -11,17 +13,30 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem/iso9660"
 
 	"github.com/asterism-dev/observatory/internal/node/guest"
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 const SeedISO = "seed.iso"
 
-// GuestSeedFiles is the cloud-init NoCloud seed of a guest VM.
+// GuestSeedFiles is the cloud-init NoCloud seed of a guest VM; a nil f.Boot gives a guest without hub-managed keys and variables.
 func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
+	var boot proto.Boot
+	if f.Boot != nil {
+		boot = *f.Boot
+	}
+	env, _ := json.Marshal(boot.Env) // a map[string]string always marshals
+	var keys strings.Builder
+	for _, k := range boot.SSHPublicKeys {
+		// One key per line: a line break inside a key would smuggle in another one.
+		if !strings.ContainsAny(k, "\r\n") {
+			keys.WriteString(k + "\n")
+		}
+	}
 	userData, metaData, networkConfig := CloudInit(f, primary)
 	return map[string][]byte{
 		"user-data": []byte(userData), "meta-data": []byte(metaData),
 		"network-config": []byte(networkConfig), "vmm-disks.sh": []byte(DiskScript(f)),
-		"vmm-integrations.sh": []byte(guest.Script()),
+		"vmm-boot.sh": []byte(guest.BootScript), "vmm-env": env, "vmm-authorized-keys": []byte(keys.String()),
 	}
 }
 

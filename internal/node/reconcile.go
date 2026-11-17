@@ -149,7 +149,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		a.placeholder(d, proto.ErrVMDirMissing)
 		return
 	}
-	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true}
+	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())
 		return
@@ -174,7 +174,7 @@ func (a *Agent) placeholder(d proto.DesiredVM, msg string) {
 func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM) {
 	if e.placeholder {
 		a.mu.Lock()
-		e.file.Spec, e.file.Power, e.file.StopMode, e.file.Generation = d.Spec, d.Power, d.StopMode, d.Generation
+		e.file.Spec, e.file.Power, e.file.StopMode, e.file.Generation, e.file.Boot = d.Spec, d.Power, d.StopMode, d.Generation, d.Boot
 		st := e.status
 		a.mu.Unlock()
 		a.report(st)
@@ -184,7 +184,8 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
-	f.Power, f.StopMode, f.Generation = d.Power, d.StopMode, d.Generation
+	// A new Boot takes effect at the next start, which reseeds; it does not restart the VM.
+	f.Power, f.StopMode, f.Generation, f.Boot = d.Power, d.StopMode, d.Generation, d.Boot
 	var reseedErr error
 	halted := !slices.Equal(f.Spec.NICs, d.Spec.NICs) || !slices.Equal(f.Spec.Attachments, d.Spec.Attachments)
 	if halted {

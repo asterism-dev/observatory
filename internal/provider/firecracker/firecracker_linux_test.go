@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -70,6 +71,53 @@ func startVM(t *testing.T, p *Provider, f node.VMFile) node.Instance {
 	return inst
 }
 
+func TestReseedKeepsSeedWithoutBoot(t *testing.T) {
+	p := &Provider{VMsDir: t.TempDir()}
+	f := testVM("fcreseed")
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(dir, node.SeedISO)
+	f.Boot = &proto.Boot{Env: map[string]string{"A": "one"}}
+	if err := p.Reseed(context.Background(), f, dir); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Boot = nil
+	if err := p.Reseed(context.Background(), f, dir); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(seed); !bytes.Equal(before, after) {
+		t.Fatal("reseed without boot rewrote seed.iso")
+	}
+	f.Boot = &proto.Boot{Env: map[string]string{"A": "two"}}
+	if err := p.Reseed(context.Background(), f, dir); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(seed); bytes.Equal(before, after) {
+		t.Fatal("reseed with boot kept the old seed.iso")
+	}
+}
+
+func TestReseedWithoutBootBuildsFirstSeed(t *testing.T) {
+	p := &Provider{VMsDir: t.TempDir()}
+	f := testVM("fcfirstseed")
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Reseed(context.Background(), f, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, node.SeedISO)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStartStopVM(t *testing.T) {
 	p := testProvider(t)
 	f := testVM("fcstartstop")
@@ -112,7 +160,7 @@ func TestGuestPoweroffEndsInstance(t *testing.T) {
 	}
 	pub, _ := os.ReadFile(key + ".pub")
 	f := testVM("fcpoweroff")
-	f.Spec.SSHPublicKeys = []string{string(pub)}
+	f.Boot = &proto.Boot{SSHPublicKeys: []string{string(pub)}}
 	inst := startVM(t, p, f)
 	defer inst.Kill()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

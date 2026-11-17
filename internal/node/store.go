@@ -20,13 +20,15 @@ type VMFile struct {
 	Generation uint64         `json:"generation,omitempty"`
 	// NeedsPrepare is cleared once Prepare succeeds; inverted so vm.json files predating it count as prepared.
 	NeedsPrepare bool `json:"needsPrepare,omitempty"`
+	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
+	Boot *proto.Boot `json:"-"`
 }
 
 func VMDir(vmsDir, id string) string { return filepath.Join(vmsDir, id) }
 
 func SaveVM(vmsDir string, f VMFile) error {
 	dir := VMDir(vmsDir, f.Spec.ID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(f, "", "  ")

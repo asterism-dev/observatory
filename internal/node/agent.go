@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"sync"
@@ -40,16 +39,16 @@ var (
 )
 
 type Agent struct {
-	HubURL, Token, NodeID, VMsDir string
-	CPUs, MemoryMB                int
-	Provider                      Provider
-	Config                        json.RawMessage
-	Machine                       *proto.Machine
-	ChassisKey                    string // public, sent in Register
-	ChassisPrivateKey             string
-	UnderlayEndpoint              string // host:port override of the hub's underlay address
-	UnderlayMTU                   int
-	Version                       string
+	HubURL, Credential, NodeID, VMsDir string
+	CPUs, MemoryMB                     int
+	Provider                           Provider
+	Config                             json.RawMessage
+	Machine                            *proto.Machine
+	ChassisKey                         string // public, sent in Register
+	ChassisPrivateKey                  string
+	UnderlayEndpoint                   string // host:port override of the hub's underlay address
+	UnderlayMTU                        int
+	Version                            string
 
 	diskRefresh time.Duration // zero means defaultDiskRefresh
 
@@ -60,8 +59,6 @@ type Agent struct {
 	chassisWG       sync.WaitGroup
 
 	reconcileMu sync.Mutex
-
-	installerCmd func(script string, args []string) *exec.Cmd // nil means installerCommand; tests set it
 
 	mu       sync.Mutex
 	vms      map[string]*vmEntry
@@ -122,7 +119,7 @@ func (a *Agent) restoreAll(ctx context.Context) error {
 
 func (a *Agent) connect(ctx context.Context) error {
 	c, _, err := websocket.Dial(ctx, a.HubURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + a.Token}},
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + a.Credential}},
 	})
 	if err != nil {
 		return err

@@ -13,8 +13,8 @@ import (
 type Config struct {
 	NodeID string `json:"nodeId"`
 	Hub    struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
+		URL        string `json:"url"`
+		Credential string `json:"credential"`
 	} `json:"hub"`
 	Provider string `json:"provider"`
 	Paths    struct {
@@ -45,7 +45,7 @@ func LoadConfig(path string) (Config, error) {
 		return c, fmt.Errorf("%s: %w", path, err)
 	}
 	for field, v := range map[string]string{
-		"hub.url": c.Hub.URL, "hub.token": c.Hub.Token, "provider": c.Provider,
+		"hub.url": c.Hub.URL, "hub.credential": c.Hub.Credential, "provider": c.Provider,
 		"paths.vms": c.Paths.VMs, "paths.images": c.Paths.Images,
 	} {
 		if v == "" {
@@ -72,7 +72,7 @@ func LoadConfig(path string) (Config, error) {
 	return c, nil
 }
 
-// Public returns the config file as written, minus the hub token, for display on the hub.
+// Public returns the config file as written, minus the hub credential, for display on the hub.
 func (c Config) Public() (json.RawMessage, error) {
 	raw := maps.Clone(c.Raw)
 	if hub, ok := raw["hub"]; ok {
@@ -80,7 +80,7 @@ func (c Config) Public() (json.RawMessage, error) {
 		if err := json.Unmarshal(hub, &h); err != nil {
 			return nil, err
 		}
-		delete(h, "token")
+		delete(h, "credential")
 		b, err := json.Marshal(h)
 		if err != nil {
 			return nil, err

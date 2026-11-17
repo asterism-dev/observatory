@@ -56,9 +56,9 @@ func TestCloneResizeTooSmall(t *testing.T) {
 }
 
 func TestCloudInit(t *testing.T) {
-	f := VMFile{Spec: proto.VMSpec{ID: "abc123", Name: "dev", SSHPublicKeys: []string{"ssh-ed25519 AAAAkey me@host", "ssh-rsa BBBBkey you@host"}}, MAC: "7e:30:17:4e:4a:00"}
+	f := VMFile{Spec: proto.VMSpec{ID: "abc123", Name: "dev"}, MAC: "7e:30:17:4e:4a:00"}
 	ud, md, nc := CloudInit(f, PrimaryNet{})
-	for _, want := range []string{"#cloud-config\n", "hostname: dev", "name: ubuntu", "NOPASSWD:ALL", "      - \"ssh-ed25519 AAAAkey me@host\"\n      - \"ssh-rsa BBBBkey you@host\"\n", "console=hvc0", "update-grub"} {
+	for _, want := range []string{"#cloud-config\n", "hostname: dev", "name: ubuntu", "NOPASSWD:ALL", "console=hvc0", "update-grub"} {
 		if !strings.Contains(ud, want) {
 			t.Errorf("user-data missing %q:\n%s", want, ud)
 		}
@@ -71,6 +71,14 @@ func TestCloudInit(t *testing.T) {
 		if !strings.Contains(nc, want) {
 			t.Errorf("network-config missing %q:\n%s", want, nc)
 		}
+	}
+}
+
+func TestCloudInitHasNoKeys(t *testing.T) {
+	f := VMFile{Spec: proto.VMSpec{ID: "abc123", Name: "dev"}, Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAAkey me@host"}}}
+	ud, _, _ := CloudInit(f, PrimaryNet{})
+	if strings.Contains(ud, "ssh_authorized_keys") || strings.Contains(ud, "AAAAkey") {
+		t.Fatalf("user-data holds keys:\n%s", ud)
 	}
 }
 
@@ -171,18 +179,17 @@ func TestCloudInitRunsDiskScriptEveryBoot(t *testing.T) {
 	if !strings.Contains(boot, "LABEL=cidata") || !strings.Contains(boot, "sh /run/vmm-seed/vmm-disks.sh") {
 		t.Fatalf("bootcmd does not run vmm-disks.sh:\n%s", ud)
 	}
-	// User-data is only re-read with a new instance-id, so existing VMs get the helpers through vmm-disks.sh instead.
-	if strings.Contains(boot, "vmm-integrations.sh") {
-		t.Fatalf("bootcmd runs vmm-integrations.sh itself:\n%s", boot)
+	// User-data is only re-read with a new instance-id, so the boot script runs through vmm-disks.sh instead.
+	if strings.Contains(boot, "vmm-boot.sh") {
+		t.Fatalf("bootcmd runs vmm-boot.sh itself:\n%s", boot)
 	}
 }
 
-func TestDiskScriptRunsIntegrations(t *testing.T) {
-	s := DiskScript(VMFile{MAC: "52:54:00:12:34:56"})
-	run := "[ -f /run/vmm-seed/vmm-integrations.sh ] && sh /run/vmm-seed/vmm-integrations.sh"
-	i := strings.Index(s, run)
-	if i < 0 || i < strings.Index(s, "systemd-run") {
-		t.Fatalf("script does not run vmm-integrations.sh after the ready probe:\n%s", s)
+func TestDiskScriptRunsBootScriptBeforeReady(t *testing.T) {
+	s := DiskScript(VMFile{MAC: "52:54:00:12:34:56", Spec: proto.VMSpec{Attachments: []proto.DiskAttachment{{DiskID: "d1", MountPath: "/data"}}}})
+	i := strings.Index(s, "sh /run/vmm-seed/vmm-boot.sh /run/vmm-seed\n")
+	if i < 0 || i > strings.Index(s, "systemd-run") || i > strings.Index(s, "mkfs") {
+		t.Fatalf("script does not run vmm-boot.sh before the disks and the ready probe:\n%s", s)
 	}
 }
 

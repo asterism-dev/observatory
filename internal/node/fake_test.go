@@ -188,6 +188,6 @@ func (p *fakeProvider) hasEvent(e string) bool {
 }
 
 func cachedVM(id, name string) VMFile {
-	return VMFile{Spec: proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10, SSHPublicKeys: []string{"k"}},
+	return VMFile{Spec: proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10},
 		MAC: "02:00:00:00:00:01", Power: proto.PowerRunning, Generation: 1}
 }

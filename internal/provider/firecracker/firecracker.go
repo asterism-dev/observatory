@@ -62,6 +62,12 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 }
 
 func (p *Provider) Reseed(_ context.Context, f node.VMFile, dir string) error {
+	// Without a pushed Boot (node restarted, hub not yet heard from) the existing seed holds the last pushed keys and variables.
+	if f.Boot == nil {
+		if _, err := os.Stat(filepath.Join(dir, node.SeedISO)); err == nil {
+			return nil
+		}
+	}
 	p.mu.Lock()
 	ip, err := linuxvm.AllocNATIP(p.VMsDir, f.Spec.ID)
 	p.mu.Unlock()

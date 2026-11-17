@@ -23,7 +23,7 @@ func readJSON(t *testing.T, path string) map[string]any {
 
 func TestInitConfigCreates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "etc", "node.json")
-	o := InitOptions{Path: path, HubURL: "http://h:8080", Token: "secret-token", Name: "n1", Provider: "firecracker", MemoryMB: 1500}
+	o := InitOptions{Path: path, HubURL: "http://h:8080", Credential: "secret-token", Name: "n1", Provider: "firecracker", MemoryMB: 1500}
 	if err := InitConfig(o, "/var/lib/vm-manager/vms", "/var/lib/vm-manager/images"); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestInitConfigCreates(t *testing.T) {
 	m := readJSON(t, path)
 	hub := m["hub"].(map[string]any)
 	paths := m["paths"].(map[string]any)
-	if m["nodeId"] != "n1" || m["provider"] != "firecracker" || hub["url"] != "ws://h:8080/api/nodes/connect" || hub["token"] != "secret-token" ||
+	if m["nodeId"] != "n1" || m["provider"] != "firecracker" || hub["url"] != "ws://h:8080/api/nodes/connect" || hub["credential"] != "secret-token" ||
 		paths["vms"] != "/var/lib/vm-manager/vms" || paths["images"] != "/var/lib/vm-manager/images" ||
 		m["capacity"].(map[string]any)["memoryMB"] != float64(1500) {
 		t.Fatalf("config = %v", m)
@@ -50,13 +50,13 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	o := InitOptions{Path: path, HubURL: "https://hub.example:8443", Token: "new", Name: "n1", Provider: "vz", UnderlayMTU: 1200}
+	o := InitOptions{Path: path, HubURL: "https://hub.example:8443", Credential: "new", Name: "n1", Provider: "vz", UnderlayMTU: 1200}
 	if err := InitConfig(o, "/x/vms", "/x/images"); err != nil {
 		t.Fatal(err)
 	}
 	m := readJSON(t, path)
 	hub := m["hub"].(map[string]any)
-	if m["nodeId"] != "n1" || hub["url"] != "wss://hub.example:8443/api/nodes/connect" || hub["token"] != "new" || hub["extra"] != float64(1) {
+	if m["nodeId"] != "n1" || hub["url"] != "wss://hub.example:8443/api/nodes/connect" || hub["credential"] != "new" || hub["extra"] != float64(1) {
 		t.Fatalf("hub = %v", m)
 	}
 	if p := m["paths"].(map[string]any); p["vms"] != "/data/vms" || p["images"] != "/data/img" {
@@ -75,19 +75,19 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 
 func TestInitConfigRejectsBadHub(t *testing.T) {
 	for _, hub := range []string{"ftp://x:1", "http://x", "x:8080", ""} {
-		o := InitOptions{Path: filepath.Join(t.TempDir(), "n.json"), HubURL: hub, Token: "t", Name: "n", Provider: "vz"}
+		o := InitOptions{Path: filepath.Join(t.TempDir(), "n.json"), HubURL: hub, Credential: "t", Name: "n", Provider: "vz"}
 		if err := InitConfig(o, "a", "b"); err == nil {
 			t.Errorf("%q accepted", hub)
 		}
 	}
 }
 
-func TestInitTokenFromStdin(t *testing.T) {
-	token, err := ReadToken(strings.NewReader("secret-token\n"))
-	if err != nil || token != "secret-token" {
-		t.Fatalf("got %q, %v", token, err)
+func TestInitCredentialFromStdin(t *testing.T) {
+	cred, err := ReadCredential(strings.NewReader("secret-token\n"))
+	if err != nil || cred != "secret-token" {
+		t.Fatalf("got %q, %v", cred, err)
 	}
-	if _, err := ReadToken(strings.NewReader("")); err == nil {
+	if _, err := ReadCredential(strings.NewReader("")); err == nil {
 		t.Fatal("empty stdin accepted")
 	}
 }

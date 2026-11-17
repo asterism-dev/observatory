@@ -11,7 +11,7 @@ import (
 
 const fullConfig = `{
   "nodeId": "mac-mini-1",
-  "hub": {"url": "ws://hub:8080/api/nodes/connect", "token": "t"},
+  "hub": {"url": "ws://hub:8080/api/nodes/connect", "credential": "t"},
   "provider": "vz",
   "paths": {"vms": "~/vmm/vms", "images": "/data/images"},
   "capacity": {"cpus": 6, "memoryMB": 12288},
@@ -33,7 +33,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	home, _ := os.UserHomeDir()
-	if c.NodeID != "mac-mini-1" || c.Hub.URL != "ws://hub:8080/api/nodes/connect" || c.Hub.Token != "t" || c.Provider != "vz" ||
+	if c.NodeID != "mac-mini-1" || c.Hub.URL != "ws://hub:8080/api/nodes/connect" || c.Hub.Credential != "t" || c.Provider != "vz" ||
 		c.Paths.VMs != filepath.Join(home, "vmm/vms") || c.Paths.Images != "/data/images" || c.Capacity.CPUs != 6 || c.Capacity.MemoryMB != 12288 {
 		t.Fatalf("config = %+v", c)
 	}
@@ -44,13 +44,13 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfigMissingRequired(t *testing.T) {
-	for _, field := range []string{"hub.url", "hub.token", "provider", "paths.vms", "paths.images"} {
+	for _, field := range []string{"hub.url", "hub.credential", "provider", "paths.vms", "paths.images"} {
 		body := fullConfig
 		switch field {
 		case "hub.url":
 			body = strings.Replace(body, `"url": "ws://hub:8080/api/nodes/connect", `, "", 1)
-		case "hub.token":
-			body = strings.Replace(body, `, "token": "t"`, "", 1)
+		case "hub.credential":
+			body = strings.Replace(body, `, "credential": "t"`, "", 1)
 		case "provider":
 			body = strings.Replace(body, `"provider": "vz",`, "", 1)
 		case "paths.vms":
@@ -69,7 +69,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("memory detection is linux-only")
 	}
-	c, err := LoadConfig(writeConfig(t, `{"hub":{"url":"ws://h","token":"t"},"provider":"vz","paths":{"vms":"/a","images":"/b"}}`))
+	c, err := LoadConfig(writeConfig(t, `{"hub":{"url":"ws://h","credential":"t"},"provider":"vz","paths":{"vms":"/a","images":"/b"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestConfigPublicDropsToken(t *testing.T) {
+func TestConfigPublicDropsCredential(t *testing.T) {
 	c, err := LoadConfig(writeConfig(t, fullConfig))
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestConfigPublicDropsToken(t *testing.T) {
 	}
 	var got map[string]map[string]any
 	json.Unmarshal(pub, &got)
-	if _, ok := got["hub"]["token"]; ok || got["hub"]["url"] != "ws://hub:8080/api/nodes/connect" || got["vz"]["imageURL"] != "https://example.com/img" {
+	if _, ok := got["hub"]["credential"]; ok || got["hub"]["url"] != "ws://hub:8080/api/nodes/connect" || got["vz"]["imageURL"] != "https://example.com/img" {
 		t.Fatalf("public = %s", pub)
 	}
 	if strings.Contains(string(pub), `"t"`) {

@@ -24,6 +24,7 @@ type hubVM struct {
 	StopMode    proto.StopMode
 	Generation  uint64
 	Provisioned bool
+	Boot        *proto.Boot
 	proto.VMStatus
 }
 
@@ -32,6 +33,7 @@ type fakeHub struct {
 	srv      *httptest.Server
 	vmsByID  map[string]*hubVM
 	regs     []proto.Register
+	auth     []string
 	conn     *json.Encoder
 	connMu   sync.Mutex
 	seq      uint64
@@ -51,6 +53,9 @@ func (h *fakeHub) url() string {
 }
 
 func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
+	h.mu.Lock()
+	h.auth = append(h.auth, req.Header.Get("Authorization"))
+	h.mu.Unlock()
 	if req.Header.Get("Authorization") != "Bearer tok" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -134,7 +139,7 @@ func (h *fakeHub) push() {
 	h.seq++
 	m := proto.Message{Type: "desired", Seq: h.seq}
 	for _, vm := range h.vmsByID {
-		m.Desired = append(m.Desired, proto.DesiredVM{Spec: vm.Spec, Power: vm.Power, StopMode: vm.StopMode, Generation: vm.Generation, Provisioned: vm.Provisioned})
+		m.Desired = append(m.Desired, proto.DesiredVM{Spec: vm.Spec, Power: vm.Power, StopMode: vm.StopMode, Generation: vm.Generation, Provisioned: vm.Provisioned, Boot: vm.Boot})
 	}
 	slices.SortFunc(m.Desired, func(a, b proto.DesiredVM) int { return strings.Compare(a.Spec.ID, b.Spec.ID) })
 	h.mu.Unlock()
@@ -146,7 +151,8 @@ func (h *fakeHub) create(name string) hubVM {
 	h.nextID++
 	id := "vm" + string(rune('a'+h.nextID))
 	vm := &hubVM{
-		Spec:   proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10, SSHPublicKeys: []string{"ssh-ed25519 AAA"}},
+		Spec:   proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10},
+		Boot:   &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAA"}},
 		NodeID: "n1", Power: proto.PowerRunning, Generation: 1, VMStatus: proto.VMStatus{ID: id, State: proto.StatePending},
 	}
 	h.vmsByID[id] = vm
@@ -198,4 +204,10 @@ func (h *fakeHub) registers() []proto.Register {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.regs)
+}
+
+func (h *fakeHub) authHeaders() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.auth)
 }

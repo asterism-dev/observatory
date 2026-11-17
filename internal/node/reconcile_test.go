@@ -15,7 +15,7 @@ import (
 
 func dv(id, name string, power proto.Power, gen uint64) proto.DesiredVM {
 	return proto.DesiredVM{
-		Spec:  proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10, SSHPublicKeys: []string{"k"}},
+		Spec:  proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10},
 		Power: power, Generation: gen,
 	}
 }
@@ -444,6 +444,34 @@ func TestReconcileReseedRetriedAfterFailure(t *testing.T) {
 	}
 	if f := loadVM(t, a, "a"); len(f.Spec.NICs) != 2 || f.Spec.NICs[1] != netNIC {
 		t.Fatalf("vm.json = %+v", f)
+	}
+}
+
+func TestUpdateDesiredStoresBoot(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	created := dvNICs(proto.PowerRunning, 1, mgmtNIC)
+	created.Boot = &proto.Boot{Env: map[string]string{"A": "first"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{created})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.mu.Lock()
+	boot := a.vms["a"].file.Boot
+	a.mu.Unlock()
+	if boot == nil || boot.Env["A"] != "first" {
+		t.Fatalf("boot after create = %+v", boot)
+	}
+	first := p.instance("a")
+	d := dvNICs(proto.PowerRunning, 2, mgmtNIC)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 NEW"}, Env: map[string]string{"A": "secret"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 2)
+	a.mu.Lock()
+	boot = a.vms["a"].file.Boot
+	a.mu.Unlock()
+	if boot == nil || boot.Env["A"] != "secret" || !slices.Equal(boot.SSHPublicKeys, d.Boot.SSHPublicKeys) {
+		t.Fatalf("boot = %+v", boot)
+	}
+	if p.instance("a") != first || p.hasEvent("stop-guest") || p.hasEvent("kill-guest") || p.hasEvent("reseed:a") {
+		t.Fatalf("boot-only change disturbed the VM: events = %v", p.gotEvents())
 	}
 }
 

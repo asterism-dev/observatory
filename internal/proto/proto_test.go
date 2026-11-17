@@ -15,8 +15,9 @@ func TestMessageRoundTrip(t *testing.T) {
 			VMs: []VMStatus{{ID: "abc", State: StateRunning, IP: "192.168.64.2", Generation: 3}},
 		}},
 		{Type: "desired", Desired: []DesiredVM{{
-			Spec:  VMSpec{ID: "abc", Name: "dev", CPUs: 2, MemoryMB: 2048, DiskGB: 20, SSHPublicKeys: []string{"ssh-ed25519 AAA"}, NICs: []NIC{{Network: "mgmt", MAC: "02:0a:c8:00:00:0a", IP: "10.200.0.10", Port: "abc-mgmt"}}},
+			Spec:  VMSpec{ID: "abc", Name: "dev", CPUs: 2, MemoryMB: 2048, DiskGB: 20, NICs: []NIC{{Network: "mgmt", MAC: "02:0a:c8:00:00:0a", IP: "10.200.0.10", Port: "abc-mgmt"}}},
 			Power: PowerStopped, StopMode: StopHard, Generation: 3, Provisioned: true,
+			Boot: &Boot{SSHPublicKeys: []string{"ssh-ed25519 AAA"}, Env: map[string]string{"A": "x\ny"}},
 		}}},
 	} {
 		var buf bytes.Buffer
@@ -48,7 +49,7 @@ func TestRegisterOmitsEmptyVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := string(b); strings.Contains(s, "version") || strings.Contains(s, "updatable") {
+	if s := string(b); strings.Contains(s, "version") {
 		t.Errorf("empty fields are sent: %s", s)
 	}
 }

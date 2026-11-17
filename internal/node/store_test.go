@@ -3,6 +3,7 @@ package node
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -57,5 +58,20 @@ func TestLoadVMsSkipsFiles(t *testing.T) {
 	got, err := LoadVMs(dir)
 	if err != nil || len(got) != 1 || got[0].Spec.ID != "a" {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func TestSaveVMOmitsBoot(t *testing.T) {
+	dir := t.TempDir()
+	f := VMFile{Spec: proto.VMSpec{ID: "a"}, Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 KEY"}, Env: map[string]string{"A": "secret"}}}
+	if err := SaveVM(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(VMDir(dir, "a"), "vm.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "secret") || strings.Contains(string(b), "KEY") {
+		t.Fatalf("vm.json holds boot data: %s", b)
 	}
 }

@@ -14,8 +14,8 @@ import (
 
 // InitOptions are the node.json fields the installer sets; zero values leave a field as it is.
 type InitOptions struct {
-	Path, HubURL, Token, Name, Provider, UnderlayEndpoint string
-	UnderlayMTU, MemoryMB                                 int
+	Path, HubURL, Credential, Name, Provider, UnderlayEndpoint string
+	UnderlayMTU, MemoryMB                                      int
 }
 
 // InitConfig creates node.json or updates only the given fields, keeping every other key (paths, provider sections) as written.
@@ -24,8 +24,8 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	if err != nil {
 		return err
 	}
-	if o.Token == "" || o.Name == "" || o.Provider == "" {
-		return errors.New("token, name and provider are required")
+	if o.Credential == "" || o.Name == "" || o.Provider == "" {
+		return errors.New("credential, name and provider are required")
 	}
 	doc := map[string]json.RawMessage{}
 	b, err := os.ReadFile(o.Path)
@@ -44,7 +44,7 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	for _, set := range []func() error{
 		func() error { return setJSON(doc, "nodeId", o.Name) },
 		func() error { return setJSON(doc, "provider", o.Provider) },
-		func() error { return setNested(doc, "hub", map[string]any{"url": connect, "token": o.Token}) },
+		func() error { return setNested(doc, "hub", map[string]any{"url": connect, "credential": o.Credential}) },
 		func() error {
 			u := map[string]any{}
 			if o.UnderlayEndpoint != "" {
@@ -73,7 +73,7 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	if err := os.MkdirAll(filepath.Dir(o.Path), 0o755); err != nil {
 		return err
 	}
-	// writeFileAtomic creates the file 0600: node.json holds the hub token.
+	// writeFileAtomic creates the file 0600: node.json holds the credential.
 	return writeFileAtomic(o.Path, append(out, '\n'))
 }
 
@@ -117,15 +117,15 @@ func setNested(doc map[string]json.RawMessage, key string, values map[string]any
 	return setJSON(doc, key, obj)
 }
 
-// ReadToken reads the hub token from r (the installer pipes it in so it never appears on a command line).
-func ReadToken(r io.Reader) (string, error) {
+// ReadCredential reads the hub credential from r (the installer pipes it in so it never appears on a command line).
+func ReadCredential(r io.Reader) (string, error) {
 	b, err := io.ReadAll(io.LimitReader(r, 4096))
 	if err != nil {
 		return "", err
 	}
 	t := strings.TrimSpace(string(b))
 	if t == "" {
-		return "", errors.New("no token on stdin")
+		return "", errors.New("no credential on stdin")
 	}
 	return t, nil
 }

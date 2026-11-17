@@ -3,11 +3,15 @@ package node
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	diskfs "github.com/diskfs/go-diskfs"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 func TestWriteSeedISORoundTrip(t *testing.T) {
@@ -72,9 +76,108 @@ func TestWriteSeedISOFailureKeepsOldSeed(t *testing.T) {
 	}
 }
 
-func TestSeedHasIntegrations(t *testing.T) {
-	files := GuestSeedFiles(VMFile{}, PrimaryNet{})
-	if s := string(files["vmm-integrations.sh"]); !strings.Contains(s, "vmm-integrations.timer") || !strings.Contains(s, "/usr/local/bin/git-credential-vmm") {
-		t.Fatalf("seed vmm-integrations.sh = %q", s)
+// runBoot runs the seed's vmm-boot.sh against root as the guest would.
+func runBoot(t *testing.T, root string, files map[string][]byte) {
+	t.Helper()
+	seed := t.TempDir()
+	for name, b := range files {
+		if err := os.WriteFile(filepath.Join(seed, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("sh", filepath.Join(seed, "vmm-boot.sh"), seed)
+	cmd.Env = append(os.Environ(), "VMM_ROOT="+root)
+	if out, err := cmd.CombinedOutput(); err != nil || len(out) > 0 {
+		t.Fatalf("vmm-boot.sh: %v: %s", err, out)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// sourcedEnv sources env.sh and reports A, B and C as a child process sees them.
+func sourcedEnv(t *testing.T, root string) string {
+	t.Helper()
+	out, err := exec.Command("sh", "-c", `. "$1"; exec sh -c 'printf "%s\0" "${A-unset}" "${B-unset}" "${C-unset}"'`, "sh", filepath.Join(root, "etc/vmm/env.sh")).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func vmmBlock(t *testing.T, environment string) []string {
+	t.Helper()
+	i, j := strings.Index(environment, "# BEGIN vmm\n"), strings.Index(environment, "# END vmm\n")
+	if i < 0 && j < 0 {
+		return nil
+	}
+	if i < 0 || j < i {
+		t.Fatalf("broken managed block:\n%s", environment)
+	}
+	return strings.Split(strings.TrimSuffix(environment[i+len("# BEGIN vmm\n"):j], "\n"), "\n")
+}
+
+func TestBootFilesRoundTrip(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/environment"), []byte("PATH=\"/usr/bin\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{"ssh-ed25519 AAAA one@host", "ssh-rsa BBBB two@host"}
+	env := map[string]string{"A": "x\ny", "B": `it's $HOME \ "q" =`, "C": ""}
+	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: keys, Env: env}}, PrimaryNet{})
+	for _, name := range []string{"vmm-boot.sh", "vmm-env", "vmm-authorized-keys"} {
+		if _, ok := files[name]; !ok {
+			t.Fatalf("seed misses %s", name)
+		}
+	}
+	runBoot(t, root, files)
+
+	if got := readFile(t, filepath.Join(root, "etc/vmm/authorized_keys")); got != keys[0]+"\n"+keys[1]+"\n" {
+		t.Fatalf("authorized_keys = %q", got)
+	}
+	if got := readFile(t, filepath.Join(root, "etc/ssh/sshd_config.d/50-vmm.conf")); !strings.Contains(got, "AuthorizedKeysFile .ssh/authorized_keys /etc/vmm/authorized_keys\n") {
+		t.Fatalf("50-vmm.conf = %q", got)
+	}
+	if got := readFile(t, filepath.Join(root, "etc/profile.d/vmm-env.sh")); !strings.Contains(got, "/etc/vmm/env.sh") {
+		t.Fatalf("profile.d/vmm-env.sh = %q", got)
+	}
+	if got, want := sourcedEnv(t, root), "x\ny\x00"+env["B"]+"\x00\x00"; got != want {
+		t.Fatalf("env.sh sets %q, want %q", got, want)
+	}
+	environment := readFile(t, filepath.Join(root, "etc/environment"))
+	if !strings.HasPrefix(environment, "PATH=\"/usr/bin\"\n") {
+		t.Fatalf("/etc/environment lost its own lines:\n%s", environment)
+	}
+	if got, want := vmmBlock(t, environment), []string{`B="` + env["B"] + `"`, `C=""`}; !slices.Equal(got, want) {
+		t.Fatalf("managed block = %q, want %q", got, want)
+	}
+	for _, p := range []string{"etc/vmm/authorized_keys", "etc/vmm/env.sh", "etc/environment"} {
+		if st, _ := os.Stat(filepath.Join(root, p)); st.Mode().Perm() != 0o644 {
+			t.Errorf("%s mode = %v", p, st.Mode())
+		}
+	}
+
+	runBoot(t, root, GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: keys[:1]}}, PrimaryNet{}))
+	if got := readFile(t, filepath.Join(root, "etc/vmm/authorized_keys")); got != keys[0]+"\n" {
+		t.Fatalf("authorized_keys after second boot = %q", got)
+	}
+	if got := sourcedEnv(t, root); got != "unset\x00unset\x00unset\x00" {
+		t.Fatalf("env.sh after second boot sets %q", got)
+	}
+	environment = readFile(t, filepath.Join(root, "etc/environment"))
+	if environment != "PATH=\"/usr/bin\"\n" {
+		t.Fatalf("/etc/environment after second boot:\n%s", environment)
 	}
 }

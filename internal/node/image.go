@@ -3,7 +3,6 @@ package node
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -120,19 +119,13 @@ func copyFile(src, dst string) error {
 type PrimaryNet struct{ Address, Gateway string }
 
 func CloudInit(f VMFile, primary PrimaryNet) (userData, metaData, networkConfig string) {
-	var keys strings.Builder
-	for _, k := range f.Spec.SSHPublicKeys {
-		j, _ := json.Marshal(k) // JSON string is valid YAML and escapes anything odd in the key
-		fmt.Fprintf(&keys, "      - %s\n", j)
-	}
 	userData = fmt.Sprintf(`#cloud-config
 hostname: %s
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-    ssh_authorized_keys:
-%sbootcmd:
+bootcmd:
   # Kernel and systemd output to the virtio console (console.log); takes effect from the second boot.
   - [sh, -c, 'test -f /etc/default/grub.d/99-vmm-console.cfg || { echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT console=tty1 console=hvc0\"" > /etc/default/grub.d/99-vmm-console.cfg && update-grub; }']
   # The disk list lives in the seed, not in user-data, so a reseed changes it without a new instance-id.
@@ -141,7 +134,7 @@ users:
 updates:
   network:
     when: [boot]
-`, f.Spec.Name, keys.String())
+`, f.Spec.Name)
 	metaData = fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", f.Spec.ID, f.Spec.Name)
 	// dhcp-identifier: mac makes the guest's DHCP lease findable by MAC (Ubuntu defaults to a DUID).
 	addressing := "    dhcp4: true\n    dhcp-identifier: mac\n"
@@ -179,10 +172,11 @@ ethernets:
 	return userData, metaData, networkConfig
 }
 
-// DiskScript formats (only if blank), mounts and grows each attached disk and runs the integrations script; the guest runs it every boot from the seed.
+// DiskScript runs the boot script, then formats (only if blank), mounts and grows each attached disk; the guest runs it every boot from the seed.
 func DiskScript(f VMFile) string {
 	var b strings.Builder
-	b.WriteString("#!/bin/sh\n")
+	// Run from here, not from bootcmd: user-data is not re-read without a new instance-id, the seed is. Keys go in before the VM reports ready.
+	b.WriteString("#!/bin/sh\nsh /run/vmm-seed/vmm-boot.sh /run/vmm-seed\n")
 	for i, at := range f.Spec.Attachments {
 		// Disks are found by attach position (after root); Firecracker's virtio serial is not the disk ID.
 		dev, mnt := shellQuote("/dev/"+DeviceName(i+1)), shellQuote(at.MountPath)
@@ -213,8 +207,6 @@ for i in $(seq 300); do
 done
 VMM_READY
 systemd-run --no-block --collect --description='vmm ready probe' sh /run/vmm-ready.sh
-# Run from here, not from bootcmd: user-data is not re-read without a new instance-id, the seed is.
-[ -f /run/vmm-seed/vmm-integrations.sh ] && sh /run/vmm-seed/vmm-integrations.sh
 `, strings.ToLower(f.MAC), ReadyMarker)
 	return b.String()
 }

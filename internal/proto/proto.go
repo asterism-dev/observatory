@@ -20,15 +20,19 @@ const (
 )
 
 type VMSpec struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	CPUs          int              `json:"cpus"`
-	MemoryMB      int              `json:"memoryMB"`
-	DiskGB        int              `json:"diskGB"`
-	SSHPublicKeys []string         `json:"sshPublicKeys"`
-	NICs          []NIC            `json:"nics"`
-	Attachments   []DiskAttachment `json:"attachments,omitempty"`
-	Isolated      bool             `json:"isolated,omitempty"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	CPUs        int              `json:"cpus"`
+	MemoryMB    int              `json:"memoryMB"`
+	DiskGB      int              `json:"diskGB"`
+	NICs        []NIC            `json:"nics"`
+	Attachments []DiskAttachment `json:"attachments,omitempty"`
+	Isolated    bool             `json:"isolated,omitempty"`
+}
+
+type Boot struct {
+	SSHPublicKeys []string          `json:"sshPublicKeys"`
+	Env           map[string]string `json:"env"`
 }
 
 type DiskAttachment struct {
@@ -89,6 +93,7 @@ type DesiredVM struct {
 	StopMode    StopMode `json:"stopMode,omitempty"`
 	Generation  uint64   `json:"generation"`
 	Provisioned bool     `json:"provisioned"`
+	Boot        *Boot    `json:"boot,omitempty"`
 }
 
 type Register struct {
@@ -98,15 +103,13 @@ type Register struct {
 	CPUs     int        `json:"cpus"`
 	MemoryMB int        `json:"memoryMB"`
 	VMs      []VMStatus `json:"vms,omitempty"`
-	// Config is the node's config file with the hub token removed; shown in the GUI only.
+	// Config is the node's config file with the hub credential removed; shown in the GUI only.
 	Config     json.RawMessage `json:"config,omitempty"`
 	Machine    *Machine        `json:"machine,omitempty"`
 	ChassisKey string          `json:"chassisKey,omitempty"`
 	DisksInUse []string        `json:"disksInUse,omitempty"`
 	AppliedSeq uint64          `json:"appliedSeq,omitempty"` // seq of the last desired list the node fully reconciled
 	Version    string          `json:"version,omitempty"`
-	// Updatable is whether the node runs from the installer's location, so the installer can update it.
-	Updatable bool `json:"updatable,omitempty"`
 }
 
 // Underlay tells a node how to join the hub's WireGuard underlay and reach the OVN southbound DB.
@@ -126,7 +129,7 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay"/"update" (hub→node), "status", "disks" and "updateFailed" (node→hub).
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status" and "disks" (node→hub).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -137,7 +140,6 @@ type Message struct {
 	DisksInUse []string    `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
 	Seq        uint64      `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
 	AppliedSeq uint64      `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Error      string      `json:"error,omitempty"`      // type "updateFailed": why, with the end of the installer output
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }
