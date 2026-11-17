@@ -65,6 +65,7 @@ done
 rule INPUT -i wg-clients -j DROP
 rule INPUT -i wg-underlay -p udp --dport 6081 -j ACCEPT
 rule INPUT -i wg-underlay -p tcp --dport 6642 -j ACCEPT
+rule INPUT -i wg-underlay -d 10.198.0.1 -p icmp --icmp-type echo-request -m limit --limit 10/second -j ACCEPT
 rule INPUT -i wg-underlay -j DROP
 for proto in udp tcp; do
   rule INPUT -i gw0 -s 10.64.0.0/10 -d 10.192.0.1 -p $proto --dport 53 -j ACCEPT

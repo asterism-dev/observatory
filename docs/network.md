@@ -32,8 +32,9 @@ and at least every 60 s. Every 10 s it reports device handshakes, chassis and cl
 | TCP 6642 | southbound DB, SSL only, bound to `10.198.0.1` (inside the underlay) |
 | UDP/TCP 53 | DNS on `10.192.0.1`, for devices and VM management NICs |
 
-The northbound DB listens on a unix socket only. On `wg-underlay` the gateway accepts only Geneve (UDP 6081) and the
-southbound DB (TCP 6642), so a node cannot ping `10.198.0.1`.
+The northbound DB listens on a unix socket only. On `wg-underlay` the gateway accepts only Geneve (UDP 6081), the
+southbound DB (TCP 6642) and rate-limited ICMP echo to `10.198.0.1`, so nodes can ping it for diagnostics. ICMP
+between nodes is not forwarded.
 
 ### Running it
 
