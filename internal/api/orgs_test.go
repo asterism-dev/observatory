@@ -291,7 +291,7 @@ func TestCommitRejectsInvalidPolicy(t *testing.T) {
 	ok := h.commit(rec, httptest.NewRequest("POST", "/", nil), func(tx *store.Store) error {
 		return tx.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorUser, ActorID: u.ID.String(), Action: "test:poison", Result: store.ResultAllowed})
 	})
-	if ok || rec.Code != 400 || !strings.Contains(rec.Body.String(), "bogus") {
+	if ok || rec.Code != 400 || !strings.Contains(rec.Body.String(), `"invalid policy"`) || strings.Contains(rec.Body.String(), "bogus") {
 		t.Fatalf("commit: %v %d %s", ok, rec.Code, rec.Body.String())
 	}
 	if len(e.audit("test:poison")) != 0 {

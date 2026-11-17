@@ -46,7 +46,7 @@ func (h *api) orgFromPath(w http.ResponseWriter, r *http.Request) (store.Members
 	return store.Membership{}, false
 }
 
-// authorize checks the caller against the current enforcer; a denial is audited and answered with 403.
+// authorize audits and 403s a denial; it doesn't check membership, so resolve org via orgFromPath first.
 func (h *api) authorize(w http.ResponseWriter, r *http.Request, org uuid.UUID, obj, act string) bool {
 	p, _ := auth.PrincipalFrom(r.Context())
 	if h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, obj, act) {
@@ -93,7 +93,8 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 	if err != nil {
 		var invalid invalidPolicyError
 		if errors.As(err, &invalid) {
-			writeError(w, http.StatusBadRequest, invalid.Error())
+			slog.Error("policy validation failed", "err", invalid)
+			writeError(w, http.StatusBadRequest, "invalid policy")
 			return false
 		}
 		for _, se := range storeErrorStatus {
@@ -105,10 +106,9 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		serverError(w, "commit", err)
 		return false
 	}
-	// The change is committed; a client hanging up must not leave the enforcer stale.
+	// Committed: report success so clients don't retry and duplicate; a hang-up must not leave the enforcer stale.
 	if err := h.z.Reload(context.WithoutCancel(ctx)); err != nil {
-		serverError(w, "authz reload", err)
-		return false
+		slog.Error("authz reload after commit", "err", err)
 	}
 	return true
 }
