@@ -119,7 +119,9 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
 - Networks bypass the connect check: any VM of the org may be attached to any network of the org, and VMs on a network
   reach each other regardless of who may connect to them.
 - A node can claim a foreign port binding for up to one gateway poll (2 s) before it is reverted. In practice the rightful
-  node's ovn-controller usually takes the binding back first.
+  node's ovn-controller usually takes the binding back first. While the rightful node's chassis is gone (e.g. its
+  ovn-controller is stopped), a node whose chassis hostname is that node id keeps re-claiming the port; the gateway
+  clears and reports it on every poll.
 - A VM moving between nodes may briefly show up as a cleared binding while the old chassis still holds it.
 - The southbound server cert is valid as long as the OVN CA (10 years) and is not rotated.
 - Chassis certs are valid for one year; the hub re-signs a connected node's cert when less than 30 days are left.
