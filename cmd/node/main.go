@@ -47,12 +47,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	chassisPriv, chassisPub, err := node.LoadOrCreateChassisKey(filepath.Join(cfg.Paths.VMs, "chassis.key"))
-	if err != nil {
-		log.Fatal(err)
-	}
 	a := &node.Agent{
-		ChassisKey: chassisPub, ChassisPrivateKey: chassisPriv, UnderlayEndpoint: cfg.Underlay.Endpoint, UnderlayMTU: cfg.Underlay.MTU,
 		HubURL: cfg.Hub.URL, Credential: cfg.Hub.Credential, NodeID: cfg.NodeID, VMsDir: cfg.Paths.VMs,
 		CPUs: cfg.Capacity.CPUs, MemoryMB: cfg.Capacity.MemoryMB, Provider: provider,
 		Config: public, Machine: node.MachineInfo(),

@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,8 +25,6 @@ import (
 const (
 	reconnectDelay = 2 * time.Second
 	ipTimeout      = 120 * time.Second
-
-	defaultUnderlayMTU = 1420
 
 	defaultDiskRefresh = 60 * time.Second
 )
@@ -44,19 +41,9 @@ type Agent struct {
 	Provider                           Provider
 	Config                             json.RawMessage
 	Machine                            *proto.Machine
-	ChassisKey                         string // public, sent in Register
-	ChassisPrivateKey                  string
-	UnderlayEndpoint                   string // host:port override of the hub's underlay address
-	UnderlayMTU                        int
 	Version                            string
 
 	diskRefresh time.Duration // zero means defaultDiskRefresh
-
-	chassisMu       sync.Mutex
-	chassisPending  *Chassis // newest config not yet applied; older ones are superseded
-	chassisRunning  bool
-	chassisStopping bool
-	chassisWG       sync.WaitGroup
 
 	reconcileMu sync.Mutex
 
@@ -169,61 +156,14 @@ func (a *Agent) connect(ctx context.Context) error {
 		if err := dec.Decode(&m); err != nil {
 			return err
 		}
-		switch {
-		case m.Type == "desired":
+		if m.Type == "desired" {
 			a.reconcile(ctx, m.Seq, m.Desired)
-		case m.Type == "underlay" && m.Underlay != nil:
-			go a.startChassis(ctx, *m.Underlay)
 		}
 	}
-}
-
-func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
-	endpoint := a.UnderlayEndpoint
-	if endpoint == "" {
-		hu, err := url.Parse(a.HubURL)
-		if err != nil {
-			log.Printf("chassis: hub url: %v", err)
-			return
-		}
-		endpoint = net.JoinHostPort(hu.Hostname(), strconv.Itoa(u.Port))
-	}
-	mtu := a.UnderlayMTU
-	if mtu == 0 {
-		mtu = defaultUnderlayMTU
-	}
-	c := Chassis{
-		Name: a.NodeID, PrivateKey: a.ChassisPrivateKey, Address: u.Address, HubKey: u.HubKey,
-		Endpoint: endpoint, SBRemote: u.SBRemote, MTU: mtu,
-	}
-	a.chassisMu.Lock()
-	if a.chassisStopping {
-		a.chassisMu.Unlock()
-		return
-	}
-	a.chassisPending = &c
-	if a.chassisRunning {
-		a.chassisMu.Unlock()
-		return
-	}
-	a.chassisRunning = true
-	a.chassisWG.Add(1)
-	defer a.chassisWG.Done()
-	for a.chassisPending != nil {
-		next := *a.chassisPending
-		a.chassisPending = nil
-		a.chassisMu.Unlock()
-		if err := a.Provider.StartChassis(ctx, next); err != nil {
-			log.Printf("chassis: %v", err)
-		}
-		a.chassisMu.Lock()
-	}
-	a.chassisRunning = false
-	a.chassisMu.Unlock()
 }
 
 func (a *Agent) registerMsg() *proto.Register {
-	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
+	reg := &proto.Register{NodeID: a.NodeID, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
 		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version}
 	reg.Hostname, _ = os.Hostname()
 	for _, e := range a.vms {
@@ -483,13 +423,6 @@ func (a *Agent) stopAll() {
 		}()
 	}
 	wg.Wait()
-	a.chassisMu.Lock()
-	a.chassisStopping = true
-	a.chassisMu.Unlock()
-	a.chassisWG.Wait()
-	if err := a.Provider.StopChassis(); err != nil {
-		log.Printf("stop chassis: %v", err)
-	}
 }
 
 // report records the status and forwards it to the hub; updates for deleted VMs are dropped.

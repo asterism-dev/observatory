@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -237,88 +236,6 @@ func TestAgentStopsVMsOnShutdown(t *testing.T) {
 	}
 	if _, err := os.Stat(VMDir(env.agent.VMsDir, vm.ID)); err != nil {
 		t.Fatalf("vm dir must survive shutdown: %v", err)
-	}
-}
-
-func TestAgentSendsChassisKeyAndStartsChassis(t *testing.T) {
-	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisPrivateKey = "pub-key", "priv-key"
-	})
-	eventually(t, "chassis started", func() bool { return len(env.provider.gotChassis()) > 0 })
-	c := env.provider.gotChassis()[0]
-	u, _ := url.Parse(env.agent.HubURL)
-	if c.Address != "10.198.0.11/24" {
-		t.Fatalf("hub did not enroll the chassis key: address %q", c.Address)
-	}
-	if c.Name != "n1" || c.PrivateKey != "priv-key" || !strings.HasPrefix(c.Address, "10.198.0.") || !strings.HasSuffix(c.Address, "/24") ||
-		c.Endpoint != net.JoinHostPort(u.Hostname(), "51820") || c.MTU != 1420 || c.HubKey == "" || c.SBRemote == "" {
-		t.Fatalf("chassis = %+v", c)
-	}
-}
-
-func TestAgentUnderlayEndpointOverride(t *testing.T) {
-	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisPrivateKey, a.UnderlayEndpoint, a.UnderlayMTU = "pub-key", "priv-key", "1.2.3.4:6000", 1400
-	})
-	eventually(t, "chassis started", func() bool { return len(env.provider.gotChassis()) > 0 })
-	if c := env.provider.gotChassis()[0]; c.Endpoint != "1.2.3.4:6000" || c.MTU != 1400 {
-		t.Fatalf("chassis = %+v", c)
-	}
-}
-
-func TestAgentStopsChassisAfterGuests(t *testing.T) {
-	env := startEnv(t, nil)
-	vm := env.hub.create("dev")
-	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
-	env.stop()
-	<-env.runDone
-	env.provider.mu.Lock()
-	defer env.provider.mu.Unlock()
-	if got := strings.Join(env.provider.events, ","); got != "prepare:dev,stop-guest,stop-chassis" {
-		t.Fatalf("events = %s", got)
-	}
-}
-
-func TestAgentSerializesChassisStarts(t *testing.T) {
-	env := startEnv(t, nil)
-	env.provider.block = make(chan struct{})
-	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.11/24"})
-	eventually(t, "first call", func() bool { return len(env.provider.gotChassis()) == 1 })
-	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.12/24"})
-	time.Sleep(100 * time.Millisecond)
-	close(env.provider.block)
-	eventually(t, "second call", func() bool { return len(env.provider.gotChassis()) == 2 })
-	if env.provider.maxInflight.Load() != 1 {
-		t.Fatalf("StartChassis calls overlapped")
-	}
-	if got := env.provider.gotChassis()[1].Address; got != "10.198.0.12/24" {
-		t.Fatalf("last call carries %q, want newest config", got)
-	}
-}
-
-func TestAgentStopChassisWaitsForInFlightStart(t *testing.T) {
-	env := startEnv(t, nil)
-	env.provider.block = make(chan struct{})
-	go env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.11/24"})
-	eventually(t, "start in flight", func() bool { return len(env.provider.gotChassis()) == 1 })
-	env.stop()
-	time.Sleep(100 * time.Millisecond)
-	env.provider.mu.Lock()
-	early := strings.Contains(strings.Join(env.provider.events, ","), "stop-chassis")
-	env.provider.mu.Unlock()
-	if early {
-		t.Fatal("StopChassis ran while StartChassis was in flight")
-	}
-	close(env.provider.block)
-	<-env.runDone
-	env.provider.mu.Lock()
-	defer env.provider.mu.Unlock()
-	if got := strings.Join(env.provider.events, ","); got != "start-begin,start-end,stop-chassis" {
-		t.Fatalf("events = %s", got)
-	}
-	env.agent.startChassis(context.Background(), proto.Underlay{Address: "10.198.0.13/24"})
-	if len(env.provider.chassis) != 1 {
-		t.Fatal("chassis started after shutdown")
 	}
 }
 

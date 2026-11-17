@@ -106,18 +106,9 @@ type Register struct {
 	// Config is the node's config file with the hub credential removed; shown in the GUI only.
 	Config     json.RawMessage `json:"config,omitempty"`
 	Machine    *Machine        `json:"machine,omitempty"`
-	ChassisKey string          `json:"chassisKey,omitempty"`
 	DisksInUse []string        `json:"disksInUse,omitempty"`
 	AppliedSeq uint64          `json:"appliedSeq,omitempty"` // seq of the last desired list the node fully reconciled
 	Version    string          `json:"version,omitempty"`
-}
-
-// Underlay tells a node how to join the hub's WireGuard underlay and reach the OVN southbound DB.
-type Underlay struct {
-	Address  string `json:"address"`
-	HubKey   string `json:"hubKey"`
-	SBRemote string `json:"sbRemote"`
-	Port     int    `json:"port"`
 }
 
 type Machine struct {
@@ -129,12 +120,11 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status" and "disks" (node→hub).
+// Message types: "register" (node→hub), "desired" (hub→node), "status" and "disks" (node→hub).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
 	Status   *VMStatus `json:"status,omitempty"`
-	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
 	Desired    []DesiredVM `json:"desired,omitempty"`
 	DisksInUse []string    `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
