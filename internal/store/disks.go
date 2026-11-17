@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -166,8 +167,22 @@ func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 
 // StorageState is the storage server's desired state; it carries unsealed export keys, so callers must never log it.
 func (s *Store) StorageState(ctx context.Context) (proto.StorageState, error) {
+	pool, ok := s.q.(*pgxpool.Pool)
+	if !ok {
+		return s.readStorageState(ctx, s.q)
+	}
+	// One snapshot, so an export never refers to a disk state the same response contradicts.
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return proto.StorageState{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	return s.readStorageState(ctx, tx)
+}
+
+func (s *Store) readStorageState(ctx context.Context, q querier) (proto.StorageState, error) {
 	st := proto.StorageState{Disks: []proto.StorageDisk{}, Deleted: []string{}, Exports: []proto.StorageExport{}}
-	rows, err := s.q.Query(ctx, "SELECT id, size_gb, ready_gb, copy_from, deleted_at IS NOT NULL FROM disks ORDER BY id")
+	rows, err := q.Query(ctx, "SELECT id, size_gb, ready_gb, copy_from, deleted_at IS NOT NULL FROM disks ORDER BY id")
 	if err != nil {
 		return st, err
 	}
@@ -193,7 +208,7 @@ func (s *Store) StorageState(ctx context.Context) (proto.StorageState, error) {
 	if err := rows.Err(); err != nil {
 		return st, err
 	}
-	rows, err = s.q.Query(ctx, `
+	rows, err = q.Query(ctx, `
 		SELECT e.disk_id, e.port, e.key_id, e.nonce, e.sealed FROM disk_exports e JOIN disks d ON d.id = e.disk_id
 		WHERE d.ready_gb > 0 ORDER BY e.port`)
 	if err != nil {
@@ -241,9 +256,9 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 			}
 		}
 		if orgs, err = collectIDs(tx.q.Query(ctx, `
-			WITH ready AS (UPDATE disks SET ready_gb = size_gb WHERE id IN (SELECT d.id `+grown+`) RETURNING id)
+			WITH ready AS (UPDATE disks SET ready_gb = size_gb WHERE id IN (SELECT d.id `+grown+` AND d.org_id = ANY($3)) RETURNING id)
 			UPDATE vms v SET generation = generation + 1 FROM vm_disks vd
-			WHERE vd.vm_id = v.id AND vd.disk_id IN (SELECT id FROM ready) RETURNING v.org_id`, ids, sizes)); err != nil {
+			WHERE vd.vm_id = v.id AND vd.disk_id IN (SELECT id FROM ready) RETURNING v.org_id`, ids, sizes, candidates)); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "UPDATE disks SET copy_from = NULL WHERE id = ANY($1) AND copy_from IS NOT NULL", ids); err != nil {
@@ -252,6 +267,9 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 		_, err = tx.q.Exec(ctx, "DELETE FROM disks WHERE deleted_at IS NOT NULL AND id <> ALL($1)", ids)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
 	slices.SortFunc(orgs, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
-	return slices.Compact(orgs), err
+	return slices.Compact(orgs), nil
 }

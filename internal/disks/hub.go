@@ -54,13 +54,13 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.StorageStatus) error {
 			errs[x.DiskID] = x.Error
 		}
 	}
-	h.mu.Lock()
-	h.reportedAt, h.files, h.exportErrs, h.version = h.now(), files, errs, st.Version
-	h.mu.Unlock()
 	orgs, err := h.store.ApplyStorageFiles(ctx, st.Files)
 	if err != nil {
 		return err
 	}
+	h.mu.Lock()
+	h.reportedAt, h.files, h.exportErrs, h.version = h.now(), files, errs, st.Version
+	h.mu.Unlock()
 	for _, org := range orgs {
 		h.notify(org)
 	}

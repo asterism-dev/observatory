@@ -167,20 +167,23 @@ func TestGrowReadyBumpsVM(t *testing.T) {
 	if _, err := e.s.GrowDisk(ctx, e.org, d.ID, 20, false); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := e.s.VM(ctx, e.org, vm.ID)
+	before, err := e.s.VM(ctx, e.org, vm.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.notified = nil
 
 	e.report(t, file(d, 10))
-	if v, _ := e.s.VM(ctx, e.org, vm.ID); v.Generation != before.Generation || len(e.notified) != 0 {
-		t.Fatalf("generation %d -> %d, notified %v", before.Generation, v.Generation, e.notified)
+	if v, err := e.s.VM(ctx, e.org, vm.ID); err != nil || v.Generation != before.Generation || len(e.notified) != 0 {
+		t.Fatalf("generation %d -> %d, notified %v, %v", before.Generation, v.Generation, e.notified, err)
 	}
 	if info := e.h.Info(e.get(t, d.ID)); info.State != "growing" {
 		t.Fatalf("%+v", info)
 	}
 
 	e.report(t, file(d, 20))
-	if v, _ := e.s.VM(ctx, e.org, vm.ID); v.Generation != before.Generation+1 || !slices.Equal(e.notified, []uuid.UUID{e.org}) {
-		t.Fatalf("generation %d -> %d, notified %v", before.Generation, v.Generation, e.notified)
+	if v, err := e.s.VM(ctx, e.org, vm.ID); err != nil || v.Generation != before.Generation+1 || !slices.Equal(e.notified, []uuid.UUID{e.org}) {
+		t.Fatalf("generation %d -> %d, notified %v, %v", before.Generation, v.Generation, e.notified, err)
 	}
 	atts, err := e.s.NodeAttachments(ctx, e.node)
 	if err != nil || len(atts[vm.ID]) != 1 || atts[vm.ID][0].SizeGB != 20 {
