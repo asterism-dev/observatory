@@ -5,7 +5,8 @@
   "login": {
     "intro": "Melde dich an, um fortzufahren.",
     "signIn": "Anmelden",
-    "createAccount": "Konto erstellen"
+    "createAccount": "Konto erstellen",
+    "failed": "Anmeldung fehlgeschlagen. Bitte versuche es erneut."
   },
   "nav": {
     "label": "Navigation",

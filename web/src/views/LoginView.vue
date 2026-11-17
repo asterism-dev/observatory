@@ -15,6 +15,7 @@ function go(register: boolean) {
 <template>
   <main class="login">
     <h1>{{ t('app.name') }}</h1>
+    <p v-if="route.query.error" role="alert">{{ t('login.failed') }}</p>
     <p>{{ t('login.intro') }}</p>
     <div class="actions">
       <Button variant="accent" @click="go(false)">{{ t('login.signIn') }}</Button>

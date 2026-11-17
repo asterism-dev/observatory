@@ -5,7 +5,8 @@
   "login": {
     "intro": "Sign in to continue.",
     "signIn": "Sign in",
-    "createAccount": "Create account"
+    "createAccount": "Create account",
+    "failed": "Sign-in failed. Please try again."
   },
   "nav": {
     "label": "Navigation",

@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { api, ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import { THEME_PREFERENCES, useTheme } from '@/composables/useTheme'
 import { LOCALES } from '@/i18n'
@@ -33,7 +33,15 @@ const navItems = computed(() => [
 ])
 
 async function signOut() {
-  await api('/auth/logout', { method: 'POST' })
+  try {
+    await api('/auth/logout', { method: 'POST' })
+  } catch (e) {
+    // 401: the session is already revoked, which is what signing out wants anyway.
+    if (!(e instanceof ApiError && e.status === 401)) {
+      console.error('sign out failed', e)
+      return
+    }
+  }
   me.value = null
   await router.push('/login')
 }
