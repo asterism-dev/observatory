@@ -42,4 +42,11 @@ device:
   device create <name> [--out FILE|-]  create a device and write its WireGuard config
   device delete <device>               delete a device
 
+snapshot:
+  snapshot list <vm>                                            list the snapshots of a VM
+  snapshot create <vm> <name> [--memory] [--wait]               snapshot a VM (--memory: include RAM)
+  snapshot restore <vm> <snap> [--memory] [--restart] [--wait]  restore a VM to a snapshot
+  snapshot delete <vm> <snap>                                   delete a snapshot
+  snapshot fork <vm> <snap> <new-vm> [--memory] [--wait]        create a new VM from a snapshot
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help
