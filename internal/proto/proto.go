@@ -37,6 +37,7 @@ type VMSpec struct {
 type Boot struct {
 	SSHPublicKeys []string          `json:"sshPublicKeys"`
 	Env           map[string]string `json:"env"`
+	EgressCAs     map[string]string `json:"egressCAs,omitempty"`
 }
 
 type DiskAttachment struct {
@@ -137,6 +138,8 @@ type DesiredVM struct {
 	Fork               *Fork         `json:"fork,omitempty"`
 	AutoSuspendMinutes int           `json:"autoSuspendMinutes,omitempty"`
 	WakeSeq            uint64        `json:"wakeSeq,omitempty"`
+	// Egress goes only to the VM's node and lives only in its memory.
+	Egress *Egress `json:"egress,omitempty"`
 }
 
 type Register struct {
@@ -274,3 +277,11 @@ type HostBoundSecret struct {
 
 func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
 func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }
+
+type Egress struct {
+	CAs     []EgressCA        `json:"cas"`
+	Secrets []HostBoundSecret `json:"secrets"`
+}
+
+func (Egress) String() string   { return "Egress{redacted}" }
+func (Egress) GoString() string { return "Egress{redacted}" }

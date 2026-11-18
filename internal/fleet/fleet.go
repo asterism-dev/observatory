@@ -202,10 +202,15 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if plan.Hold {
 			continue
 		}
-		boot, err := f.boot(ctx, org, v)
+		boot, bound, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
 		}
+		eg, cas, err := f.egress(ctx, org, v, bound)
+		if err != nil {
+			return nil, nil, err
+		}
+		boot.EgressCAs = cas
 		nics, err := f.nics(ctx, v, rank)
 		if err != nil {
 			return nil, nil, err
@@ -214,7 +219,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
-			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq,
+			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg,
 		})
 	}
 	return out, releasing, nil
@@ -240,7 +245,7 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 }
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
-func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, error) {
+func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, []proto.HostBoundSecret, error) {
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -250,7 +255,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 		owner = authz.TeamSubject(*v.TeamID)
 		members, err := f.store.TeamMembers(ctx, org, *v.TeamID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, m := range members {
 			users = append(users, m.User.ID)
@@ -258,14 +263,59 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 	}
 	keys, err := f.store.SSHKeysOf(ctx, users)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	env, err := f.store.ResolveEnv(ctx, f.authz.Enforcer(), org, owner)
+	// bound is the EgressSecrets hook: integrations append their proxy-mode entries here.
+	env, bound, err := f.store.ResolveVMEnv(ctx, f.authz.Enforcer(), org, owner)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if keys == nil {
 		keys = []string{}
 	}
-	return &proto.Boot{SSHPublicKeys: keys, Env: env}, nil
+	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, nil
+}
+
+// egress keeps the VM's CAs current for the bound hosts and returns its egress entry plus the public certs by CA ID; nil, nil when nothing is bound.
+func (f *Fleet) egress(ctx context.Context, org uuid.UUID, v store.VM, bound []proto.HostBoundSecret) (*proto.Egress, map[string]string, error) {
+	// ponytail: one FOR UPDATE tx per VM per push, also to drop stale CAs of unbound VMs; skip unbound VMs without CA rows if pushes get hot.
+	var hosts []string
+	for _, b := range bound {
+		hosts = append(hosts, b.Hosts...)
+	}
+	slices.Sort(hosts)
+	cas, err := f.store.EnsureEgressCAs(ctx, org, v.ID, slices.Compact(hosts), time.Now())
+	if err != nil || len(bound) == 0 {
+		return nil, nil, err
+	}
+	eg := &proto.Egress{Secrets: bound}
+	certs := make(map[string]string, len(cas))
+	for _, c := range cas {
+		eg.CAs = append(eg.CAs, proto.EgressCA{ID: c.ID.String(), CertPEM: c.CertPEM, KeyPEM: c.KeyPEM})
+		certs[c.ID.String()] = c.CertPEM
+	}
+	return eg, certs, nil
+}
+
+// SweepEgressCAs pushes fresh lists to orgs with a VM whose newest CA is due for rotation, so the desired build mints it; it returns when ctx ends.
+func (f *Fleet) SweepEgressCAs(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		orgs, err := f.store.EgressCAOrgs(ctx, time.Now())
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("sweep egress cas", "err", err)
+			}
+			continue
+		}
+		for _, org := range orgs {
+			f.NotifyOrg(org)
+		}
+	}
 }
