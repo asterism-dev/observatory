@@ -84,11 +84,15 @@ func bindingColumns(v EnvVar, value string) (hosts []string, placeholder *string
 	if len(value) < egress.MinValueLen {
 		return nil, nil, ErrValueTooShort
 	}
+	hosts, err = egress.NormalizeHosts(v.Hosts)
+	if err != nil {
+		return nil, nil, err
+	}
 	p, err := egress.NewPlaceholder()
 	if err != nil {
 		return nil, nil, err
 	}
-	return v.Hosts, &p, nil
+	return hosts, &p, nil
 }
 
 // orgKey returns the org's data key, creating it on first use.

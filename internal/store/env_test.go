@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -668,5 +669,17 @@ func TestResolveVMEnvBound(t *testing.T) {
 		if strings.Contains(v, val) {
 			t.Fatalf("ResolveEnv leaked the bound value in %s", k)
 		}
+	}
+}
+
+func TestEnvHostsNormalized(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	v := mustCreateEnv(t, s, boundVar(org, u.User.ID, store.EnvScopeOrg, nil, "A", " B.test", "a.test", "A.test"), "0123456789abcdef")
+	if got := mustEnvVar(t, s, org.ID, v.ID); !slices.Equal(got.Hosts, []string{"a.test", "b.test"}) {
+		t.Fatalf("hosts %v", got.Hosts)
+	}
+	if _, err := s.CreateEnvVar(ctx, boundVar(org, u.User.ID, store.EnvScopeOrg, nil, "B", "*.test"), "0123456789abcdef"); !errors.Is(err, egress.ErrInvalidHost) {
+		t.Fatalf("got %v", err)
 	}
 }

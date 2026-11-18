@@ -494,6 +494,9 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 				return err
 			}
 		}
+		if err := tx.copyEgressCAs(ctx, org, src.ID, id); err != nil {
+			return err
+		}
 		out, err = tx.VM(ctx, org, id)
 		return err
 	})
