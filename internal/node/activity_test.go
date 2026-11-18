@@ -11,6 +11,11 @@ func ethFrame(etherType uint16, payload []byte) []byte {
 	return append(f, payload...)
 }
 
+func broadcast(frame []byte) []byte {
+	copy(frame, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	return frame
+}
+
 func ipv4(proto byte, l4 []byte) []byte {
 	h := make([]byte, 20)
 	h[0], h[9] = 0x45, proto
@@ -56,6 +61,8 @@ func TestIsActivity(t *testing.T) {
 		{"udp 51820", ipv4(17, ports(51820, 51820)), true},
 		{"ipv6 tcp 443", ipv6(6, ports(40000, 443)), true},
 		{"ipv4 non-first fragment", fragment, true},
+		{"broadcast udp 1900", broadcast(ipv4(17, ports(40000, 1900))), false},
+		{"unicast udp 1900", ipv4(17, ports(40000, 1900)), true},
 		{"truncated", ipv4(6, ports(40000, 22))[:20], false},
 	}
 	for _, tt := range tests {

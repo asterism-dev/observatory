@@ -98,6 +98,7 @@ type vmEntry struct {
 	// idleStop ends the idle watch; wake ends a suspended VM's WaitWake to resume it, as does woken set before it waits. Guarded by Agent.mu.
 	idleStop, wake context.CancelFunc
 	woken          bool
+	wakeDone       chan struct{} // closed once a cancelled WaitWake has removed its taps
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -302,7 +303,17 @@ func (a *Agent) startVM(ctx context.Context, f VMFile, prepare bool) {
 		state = restingState(f)
 	}
 	bootCtx, cancel := context.WithCancel(ctx)
-	e := &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: state}, cancel: cancel, booted: make(chan struct{}), ctx: bootCtx, root: ctx}
+	e := &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: state}, booted: make(chan struct{}), ctx: bootCtx, root: ctx}
+	// Whoever cancels goes on to start the VM, whose taps the cancelled WaitWake must not remove after the fact.
+	e.cancel = func() {
+		cancel()
+		a.mu.Lock()
+		done := e.wakeDone
+		a.mu.Unlock()
+		if done != nil {
+			<-done
+		}
+	}
 	a.mu.Lock()
 	a.vms[f.Spec.ID] = e
 	a.mu.Unlock()

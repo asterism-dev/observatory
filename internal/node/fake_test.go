@@ -131,6 +131,7 @@ type fakeProvider struct {
 	guestResumes  []time.Time
 	restores      map[string]int
 	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil
+	wakeTeardown  chan struct{} // when set, a cancelled WaitWake removes its taps only once it is closed
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -272,7 +273,16 @@ func (p *fakeProvider) WaitIdle(ctx context.Context, _ VMFile, _ time.Duration) 
 }
 
 func (p *fakeProvider) WaitWake(ctx context.Context, _ VMFile) error {
-	return p.wait(ctx, p.wake, "wait-wake")
+	err := p.wait(ctx, p.wake, "wait-wake")
+	p.mu.Lock()
+	block := p.wakeTeardown
+	p.mu.Unlock()
+	if err != nil && block != nil {
+		p.record("wake-teardown-begin")
+		<-block
+		p.record("wake-teardown-end")
+	}
+	return err
 }
 
 func (p *fakeProvider) wait(ctx context.Context, ch chan struct{}, name string) error {

@@ -7,7 +7,8 @@ var idlePorts = map[uint16]bool{53: true, 67: true, 68: true, 123: true, 546: tr
 
 // IsActivity reports whether an Ethernet frame is TCP or UDP traffic that keeps a VM from auto-suspending.
 func IsActivity(frame []byte) bool {
-	if len(frame) < 14 {
+	// Broadcast and multicast reach every VM on the segment, so one chatty guest would keep all of them awake.
+	if len(frame) < 14 || frame[0]&1 != 0 {
 		return false
 	}
 	ip := frame[14:]

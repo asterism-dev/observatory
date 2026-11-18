@@ -157,3 +157,30 @@ func TestSuspendedWaitsForWakeAfterNodeStart(t *testing.T) {
 		return ev[len(ev)-1] == "wait-idle"
 	})
 }
+
+func TestDesiredWakeWaitsForTapTeardown(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	suspendedVM(t, a, p)
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.wakeTeardown = block
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		a.reconcile(context.Background(), 0, []proto.DesiredVM{dvSuspend(proto.PowerRunning, 2, 15)})
+		close(done)
+	}()
+	eventually(t, "teardown started", func() bool { return p.hasEvent("wake-teardown-begin") })
+	time.Sleep(100 * time.Millisecond)
+	state := "restore:" + filepath.Join(VMDir(a.VMsDir, "a"), StateDir)
+	if p.hasEvent(state) {
+		t.Fatalf("restored during the tap teardown: %v", p.gotEvents())
+	}
+	close(block)
+	<-done
+	waitState(t, a, "a", proto.StateRunning, 2)
+	ev := strings.Join(p.gotEvents(), ",")
+	if e, r := strings.Index(ev, "wake-teardown-end"), strings.Index(ev, state); e < 0 || r < e {
+		t.Fatalf("events = %s", ev)
+	}
+}

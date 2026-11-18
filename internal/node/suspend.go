@@ -72,31 +72,8 @@ func (a *Agent) suspend(ctx context.Context, e *vmEntry) bool {
 
 // waitWake resumes suspended e on traffic or a wake request; a desired change, delete or node stop ends e.ctx and leaves e suspended.
 func (a *Agent) waitWake(e *vmEntry) {
-	for i := 0; ; i++ {
-		ctx, wake := context.WithCancel(e.ctx)
-		a.mu.Lock()
-		e.wake = wake
-		f, woken := e.file, e.woken
-		a.mu.Unlock()
-		var err error
-		if !woken {
-			err = a.Provider.WaitWake(ctx, f)
-		}
-		woken = ctx.Err() != nil
-		wake()
-		if e.ctx.Err() != nil {
-			return
-		}
-		if err == nil || woken {
-			break
-		}
-		log.Printf("vm %s: wait for traffic: %v", f.Spec.ID, err)
-		a.reportEntry(e, proto.VMStatus{ID: f.Spec.ID, State: proto.StateSuspended, Error: "wait for traffic: " + err.Error()})
-		select {
-		case <-e.ctx.Done():
-			return
-		case <-time.After(restartBackoff[min(i, len(restartBackoff)-1)]):
-		}
+	if !a.waitForWake(e) {
+		return
 	}
 	e.op.Lock()
 	defer e.op.Unlock()
@@ -110,6 +87,41 @@ func (a *Agent) waitWake(e *vmEntry) {
 	f.Suspended = false
 	e.cancel()
 	a.startVM(e.root, f, false)
+}
+
+// waitForWake reports whether traffic or a wake request came before e.ctx ended; e.op must not be held, as e.cancel waits for it.
+func (a *Agent) waitForWake(e *vmEntry) bool {
+	done := make(chan struct{})
+	a.mu.Lock()
+	e.wakeDone = done
+	a.mu.Unlock()
+	defer close(done)
+	for i := 0; ; i++ {
+		ctx, wake := context.WithCancel(e.ctx)
+		a.mu.Lock()
+		e.wake = wake
+		f, woken := e.file, e.woken
+		a.mu.Unlock()
+		var err error
+		if !woken {
+			err = a.Provider.WaitWake(ctx, f)
+		}
+		woken = ctx.Err() != nil
+		wake()
+		if e.ctx.Err() != nil {
+			return false
+		}
+		if err == nil || woken {
+			return true
+		}
+		log.Printf("vm %s: wait for traffic: %v", f.Spec.ID, err)
+		a.reportEntry(e, proto.VMStatus{ID: f.Spec.ID, State: proto.StateSuspended, Error: "wait for traffic: " + err.Error()})
+		select {
+		case <-e.ctx.Done():
+			return false
+		case <-time.After(restartBackoff[min(i, len(restartBackoff)-1)]):
+		}
+	}
 }
 
 // syncSuspend applies d's auto-suspend minutes and wake requests to e; neither comes with a new generation.
