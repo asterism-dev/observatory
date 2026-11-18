@@ -357,15 +357,17 @@ func currentVMDisks(vm vmJSON) []vmDiskBody {
 	return out
 }
 
-func (c *cli) putVMDisks(vm vmJSON, disks []vmDiskBody, restart bool) error {
+func (c *cli) putVMDisks(vm vmJSON, disks []vmDiskBody, restart bool) (json.RawMessage, error) {
 	path, err := c.vmPath(vm.ID, "/disks")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return c.call(http.MethodPut, path, struct {
+	var raw json.RawMessage
+	err = c.call(http.MethodPut, path, struct {
 		Disks          []vmDiskBody `json:"disks"`
 		RestartAllowed bool         `json:"restartAllowed"`
-	}{disks, restart}, nil)
+	}{disks, restart}, &raw)
+	return raw, err
 }
 
 func cmdDiskAttach(c *cli, args []string) error {
@@ -391,10 +393,11 @@ func cmdDiskAttach(c *cli, args []string) error {
 	if *mount == "" {
 		*mount = "/mnt/" + d.Name
 	}
-	if err := c.putVMDisks(vm, append(cur, vmDiskBody{d.ID, *mount}), *restart); err != nil {
+	raw, err := c.putVMDisks(vm, append(cur, vmDiskBody{d.ID, *mount}), *restart)
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "Disk %s attached to VM %s at %s.", d.Name, vm.Name, *mount)
+	return c.done(raw, "Disk %s attached to VM %s at %s.", d.Name, vm.Name, *mount)
 }
 
 func cmdDiskDetach(c *cli, args []string) error {
@@ -417,8 +420,9 @@ func cmdDiskDetach(c *cli, args []string) error {
 	if len(rest) == len(cur) {
 		return notFoundf("disk %s is not attached to VM %s", d.Name, vm.Name)
 	}
-	if err := c.putVMDisks(vm, rest, *restart); err != nil {
+	raw, err := c.putVMDisks(vm, rest, *restart)
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "Disk %s detached from VM %s.", d.Name, vm.Name)
+	return c.done(raw, "Disk %s detached from VM %s.", d.Name, vm.Name)
 }

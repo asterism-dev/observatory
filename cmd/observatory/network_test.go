@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const (
 	netN1       = `{"id":"n1","name":"front","subnet":"10.1.0.0/24","vmCount":2,"canUse":true,"canDelete":true}`
@@ -40,6 +43,20 @@ func TestNetworkAttachKeepsExisting(t *testing.T) {
 	}
 	if got, want := h.calls(netPutRoute)[1].Body, `{"networkIds":[],"restartAllowed":true}`; got != want {
 		t.Errorf("body %s", got)
+	}
+}
+
+func TestNetworkAttachDetachJSONPrintsVM(t *testing.T) {
+	h, c, out, errb := networkHub(t)
+	h.on(netPutRoute, 200, vmOnN1)
+	for _, cmd := range []string{"attach", "detach"} {
+		net := map[string]string{"attach": "back", "detach": "front"}[cmd]
+		if code := run(c, []string{"network", cmd, net, "dev", "--json"}); code != 0 {
+			t.Fatal(code, errb())
+		}
+	}
+	if strings.Count(out(), `"ip": "10.1.0.2"`) != 2 {
+		t.Errorf("stdout %q", out())
 	}
 }
 

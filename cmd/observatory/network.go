@@ -127,15 +127,17 @@ func currentVMNetworks(vm vmJSON) []string {
 	return out
 }
 
-func (c *cli) putVMNetworks(vm vmJSON, ids []string, restart bool) error {
+func (c *cli) putVMNetworks(vm vmJSON, ids []string, restart bool) (json.RawMessage, error) {
 	path, err := c.vmPath(vm.ID, "/networks")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return c.call(http.MethodPut, path, struct {
+	var raw json.RawMessage
+	err = c.call(http.MethodPut, path, struct {
 		NetworkIDs     []string `json:"networkIds"`
 		RestartAllowed bool     `json:"restartAllowed"`
-	}{ids, restart}, nil)
+	}{ids, restart}, &raw)
+	return raw, err
 }
 
 func networkVMArgs(c *cli, path string, args []string) (networkJSON, vmJSON, bool, error) {
@@ -162,10 +164,11 @@ func cmdNetworkAttach(c *cli, args []string) error {
 	if slices.Contains(cur, n.ID) {
 		return usagef("VM %s is already on network %s", vm.Name, n.Name)
 	}
-	if err := c.putVMNetworks(vm, append(cur, n.ID), restart); err != nil {
+	raw, err := c.putVMNetworks(vm, append(cur, n.ID), restart)
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "VM %s attached to network %s.", vm.Name, n.Name)
+	return c.done(raw, "VM %s attached to network %s.", vm.Name, n.Name)
 }
 
 func cmdNetworkDetach(c *cli, args []string) error {
@@ -178,8 +181,9 @@ func cmdNetworkDetach(c *cli, args []string) error {
 	if len(rest) == len(cur) {
 		return notFoundf("VM %s is not on network %s", vm.Name, n.Name)
 	}
-	if err := c.putVMNetworks(vm, rest, restart); err != nil {
+	raw, err := c.putVMNetworks(vm, rest, restart)
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "VM %s detached from network %s.", vm.Name, n.Name)
+	return c.done(raw, "VM %s detached from network %s.", vm.Name, n.Name)
 }

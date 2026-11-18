@@ -60,6 +60,19 @@ func TestDiskDetachKeepsOthers(t *testing.T) {
 	}
 }
 
+func TestDiskAttachDetachJSONPrintsVM(t *testing.T) {
+	h, c, out, errb := diskHub(t, vmOneDisk, true)
+	h.on("PUT /api/orgs/o1/vms/v1/disks", 200, vmWithDisks)
+	for _, args := range [][]string{{"disk", "attach", "b", "dev", "--json"}, {"disk", "detach", "a", "dev", "--json"}} {
+		if code := run(c, args); code != 0 {
+			t.Fatal(code, errb())
+		}
+	}
+	if strings.Count(out(), `"mountPath": "/mnt/b"`) != 2 {
+		t.Errorf("stdout %q", out())
+	}
+}
+
 func TestDiskAttachTwiceRefused(t *testing.T) {
 	h, c, _, errb := diskHub(t, vmWithDisks, true)
 	if code := run(c, []string{"disk", "attach", "a", "dev"}); code != 2 {
