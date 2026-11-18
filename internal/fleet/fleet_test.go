@@ -1464,7 +1464,7 @@ func TestDesiredIntegrationVMMode(t *testing.T) {
 	n, cred := e.node(e.org.ID, "n")
 	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
 	exp := time.Now().Add(time.Hour).Truncate(time.Second)
-	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeVM, store.IntegrationSecret{Token: intToken, AccessExpiresAt: &exp})
+	e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, integrations.ModeVM, store.IntegrationSecret{Token: intToken, Refresh: intRefresh, AccessExpiresAt: &exp})
 
 	d := e.connect(cred).desired().Desired[0]
 	if len(d.Integrations) != 1 || d.Integrations[0].Token != intToken || d.Integrations[0].ExpiresAt == nil || !d.Integrations[0].ExpiresAt.Equal(exp) {
@@ -1573,6 +1573,115 @@ func TestDesiredNeverRefreshToken(t *testing.T) {
 		}
 		if err := e.s.DeleteIntegration(context.Background(), in); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+type fakeOAuth struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+	exp   time.Time
+}
+
+func (*fakeOAuth) AuthorizeURL(string, string) string { return "" }
+func (*fakeOAuth) Exchange(context.Context, string, string, string) (integrations.OAuthTokens, error) {
+	return integrations.OAuthTokens{}, errors.New("unused")
+}
+func (f *fakeOAuth) Refresh(_ context.Context, rt string) (integrations.OAuthTokens, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return integrations.OAuthTokens{}, f.err
+	}
+	return integrations.OAuthTokens{Access: "at-new-dummy-0000", Refresh: "rt-new-dummy-0000", ExpiresAt: f.exp}, nil
+}
+
+func (f *fakeOAuth) n() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// runRefresh starts the refresh loop and stops it, waiting for its exit, at test end.
+func (e *env) runRefresh(oauth integrations.ClaudeOAuth) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		e.f.RefreshIntegrations(ctx, oauth, 10*time.Millisecond)
+		close(done)
+	}()
+	e.t.Cleanup(func() { cancel(); <-done })
+}
+
+func TestRefreshIntegrationsPushes(t *testing.T) {
+	for _, mode := range []integrations.Mode{integrations.ModeProxy, integrations.ModeVM} {
+		t.Run(string(mode), func(t *testing.T) {
+			e := newEnv(t)
+			n, cred := e.node(e.org.ID, "n")
+			v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+			exp := time.Now().Add(10 * time.Minute)
+			e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, mode, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &exp})
+			node := e.connect(cred)
+			before := desiredVM(t, node.desired(), v.ID)
+			newExp := time.Now().Add(8 * time.Hour).Truncate(time.Second)
+			e.runRefresh(&fakeOAuth{exp: newExp})
+			after := desiredVM(t, node.desired(), v.ID)
+			if mode == integrations.ModeProxy {
+				if after.Egress == nil || len(after.Egress.Secrets) != 1 || after.Egress.Secrets[0].Value != "at-new-dummy-0000" ||
+					after.Egress.Secrets[0].Placeholder != before.Egress.Secrets[0].Placeholder || after.Integrations[0].Token != before.Integrations[0].Token {
+					t.Fatalf("proxy after refresh: %+v", after.Egress)
+				}
+				return
+			}
+			if len(after.Integrations) != 1 || after.Integrations[0].Token != "at-new-dummy-0000" || after.Integrations[0].ExpiresAt == nil || !after.Integrations[0].ExpiresAt.Equal(newExp) {
+				t.Fatalf("vm after refresh: %#v", after.Integrations)
+			}
+		})
+	}
+}
+
+func TestRefreshIntegrationsBackoff(t *testing.T) {
+	var buf syncBuf
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+
+	e := newEnv(t)
+	exp := base.Add(10 * time.Minute)
+	in := e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &exp})
+	oauth := &fakeOAuth{err: fmt.Errorf("%w: claude: HTTP 503", integrations.ErrUnreachable)}
+	e.runRefresh(oauth)
+	waitFor(t, func() bool { return oauth.n() == 1 })
+	time.Sleep(30 * time.Millisecond)
+	if n := oauth.n(); n != 1 {
+		t.Fatalf("called %d times within three ticks", n)
+	}
+	offset.Store(int64(59 * time.Second))
+	time.Sleep(30 * time.Millisecond)
+	if n := oauth.n(); n != 1 {
+		t.Fatalf("called %d times before a minute passed", n)
+	}
+	offset.Store(int64(61 * time.Second))
+	waitFor(t, func() bool { return oauth.n() == 2 })
+	offset.Store(int64(61*time.Second + 119*time.Second))
+	time.Sleep(30 * time.Millisecond)
+	if n := oauth.n(); n != 2 {
+		t.Fatalf("backoff did not double: %d calls", n)
+	}
+	logs := buf.String()
+	if !strings.Contains(logs, "integration refresh failed") || !strings.Contains(logs, in.ID.String()) {
+		t.Fatalf("no failure log: %s", logs)
+	}
+	for _, tok := range []string{"sk-ant-oat01-dummyaccess0000", intRefresh} {
+		if strings.Contains(logs, tok) {
+			t.Fatalf("token in log: %s", logs)
 		}
 	}
 }

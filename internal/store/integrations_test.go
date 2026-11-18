@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -372,5 +374,186 @@ func TestIntegrationStaleWrite(t *testing.T) {
 	}
 	if err := s.SetIntegrationMode(ctx, cur, integrations.ModeVM, uid); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted: %v", err)
+	}
+}
+
+func TestIntegrationRefreshTokenOnlyForOAuth(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	if _, err := s.CreateIntegration(ctx, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeOrg, nil),
+		store.IntegrationSecret{Token: dummyAccess}); !errors.Is(err, store.ErrIntegrationRefresh) {
+		t.Fatalf("oauth without refresh: %v", err)
+	}
+	if _, err := s.CreateIntegration(ctx, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil),
+		store.IntegrationSecret{Token: dummyGH, Refresh: dummyRefresh}); !errors.Is(err, store.ErrIntegrationRefresh) {
+		t.Fatalf("pat with refresh: %v", err)
+	}
+	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceSetupToken, store.EnvScopeOrg, nil), store.IntegrationSecret{Token: dummyAccess})
+	n := v
+	n.Source = integrations.SourceOAuth
+	if err := s.ReplaceIntegrationToken(ctx, v, n, store.IntegrationSecret{Token: dummyAccess}); !errors.Is(err, store.ErrIntegrationRefresh) || strings.Contains(err.Error(), "obsph_") {
+		t.Fatalf("replace oauth without refresh: %v", err)
+	}
+}
+
+func TestIntegrationAccessExpiryOnlyForOAuth(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	exp := time.Now().Add(time.Hour)
+	v := mustCreateIntegration(t, s, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil), store.IntegrationSecret{Token: dummyGH, AccessExpiresAt: &exp})
+	if v.AccessExpiresAt != nil || mustIntegration(t, s, org.ID, v.ID).AccessExpiresAt != nil {
+		t.Fatal("pat create stored an access expiry")
+	}
+	if err := s.ReplaceIntegrationToken(ctx, v, v, store.IntegrationSecret{Token: dummyGH, AccessExpiresAt: &exp}); err != nil {
+		t.Fatal(err)
+	}
+	if mustIntegration(t, s, org.ID, v.ID).AccessExpiresAt != nil {
+		t.Fatal("pat replace stored an access expiry")
+	}
+}
+
+type fakeRefresh struct {
+	mu      sync.Mutex
+	got     []string
+	n       int
+	err     error
+	block   chan struct{}
+	entered chan struct{}
+}
+
+func (f *fakeRefresh) refresh(_ context.Context, rt string) (integrations.OAuthTokens, error) {
+	f.mu.Lock()
+	f.got = append(f.got, rt)
+	f.n++
+	n, err, block, entered := f.n, f.err, f.block, f.entered
+	f.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
+	if block != nil {
+		<-block
+	}
+	if err != nil {
+		return integrations.OAuthTokens{}, err
+	}
+	return integrations.OAuthTokens{Access: fmt.Sprintf("at-new-%d", n), Refresh: fmt.Sprintf("rt-new-%d", n), ExpiresAt: time.Now().Add(30 * time.Minute)}, nil
+}
+
+func (f *fakeRefresh) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.got)
+}
+
+func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.IntegrationRef {
+	t.Helper()
+	exp := time.Now().Add(in)
+	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &uid),
+		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
+	return store.IntegrationRef{OrgID: org.ID, ID: v.ID}
+}
+
+func TestRefreshIntegrationRotates(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 10*time.Minute)
+	before := time.Now().Add(time.Hour)
+	due, err := s.DueOAuthRefreshes(ctx, before)
+	if err != nil || len(due) != 1 || due[0] != ref {
+		t.Fatalf("due %v %v", due, err)
+	}
+	f := &fakeRefresh{}
+	if ok, err := s.RefreshIntegration(ctx, ref, before, f.refresh); !ok || err != nil {
+		t.Fatalf("refresh %v %v", ok, err)
+	}
+	if res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid)); res[integrations.Claude].Token != "at-new-1" {
+		t.Fatal("resolution after refresh")
+	}
+	if ok, err := s.RefreshIntegration(ctx, ref, before, f.refresh); !ok || err != nil {
+		t.Fatalf("second refresh %v %v", ok, err)
+	}
+	if got := f.calls(); !slices.Equal(got, []string{dummyRefresh, "rt-new-1"}) {
+		t.Fatalf("refresh tokens passed: %d calls, rotation stored: %v", len(got), len(got) == 2 && got[1] == "rt-new-1")
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationOK || got.LastError != "" || got.AccessExpiresAt == nil || time.Until(*got.AccessExpiresAt) < 20*time.Minute {
+		t.Fatalf("after refresh %+v", got)
+	}
+}
+
+func TestRefreshIntegrationNoDoubleRun(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 10*time.Minute)
+	before := time.Now().Add(time.Hour)
+	f := &fakeRefresh{block: make(chan struct{}), entered: make(chan struct{}, 2)}
+	type result struct {
+		ok  bool
+		err error
+	}
+	first := make(chan result, 1)
+	go func() {
+		ok, err := s.RefreshIntegration(ctx, ref, before, f.refresh)
+		first <- result{ok, err}
+	}()
+	<-f.entered
+	ok, err := s.RefreshIntegration(ctx, ref, before, f.refresh)
+	close(f.block)
+	if ok || err != nil {
+		t.Fatalf("second while locked: %v %v", ok, err)
+	}
+	if r := <-first; !r.ok || r.err != nil {
+		t.Fatalf("first: %+v", r)
+	}
+	if n := len(f.calls()); n != 1 {
+		t.Fatalf("refresh called %d times", n)
+	}
+}
+
+func TestRefreshIntegrationInvalidGrant(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 10*time.Minute)
+	f := &fakeRefresh{err: integrations.ErrInvalidGrant}
+	if ok, err := s.RefreshIntegration(ctx, ref, time.Now().Add(time.Hour), f.refresh); ok || !errors.Is(err, integrations.ErrInvalidGrant) {
+		t.Fatalf("invalid grant: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationExpired || got.LastError != "sign in again" {
+		t.Fatalf("after invalid grant %+v", got)
+	}
+	if res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid)); res[integrations.Claude].Token != dummyAccess {
+		t.Fatal("old access token no longer resolved")
+	}
+	if due, err := s.DueOAuthRefreshes(ctx, time.Now().Add(time.Hour)); err != nil || len(due) != 0 {
+		t.Fatalf("expired still due: %v %v", due, err)
+	}
+}
+
+func TestRefreshIntegrationFailureRecorded(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 10*time.Minute)
+	f := &fakeRefresh{err: integrations.ErrUnreachable}
+	if ok, err := s.RefreshIntegration(ctx, ref, time.Now().Add(time.Hour), f.refresh); ok || !errors.Is(err, integrations.ErrUnreachable) {
+		t.Fatalf("unreachable: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationOK || got.LastError != "refresh failed" {
+		t.Fatalf("after failure %+v", got)
+	}
+}
+
+func TestRefreshIntegrationNotDue(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 2*time.Hour)
+	before := time.Now().Add(60 * time.Minute)
+	if due, err := s.DueOAuthRefreshes(ctx, before); err != nil || len(due) != 0 {
+		t.Fatalf("due %v %v", due, err)
+	}
+	f := &fakeRefresh{}
+	if ok, err := s.RefreshIntegration(ctx, ref, before, f.refresh); ok || err != nil {
+		t.Fatalf("not due: %v %v", ok, err)
+	}
+	if len(f.calls()) != 0 {
+		t.Fatal("refresh called for a row not due")
 	}
 }

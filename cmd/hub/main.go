@@ -94,7 +94,9 @@ func run() error {
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
 	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary)
-	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}}
+	oauth := &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}
+	go f.RefreshIntegrations(ctx, oauth, time.Minute)
+	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth}
 	if cfg.DevSkipVerify {
 		ig.Verifier = integrations.SkipVerifier{}
 		slog.Warn("dev mode: integration verification skipped")

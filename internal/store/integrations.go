@@ -23,6 +23,11 @@ const (
 	IntegrationExpired = "expired"
 )
 
+// ErrIntegrationRefresh is checked before sealing so a CHECK violation, whose detail would carry the row, never surfaces.
+var ErrIntegrationRefresh = errors.New("a refresh token is required for oauth sign-ins and not allowed otherwise")
+
+type IntegrationRef struct{ OrgID, ID uuid.UUID }
+
 // Integration is the metadata of a connected provider account; the token and placeholder never leave the store this way.
 type Integration struct {
 	ID, OrgID                          uuid.UUID
@@ -77,6 +82,17 @@ func integrationAAD(org, id uuid.UUID, field string) []byte {
 	return []byte("integration:" + org.String() + ":" + id.String() + ":" + field)
 }
 
+// checkIntegrationSecret drops an access expiry for non-oauth sources.
+func checkIntegrationSecret(source integrations.Source, sec IntegrationSecret) (IntegrationSecret, error) {
+	if (source == integrations.SourceOAuth) != (sec.Refresh != "") {
+		return sec, ErrIntegrationRefresh
+	}
+	if source != integrations.SourceOAuth {
+		sec.AccessExpiresAt = nil
+	}
+	return sec, nil
+}
+
 // sealIntegration returns nil refresh columns when sec has no refresh token.
 func sealIntegration(key seal.Key, org, id uuid.UUID, sec IntegrationSecret) (nonce, ct, rnonce, rct []byte, err error) {
 	if nonce, ct, err = seal.Seal(key, []byte(sec.Token), integrationAAD(org, id, "access")); err != nil || sec.Refresh == "" {
@@ -106,7 +122,11 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 	if v.Mode == "" {
 		v.Mode = integrations.ModeProxy
 	}
-	err := s.InTx(ctx, func(tx *Store) error {
+	sec, err := checkIntegrationSecret(v.Source, sec)
+	if err != nil {
+		return Integration{}, err
+	}
+	err = s.InTx(ctx, func(tx *Store) error {
 		if err := tx.lockEnvOwner(ctx, integrationOwner(v)); err != nil {
 			return err
 		}
@@ -154,6 +174,10 @@ func (s *Store) integrationWriteResult(ctx context.Context, old Integration, row
 
 // ReplaceIntegrationToken stores a new verified token from sec with v's source and account details; the placeholder stays.
 func (s *Store) ReplaceIntegrationToken(ctx context.Context, old, v Integration, sec IntegrationSecret) error {
+	sec, err := checkIntegrationSecret(v.Source, sec)
+	if err != nil {
+		return err
+	}
 	key, err := s.orgKey(ctx, old.OrgID)
 	if err != nil {
 		return err
@@ -170,6 +194,68 @@ func (s *Store) ReplaceIntegrationToken(ctx context.Context, old, v Integration,
 		WHERE `+envGuard, integrationGuardArgs(old, v.Source, v.Account, v.ScopesInfo, v.ProviderExpiresAt,
 		nonce, ct, rnonce, rct, sec.AccessExpiresAt, v.UpdatedBy)...)
 	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
+}
+
+// DueOAuthRefreshes lists working oauth integrations whose access token expires before before.
+func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]IntegrationRef, error) {
+	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM integrations
+		WHERE source = 'oauth' AND status = 'ok' AND access_expires_at < $1 ORDER BY access_expires_at`, before)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[IntegrationRef])
+}
+
+// RefreshIntegration runs refresh under the row lock, since the provider rotates refresh tokens; false, nil when the row is locked elsewhere or no longer due.
+func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, before time.Time,
+	refresh func(ctx context.Context, refreshToken string) (integrations.OAuthTokens, error)) (bool, error) {
+	var refreshed bool
+	var refreshErr error
+	err := s.InTx(ctx, func(tx *Store) error {
+		var rnonce, rct []byte
+		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM integrations
+			WHERE org_id = $1 AND id = $2 AND source = 'oauth' AND status = 'ok' AND access_expires_at < $3
+			FOR UPDATE SKIP LOCKED`, ref.OrgID, ref.ID, before).Scan(&rnonce, &rct)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		key, err := tx.orgKey(ctx, ref.OrgID)
+		if err != nil {
+			return err
+		}
+		old, err := seal.Open(key, rnonce, rct, integrationAAD(ref.OrgID, ref.ID, "refresh"))
+		if err != nil {
+			return fmt.Errorf("decrypt integration %s: %w", ref.ID, err)
+		}
+		t, err := refresh(ctx, string(old))
+		var sec IntegrationSecret
+		if err == nil {
+			sec, err = checkIntegrationSecret(integrations.SourceOAuth, IntegrationSecret{Token: t.Access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt})
+		}
+		if refreshErr = err; err != nil {
+			status, reason := IntegrationOK, "refresh failed"
+			if errors.Is(err, integrations.ErrInvalidGrant) {
+				status, reason = IntegrationExpired, "sign in again"
+			}
+			_, err := tx.q.Exec(ctx, "UPDATE integrations SET status = $3, last_error = $4 WHERE org_id = $1 AND id = $2", ref.OrgID, ref.ID, status, reason)
+			return err
+		}
+		nonce, ct, rnonce, rct, err := sealIntegration(key, ref.OrgID, ref.ID, sec)
+		if err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, `UPDATE integrations SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
+			access_expires_at = $7, last_error = '' WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, nonce, ct, rnonce, rct, sec.AccessExpiresAt)
+		refreshed = err == nil
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return refreshed, refreshErr
 }
 
 // SetIntegrationMode remembers a past vm mode, since the real token may still be in the guest.

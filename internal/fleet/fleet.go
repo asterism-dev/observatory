@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -345,6 +346,57 @@ func (f *Fleet) SweepEgressCAs(ctx context.Context, every time.Duration) {
 		}
 		for _, org := range orgs {
 			f.NotifyOrg(org)
+		}
+	}
+}
+
+const refreshAhead = 60 * time.Minute
+
+var clock = time.Now
+
+// RefreshIntegrations refreshes Claude sign-ins due within refreshAhead and pushes the new access tokens; failures back off per integration from 1 to 15 minutes. It returns when ctx ends.
+func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, every time.Duration) {
+	type backoff struct {
+		until time.Time
+		wait  time.Duration
+	}
+	backoffs := map[store.IntegrationRef]backoff{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		now := clock()
+		refs, err := f.store.DueOAuthRefreshes(ctx, now.Add(refreshAhead))
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("list due integration refreshes", "err", err)
+			}
+			continue
+		}
+		maps.DeleteFunc(backoffs, func(r store.IntegrationRef, _ backoff) bool { return !slices.Contains(refs, r) })
+		for _, ref := range refs {
+			b := backoffs[ref]
+			if now.Before(b.until) {
+				continue
+			}
+			// The provider call runs inside the row-locking tx; the timeout bounds both.
+			rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ok, err := f.store.RefreshIntegration(rctx, ref, now.Add(refreshAhead), oauth.Refresh)
+			cancel()
+			switch {
+			case err != nil:
+				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
+				backoffs[ref] = backoff{until: now.Add(b.wait), wait: b.wait}
+				slog.Error("integration refresh failed", "id", ref.ID, "err", err)
+			case ok:
+				delete(backoffs, ref)
+				slog.Info("integration refreshed", "id", ref.ID)
+				f.NotifyOrg(ref.OrgID)
+			}
 		}
 	}
 }
