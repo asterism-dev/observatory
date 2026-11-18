@@ -86,6 +86,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	go f.SweepSnapshots(ctx, 10*time.Second, 120*time.Second)
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)

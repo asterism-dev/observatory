@@ -991,3 +991,150 @@ func TestDiskErrorsDroppedWithVMOrNode(t *testing.T) {
 		t.Fatalf("after disconnect: %v", got)
 	}
 }
+
+// reportSnapshot reports snap as taken by the node; without attached disks it becomes ready at once.
+func (e *env) reportSnapshot(v store.VM, snap uuid.UUID, errMsg string) {
+	e.t.Helper()
+	if _, err := e.s.ApplySnapshotStatus(context.Background(), v.NodeID, proto.VMStatus{ID: v.ID.String(),
+		Snapshots: []proto.SnapshotInfo{{ID: snap.String(), Error: errMsg}}}); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) snapshot(v store.VM, name string) store.Snapshot {
+	e.t.Helper()
+	sn, err := e.s.CreateSnapshot(context.Background(), v.OrgID, v.ID, name, false, e.owner)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return sn
+}
+
+func desiredVM(t *testing.T, m proto.Message, id uuid.UUID) *proto.DesiredVM {
+	t.Helper()
+	for _, d := range m.Desired {
+		if d.Spec.ID == id.String() {
+			return &d
+		}
+	}
+	return nil
+}
+
+func TestDesiredCarriesSnapshots(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	creating := e.snapshot(v, "creating")
+	ready := e.snapshot(v, "ready")
+	e.reportSnapshot(v, ready.ID, "")
+	failed := e.snapshot(v, "failed")
+	e.reportSnapshot(v, failed.ID, "disk full")
+
+	got := e.connect(cred).desired().Desired[0].Snapshots
+	want := []proto.SnapshotRef{{ID: creating.ID.String()}, {ID: ready.ID.String(), Complete: true}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("snapshots = %+v, want %+v", got, want)
+	}
+}
+
+func TestDesiredRestoreReady(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	sn := e.snapshot(v, "s")
+	e.reportSnapshot(v, sn.ID, "")
+	if _, err := e.s.RequestRestore(ctx, e.org.ID, v.ID, sn.ID, false, true); err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	for _, c := range []struct {
+		state string
+		ready bool
+	}{{"node", false}, {"storage", false}, {"done", true}} {
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET restore_state = $2 WHERE id = $1", v.ID, c.state); err != nil {
+			t.Fatal(err)
+		}
+		e.f.NotifyOrg(e.org.ID)
+		r := node.desired().Desired[0].Restore
+		if r == nil || *r != (proto.Restore{SnapshotID: sn.ID.String(), Seq: 1, Ready: c.ready}) {
+			t.Fatalf("%s: restore = %+v", c.state, r)
+		}
+	}
+}
+
+func TestDesiredSkipsForkUntilDisksReady(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.readyDisk(v, "data")
+	sn := e.snapshot(v, "s")
+	e.reportSnapshot(v, sn.ID, "")
+	sn, err := e.s.Snapshot(ctx, e.org.ID, v.ID, sn.ID)
+	if err != nil || len(sn.Disks) != 1 {
+		t.Fatalf("snapshot: %+v %v", sn, err)
+	}
+	if _, err := e.s.ApplyStorageFiles(ctx, []proto.StorageFile{{Name: proto.StorageFileName(sn.Disks[0].ID.String()), SizeBytes: 1 << 30}}); err != nil {
+		t.Fatal(err)
+	}
+	fork, err := e.s.ForkVM(ctx, e.org.ID, sn, "fork", false, e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := e.connect(cred)
+	if m := node.desired(); desiredVM(t, m, fork.ID) != nil || desiredVM(t, m, v.ID) == nil {
+		t.Fatalf("fork listed before its disk is ready: %v", ids(m))
+	}
+	disks, err := e.s.VMDisks(ctx, fork.ID)
+	if err != nil || len(disks) != 1 {
+		t.Fatalf("fork disks: %+v %v", disks, err)
+	}
+	if _, err := e.s.ApplyStorageFiles(ctx, []proto.StorageFile{{Name: proto.StorageFileName(disks[0].DiskID.String()), SizeBytes: 1 << 30}}); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	d := desiredVM(t, node.desired(), fork.ID)
+	if d == nil || d.Fork == nil || *d.Fork != (proto.Fork{SourceVMID: v.ID.String(), SnapshotID: sn.ID.String()}) {
+		t.Fatalf("fork entry = %+v", d)
+	}
+}
+
+func TestStatusSnapshotNotifies(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	sn := e.snapshot(v, "s")
+	node := e.connect(cred)
+	if refs := node.desired().Desired[0].Snapshots; len(refs) != 1 || refs[0].Complete {
+		t.Fatalf("snapshots = %+v", refs)
+	}
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning,
+		Snapshots: []proto.SnapshotInfo{{ID: sn.ID.String(), SizeBytes: 1}}}})
+	if refs := node.desired().Desired[0].Snapshots; len(refs) != 1 || !refs[0].Complete {
+		t.Fatalf("snapshots after status = %+v", refs)
+	}
+}
+
+func TestSweepSnapshotsFailsStaleAndNotifies(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.readyDisk(v, "data")
+	sn := e.snapshot(v, "s")
+	e.reportSnapshot(v, sn.ID, "")
+	node := e.connect(cred)
+	if refs := node.desired().Desired[0].Snapshots; len(refs) != 1 {
+		t.Fatalf("snapshots = %+v", refs)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.f.SweepSnapshots(ctx, 10*time.Millisecond, 0)
+	if refs := node.desired().Desired[0].Snapshots; len(refs) != 0 {
+		t.Fatalf("snapshots after timeout = %+v", refs)
+	}
+	if got, _ := e.s.Snapshot(context.Background(), e.org.ID, v.ID, sn.ID); got.State != "error" {
+		t.Fatalf("state %q", got.State)
+	}
+}

@@ -304,3 +304,49 @@ func TestOnline(t *testing.T) {
 		t.Fatal("online after 11 s")
 	}
 }
+
+func TestStorageRestoredNotifies(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	vm, err := e.s.CreateVM(ctx, store.VM{OrgID: e.org, NodeID: e.node, UserID: &e.user, Name: "vm", CPUs: 1, MemoryMB: 512, DiskGB: 5, CreatedBy: e.user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := e.disk(t, "data", 1, nil)
+	e.report(t, file(d, 1))
+	if _, _, err := e.s.SetVMDisks(ctx, e.org, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); err != nil {
+		t.Fatal(err)
+	}
+	sn, err := e.s.CreateSnapshot(ctx, e.org, vm.ID, "s", false, e.user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node, proto.VMStatus{ID: vm.ID.String(), Snapshots: []proto.SnapshotInfo{{ID: sn.ID.String()}}}); err != nil {
+		t.Fatal(err)
+	}
+	if sn, err = e.s.Snapshot(ctx, e.org, vm.ID, sn.ID); err != nil || len(sn.Disks) != 1 {
+		t.Fatalf("%+v %v", sn, err)
+	}
+	copyFile := proto.StorageFile{Name: proto.StorageFileName(sn.Disks[0].ID.String()), SizeBytes: 1 << 30}
+	e.report(t, file(d, 1), copyFile)
+	if _, err := e.s.RequestRestore(ctx, e.org, vm.ID, sn.ID, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node, proto.VMStatus{ID: vm.ID.String(), RestoredSeq: 1}); err != nil {
+		t.Fatal(err)
+	}
+	token := stateDisk(e.state(t), d.ID).RestoreToken
+	if token == "" {
+		t.Fatal("no restore token")
+	}
+	e.notified = nil
+	if err := e.h.SetStatus(ctx, proto.StorageStatus{Files: []proto.StorageFile{file(d, 1), copyFile}, Restored: []string{token}}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(e.notified, []uuid.UUID{e.org}) {
+		t.Fatalf("notified %v", e.notified)
+	}
+	if sd := stateDisk(e.state(t), d.ID); sd.RestoreToken != "" {
+		t.Fatalf("restore left: %+v", sd)
+	}
+}

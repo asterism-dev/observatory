@@ -42,7 +42,7 @@ func (h *Hub) State(ctx context.Context) (proto.StorageState, error) {
 	return h.store.StorageState(ctx)
 }
 
-// SetStatus keeps the report in memory and writes what the files confirm (ready sizes, finished copies, purges) to the store.
+// SetStatus keeps the report in memory and writes what the files confirm (ready sizes, finished copies, purges) and finished restores to the store.
 func (h *Hub) SetStatus(ctx context.Context, st proto.StorageStatus) error {
 	files := make(map[string]proto.StorageFile, len(st.Files))
 	for _, f := range st.Files {
@@ -58,6 +58,11 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.StorageStatus) error {
 	if err != nil {
 		return err
 	}
+	restored, err := h.store.ApplyStorageRestored(ctx, st.Restored)
+	if err != nil {
+		return err
+	}
+	orgs = append(orgs, restored...)
 	h.mu.Lock()
 	h.reportedAt, h.files, h.exportErrs, h.version = h.now(), files, errs, st.Version
 	h.mu.Unlock()

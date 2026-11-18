@@ -403,6 +403,10 @@ func TestRequestRestoreRefusals(t *testing.T) {
 	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, creating.ID, false, true); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("not ready: %v", err)
 	}
+	// A snapshot still being taken would block the restore.
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node.ID, proto.VMStatus{ID: vm.ID.String(), Snapshots: []proto.SnapshotInfo{{ID: creating.ID.String(), Error: "failed"}}}); err != nil {
+		t.Fatal(err)
+	}
 	ready := readySnapshot(t, e, vm.ID, "r")
 	if _, err := e.s.SetVMPower(ctx, e.org.ID, vm.ID, proto.PowerRunning, ""); err != nil {
 		t.Fatal(err)
@@ -610,5 +614,42 @@ func TestApplySnapshotStatusSanitizesNodeValues(t *testing.T) {
 	}
 	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, bad.ID); got.State != "error" || len(got.Error) != 500 {
 		t.Fatalf("error length %d", len(got.Error))
+	}
+}
+
+func TestDeleteVMPendingForkSource(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, _ := vmWithDisk(t, e, "v")
+	snap := readySnapshot(t, e, vm.ID, "s")
+	fork, err := e.s.ForkVM(ctx, e.org.ID, snap, "f", false, e.user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("source of a pending fork: %v", err)
+	}
+	if err := e.s.SetVMStatus(ctx, e.node.ID, proto.VMStatus{ID: fork.ID.String(), State: proto.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID); err != nil {
+		t.Fatalf("fork provisioned: %v", err)
+	}
+}
+
+func TestRequestRestoreWhileSnapshotting(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm := mustStoppedVM(t, e, "v", nil)
+	ready := readySnapshot(t, e, vm.ID, "r")
+	creating := mustSnapshot(t, e, vm.ID, "c", false)
+	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, ready.ID, false, true); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("restore during a snapshot: %v", err)
+	}
+	if err := e.s.DeleteSnapshot(ctx, e.org.ID, vm.ID, creating.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, ready.ID, false, true); err != nil {
+		t.Fatalf("after the snapshot is gone: %v", err)
 	}
 }

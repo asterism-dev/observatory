@@ -323,7 +323,11 @@ func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, mem
 			return err
 		}
 		var restoreState string
-		if err := tx.q.QueryRow(ctx, "SELECT restore_state FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", vm, org).Scan(&restoreState); errors.Is(err, pgx.ErrNoRows) {
+		var snapshotting bool
+		// A restore hard-stops the VM, which would cut a snapshot in progress short.
+		if err := tx.q.QueryRow(ctx, `
+			SELECT restore_state, EXISTS (SELECT 1 FROM vm_snapshots WHERE vm_id = v.id AND state = 'creating')
+			FROM vms v WHERE id = $1 AND org_id = $2 FOR UPDATE`, vm, org).Scan(&restoreState, &snapshotting); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
@@ -337,7 +341,7 @@ func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, mem
 			return err
 		}
 		// A started storage restore must finish first: its token can't be replaced before the storage server reports it.
-		if sn.State != "ready" || restoreState == "storage" {
+		if sn.State != "ready" || restoreState == "storage" || snapshotting {
 			return ErrConflict
 		}
 		if v.Power != proto.PowerStopped && !restartAllowed {
@@ -447,6 +451,71 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 		return err
 	})
 	return out, err
+}
+
+// NodeSnapshots lists the snapshots the node's VMs keep, oldest first; failed ones are left out so the node drops their files.
+func (s *Store) NodeSnapshots(ctx context.Context, node uuid.UUID) (map[uuid.UUID][]proto.SnapshotRef, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT s.vm_id, s.id, s.memory, s.state = 'ready' FROM vm_snapshots s JOIN vms v ON v.id = s.vm_id
+		WHERE v.node_id = $1 AND s.state <> 'error' ORDER BY s.created_at, s.name`, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID][]proto.SnapshotRef{}
+	for rows.Next() {
+		var vm, id uuid.UUID
+		var ref proto.SnapshotRef
+		if err := rows.Scan(&vm, &id, &ref.Memory, &ref.Complete); err != nil {
+			return nil, err
+		}
+		ref.ID = id.String()
+		out[vm] = append(out[vm], ref)
+	}
+	return out, rows.Err()
+}
+
+// VMPlan is a VM's pending restore or fork; Hold keeps a fork off its node until its disk copies are ready.
+type VMPlan struct {
+	Restore *proto.Restore
+	Fork    *proto.Fork
+	Hold    bool
+}
+
+// NodeVMPlans returns the plans of the node's VMs that have a restore or an unbuilt fork.
+func (s *Store) NodeVMPlans(ctx context.Context, node uuid.UUID) (map[uuid.UUID]VMPlan, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT v.id, v.restore_snapshot_id, v.restore_seq, v.restore_memory, v.restore_state = 'done',
+			CASE WHEN NOT v.provisioned THEN v.fork_snapshot_id END, v.fork_source_vm, v.fork_memory,
+			NOT v.provisioned AND EXISTS (SELECT 1 FROM vm_disks vd JOIN disks d ON d.id = vd.disk_id
+				WHERE vd.vm_id = v.id AND (d.copy_from_snapshot IS NOT NULL OR d.ready_gb = 0))
+		FROM vms v WHERE v.node_id = $1 AND ((v.restore_seq > 0 AND v.restore_snapshot_id IS NOT NULL)
+			OR (v.fork_snapshot_id IS NOT NULL AND NOT v.provisioned))`, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]VMPlan{}
+	for rows.Next() {
+		var vm uuid.UUID
+		var restoreSnap, forkSnap, forkSource *uuid.UUID
+		var r proto.Restore
+		var forkMemory, hold bool
+		if err := rows.Scan(&vm, &restoreSnap, &r.Seq, &r.Memory, &r.Ready, &forkSnap, &forkSource, &forkMemory, &hold); err != nil {
+			return nil, err
+		}
+		var p VMPlan
+		if restoreSnap != nil {
+			r.SnapshotID = restoreSnap.String()
+			p.Restore = &r
+		}
+		if forkSnap != nil && forkSource != nil {
+			p.Fork = &proto.Fork{SourceVMID: forkSource.String(), SnapshotID: forkSnap.String(), Memory: forkMemory}
+			p.Hold = hold
+		}
+		out[vm] = p
+	}
+	return out, rows.Err()
 }
 
 func uniqueIDs(ids []uuid.UUID) []uuid.UUID {

@@ -189,12 +189,18 @@ func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power
 // DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.
 func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		var one int
-		err := tx.q.QueryRow(ctx, "SELECT 1 FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", id, org).Scan(&one)
+		// The node deletes the VM's snapshot files, which a fork not yet built still copies from.
+		var forkPending bool
+		err := tx.q.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM vms f WHERE f.fork_source_vm = v.id AND NOT f.provisioned)
+			FROM vms v WHERE v.id = $1 AND v.org_id = $2 FOR UPDATE`, id, org).Scan(&forkPending)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
+		}
+		if forkPending {
+			return ErrConflict
 		}
 		if _, err := tx.q.Exec(ctx, `
 			UPDATE disk_exports SET releasing = true, release_seq = NULL

@@ -3,6 +3,7 @@ package fleet
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -126,6 +127,29 @@ func (f *Fleet) detach(c *conn) {
 	}
 }
 
+// SweepSnapshots fails snapshots whose storage copies took longer than timeout, so their nodes resume the VMs; it returns when ctx ends.
+func (f *Fleet) SweepSnapshots(ctx context.Context, every, timeout time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		orgs, err := f.store.FailStaleSnapshots(ctx, time.Now().Add(-timeout))
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("sweep snapshots", "err", err)
+			}
+			continue
+		}
+		for _, org := range orgs {
+			f.NotifyOrg(org)
+		}
+	}
+}
+
 // desired builds the node's list and returns the releasing disks it no longer carries.
 func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.DesiredVM, []uuid.UUID, error) {
 	// Read first: a detach committed after this read is still in the list below, so its export is never marked by it.
@@ -141,6 +165,14 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	if err != nil {
 		return nil, nil, err
 	}
+	snaps, err := f.store.NodeSnapshots(ctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
+	plans, err := f.store.NodeVMPlans(ctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
 	nets, err := f.store.Networks(ctx, org)
 	if err != nil {
 		return nil, nil, err
@@ -151,6 +183,10 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	}
 	out := make([]proto.DesiredVM, 0, len(vms))
 	for _, v := range vms {
+		plan := plans[v.ID]
+		if plan.Hold {
+			continue
+		}
 		boot, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
@@ -162,6 +198,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		out = append(out, proto.DesiredVM{
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
+			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
 		})
 	}
 	return out, releasing, nil
