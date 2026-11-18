@@ -69,6 +69,11 @@ func TestSSHRefusesStopped(t *testing.T) {
 	if code := run(c, []string{"ssh", "dev"}); code != 1 || len(*execs) != 0 || !strings.Contains(errb(), "observatory vm start dev") {
 		t.Errorf("code %d execs %v stderr %q", code, *execs, errb())
 	}
+	noAddr := strings.Replace(withState("stopped"), `"dnsName":"dev.internal"`, `"dnsName":""`, 1)
+	_, c, _, _, errb = connectHub(t, noAddr, ownDevice)
+	if code := run(c, []string{"ssh", "dev"}); code != 1 || !strings.Contains(errb(), "observatory vm start dev") {
+		t.Errorf("stopped without address: code %d stderr %q", code, errb())
+	}
 	_, c, execs, _, _ = connectHub(t, withState("suspended"), ownDevice)
 	if code := run(c, []string{"ssh", "dev"}); code != 0 || len(*execs) != 1 {
 		t.Errorf("code %d execs %v", code, *execs)

@@ -26,16 +26,16 @@ func (c *cli) sshHost(key string) (vmJSON, string, error) {
 	if err != nil {
 		return v, "", err
 	}
+	switch v.State {
+	case "stopped", "paused", "hibernated":
+		return v, "", &exitError{1, fmt.Sprintf("vm %s is %s; run observatory vm start %s", v.Name, v.State, v.Name)}
+	}
 	host := v.DNSName
 	if host == "" {
 		host = v.MgmtIP
 	}
 	if host == "" {
 		return v, "", &exitError{1, "vm has no management address yet"}
-	}
-	switch v.State {
-	case "stopped", "paused", "hibernated":
-		return v, "", &exitError{1, fmt.Sprintf("vm %s is %s; run observatory vm start %s", v.Name, v.State, v.Name)}
 	}
 	return v, host, nil
 }
