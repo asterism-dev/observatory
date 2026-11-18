@@ -117,7 +117,7 @@ func installGuest(t *testing.T) string {
 	root, seed := t.TempDir(), t.TempDir()
 	for name, s := range map[string]string{
 		"vmm-boot.sh": BootScript, "vmm-agent.py": AgentScript, "vmm-integrations.py": IntegrationsScript,
-		"vmm-env": `{}`, "vmm-authorized-keys": "",
+		"vmm-AGENTS.md": ContextFile, "vmm-env": `{}`, "vmm-authorized-keys": "",
 	} {
 		if err := os.WriteFile(filepath.Join(seed, name), []byte(s), 0o644); err != nil {
 			t.Fatal(err)
@@ -320,7 +320,7 @@ type userGuest struct {
 	t                           *testing.T
 	env                         []string
 	script, home, state, claude string
-	log, flag                   string
+	log, flag, root             string
 }
 
 func newUserGuest(t *testing.T, answers map[string]string) *userGuest {
@@ -331,7 +331,7 @@ func newUserGuest(t *testing.T, answers map[string]string) *userGuest {
 		t.Skip("no current user")
 	}
 	root := t.TempDir()
-	g := &userGuest{t: t, home: filepath.Join(root, "home", u.Username), state: filepath.Join(root, "var/lib/vmm", u.Username, "integrations.json")}
+	g := &userGuest{t: t, root: root, home: filepath.Join(root, "home", u.Username), state: filepath.Join(root, "var/lib/vmm", u.Username, "integrations.json")}
 	g.script = filepath.Join(t.TempDir(), "vmm-integrations.py")
 	os.WriteFile(g.script, []byte(IntegrationsScript), 0o644)
 	os.MkdirAll(g.home, 0o755)
@@ -591,5 +591,67 @@ func TestLinearProfileWithoutVmmToken(t *testing.T) {
 	cmd.Env = []string{"PATH=" + t.TempDir()}
 	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "unset\n" {
 		t.Fatalf("login without vmm-token: %v %q", err, out)
+	}
+}
+
+func (g *userGuest) setContext(text string) {
+	src := filepath.Join(g.root, "usr/local/share/vmm/AGENTS.md")
+	os.MkdirAll(filepath.Dir(src), 0o755)
+	if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
+		g.t.Fatal(err)
+	}
+}
+
+func (g *userGuest) codexAgents() string { return filepath.Join(g.home, ".codex/AGENTS.md") }
+
+func TestCodexAgentsWritten(t *testing.T) {
+	g := newUserGuest(t, map[string]string{})
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "<missing>" {
+		t.Fatalf("without a source = %q", got)
+	}
+	g.setContext("platform v1\n")
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v1\n" {
+		t.Fatalf("written = %q", got)
+	}
+	if fi, _ := os.Stat(g.codexAgents()); fi.Mode().Perm() != 0o644 {
+		t.Errorf("file mode %v", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(filepath.Dir(g.codexAgents())); fi.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", fi.Mode().Perm())
+	}
+	if !strings.Contains(g.read(g.state), `"codex_agents"`) {
+		t.Fatalf("state = %q", g.read(g.state))
+	}
+	g.setContext("platform v2\n")
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v2\n" {
+		t.Fatalf("after a source change = %q", got)
+	}
+}
+
+func TestCodexAgentsUserFileLeftAlone(t *testing.T) {
+	g := newUserGuest(t, map[string]string{})
+	g.setContext("platform v1\n")
+	os.MkdirAll(filepath.Dir(g.codexAgents()), 0o755)
+	os.WriteFile(g.codexAgents(), []byte("my own rules\n"), 0o600)
+	g.sync()
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "my own rules\n" {
+		t.Fatalf("own file = %q", got)
+	}
+
+	g = newUserGuest(t, map[string]string{})
+	g.setContext("platform v1\n")
+	g.sync()
+	if err := os.WriteFile(g.codexAgents(), []byte("platform v1\nmy addition\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g.setContext("platform v2\n")
+	g.sync()
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v1\nmy addition\n" {
+		t.Fatalf("edited file = %q", got)
 	}
 }

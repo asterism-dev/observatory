@@ -115,6 +115,12 @@ func TestSeedHasIntegrationsScript(t *testing.T) {
 	}
 }
 
+func TestSeedHasContextFile(t *testing.T) {
+	if got := GuestSeedFiles(VMFile{}, PrimaryNet{})["vmm-AGENTS.md"]; string(got) != guest.ContextFile || len(got) == 0 {
+		t.Fatalf("seed vmm-AGENTS.md = %q", got)
+	}
+}
+
 func TestSeedKeysTrimmed(t *testing.T) {
 	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one@host\n", "", "  \n", "ssh-rsa BB\nssh-rsa CC", " ssh-rsa DD two\r\n"}}}, PrimaryNet{})
 	if got := string(files["vmm-authorized-keys"]); got != "ssh-ed25519 AAAA one@host\nssh-rsa DD two\n" {
@@ -301,6 +307,43 @@ func TestBootScriptTrust(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "usr/local/share/ca-certificates/observatory-egress-"+id+".crt")); !os.IsNotExist(err) {
 		t.Fatalf("ca file kept without cas in the seed: %v", err)
+	}
+}
+
+func TestBootScriptInstallsContext(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "usr/local/share/vmm/AGENTS.md")
+	link := filepath.Join(root, "etc/claude-code/CLAUDE.md")
+	for range 2 {
+		runBoot(t, root, GuestSeedFiles(VMFile{}, PrimaryNet{}))
+		if got := readFile(t, path); got != guest.ContextFile {
+			t.Fatalf("AGENTS.md = %q", got)
+		}
+		if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0o644 {
+			t.Fatalf("AGENTS.md: %v, %v", st, err)
+		}
+		if got, err := os.Readlink(link); err != nil || got != "/usr/local/share/vmm/AGENTS.md" {
+			t.Fatalf("CLAUDE.md link = %q, %v", got, err)
+		}
+	}
+}
+
+func TestBootScriptKeepsOwnClaudeMemory(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	link := filepath.Join(root, "etc/claude-code/CLAUDE.md")
+	os.MkdirAll(filepath.Dir(link), 0o755)
+	if err := os.WriteFile(link, []byte("org policy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runBoot(t, root, GuestSeedFiles(VMFile{}, PrimaryNet{}))
+	if st, err := os.Lstat(link); err != nil || !st.Mode().IsRegular() || readFile(t, link) != "org policy\n" {
+		t.Fatalf("own CLAUDE.md replaced: %v, %v", st, err)
 	}
 }
 
