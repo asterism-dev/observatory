@@ -136,7 +136,7 @@ func (a *Agent) takeSnapshot(id string, ref proto.SnapshotRef) {
 	if err == nil {
 		switch {
 		case live && ref.Memory:
-			if err = checkSpace(a.VMsDir, int64(f.Spec.MemoryMB)<<20+1<<30); err == nil {
+			if err = CheckSpace(a.VMsDir, int64(f.Spec.MemoryMB)<<20+1<<30); err == nil {
 				err = inst.SaveState(tmp)
 			}
 		case live:
@@ -380,7 +380,7 @@ func (a *Agent) forkLocal(d proto.DesiredVM) (VMFile, error) {
 			return VMFile{}, errSnapshotMissing
 		}
 	}
-	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, Boot: d.Boot,
+	f := VMFile{Spec: d.Spec, MAC: RandomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, Boot: d.Boot,
 		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	dir := VMDir(a.VMsDir, f.Spec.ID)
 	state := filepath.Join(dir, StateDir)

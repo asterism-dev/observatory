@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 # Vsock agent for the node; requests never carry keys or variables (the seed does), so never log request values.
 import base64
+import concurrent.futures
+import fcntl
 import glob
 import json
 import os
@@ -16,6 +18,8 @@ MAX_REQUEST = 64 << 10
 ROOT = os.environ.get("VMM_ROOT", "")
 SEED_DIR = os.environ.get("VMM_SEED_DIR", "")
 SEED_MOUNT = "/run/vmm-seed"
+NETPLAN_GENERATE = "/usr/libexec/netplan/generate"
+RNDRESEEDCRNG = 0x5207
 MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,62})")
 
@@ -78,6 +82,15 @@ def set_macs(macs):
         run("ip", "link", "set", "dev", name, "up")
 
 
+def reseed_rng(entropy):
+    # A clone starts with its template's CRNG state; mix in host entropy and make the kernel rekey before anything random is made.
+    if len(entropy) < 16:
+        raise ValueError("takeoff needs host entropy")
+    with open("/dev/urandom", "wb", buffering=0) as f:
+        f.write(entropy)
+        fcntl.ioctl(f, RNDRESEEDCRNG)
+
+
 def grow_root():
     src = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "/"], check=True, capture_output=True, text=True).stdout.strip()
     part = os.path.basename(os.path.realpath(src))
@@ -105,6 +118,8 @@ def resume(req):
 
 def takeoff(req):
     set_clock(req["time"])
+    if not ROOT:
+        reseed_rng(req["entropy"])
     seed = mount_seed()
     try:
         if not ROOT:
@@ -124,23 +139,46 @@ def takeoff(req):
                 net = net.replace('macaddress: "%s"' % mac, 'name: "%s"' % name)
         # The seed holds a bare v2 config; netplan needs it under "network:" like cloud-init writes it.
         write(ROOT + "/etc/netplan/50-cloud-init.yaml", "network:\n" + "".join("  " + l for l in net.splitlines(True)), 0o600)
-        if not ROOT:
-            run("netplan", "apply")
-        for k in glob.glob(ROOT + "/etc/ssh/ssh_host_*"):
-            os.remove(k)
-        os.makedirs(ROOT + "/etc/ssh", exist_ok=True)
-        run("ssh-keygen", "-A", *(["-f", ROOT] if ROOT else []))
+        # Before the network: networkd derives DHCP client ids from the machine id.
         write(ROOT + "/etc/machine-id", uuid.uuid4().hex + "\n", 0o444)
-        if req["entropy"] and not ROOT:
-            with open("/dev/urandom", "wb") as f:
-                f.write(req["entropy"])
-        boot(seed)
         if not ROOT:
-            grow_root()
-            run("sh", seed + "/vmm-disks.sh")
-            run("systemctl", "restart", "ssh.service")
+            apply_network()
+        new_host_keys()
+        if ROOT:
+            boot(seed)
+        else:
+            # growpart mostly waits for the kernel and udev, so it overlaps the rest.
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                grown = pool.submit(grow_root)
+                run("sh", seed + "/vmm-disks.sh", env=dict(os.environ, VMM_AGENT="1"))
+                run("systemctl", "restart", "ssh.service")
+                grown.result()
     finally:
         umount_seed()
+
+
+def apply_network():
+    # netplan's own CLI costs about a second of CPU on a small VM; its generator plus networkd do the same for unrenamed NICs.
+    if not os.path.exists(NETPLAN_GENERATE):
+        run("netplan", "apply")
+        return
+    run(NETPLAN_GENERATE)
+    run("networkctl", "reload")
+    run("networkctl", "reconfigure", *nics())
+
+
+def new_host_keys():
+    for k in glob.glob(ROOT + "/etc/ssh/ssh_host_*"):
+        os.remove(k)
+    os.makedirs(ROOT + "/etc/ssh", exist_ok=True)
+    if ROOT:
+        run("ssh-keygen", "-A", "-f", ROOT)
+        return
+    for t in ("ed25519", "ecdsa"):
+        run("ssh-keygen", "-q", "-t", t, "-N", "", "-f", "/etc/ssh/ssh_host_%s_key" % t)
+    # An RSA key takes seconds of CPU on a small VM; sshd starts without it and reloads once it exists.
+    subprocess.Popen(["nice", "-n", "19", "sh", "-c", "ssh-keygen -q -t rsa -N '' -f /etc/ssh/ssh_host_rsa_key && systemctl reload ssh.service"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def ping(req):

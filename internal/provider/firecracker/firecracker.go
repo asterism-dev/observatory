@@ -32,11 +32,15 @@ type Provider struct {
 
 	mu  sync.Mutex // serializes base image downloads and NAT address allocation
 	nbd linuxvm.NBDWatch
+
+	fastBoot bool
+	building sync.Mutex // held while a template builds; builds never queue
 }
 
 func New(c node.Config) (*Provider, error) {
 	var s struct {
 		ImageURL string `json:"imageURL"`
+		FastBoot *bool  `json:"fastBoot"`
 	}
 	if err := c.ProviderSection(&s); err != nil {
 		return nil, fmt.Errorf("config firecracker section: %w", err)
@@ -44,10 +48,11 @@ func New(c node.Config) (*Provider, error) {
 	if err := linuxvm.CheckHost("firecracker", "jailer", "qemu-nbd"); err != nil {
 		return nil, err
 	}
-	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL}
+	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL, fastBoot: s.FastBoot == nil || *s.FastBoot}
 	if p.ImageURL == "" {
 		p.ImageURL = DefaultImageURL
 	}
+	p.removeUnfinishedTemplates()
 	return p, nil
 }
 
@@ -59,6 +64,33 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 	p.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("base image: %w", err)
+	}
+	marker := filepath.Join(dir, templateMarker)
+	if err := os.Remove(marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if p.fastBoot && len(f.Spec.Attachments) == 0 && f.Spec.DiskGB >= templateDiskGB {
+		key, err := templateKey(base, f)
+		if err != nil {
+			return err
+		}
+		tpl := p.templateDir(key)
+		if _, err := os.Stat(tpl); err != nil {
+			go func() {
+				if err := p.buildTemplate(context.Background(), key, f); err != nil {
+					log.Printf("template %s: %v", key, err)
+				}
+			}()
+		} else if err := node.CloneResize(filepath.Join(tpl, "root.img"), filepath.Join(dir, "root.img"), f.Spec.DiskGB); err != nil {
+			log.Printf("vm %s: template %s: %v; booting cold", f.Spec.ID, key, err)
+		} else {
+			now := time.Now()
+			os.Chtimes(tpl, now, now)
+			if err := os.WriteFile(marker, []byte(key), 0o600); err != nil {
+				return err
+			}
+			return p.Reseed(ctx, f, dir)
+		}
 	}
 	if err := node.CloneResize(base, filepath.Join(dir, "root.img"), f.Spec.DiskGB); err != nil {
 		return err
@@ -91,6 +123,21 @@ func (p *Provider) Disks(f node.VMFile, dir string) ([]proto.Disk, error) {
 }
 
 func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
+	marker := filepath.Join(dir, templateMarker)
+	if key, err := os.ReadFile(marker); err == nil {
+		os.Remove(marker)
+		tpl := p.templateDir(string(key))
+		began := time.Now()
+		inst, err := p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: tpl, Takeoff: true, Shared: true})
+		if err == nil {
+			log.Printf("vm %s: started from template %s in %s", f.Spec.ID, key, time.Since(began).Round(time.Millisecond))
+			return inst, nil
+		}
+		log.Printf("vm %s: start from template %s: %v; deleting the template and booting cold", f.Spec.ID, key, err)
+		if err := os.RemoveAll(tpl); err != nil {
+			log.Printf("template %s: %v", key, err)
+		}
+	}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
@@ -162,8 +209,8 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 	if err := i.api.LoadSnapshot("/"+node.StateFile, "/"+node.MemFile, nets); err != nil {
 		return err
 	}
-	// The guest keeps the drive sizes from the state until Firecracker re-reads the file and notifies it.
-	if seedGrew {
+	// The guest keeps the drive sizes from the state until Firecracker re-reads the file and notifies it; a takeoff's state is another VM's.
+	if seedGrew || from.Takeoff {
 		if err := i.api.PatchDrive("seed", "/"+node.SeedISO); err != nil {
 			return err
 		}

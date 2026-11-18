@@ -75,7 +75,8 @@ done
 if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	systemctl try-reload-or-restart ssh.service >/dev/null 2>&1
 	[ -n "$changed" ] && systemctl daemon-reload >/dev/null 2>&1
-	systemctl enable vmm-agent.service >/dev/null 2>&1
+	# enable reloads systemd, which costs a fast-booted VM half a second.
+	systemctl is-enabled -q vmm-agent.service || systemctl enable vmm-agent.service >/dev/null 2>&1
 	# --no-block: at boot this runs inside cloud-init, which the unit is ordered after; under the agent (VMM_AGENT) a restart would kill its own request.
 	if [ -n "$changed" ] && [ -z "${VMM_AGENT:-}" ]; then
 		systemctl --no-block restart vmm-agent.service >/dev/null 2>&1

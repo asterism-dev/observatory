@@ -219,7 +219,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		a.startVM(ctx, f, false)
 		return
 	}
-	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot,
+	f := VMFile{Spec: d.Spec, MAC: RandomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot,
 		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())

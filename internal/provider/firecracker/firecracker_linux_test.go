@@ -28,7 +28,16 @@ import (
 const testImageURL = "test://noble"
 
 // testProvider needs root, KVM, bridge vmm0 and VMM_TEST_IMAGE (a raw bootable noble disk).
+// testProvider has fast boot off: a background template build in one test's VMs dir would take NAT addresses another test's VMs use.
 func testProvider(t *testing.T) *Provider {
+	t.Helper()
+	p := testProviderWith(t, "")
+	p.fastBoot = false
+	return p
+}
+
+// testProviderWith adds settings (JSON object members) to the firecracker config section.
+func testProviderWith(t *testing.T, settings string) *Provider {
 	t.Helper()
 	img := os.Getenv("VMM_TEST_IMAGE")
 	if img == "" || os.Geteuid() != 0 {
@@ -46,7 +55,7 @@ func testProvider(t *testing.T) *Provider {
 	p, err := New(node.Config{Provider: "firecracker", Paths: struct {
 		VMs    string `json:"vms"`
 		Images string `json:"images"`
-	}{VMs: filepath.Join(base, "vms"), Images: images}, Raw: map[string]json.RawMessage{"firecracker": json.RawMessage(`{"imageURL":"` + testImageURL + `"}`)}})
+	}{VMs: filepath.Join(base, "vms"), Images: images}, Raw: map[string]json.RawMessage{"firecracker": json.RawMessage(`{"imageURL":"` + testImageURL + `"` + settings + `}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}

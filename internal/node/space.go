@@ -4,7 +4,7 @@ import "fmt"
 
 var statfsFree = freeBytes
 
-func checkSpace(dir string, need int64) error {
+func CheckSpace(dir string, need int64) error {
 	free, err := statfsFree(dir)
 	if err != nil {
 		return err

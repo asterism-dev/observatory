@@ -501,7 +501,7 @@ func (a *Agent) hibernate(e *vmEntry) error {
 	a.mu.Lock()
 	f, inst, wasPaused := e.file, e.inst, e.paused
 	a.mu.Unlock()
-	if err := checkSpace(a.VMsDir, int64(f.Spec.MemoryMB)<<20+1<<30); err != nil {
+	if err := CheckSpace(a.VMsDir, int64(f.Spec.MemoryMB)<<20+1<<30); err != nil {
 		return err
 	}
 	dir := VMDir(a.VMsDir, f.Spec.ID)
@@ -1015,7 +1015,7 @@ func (a *Agent) refreshDisks() {
 	}
 }
 
-func randomMAC() string {
+func RandomMAC() string {
 	b := make([]byte, 6)
 	rand.Read(b)
 	b[0] = b[0]&^0x01 | 0x02 // unicast, locally administered
