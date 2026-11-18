@@ -35,6 +35,22 @@ Permissions are in [permissions.md](permissions.md#disks); the network path in [
 - **Missing:** never recreated blank. A missing disk cannot be attached or copied; it becomes `ready` again when the
   file comes back (for example after restoring the volume).
 
+### Snapshots, restore and fork
+
+A VM snapshot ([vm-lifecycle.md](vm-lifecycle.md#snapshots)) includes every disk attached to the VM. The VM is paused
+and its disks flushed, then the storage server copies each disk to `<snapshot disk id>.img` in `/disks` (a reflink on
+XFS or btrfs, a full copy otherwise) and the VM resumes once every copy is complete. Snapshot disk files are not
+disks: they are not listed, cannot be attached and never get an export. Deleting the snapshot deletes them the same
+way as a disk (gone from the API at once, file deleted on the next poll). Deleting a disk is refused (`409`) while a
+snapshot copy of it is still in progress.
+
+- **Restore** resets each snapshot disk that is still attached to the VM **in place**: the storage server reflinks
+  (or copies) the snapshot file into `.partial/`, renames it over `<disk id>.img` and restarts that disk's NBD server.
+  The disk keeps its id, name, owner, permissions and audit trail. The VM starts only after every disk is restored. A
+  disk grown since the snapshot gets the snapshot's content and keeps its new size.
+- **Fork** turns each snapshot disk into a new disk `<disk>-<4 hex>` owned by the source VM's owner, copied from the
+  snapshot file like a disk copy and attached to the new VM at the same mount path. It counts against the disk limits.
+
 ### Release and force release
 
 Detaching a disk, or deleting its VM, does not free the disk at once. It stays `releasing` until the node confirms
@@ -116,9 +132,10 @@ Disk files live in the `disks` volume:
   boots once storage is back.
 - Disk errors on a VM (e.g. "NBD connection lost") are shown once the node's NBD device drops; a `qemu-nbd` that is
   still trying to reconnect does not show up as an error.
-- Stopping `observatory-node.service` stops the node's VMs and their `qemu-nbd` processes (they run in the service's
-  cgroup); starting it starts them again.
+- Restarting `observatory-node.service` hibernates the node's VMs (disks flushed first) and resumes them on start
+  ([vm-lifecycle.md](vm-lifecycle.md#node-restart)); their `qemu-nbd` processes are stopped and reconnected.
 - Every VM drive (root and attached disks) uses Firecracker's `Writeback` cache mode, so a guest flush (`fsync`)
   reaches the host and, for disks, the storage server before it returns. This is what makes writes durable across a
   storage restart or a node crash, at the cost of slower `fsync`-heavy workloads.
-- No snapshots, shrinking, shared or read-only attachments, or encryption at rest yet.
+- No shrinking, shared or read-only attachments, disk-only snapshots (snapshots are always of a whole VM), or
+  encryption at rest yet.

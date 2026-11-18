@@ -106,6 +106,10 @@ Nodes installed before disks existed must be re-installed too: only the new inst
 VMs off the underlay (`vmm0` → `10.198.0.0/16` dropped). Without them a guest can reach the storage exports (it still
 needs the export key) and the southbound DB through its node.
 
+Nodes installed before hibernation existed should be re-installed as well: only the new unit has `KillMode=mixed` and
+`TimeoutStopSec=300`, which let a service restart hibernate the VMs instead of killing them
+([vm-lifecycle.md](vm-lifecycle.md#node-restart)).
+
 ## Remove
 
 Delete the VMs on the node, then delete the node in the GUI; this revokes its credential. The host is not cleaned up:
