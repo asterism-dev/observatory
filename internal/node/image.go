@@ -125,13 +125,18 @@ func copyFile(src, dst string) error {
 type PrimaryNet struct{ Address, Gateway string }
 
 func CloudInit(f VMFile, primary PrimaryNet) (userData, metaData, networkConfig string) {
+	groups := ""
+	if f.Image != "" {
+		// users: replaces cloud-init's default_user, so the image's cloud.cfg.d cannot add the group.
+		groups = "    groups: [docker]\n"
+	}
 	userData = fmt.Sprintf(`#cloud-config
 hostname: %s
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-bootcmd:
+%sbootcmd:
   # Kernel and systemd output to the virtio console (console.log); takes effect from the second boot.
   - [sh, -c, 'test -f /etc/default/grub.d/99-vmm-console.cfg || { echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT console=tty1 console=hvc0\"" > /etc/default/grub.d/99-vmm-console.cfg && update-grub; }']
   # The disk list lives in the seed, not in user-data, so a reseed changes it without a new instance-id.
@@ -140,7 +145,7 @@ bootcmd:
 updates:
   network:
     when: [boot]
-`, f.Spec.Name)
+`, f.Spec.Name, groups)
 	metaData = fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", f.Spec.ID, f.Spec.Name)
 	// dhcp-identifier: mac makes the guest's DHCP lease findable by MAC (Ubuntu defaults to a DUID).
 	addressing := "    dhcp4: true\n    dhcp-identifier: mac\n"

@@ -410,3 +410,24 @@ func TestStopUnstartedForkNeverResumes(t *testing.T) {
 		t.Fatalf("vm.json = %+v", f)
 	}
 }
+
+func TestForkInheritsImage(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	src := dv("src", "src", proto.PowerRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{src})
+	waitState(t, a, "src", proto.StateRunning, 1)
+	a.mu.Lock()
+	a.vms["src"].file.Image = "2026.11.1-aaaaaaaa"
+	a.mu.Unlock()
+	snapshotOf(t, a, "src", "root", false)
+	d := dv("f", "f", proto.PowerRunning, 1)
+	d.Fork = &proto.Fork{SourceVMID: "src", SnapshotID: "s1"}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d, src})
+	waitState(t, a, "f", proto.StateRunning, 1)
+	if f := loadVM(t, a, "f"); f.Image != "2026.11.1-aaaaaaaa" {
+		t.Fatalf("vm.json image = %q", f.Image)
+	}
+	if st, _ := a.vmStatus("f"); st.Image != "2026.11.1-aaaaaaaa" {
+		t.Fatalf("status image = %q", st.Image)
+	}
+}

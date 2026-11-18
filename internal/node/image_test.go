@@ -305,3 +305,14 @@ func TestEnsureBaseImageChecksum(t *testing.T) {
 		t.Fatalf("empty hash: %v", err)
 	}
 }
+
+func TestCloudInitDockerGroup(t *testing.T) {
+	f := VMFile{Spec: proto.VMSpec{ID: "abc123", Name: "dev"}, Image: "2026.11.1-aaaaaaaa"}
+	if ud, _, _ := CloudInit(f, PrimaryNet{}); !strings.Contains(ud, "    shell: /bin/bash\n    groups: [docker]\n") {
+		t.Errorf("user-data without docker group:\n%s", ud)
+	}
+	f.Image = ""
+	if ud, _, _ := CloudInit(f, PrimaryNet{}); strings.Contains(ud, "docker") {
+		t.Errorf("stock image user-data has docker group:\n%s", ud)
+	}
+}

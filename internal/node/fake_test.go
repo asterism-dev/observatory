@@ -128,6 +128,7 @@ func (i *fakeInstance) SaveState(dir string) error {
 type fakeProvider struct {
 	mu            sync.Mutex
 	prepared      []string
+	preparedImage map[string]string // f.Image of the latest Prepare per VM
 	started       map[string]*fakeInstance
 	failPrepare   map[string]bool
 	failStart     map[string]bool
@@ -216,6 +217,10 @@ func (p *fakeProvider) Prepare(_ context.Context, f VMFile, dir string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.prepared = append(p.prepared, f.Spec.Name)
+	if p.preparedImage == nil {
+		p.preparedImage = map[string]string{}
+	}
+	p.preparedImage[f.Spec.Name] = f.Image
 	p.events = append(p.events, "prepare:"+f.Spec.Name)
 	if p.failPrepare[f.Spec.Name] {
 		return errors.New("prepare boom")
@@ -224,6 +229,35 @@ func (p *fakeProvider) Prepare(_ context.Context, f VMFile, dir string) error {
 		p.afterPrepare(dir)
 	}
 	return nil
+}
+
+// imageProvider is a fakeProvider with a guest image whose state the test reports.
+type imageProvider struct {
+	*fakeProvider
+	initial proto.ImageStatus
+	sink    func(proto.ImageStatus) // guarded by fakeProvider.mu
+}
+
+func (p *imageProvider) RunGuestImages(ctx context.Context, report func(proto.ImageStatus)) {
+	p.mu.Lock()
+	p.sink = report
+	p.mu.Unlock()
+	report(p.initial)
+	<-ctx.Done()
+}
+
+func (p *imageProvider) report(t *testing.T, st proto.ImageStatus) {
+	t.Helper()
+	var sink func(proto.ImageStatus)
+	eventually(t, "RunGuestImages", func() bool { p.mu.Lock(); defer p.mu.Unlock(); sink = p.sink; return sink != nil })
+	sink(st)
+}
+
+func (p *fakeProvider) gotPreparedImage(name string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	img, ok := p.preparedImage[name]
+	return img, ok
 }
 
 func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
