@@ -92,12 +92,21 @@ func TestInviteCreateAndAccept(t *testing.T) {
 func TestInviteAcceptFromURL(t *testing.T) {
 	h, c, out, errb := orgHub(t)
 	h.on("POST /api/invites/accept", 200, `{"orgId":"o1","role":"member"}`)
-	mustRun(t, c, errb, 0, "invite", "accept", "https://hub/invite/tok123")
+	c.stdin = strings.NewReader("https://hub/invite/tok123\n")
+	mustRun(t, c, errb, 0, "invite", "accept")
 	if got := h.calls("POST /api/invites/accept")[0].Body; got != `{"token":"tok123"}` {
 		t.Errorf("body %s", got)
 	}
 	if out() != "Joined orga.\n" {
 		t.Errorf("stdout %q", out())
+	}
+}
+
+func TestInviteAcceptRejectsArgv(t *testing.T) {
+	h, c, _, errb := orgHub(t)
+	mustRun(t, c, errb, 2, "invite", "accept", "tok123")
+	if len(h.calls("POST /api/invites/accept")) != 0 {
+		t.Fatal("request sent")
 	}
 }
 
@@ -157,18 +166,16 @@ const limitsBody = `{"org":{"vcpu":8,"ramMb":16384,"diskGb":100,"vmCount":10,"sn
 func TestLimitSetKeepsOtherValues(t *testing.T) {
 	h, c, _, errb := orgHub(t)
 	h.on("GET /api/orgs/o1/limits", 200, limitsBody)
-	h.on("PUT /api/admin/orgs/o1/limits", 204, "")
 	h.on("PUT /api/orgs/o1/limits/team:t1", 204, "")
-	mustRun(t, c, errb, 0, "limit", "set", "org", "--vcpu", "16", "--ram", "none")
-	if got := h.calls("PUT /api/admin/orgs/o1/limits")[0].Body; got != `{"vcpu":16,"ramMb":null,"diskGb":100,"vmCount":10,"snapshotCount":null}` {
-		t.Errorf("body %s", got)
-	}
+	mustRun(t, c, errb, 2, "limit", "set", "org", "--vcpu", "16")
 	mustRun(t, c, errb, 0, "limit", "set", "team:backend", "--vms", "3")
 	if got := h.calls("PUT /api/orgs/o1/limits/team:t1")[0].Body; got != `{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":3,"snapshotCount":null}` {
 		t.Errorf("body %s", got)
 	}
-	mustRun(t, c, errb, 2, "limit", "set", "org")
-	mustRun(t, c, errb, 2, "limit", "set", "org", "--vcpu", "-1")
+	if len(h.calls("PUT /api/admin/orgs/o1/limits")) != 0 {
+		t.Error("admin route called")
+	}
+	mustRun(t, c, errb, 2, "limit", "set", "team:backend", "--vcpu", "-1")
 }
 
 func TestLimitShow(t *testing.T) {

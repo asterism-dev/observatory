@@ -75,7 +75,7 @@ func orgCommands() []command {
 		{"invite list", "", "list open invites", cmdInviteList},
 		{"invite create", "[--role member]", "create an invite link", cmdInviteCreate},
 		{"invite revoke", "<id>", "revoke an invite", cmdInviteRevoke},
-		{"invite accept", "[TOKEN|URL]", "join an org with an invite", cmdInviteAccept},
+		{"invite accept", "[--from-file F|-]", "join an org with an invite (token or URL from stdin or --from-file)", cmdInviteAccept},
 		{"role list", "", "list roles", cmdRoleList},
 		{"role show", "<role>", "show a role's rules", cmdRoleShow},
 		{"role catalog", "", "list the permissions a rule can name", cmdRoleCatalog},
@@ -86,7 +86,7 @@ func orgCommands() []command {
 		{"binding add", "<subject> <role>", "bind a custom role to user:<x> or team:<x>", cmdBindingAdd},
 		{"binding delete", "<id>", "delete a role binding", cmdBindingDelete},
 		{"limit show", "", "show resource limits", cmdLimitShow},
-		{"limit set", "<org|team:T|user:M> [flags]", "set resource limits", cmdLimitSet},
+		{"limit set", "<team:T|user:M> [flags]", "set resource limits", cmdLimitSet},
 		{"session list", "", "list your sessions", cmdSessionList},
 		{"session revoke", "<id>", "revoke a session", cmdSessionRevoke},
 	}
@@ -440,14 +440,17 @@ func cmdInviteRevoke(c *cli, args []string) error {
 }
 
 func cmdInviteAccept(c *cli, args []string) error {
-	pos, err := c.parse(c.flags("invite accept"), args, 0, 1)
+	fs := c.flags("invite accept")
+	file := fs.String("from-file", "", "read the token or URL from `F` (- for stdin)")
+	pos, err := c.parse(fs, args, 0, -1)
 	if err != nil {
 		return err
 	}
-	var token string
-	if len(pos) == 1 {
-		token = pos[0]
-	} else if token, err = c.secret("Invite token or URL: ", ""); err != nil {
+	if len(pos) > 0 {
+		return usagef("the invite token is not taken as an argument: pipe it on stdin or use --from-file")
+	}
+	token, err := c.secret("Invite token or URL: ", *file)
+	if err != nil {
 		return err
 	}
 	token = strings.TrimRight(token, "/")
@@ -833,6 +836,7 @@ func cmdLimitSet(c *cli, args []string) error {
 	var scope string
 	switch {
 	case pos[0] == "org":
+		return usagef("org limits are set by a platform admin in the web UI")
 	case kind == "team" && key != "":
 		t, err := c.findTeam(key)
 		if err != nil {
@@ -852,29 +856,14 @@ func cmdLimitSet(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	cur := ol.Org
-	if scope != "" {
-		cur = ol.Teams[strings.TrimPrefix(scope, "team:")]
-		if kind == "user" {
-			cur = ol.Members[strings.TrimPrefix(scope, "user:")]
-		}
+	cur := ol.Teams[strings.TrimPrefix(scope, "team:")]
+	if kind == "user" {
+		cur = ol.Members[strings.TrimPrefix(scope, "user:")]
 	}
 	for name, p := range map[string]**int{"vcpu": &cur.VCPU, "ram": &cur.RAMMB, "disk": &cur.DiskGB, "vms": &cur.VMCount, "snapshots": &cur.SnapshotCount} {
 		if _, ok := parsed[name]; ok {
 			*p = parsed[name]
 		}
-	}
-	if scope == "" {
-		o, err := c.currentOrg()
-		if err != nil {
-			return err
-		}
-		// The org-scoped limits route is closed to everyone; platform admins use the admin route.
-		err = c.call(http.MethodPut, "/api/admin/orgs/"+o.ID+"/limits", cur, nil)
-		if err != nil {
-			return err
-		}
-		return c.done(nil, "Limits for org set.")
 	}
 	if err := c.simpleCall(http.MethodPut, "/limits/"+scope, cur); err != nil {
 		return err

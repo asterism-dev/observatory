@@ -104,10 +104,10 @@ member:
   member remove <member>                   remove a member from the org
 
 invite:
-  invite list                    list open invites
-  invite create [--role member]  create an invite link
-  invite revoke <id>             revoke an invite
-  invite accept [TOKEN|URL]      join an org with an invite
+  invite list                      list open invites
+  invite create [--role member]    create an invite link
+  invite revoke <id>               revoke an invite
+  invite accept [--from-file F|-]  join an org with an invite (token or URL from stdin or --from-file)
 
 role:
   role list                    list roles
@@ -123,8 +123,8 @@ binding:
   binding delete <id>           delete a role binding
 
 limit:
-  limit show                             show resource limits
-  limit set <org|team:T|user:M> [flags]  set resource limits
+  limit show                         show resource limits
+  limit set <team:T|user:M> [flags]  set resource limits
 
 session:
   session list         list your sessions
