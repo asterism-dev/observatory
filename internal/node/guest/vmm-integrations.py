@@ -190,17 +190,17 @@ def sync_linear(home, state):
     if code == UNAVAILABLE:
         return
     recorded = state.get("linear_mcp")
-    if code == NOT_CONNECTED:
-        if recorded:
-            claude_cli(claude, home, "mcp", "remove", "--scope", "user", "linear")
-            state.pop("linear_mcp")
-        return
-    if recorded == digest(tok):
+    if code == 0 and recorded == digest(tok):
         return
     if recorded:
-        claude_cli(claude, home, "mcp", "remove", "--scope", "user", "linear")
+        # Keep the record on failure, so the next sync retries instead of treating the entry as the user's.
+        if claude_cli(claude, home, "mcp", "remove", "--scope", "user", "linear") != 0:
+            log("claude mcp remove failed")
+            return
         state.pop("linear_mcp")
-    elif claude_cli(claude, home, "mcp", "get", "linear") == 0:
+    if code == NOT_CONNECTED:
+        return
+    if not recorded and claude_cli(claude, home, "mcp", "get", "linear") == 0:
         return
     if claude_cli(claude, home, "mcp", "add", "--transport", "http", "--scope", "user", "linear", LINEAR_MCP,
                   "--header", "Authorization: Bearer " + tok) == 0:
@@ -257,7 +257,7 @@ def sync():
         return sync_user(ROOT + "/home/" + USER)
     # Files in the user's home are touched only as the user, so a planted link never gets root access.
     try:
-        subprocess.run(["runuser", "-u", USER, "--", "env", "HOME=" + pw.pw_dir, "python3", os.path.abspath(__file__), "sync-user"],
+        subprocess.run(["runuser", "-u", USER, "--", "env", "HOME=" + pw.pw_dir, "python3", "-I", os.path.abspath(__file__), "sync-user"],
                        stdin=subprocess.DEVNULL, timeout=300)
     except (OSError, subprocess.SubprocessError):
         log("user sync failed")

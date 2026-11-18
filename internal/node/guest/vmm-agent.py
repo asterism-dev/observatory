@@ -174,8 +174,8 @@ def takeoff(req):
             print("install egress cas: %s" % e, file=sys.stderr)
         # A fork from a memory snapshot carries the template's integration files; refresh them now, not in up to 5 minutes.
         try:
-            subprocess.run(["systemctl", "--no-block", "start", "vmm-integrations.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
+            subprocess.run(["systemctl", "--no-block", "start", "vmm-integrations.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        except (OSError, subprocess.SubprocessError):
             pass
     finally:
         umount_seed()

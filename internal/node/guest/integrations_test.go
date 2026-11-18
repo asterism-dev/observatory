@@ -354,7 +354,8 @@ func newUserGuest(t *testing.T, answers map[string]string) *userGuest {
 func (g *userGuest) addClaude() {
 	os.MkdirAll(filepath.Dir(g.claude), 0o755)
 	fake := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>" + g.log + "\necho \"$*\"; echo \"$*\" >&2\n" +
-		"if [ \"$1 $2\" = \"mcp get\" ]; then test -e " + g.flag + "; exit; fi\n"
+		"if [ \"$1 $2\" = \"mcp get\" ]; then test -e " + g.flag + "; exit; fi\n" +
+		"if [ \"$1 $2\" = \"mcp remove\" ] && [ -e " + g.flag + ".rmfail ]; then exit 1; fi\n"
 	if err := os.WriteFile(g.claude, []byte(fake), 0o755); err != nil {
 		g.t.Fatal(err)
 	}
@@ -499,6 +500,32 @@ func TestLinearMCPAddRemove(t *testing.T) {
 	check("user's own entry", get)
 	delete(answers, "linear")
 	check("user's own entry, not connected")
+}
+
+func TestLinearMCPRemoveFailureKeepsRecord(t *testing.T) {
+	answers := map[string]string{"linear": okAnswer(dummyLinear)}
+	g := newUserGuest(t, answers)
+	g.addClaude()
+	remove := "mcp remove --scope user linear"
+	g.sync()
+	os.WriteFile(g.flag+".rmfail", nil, 0o644)
+	answers["linear"] = okAnswer(dummyLinear2)
+	if got := g.sync(); strings.Join(got, "|") != remove {
+		t.Fatalf("new token, remove fails: calls %q", got)
+	}
+	delete(answers, "linear")
+	for i := 0; i < 2; i++ {
+		if got := g.sync(); strings.Join(got, "|") != remove {
+			t.Fatalf("not connected, remove fails (%d): calls %q", i, got)
+		}
+	}
+	os.Remove(g.flag + ".rmfail")
+	if got := g.sync(); strings.Join(got, "|") != remove {
+		t.Fatalf("not connected, remove works: calls %q", got)
+	}
+	if got := g.sync(); got != nil {
+		t.Fatalf("after removal: calls %q", got)
+	}
 }
 
 func TestSyncWithoutClaude(t *testing.T) {
