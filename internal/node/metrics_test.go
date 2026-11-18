@@ -18,10 +18,7 @@ func TestParseProcStatTicks(t *testing.T) {
 }
 
 func TestMetricsLoopSendsRunningOnly(t *testing.T) {
-	old := metricsEvery
-	metricsEvery = time.Second
-	t.Cleanup(func() { metricsEvery = old })
-	env := startEnv(t, nil)
+	env := startEnv(t, func(a *Agent, _ *fakeProvider) { a.metricsEvery = time.Second })
 	env.hub.mu.Lock()
 	env.hub.cpus = 2
 	env.hub.mu.Unlock()

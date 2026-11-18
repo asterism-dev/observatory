@@ -54,7 +54,11 @@ type cpuMark struct {
 }
 
 func (a *Agent) metricsLoop(ctx context.Context) {
-	t := time.NewTicker(metricsEvery)
+	every := a.metricsEvery
+	if every == 0 {
+		every = metricsEvery
+	}
+	t := time.NewTicker(every)
 	defer t.Stop()
 	marks := map[string]cpuMark{}
 	for {
@@ -62,13 +66,13 @@ func (a *Agent) metricsLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			a.sendMetrics(marks)
+			a.sendMetrics(marks, every)
 		}
 	}
 }
 
 // sendMetrics skips a VM's first sight, which only sets the CPU baseline.
-func (a *Agent) sendMetrics(marks map[string]cpuMark) {
+func (a *Agent) sendMetrics(marks map[string]cpuMark, every time.Duration) {
 	type runner struct {
 		id   string
 		cpus int
@@ -97,7 +101,7 @@ func (a *Agent) sendMetrics(marks map[string]cpuMark) {
 		if !ok || prev.inst != r.inst || ticks < prev.ticks {
 			continue
 		}
-		cpu := float64(ticks-prev.ticks) / (clockTicks * metricsEvery.Seconds() * float64(r.cpus)) * 100
+		cpu := float64(ticks-prev.ticks) / (clockTicks * every.Seconds() * float64(r.cpus)) * 100
 		m := proto.VMMetrics{ID: r.id, CPUPercent: cpu}
 		if total, used, err := r.inst.Memory(); err == nil {
 			m.MemTotalMB, m.MemUsedMB = total, used

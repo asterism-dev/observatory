@@ -56,7 +56,8 @@ type Agent struct {
 	OVNKeyFile                         string
 	Version                            string
 
-	diskRefresh time.Duration // zero means defaultDiskRefresh
+	diskRefresh  time.Duration // zero means defaultDiskRefresh
+	metricsEvery time.Duration // zero means the package default
 
 	chassisMu       sync.Mutex
 	chassisPending  *chassisconf.Config // newest config not yet applied; older ones are superseded
