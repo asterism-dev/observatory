@@ -25,6 +25,8 @@ type EgressProc interface {
 	Kill()
 }
 
+var testHookBeforeEgressUp func()
+
 var (
 	egressReadyTimeout = 10 * time.Second
 	guestTrustTimeout  = 30 * time.Second
@@ -42,28 +44,30 @@ type egressSup struct {
 	done    chan struct{}
 }
 
-// egressUp starts f's proxy and waits, at most egressReadyTimeout, for the redirect; each call is paired with one egressDown once the VM process started with it ends.
-func (a *Agent) egressUp(f VMFile) {
-	id := f.Spec.ID
+// egressUp starts e's proxy and waits, at most egressReadyTimeout, for the redirect; each call is paired with one egressDown once the VM process started with it ends.
+func (a *Agent) egressUp(e *vmEntry) {
+	// Under both locks, a push either lands in e.file first or its egressSync sees this process counted.
+	a.mu.Lock()
+	f := e.file
 	a.egressMu.Lock()
 	if a.egressUsers == nil {
 		a.egressUsers = map[string]int{}
 	}
-	// Counted per process: a replaced instance exiting late must not take down its successor's proxy.
-	a.egressUsers[id]++
+	a.egressUsers[f.Spec.ID]++
 	s := a.setEgressLocked(f)
 	a.egressMu.Unlock()
+	a.mu.Unlock()
 	if s == nil {
 		return
 	}
 	select {
 	case <-s.ready:
 	case <-time.After(egressReadyTimeout):
-		log.Printf("vm %s: egress proxy not ready after %s, starting without it", id, egressReadyTimeout)
+		log.Printf("vm %s: egress proxy not ready after %s, starting without it", f.Spec.ID, egressReadyTimeout)
 	}
 }
 
-// egressDown stops the VM's proxy once no process started with egressUp is left.
+// egressDown stops the VM's proxy once no process started with egressUp is left; the count keeps a replaced instance exiting late from taking down its successor's proxy.
 func (a *Agent) egressDown(id string) {
 	a.egressMu.Lock()
 	var s *egressSup
@@ -81,7 +85,6 @@ func (a *Agent) egressDown(id string) {
 func (a *Agent) egressSync(e *vmEntry, old VMFile) {
 	a.mu.Lock()
 	f, inst, paused := e.file, e.inst, e.paused
-	a.mu.Unlock()
 	id := f.Spec.ID
 	var halted *egressSup
 	a.egressMu.Lock()
@@ -93,6 +96,7 @@ func (a *Agent) egressSync(e *vmEntry, old VMFile) {
 		}
 	}
 	a.egressMu.Unlock()
+	a.mu.Unlock()
 	halted.wait()
 	cas := func(b *proto.Boot) map[string]string {
 		if b == nil {
@@ -105,9 +109,15 @@ func (a *Agent) egressSync(e *vmEntry, old VMFile) {
 		return
 	}
 	go func() {
+		// The guest drops CAs missing from a call, so calls run one at a time and each sends the newest set.
+		e.trustMu.Lock()
+		defer e.trustMu.Unlock()
+		a.mu.Lock()
+		latest := cas(e.file.Boot)
+		a.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), guestTrustTimeout)
 		defer cancel()
-		if err := inst.GuestTrust(ctx, cas(f.Boot)); err != nil {
+		if err := inst.GuestTrust(ctx, latest); err != nil {
 			log.Printf("vm %s: egress ca trust: %v", id, err)
 		}
 	}()
@@ -153,6 +163,21 @@ func (a *Agent) haltEgressLocked(id string) *egressSup {
 	s.halted = true
 	s.stop()
 	return s
+}
+
+// haltAllEgress stops every proxy and its redirect, so none outlives the node process.
+func (a *Agent) haltAllEgress() {
+	a.egressMu.Lock()
+	var halted []*egressSup
+	// Includes proxies an exited VM's egressDown is still waiting for.
+	for id, s := range a.egress {
+		a.haltEgressLocked(id)
+		halted = append(halted, s)
+	}
+	a.egressMu.Unlock()
+	for _, s := range halted {
+		s.wait()
+	}
 }
 
 func (s *egressSup) wait() {
@@ -239,6 +264,7 @@ func (a *Agent) runEgress(ctx context.Context, s *egressSup) {
 		case <-s.changed:
 			if err := proc.Send(*a.egressFile(s).Egress); err != nil {
 				log.Printf("vm %s: egress proxy config: %v", id, err)
+				return
 			}
 		}
 	}

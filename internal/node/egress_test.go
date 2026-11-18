@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -264,8 +265,9 @@ func TestEgressDownCountsInstances(t *testing.T) {
 	a, p, _ := newEgressAgent(t)
 	f := cachedVM("a", "a")
 	f.Egress = egressTable("tok-secret-value")
-	a.egressUp(f)
-	a.egressUp(f)
+	e := &vmEntry{file: f}
+	a.egressUp(e)
+	a.egressUp(e)
 	a.egressDown("a")
 	if p.hasEvent("unredirect") || countEvent(p, "spawn") != 1 {
 		t.Fatalf("events = %v", p.gotEvents())
@@ -273,5 +275,80 @@ func TestEgressDownCountsInstances(t *testing.T) {
 	a.egressDown("a")
 	if !inOrder(p.gotEvents(), "redirect", "unredirect", "kill") {
 		t.Fatalf("events = %v", p.gotEvents())
+	}
+}
+
+// A push landing between boot copying the file and egressUp must reach the proxy.
+func TestEgressPushBeforeUpReachesProxy(t *testing.T) {
+	a, _, h := newEgressAgent(t)
+	var once sync.Once
+	testHookBeforeEgressUp = func() {
+		once.Do(func() {
+			a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-new-value")})
+		})
+	}
+	t.Cleanup(func() { testHookBeforeEgressUp = nil })
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-secret-value")})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	eventually(t, "new value sent", func() bool {
+		s := h.gotSent()
+		return len(s) > 0 && s[len(s)-1].Secrets[0].Value == "tok-new-value"
+	})
+}
+
+func TestEgressTrustLatestWins(t *testing.T) {
+	a, p, _ := newEgressAgent(t)
+	d := withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-secret-value")
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	release := make(chan struct{})
+	p.mu.Lock()
+	p.trustBlock = release
+	p.mu.Unlock()
+	id2, id3 := "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e02", "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e03"
+	d.Boot = &proto.Boot{EgressCAs: map[string]string{egressCAID: "CERT1", id2: "CERT2"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	eventually(t, "first trust blocked", func() bool { return p.hasEvent("guest-trust") })
+	d.Boot = &proto.Boot{EgressCAs: map[string]string{id2: "CERT2", id3: "CERT3"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	eventually(t, "both trusted", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.trusts) == 2
+	})
+	p.mu.Lock()
+	last := p.trusts[1]
+	p.mu.Unlock()
+	if len(last) != 2 || last[id3] != "CERT3" {
+		t.Fatalf("last trusted %v", last)
+	}
+}
+
+func TestEgressStopAllRemovesRedirects(t *testing.T) {
+	a, p, _ := newEgressAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-secret-value")})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.stopAll()
+	if ev := p.gotEvents(); !inOrder(ev, "redirect", "unredirect", "kill") {
+		t.Fatalf("events after stopAll = %v", ev)
+	}
+}
+
+func TestEgressSendFailureRespawns(t *testing.T) {
+	old := restartBackoff
+	restartBackoff = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { restartBackoff = old })
+	a, p, h := newEgressAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-secret-value")})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	h.mu.Lock()
+	h.failSend = errors.New("broken pipe")
+	h.mu.Unlock()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-new-value")})
+	eventually(t, "respawned", func() bool { return countEvent(p, "spawn") >= 2 })
+	if ev := after(p.gotEvents(), "redirect"); !inOrder(ev, "send", "unredirect", "kill", "spawn") {
+		t.Fatalf("events = %v", ev)
 	}
 }

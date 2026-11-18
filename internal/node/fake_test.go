@@ -87,6 +87,13 @@ func (i *fakeInstance) GuestResume(context.Context) error {
 func (i *fakeInstance) GuestTrust(_ context.Context, cas map[string]string) error {
 	i.p.record("guest-trust")
 	i.p.mu.Lock()
+	block := i.p.trustBlock
+	i.p.trustBlock = nil
+	i.p.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	i.p.mu.Lock()
 	i.p.trusts = append(i.p.trusts, cas)
 	i.p.mu.Unlock()
 	return nil
@@ -146,6 +153,7 @@ type fakeProvider struct {
 	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil
 	wakeTeardown  chan struct{} // when set, a cancelled WaitWake removes its taps only once it is closed
 	trusts        []map[string]string
+	trustBlock    chan struct{} // when set, the next GuestTrust waits for it to close
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {

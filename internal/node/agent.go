@@ -80,7 +80,7 @@ type Agent struct {
 	dying    map[*vmEntry]bool
 	snapJobs map[snapKey]*snapshotJob
 
-	// egressMu guards the proxies and the count of running processes per VM; it is never held with a.mu.
+	// egressMu guards the proxies and the count of running processes per VM; taken after a.mu, never before it.
 	egressMu    sync.Mutex
 	egress      map[string]*egressSup
 	egressUsers map[string]int
@@ -108,6 +108,7 @@ type vmEntry struct {
 	idleStop, wake context.CancelFunc
 	woken          bool
 	wakeDone       chan struct{} // closed once a cancelled WaitWake has removed its taps
+	trustMu        sync.Mutex    // serializes egress CA trust calls to the guest
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -444,7 +445,10 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
 
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
 func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
-	a.egressUp(f)
+	if testHookBeforeEgressUp != nil {
+		testHookBeforeEgressUp()
+	}
+	a.egressUp(e)
 	defer func() {
 		if err != nil {
 			a.egressDown(f.Spec.ID)
@@ -936,6 +940,7 @@ func (a *Agent) stopAll() {
 		kills.Wait()
 		<-done
 	}
+	a.haltAllEgress()
 	a.chassisMu.Lock()
 	a.chassisStopping = true
 	a.chassisMu.Unlock()

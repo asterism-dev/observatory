@@ -30,6 +30,7 @@ CA_ID = re.compile(r"[0-9a-f-]{36}")
 CA_PEM = re.compile(r"(-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?)+")
 MAX_CA = 16 << 10
 UPDATE_CA = os.environ.get("VMM_UPDATE_CA", "" if ROOT else "update-ca-certificates")
+CA_PENDING = ROOT + "/etc/vmm/ca-update-pending"
 
 lock = threading.Lock()
 slots = threading.BoundedSemaphore(4)
@@ -231,7 +232,6 @@ def install_cas(certs, force=False):
     d = ROOT + CA_DIR
     os.makedirs(d, exist_ok=True)
     changed = removed = False
-    written = []
     for i, pem in certs.items():
         path = "%s/observatory-egress-%s.crt" % (d, i)
         try:
@@ -241,21 +241,19 @@ def install_cas(certs, force=False):
         except FileNotFoundError:
             pass
         write(path, pem)
-        written.append(path)
         changed = True
     for path in glob.glob(d + "/observatory-egress-*.crt"):
         if os.path.basename(path)[len("observatory-egress-"):-len(".crt")] not in certs:
             os.remove(path)
             changed = removed = True
-    if (changed or force) and UPDATE_CA:
-        try:
-            # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
-            run(UPDATE_CA, *(["--fresh"] if removed or force else []))
-        except Exception:
-            # So the next call sees them as new and updates again.
-            for path in written:
-                os.remove(path)
-            raise
+    # A failed update leaves the files in place, so only the marker tells the next call to update again.
+    pending = os.path.exists(CA_PENDING)
+    if (changed or force or pending) and UPDATE_CA:
+        os.makedirs(os.path.dirname(CA_PENDING), exist_ok=True)
+        write(CA_PENDING, "")
+        # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
+        run(UPDATE_CA, *(["--fresh"] if removed or force or pending else []))
+        os.remove(CA_PENDING)
     return changed
 
 

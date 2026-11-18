@@ -248,10 +248,6 @@ func TestAgentTrustRetriesFailedUpdate(t *testing.T) {
 	if r := callAgent(t, sock, string(b)); r.OK {
 		t.Fatal("trust succeeded with a failing update")
 	}
-	// Left in place, the cert would look installed to the next call, which would then skip the update.
-	if _, err := os.Stat(crt); !os.IsNotExist(err) {
-		t.Fatalf("cert kept after failed update: %v", err)
-	}
 	os.Remove(fail)
 	for i := 0; i < 2; i++ {
 		if r := callAgent(t, sock, string(b)); !r.OK {
@@ -289,5 +285,40 @@ func TestAgentTrustRejectsNonObjectCerts(t *testing.T) {
 		if r := callAgent(t, sock, `{"op":"trust","certs":`+certs+`}`); r.OK || r.Error != "bad certs" {
 			t.Fatalf("certs %s: reply = %+v", certs, r)
 		}
+	}
+}
+
+// A boot whose update failed must update on the next boot even though the cert files are in place by then.
+func TestInstallCAsRetriesFailedUpdate(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root, bin := t.TempDir(), t.TempDir()
+	runs, fail := filepath.Join(bin, "runs"), filepath.Join(bin, "fail")
+	update := filepath.Join(bin, "update-ca")
+	if err := os.WriteFile(update, []byte("#!/bin/sh\necho \"$*\" >>"+runs+"\n[ ! -e "+fail+" ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script, cas := filepath.Join(bin, "vmm-agent.py"), filepath.Join(bin, "cas.json")
+	os.WriteFile(script, []byte(AgentScript), 0o755)
+	b, _ := json.Marshal(map[string]string{"0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01": "-----BEGIN CERTIFICATE-----\nMIIBdGVzdA==\n-----END CERTIFICATE-----\n"})
+	os.WriteFile(cas, b, 0o644)
+	install := func() error {
+		cmd := exec.Command("python3", "-I", script, "install-cas", cas)
+		cmd.Env = append(os.Environ(), "VMM_ROOT="+root, "VMM_UPDATE_CA="+update)
+		return cmd.Run()
+	}
+	os.WriteFile(fail, nil, 0o644)
+	if install() == nil {
+		t.Fatal("install-cas succeeded with a failing update")
+	}
+	os.Remove(fail)
+	for i := 0; i < 2; i++ {
+		if err := install(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := os.ReadFile(runs); string(got) != "\n--fresh\n" {
+		t.Fatalf("update runs = %q", got)
 	}
 }
