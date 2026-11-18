@@ -159,3 +159,14 @@ func TestSSHKeyDeleteConfirms(t *testing.T) {
 		t.Errorf("code %d", code)
 	}
 }
+
+func TestSSHRejectsBadUser(t *testing.T) {
+	for _, cmd := range []string{"ssh", "desktop"} {
+		for _, u := range []string{"-oProxyCommand=x", "a b"} {
+			_, c, execs, runs, _ := connectHub(t, vmDev, ownDevice)
+			if code := run(c, []string{cmd, "dev", "--user", u}); code != 2 || len(*execs)+len(*runs) != 0 {
+				t.Errorf("%s %q: code %d", cmd, u, code)
+			}
+		}
+	}
+}

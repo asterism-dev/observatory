@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -62,6 +63,8 @@ func (c *cli) warnNoDevice() {
 	fmt.Fprintf(c.stderr, "observatory: no device in org %s; run observatory device create <name> and import it\n", c.org.Name)
 }
 
+var validSSHUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}[$]?$`)
+
 func (c *cli) sshTarget(cmdPath string, args []string, max int) (target string, rest []string, err error) {
 	fs := c.flags(cmdPath)
 	user := fs.String("user", "ubuntu", "login `user`")
@@ -69,9 +72,15 @@ func (c *cli) sshTarget(cmdPath string, args []string, max int) (target string, 
 	if err != nil {
 		return "", nil, err
 	}
+	if !validSSHUser.MatchString(*user) {
+		return "", nil, usagef("invalid --user %q", *user)
+	}
 	_, host, err := c.sshHost(pos[0])
 	if err != nil {
 		return "", nil, err
+	}
+	if strings.HasPrefix(host, "-") {
+		return "", nil, &exitError{1, "invalid vm address " + host}
 	}
 	c.warnNoDevice()
 	return *user + "@" + host, pos[1:], nil
