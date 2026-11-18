@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,6 +91,14 @@ printf '2026.11.1-ffffffff\n' >/etc/observatory/image
 sync
 `
 	stubBuildHang = `#!/bin/sh
+sleep 600
+`
+	// Writes the right version, then reboots at once instead of powering off.
+	stubBuildNoPoweroff = `#!/bin/sh
+install -d -m 0755 /etc/observatory
+printf '%s\n' "$2" >/etc/observatory/image
+sync
+echo b >/proc/sysrq-trigger
 sleep 600
 `
 )
@@ -198,7 +207,7 @@ func TestGuestImageBuildRefusedWithoutSpace(t *testing.T) {
 	old := checkSpace
 	t.Cleanup(func() { checkSpace = old })
 	checkSpace = func(dir string, need int64) error {
-		if dir != p.ImagesDir || need != imageBuildSpace {
+		if dir != p.VMsDir || need != imageBuildSpace {
 			t.Errorf("checkSpace(%s, %d)", dir, need)
 		}
 		return fmt.Errorf("not enough space on node: %d MiB free, %d MiB needed", (need-1)>>20, need>>20)
@@ -327,5 +336,47 @@ func TestGuestImageInterruptedBuildDiscarded(t *testing.T) {
 	}
 	if _, err := os.Stat(part); err == nil {
 		t.Error(".part left after the build")
+	}
+}
+
+func TestGuestImageWithoutPoweroffRejected(t *testing.T) {
+	p := stubImageProvider(t, stubBuildNoPoweroff)
+	r := runUntilFailed(t, p)
+	if st := r.last(); !strings.Contains(st.Error, "without a guest poweroff") {
+		t.Errorf("error = %q", st.Error)
+	}
+	noGuestImage(t, p)
+	noBuildLeft(t, p)
+}
+
+func TestMoveDiskAcrossFilesystems(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "root.img"), filepath.Join(dir, "guest.raw.part")
+	if err := os.WriteFile(src, []byte("disk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := rename
+	t.Cleanup(func() { rename = old })
+	rename = func(o, n string) error { return &os.LinkError{Op: "rename", Old: o, New: n, Err: syscall.EXDEV} }
+	if err := moveDisk(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("source left behind")
+	}
+	f, err := os.Open(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	head := make([]byte, 4)
+	st, _ := f.Stat()
+	if _, err := f.Read(head); err != nil || string(head) != "disk" || st.Size() != imageDiskGB<<30 {
+		t.Fatalf("copy = %q (%d bytes), %v", head, st.Size(), err)
+	}
+
+	rename = func(string, string) error { return errors.New("boom") }
+	if err := moveDisk(dst, src); err == nil || err.Error() != "boom" {
+		t.Fatalf("other rename error = %v", err)
 	}
 }

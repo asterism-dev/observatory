@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/node"
@@ -31,8 +32,14 @@ const (
 	imageBuildID = "tpl-image-build"
 )
 
-// checkSpace is a variable so tests can simulate a full disk.
-var checkSpace = node.CheckSpace
+// haltMarker is what the guest kernel prints after a clean poweroff; KillOnConsole ends Firecracker on it.
+const haltMarker = "System halted"
+
+// checkSpace and rename are variables so tests can simulate a full disk and separate filesystems.
+var (
+	checkSpace = node.CheckSpace
+	rename     = os.Rename
+)
 
 // RunGuestImages makes sure the current guest image exists, building it if needed, and reports its state.
 func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageStatus)) {
@@ -79,8 +86,17 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 func (p *Provider) buildGuestImage(ctx context.Context, img guestimage.Image) error {
 	p.building.Lock()
 	defer p.building.Unlock()
-	if err := checkSpace(p.ImagesDir, imageBuildSpace); err != nil {
+	if err := os.MkdirAll(p.VMsDir, 0o755); err != nil {
 		return err
+	}
+	// The build disk lives in the VMs dir; on another filesystem the images dir needs room for the finished image too.
+	if err := checkSpace(p.VMsDir, imageBuildSpace); err != nil {
+		return err
+	}
+	if !sameFilesystem(p.VMsDir, p.ImagesDir) {
+		if err := checkSpace(p.ImagesDir, imageBuildSpace); err != nil {
+			return err
+		}
 	}
 	mem, err := imageBuildMemory()
 	if err != nil {
@@ -122,10 +138,15 @@ func (p *Provider) buildGuestImage(ctx context.Context, img guestimage.Image) er
 		inst.Kill()
 		return fmt.Errorf("image build: %w", ctx.Err())
 	}
+	console, _ := os.ReadFile(inst.Console)
+	halted := int64(len(console)) >= inst.Offset && bytes.Contains(console[inst.Offset:], []byte(haltMarker))
 	got, err := readGuestFile(root, guestimage.ImageFile, 64)
-	if v := strings.TrimSpace(string(got)); err != nil || v != img.Version {
-		if line := lastFailLine(filepath.Join(dir, node.ConsoleLog)); line != "" {
+	if v := strings.TrimSpace(string(got)); !halted || err != nil || v != img.Version {
+		if line := lastFailLine(console); line != "" {
 			return errors.New(line)
+		}
+		if !halted {
+			return errors.New("build VM exited without a guest poweroff")
 		}
 		if err == nil {
 			return fmt.Errorf("build VM wrote image %q, want %q", v, img.Version)
@@ -134,7 +155,7 @@ func (p *Provider) buildGuestImage(ctx context.Context, img guestimage.Image) er
 	}
 	dst := guestImagePath(p.ImagesDir, img.Version)
 	part := dst + ".part"
-	if err := os.Rename(root, part); err != nil {
+	if err := moveDisk(root, part); err != nil {
 		return err
 	}
 	// The jail gave root.img to the build VM's UID.
@@ -145,6 +166,27 @@ func (p *Provider) buildGuestImage(ctx context.Context, img guestimage.Image) er
 		return err
 	}
 	return os.Rename(part, dst)
+}
+
+// moveDisk renames src to dst, or sparse-copies it when the VMs and images dirs are on different filesystems.
+func moveDisk(src, dst string) error {
+	err := rename(src, dst)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := node.CloneResize(src, dst, imageDiskGB); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return os.Remove(src)
+}
+
+func sameFilesystem(a, b string) bool {
+	var sa, sb syscall.Stat_t
+	if syscall.Stat(a, &sa) != nil || syscall.Stat(b, &sb) != nil {
+		return false
+	}
+	return sa.Dev == sb.Dev
 }
 
 // imageBuildMemory is half the available memory, at most imageBuildMemoryMB, in 256 MiB steps.
@@ -167,13 +209,9 @@ func imageBuildMemory() (int, error) {
 }
 
 // lastFailLine is the build script's last failure message on the console, without the kernel or cloud-init prefix.
-func lastFailLine(console string) string {
-	b, err := os.ReadFile(console)
-	if err != nil {
-		return ""
-	}
+func lastFailLine(console []byte) string {
 	var last string
-	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc := bufio.NewScanner(bytes.NewReader(console))
 	for sc.Scan() {
 		if i := strings.Index(sc.Text(), "vmm-image-build: FAIL "); i >= 0 {
 			last = strings.TrimSpace(sc.Text()[i:])
