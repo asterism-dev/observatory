@@ -253,3 +253,9 @@ func ValidEndpoint(s string) bool {
 	n, err := strconv.Atoi(port)
 	return err == nil && n >= 1 && n <= 65535
 }
+
+type EgressCA struct {
+	ID      string `json:"id"`
+	CertPEM string `json:"certPem"`
+	KeyPEM  string `json:"keyPem"`
+}
