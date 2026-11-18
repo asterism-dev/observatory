@@ -27,6 +27,7 @@ func TestContextFileNamesExist(t *testing.T) {
 		all.Write(b)
 	}
 	all.WriteString(DesktopScript)
+	all.WriteString(BrowserScript)
 	spans := regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(ContextFile, -1)
 	if len(spans) == 0 {
 		t.Fatal("no backticked names")

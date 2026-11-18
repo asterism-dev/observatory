@@ -19,3 +19,6 @@ var ContextFile string
 
 //go:embed vmm-desktop
 var DesktopScript string
+
+//go:embed vmm-browser.py
+var BrowserScript string

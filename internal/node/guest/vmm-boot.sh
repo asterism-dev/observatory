@@ -118,6 +118,8 @@ desktop=
 user_units=$root/etc/systemd/user
 mkdir -p "$user_units" "$root/var/lib/systemd/linger"
 cp "$seed/vmm-desktop" "$bin/vmm-desktop.new"
+cp "$seed/vmm-browser.py" "$lib/vmm-browser.py.new"
+printf '#!/bin/sh\nexec python3 /usr/local/lib/vmm/vmm-browser.py "$@"\n' >"$bin/agent-browser.new"
 # xpra 6.5: an empty --bind-tcp= is rejected (no TCP socket is the default), bind=auto would add an abstract socket, and systemd-run would move xpra out of this unit's cgroup.
 # A custom --xvfb gets no -auth from xpra; without it any local UID could drive the X server ($$ leaves xpra a literal $XAUTHORITY).
 cat >"$user_units/vmm-desktop.service.new" <<'EOF'
@@ -129,7 +131,7 @@ ExecStart=/usr/bin/xpra start :100 --daemon=no --systemd-run=no --bind=noabstrac
 EOF
 printf '[Unit]\nDescription=vmm desktop idle stop\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/vmm-desktop idle-check\n' >"$user_units/vmm-desktop-idle.service.new"
 printf '[Unit]\nDescription=vmm desktop idle stop\nPartOf=vmm-desktop.service\n\n[Timer]\nOnActiveSec=1min\nOnUnitActiveSec=1min\n' >"$user_units/vmm-desktop-idle.timer.new"
-for f in "$bin/vmm-desktop" "$user_units/vmm-desktop.service" "$user_units/vmm-desktop-idle.service" "$user_units/vmm-desktop-idle.timer"; do
+for f in "$bin/vmm-desktop" "$lib/vmm-browser.py" "$bin/agent-browser" "$user_units/vmm-desktop.service" "$user_units/vmm-desktop-idle.service" "$user_units/vmm-desktop-idle.timer"; do
 	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac
 	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$user_units"/*) desktop=1 ;; esac; fi
 done
