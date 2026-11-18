@@ -216,7 +216,8 @@ func (c *cli) waitRestored(vm vmJSON) (json.RawMessage, error) {
 			return false, nil
 		}
 		c.progress(v.State)
-		return v.State == vm.State, nil
+		// Restore keeps the desired power; state can differ (auto-suspend, starting at lookup).
+		return v.State == vm.Power || vm.Power == "running" && v.State == "suspended", nil
 	})
 }
 

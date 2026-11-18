@@ -105,6 +105,20 @@ func TestSnapshotRestoreWait(t *testing.T) {
 	}
 }
 
+func TestSnapshotRestoreWaitFromSuspended(t *testing.T) {
+	h := newFakeHub(t)
+	meOneOrg(h)
+	suspended := strings.Replace(vmDev, `"state":"running"`, `"state":"suspended"`, 1)
+	h.on("GET /api/orgs/o1/vms", 200, `{"vms":[`+suspended+`],"nodes":[]}`)
+	h.on("GET /api/orgs/o1/vms/v1/snapshots", 200, `[`+snapA+`]`)
+	h.on("POST /api/orgs/o1/vms/v1/snapshots/s1/restore", 200, suspended)
+	h.on("GET /api/orgs/o1/vms/v1", 200, vmDev)
+	c, _, errb := newTestCLI(t, h)
+	if code := run(c, []string{"snapshot", "restore", "dev", "clean", "-y", "--restart", "--wait", "--timeout", "1s"}); code != 0 {
+		t.Fatal(code, errb.String())
+	}
+}
+
 func TestSnapshotRestoreWaitError(t *testing.T) {
 	h, c, _, errb := snapHub(t)
 	h.on("POST /api/orgs/o1/vms/v1/snapshots/s1/restore", 200, vmDev)
