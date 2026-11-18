@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -269,7 +270,7 @@ func TestRequestRewrites(t *testing.T) {
 func TestUpstreamBadCert502(t *testing.T) {
 	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, nil, func(r *rig) { r.p.UpstreamRoots = x509.NewCertPool() })
 	res, body := r.do(r.client(false), get(t, "https://a.test/"))
-	if res.StatusCode != http.StatusBadGateway || !strings.Contains(body, "certificate") {
+	if res.StatusCode != http.StatusBadGateway || body != "egress: certificate" {
 		t.Fatalf("status %d body %q", res.StatusCode, body)
 	}
 }
@@ -277,7 +278,7 @@ func TestUpstreamBadCert502(t *testing.T) {
 func TestUpstreamForbidden502(t *testing.T) {
 	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, nil, func(r *rig) { r.p.Policy = DefaultPolicy() })
 	res, body := r.do(r.client(false), get(t, "https://a.test/"))
-	if res.StatusCode != http.StatusBadGateway || !strings.HasPrefix(body, "egress: ") {
+	if res.StatusCode != http.StatusBadGateway || body != "egress: forbidden" {
 		t.Fatalf("status %d body %q", res.StatusCode, body)
 	}
 	if n := len(r.requests()); n != 0 {
@@ -439,21 +440,107 @@ func (s *syncBuffer) String() string {
 func TestLogLineNoSecrets(t *testing.T) {
 	var buf syncBuffer
 	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, nil, func(r *rig) { r.p.Log = log.New(&buf, "", 0) })
-	r.do(r.client(false), get(t, "https://a.test/repos/x/"+ghPH+"?token=querysecret42",
+	c := r.client(false)
+	r.do(c, get(t, "https://a.test/repos/x/"+ghPH+"?token=querysecret42",
 		"Authorization", "Bearer "+ghPH, "X-Extra", "headervalue42"))
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(buf.String(), "vars=") && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	line := buf.String()
+	r.do(c, get(t, "https://a.test/repos/x/%6F"+ghPH[1:]))
+	line := waitLog(t, &buf, 2)
 	for _, want := range []string{"vm=vm1", "host=a.test", "method=GET", "path=/repos/x/", "status=200", "vars=GH_TOKEN"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("log %q lacks %q", line, want)
 		}
 	}
-	for _, bad := range []string{ghValue, ghPH, "querysecret42", "token=", "headervalue42", "Bearer"} {
+	for _, bad := range []string{ghValue, ghPH[1:], "querysecret42", "token=", "headervalue42", "Bearer"} {
 		if strings.Contains(line, bad) {
 			t.Fatalf("log %q contains %q", line, bad)
 		}
+	}
+}
+
+func waitLog(t *testing.T, buf *syncBuffer, lines int) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for strings.Count(buf.String(), "vars=") < lines && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return buf.String()
+}
+
+// TestUpstreamErrorNoSecrets: an upstream echoing the substituted header in a malformed status line must not leak it.
+func TestUpstreamErrorNoSecrets(t *testing.T) {
+	ca, err := NewCA([]string{"a.test"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := NewIssuer([]proto.EgressCA{{ID: "bad", CertPEM: ca.CertPEM, KeyPEM: ca.KeyPEM}}, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := iss.Leaf("a.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := tls.NewListener(listen(t), &tls.Config{Certificates: []tls.Certificate{*leaf}, NextProtos: []string{"http/1.1"}})
+	go func() {
+		for {
+			c, err := bad.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				req, err := http.ReadRequest(bufio.NewReader(c))
+				if err != nil {
+					return
+				}
+				io.WriteString(c, "HTTP/1.1 "+strings.ReplaceAll(req.Header.Get("Authorization"), " ", "_")+"\r\n\r\n")
+			}()
+		}
+	}()
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM([]byte(ca.CertPEM))
+	var buf syncBuffer
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, nil, func(r *rig) {
+		r.upstream = bad.Addr().String()
+		r.p.UpstreamRoots = pool
+		r.p.Log = log.New(&buf, "", 0)
+	})
+	res, body := r.do(r.client(false), get(t, "https://a.test/", "Authorization", "Bearer "+ghPH))
+	line := waitLog(t, &buf, 1)
+	if res.StatusCode != http.StatusBadGateway || body != "egress: upstream" {
+		t.Fatalf("status %d body %q", res.StatusCode, body)
+	}
+	for _, s := range []string{body, line} {
+		if strings.Contains(s, ghValue) || strings.Contains(s, ghPH) {
+			t.Fatalf("leaked: %q", s)
+		}
+	}
+}
+
+func TestAbsoluteFormHostMismatch421(t *testing.T) {
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test", "b.test")}, nil)
+	c, err := net.Dial("tcp", r.addr.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	tc := tls.Client(c, &tls.Config{ServerName: "a.test", RootCAs: r.vmPool, NextProtos: []string{"http/1.1"}})
+	tc.SetDeadline(time.Now().Add(3 * time.Second))
+	io.WriteString(tc, "GET https://b.test/ HTTP/1.1\r\nHost: a.test\r\nAuthorization: Bearer "+ghPH+"\r\n\r\n")
+	res, err := http.ReadResponse(bufio.NewReader(tc), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusMisdirectedRequest || len(r.requests()) != 0 {
+		t.Fatalf("status %d, upstream got %d", res.StatusCode, len(r.requests()))
+	}
+}
+
+func TestForwardedDropped(t *testing.T) {
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, nil)
+	r.do(r.client(false), get(t, "https://a.test/", "Forwarded", "for=198.51.100.1"))
+	if h := r.last().header.Get("Forwarded"); h != "" {
+		t.Fatalf("upstream saw Forwarded %q", h)
 	}
 }

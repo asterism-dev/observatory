@@ -3,11 +3,14 @@ package egress
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -126,9 +129,9 @@ func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 			p.reverseProxy(sni, st, t, sent).ServeHTTP(w, r)
 		}
 		line := "egress vm=%s host=%s method=%s path=%s status=%d bytes=%d dur=%s vars=%s"
-		args := []any{p.VMID, sni, r.Method, redactPath(r.URL.EscapedPath(), t), st.status, st.bytes, time.Since(start), strings.Join(names, ",")}
+		args := []any{p.VMID, sni, r.Method, redactPath(r.URL.Path, t), st.status, st.bytes, time.Since(start), strings.Join(names, ",")}
 		if st.err != "" {
-			line += " err=%q"
+			line += " err=%s"
 			args = append(args, st.err)
 		}
 		p.Log.Printf(line, args...)
@@ -143,7 +146,7 @@ func fail(w http.ResponseWriter, st *reqStats, code int, msg string) {
 	st.bytes += int64(n)
 }
 
-// redactPath keeps the VM's own placeholders and values out of the log even when it puts them into a path.
+// redactPath keeps the VM's own placeholders and values out of the log even when it puts them into a path; escaping stops log injection.
 func redactPath(path string, t *table) string {
 	for _, secrets := range t.bound {
 		for _, s := range secrets {
@@ -154,7 +157,7 @@ func redactPath(path string, t *table) string {
 			}
 		}
 	}
-	return path
+	return (&url.URL{Path: path}).EscapedPath()
 }
 
 func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) *httputil.ReverseProxy {
@@ -163,6 +166,7 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			pr.Out.URL.Scheme = "https"
 			pr.Out.URL.Host = sni
 			pr.Out.Host = sni
+			pr.Out.Header.Del("Forwarded")
 		},
 		Transport:     p.upstream(),
 		FlushInterval: -1,
@@ -176,10 +180,32 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			return scrubResponse(res, t.scrub, sent)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-			st.err = err.Error()
-			fail(w, st, http.StatusBadGateway, "egress: "+err.Error())
+			st.err = upstreamReason(err)
+			fail(w, st, http.StatusBadGateway, "egress: "+st.err)
 		},
 	}
+}
+
+// upstreamReason maps errors to fixed words: transport errors can quote upstream bytes, which may echo substituted values.
+func upstreamReason(err error) string {
+	var certErr *tls.CertificateVerificationError
+	var unknownCA x509.UnknownAuthorityError
+	var hostErr x509.HostnameError
+	var invalidErr x509.CertificateInvalidError
+	var opErr *net.OpError
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &certErr), errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalidErr):
+		return "certificate"
+	case errors.Is(err, ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	case errors.As(err, &dnsErr), errors.As(err, &opErr) && opErr.Op == "dial":
+		return "dial"
+	}
+	return "upstream"
 }
 
 // ponytail: no-op until response scrubbing lands; values and sent are what it must mask.
