@@ -67,4 +67,10 @@ network:
   network attach <net> <vm> [--restart]  attach a VM to a network
   network detach <net> <vm> [--restart]  detach a VM from a network
 
+var:
+  var list [--scope private|team|org] [--team T]                                              list variables and secrets
+  var set <name> [--secret] [--host H]... [--scope S] [--team T] [--value V | --from-file F]  create or update a variable (secrets from stdin or --from-file)
+  var move <name> [--scope S] [--team T] --to private|team|org [--to-team T]                  move a variable to another scope
+  var delete <name> [--scope S] [--team T]                                                    delete a variable
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help

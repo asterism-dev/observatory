@@ -1,0 +1,4 @@
+NAME      KIND    SCOPE         VALUE                                UPDATED
+FOO       env     org           bar-plain                            13 min ago
+TOKEN     secret  private       ••••••                               3 h ago
+GH_TOKEN  secret  team backend  •••••• → api.github.com, github.com  2026-11-10 09:00
