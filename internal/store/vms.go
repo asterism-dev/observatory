@@ -21,27 +21,29 @@ var (
 )
 
 type VM struct {
-	ID, OrgID, NodeID uuid.UUID
-	UserID, TeamID    *uuid.UUID
-	Name              string
-	CPUs, MemoryMB    int
-	DiskGB            int
-	Power             proto.Power
-	StopMode          proto.StopMode
-	Generation        uint64
-	Provisioned       bool
-	State             proto.VMState
-	Error, IP         string
-	MgmtIP            netip.Addr
-	CreatedBy         uuid.UUID
-	CreatedAt         time.Time
+	ID, OrgID, NodeID  uuid.UUID
+	UserID, TeamID     *uuid.UUID
+	Name               string
+	CPUs, MemoryMB     int
+	DiskGB             int
+	Power              proto.Power
+	StopMode           proto.StopMode
+	Generation         uint64
+	Provisioned        bool
+	State              proto.VMState
+	Error, IP          string
+	MgmtIP             netip.Addr
+	CreatedBy          uuid.UUID
+	CreatedAt          time.Time
+	AutoSuspendMinutes int
+	WakeSeq            uint64
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -174,7 +176,8 @@ func (s *Store) VMsOnNode(ctx context.Context, node uuid.UUID) ([]VM, error) {
 // SetVMPower refuses to pause or hibernate a stopped VM with ErrNotRunning.
 func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power, m proto.StopMode) (VM, error) {
 	v, err := scanVM(s.q.QueryRow(ctx, `
-		UPDATE vms SET power = $3, stop_mode = nullif($4, ''), generation = generation + 1
+		UPDATE vms SET power = $3, stop_mode = nullif($4, ''), generation = generation + 1,
+			wake_seq = wake_seq + CASE WHEN $3 = 'running' AND state = 'suspended' THEN 1 ELSE 0 END
 		WHERE id = $1 AND org_id = $2 AND NOT ($3 IN ('paused', 'hibernated') AND power = 'stopped')
 		RETURNING `+vmColumns, id, org, p, m))
 	if errors.Is(err, ErrNotFound) && (p == proto.PowerPaused || p == proto.PowerHibernated) {
@@ -184,6 +187,13 @@ func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power
 		return VM{}, ErrNotRunning
 	}
 	return v, err
+}
+
+// SetAutoSuspend does not bump the generation: nodes read the setting on every push.
+func (s *Store) SetAutoSuspend(ctx context.Context, org, id uuid.UUID, minutes int) (VM, error) {
+	return scanVM(s.q.QueryRow(ctx, `
+		UPDATE vms SET auto_suspend_minutes = $3 WHERE id = $1 AND org_id = $2
+		RETURNING `+vmColumns, id, org, minutes))
 }
 
 // DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.

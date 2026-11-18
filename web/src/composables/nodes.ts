@@ -43,6 +43,7 @@ export interface VmInfo {
   diskGB: number
   createdAt: string
   canPower: boolean
+  autoSuspendMinutes: number
   canDelete: boolean
 }
 

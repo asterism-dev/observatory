@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog } from '@asterism-dev/lumen'
+import { Badge, Button, Dialog, NumberInput, Select } from '@asterism-dev/lumen'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -57,6 +57,30 @@ const power = (action: string) =>
   run(async () => {
     vm.value = await api<VmInfo>(`${base()}/${action}`, { method: 'POST' })
   })
+
+const presets = [0, 15, 60, 240]
+const suspendOptions = computed(() => [
+  ...presets.map((m) => ({ value: String(m), label: m ? t('vms.autoSuspendMinutes', { n: m }) : t('vms.autoSuspendOff') })),
+  { value: 'custom', label: t('vms.autoSuspendCustom') },
+])
+const suspendChoice = ref('0')
+const customMinutes = ref(30)
+const customValid = computed(() => Number.isInteger(customMinutes.value) && customMinutes.value >= 5 && customMinutes.value <= 1440)
+
+const setAutoSuspend = (minutes: number) =>
+  run(async () => {
+    vm.value = await api<VmInfo>(`${base()}/auto-suspend`, { method: 'PUT', body: JSON.stringify({ minutes }) })
+  })
+
+watch(
+  () => vm.value?.autoSuspendMinutes,
+  (m) => {
+    if (m === undefined || busy.value) return
+    suspendChoice.value = presets.includes(m) ? String(m) : 'custom'
+    if (!presets.includes(m)) customMinutes.value = m
+  },
+  { immediate: true },
+)
 
 const remove = () =>
   run(async () => {
@@ -138,6 +162,23 @@ watch(
       <p v-if="vm.canDisks"><Button :disabled="busy" @click="disksOpen = true">{{ t('vmDisks.change') }}</Button></p>
       <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
       <VMSnapshots :org-id="org.id" :vm="vm" @changed="load" />
+      <template v-if="vm.canPower">
+        <h2>{{ t('vms.autoSuspend') }}</h2>
+        <p class="row">
+          <Select
+            v-model="suspendChoice"
+            :options="suspendOptions"
+            :disabled="busy"
+            :aria-label="t('vms.autoSuspend')"
+            @update:model-value="(c) => c !== 'custom' && setAutoSuspend(Number(c))"
+          />
+          <template v-if="suspendChoice === 'custom'">
+            <NumberInput v-model="customMinutes" :aria-label="t('vms.autoSuspendCustom')" :invalid="!customValid" />
+            <Button :disabled="busy || !customValid" @click="setAutoSuspend(customMinutes)">{{ t('vms.autoSuspendApply') }}</Button>
+          </template>
+        </p>
+        <small>{{ t('vms.autoSuspendHint') }}</small>
+      </template>
       <p v-if="vm.canPower || vm.canDelete" class="row">
         <template v-if="vm.canPower">
           <Button v-for="a in powerActions(vm.state)" :key="a" :disabled="busy" @click="power(a)">{{ t(`vms.${a}`) }}</Button>

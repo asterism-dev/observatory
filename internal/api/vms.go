@@ -54,9 +54,10 @@ type vmJSON struct {
 	Disks      []vmDiskJSON   `json:"disks"`
 	CanDisks   bool           `json:"canDisks"`
 
-	CanSnapshot bool `json:"canSnapshot"`
-	CanRestore  bool `json:"canRestore"`
-	CanFork     bool `json:"canFork"`
+	AutoSuspendMinutes int  `json:"autoSuspendMinutes"`
+	CanSnapshot        bool `json:"canSnapshot"`
+	CanRestore         bool `json:"canRestore"`
+	CanFork            bool `json:"canFork"`
 }
 
 type vmDiskJSON struct {
@@ -138,7 +139,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
@@ -351,6 +352,36 @@ func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) htt
 		h.fleet.NotifyOrg(v.OrgID)
 		h.writeVM(w, r, http.StatusOK, v)
 	}
+}
+
+func (h *api) setAutoSuspend(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, store.ActionVMPower)
+	if !ok {
+		return
+	}
+	var body struct {
+		Minutes int `json:"minutes"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Minutes != 0 && (body.Minutes < 5 || body.Minutes > 1440) {
+		writeError(w, http.StatusBadRequest, "minutes must be 0 or between 5 and 1440")
+		return
+	}
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if v, err = tx.SetAutoSuspend(r.Context(), v.OrgID, v.ID, body.Minutes); err != nil {
+			return err
+		}
+		e := vmAudit(r, store.ActionVMPower, v)
+		e.Details["autoSuspendMinutes"] = body.Minutes
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	h.writeVM(w, r, http.StatusOK, v)
 }
 
 func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {

@@ -303,6 +303,9 @@ func TestDesiredOnlyOwnNodeAndForeignStatusIgnored(t *testing.T) {
 	sibling := e.vm(e.org.ID, a2.ID, "sibling", &e.owner, nil)
 	foreign := e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
 
+	if _, err := e.s.SetAutoSuspend(ctx, e.org.ID, mine.ID, 15); err != nil {
+		t.Fatal(err)
+	}
 	// The node also reports a VM the hub doesn't place on it: never written anywhere.
 	node := e.connect(cred, proto.VMStatus{ID: foreign.ID.String(), State: proto.StateRunning, IP: "1.2.3.4"})
 	m := node.desired()
@@ -310,7 +313,7 @@ func TestDesiredOnlyOwnNodeAndForeignStatusIgnored(t *testing.T) {
 		t.Fatalf("desired = %v seq %d", got, m.Seq)
 	}
 	d := m.Desired[0]
-	if d.Spec.Name != "mine" || d.Spec.CPUs != 1 || d.Spec.MemoryMB != 512 || d.Spec.DiskGB != 5 || d.Power != mine.Power || d.Generation != mine.Generation {
+	if d.Spec.Name != "mine" || d.Spec.CPUs != 1 || d.Spec.MemoryMB != 512 || d.Spec.DiskGB != 5 || d.Power != mine.Power || d.Generation != mine.Generation || d.AutoSuspendMinutes != 15 || d.WakeSeq != 0 {
 		t.Errorf("unexpected desired VM %+v", d)
 	}
 	if !e.f.Online(a.ID) || e.f.Online(a2.ID) {

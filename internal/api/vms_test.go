@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -485,5 +486,69 @@ func TestVMDiskErrorShown(t *testing.T) {
 	decode(t, e.do("GET", vmsPath(org)+"/"+v.ID, tok), &got)
 	if len(got.Disks) != 1 || got.Disks[0].Error != "NBD connection lost" || got.Disks[0].State != "creating" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAutoSuspendValidation(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	for minutes, code := range map[int]int{3: 400, 0: 200, 5: 200, 1440: 200, 1441: 400} {
+		rec := e.send("PUT", vmsPath(org)+"/"+v.ID+"/auto-suspend", tok, `{"minutes":`+strconv.Itoa(minutes)+`}`)
+		if rec.Code != code {
+			t.Fatalf("minutes %d: %d %s", minutes, rec.Code, rec.Body.String())
+		}
+		if code == 200 {
+			var got struct{ AutoSuspendMinutes int }
+			decode(t, rec, &got)
+			if got.AutoSuspendMinutes != minutes {
+				t.Fatalf("minutes %d: %+v", minutes, got)
+			}
+			if d := e.audit("vm:power")[0].Details; d["autoSuspendMinutes"] != float64(minutes) {
+				t.Fatalf("audit: %+v", d)
+			}
+		}
+	}
+}
+
+func TestAutoSuspendPermission(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	v := e.createVM(ownerTok, org, vmBody("a", userOwner(), e.enrolledNode(ownerTok, org, "n1")))
+	if rec := e.send("PUT", vmsPath(org)+"/"+v.ID+"/auto-suspend", bobTok, `{"minutes":15}`); rec.Code != 403 {
+		t.Fatalf("no vm:power: %d", rec.Code)
+	}
+}
+
+func TestStartWakesSuspended(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	vid, node := uuid.MustParse(v.ID), uuid.MustParse(v.Node.ID)
+	for i, action := range []string{"start", "resume"} {
+		if err := e.store.SetVMStatus(context.Background(), node, proto.VMStatus{ID: v.ID, State: proto.StateSuspended}); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/"+action, tok); rec.Code != 200 {
+			t.Fatalf("%s: %d %s", action, rec.Code, rec.Body.String())
+		}
+		got, err := e.store.VM(context.Background(), org, vid)
+		if err != nil || got.WakeSeq != uint64(i+1) {
+			t.Fatalf("%s: wake_seq %d %v", action, got.WakeSeq, err)
+		}
+	}
+	if err := e.store.SetVMStatus(context.Background(), node, proto.VMStatus{ID: v.ID, State: proto.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/start", tok); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	if got, _ := e.store.VM(context.Background(), org, vid); got.WakeSeq != 2 {
+		t.Fatalf("running start must not bump wake_seq: %d", got.WakeSeq)
 	}
 }

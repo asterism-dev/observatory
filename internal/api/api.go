@@ -103,6 +103,7 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/hibernate", h.powerVM("hibernate", proto.PowerHibernated, ""))
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/resume", h.powerVM("resume", proto.PowerRunning, ""))
 	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}", h.deleteVM)
+	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/auto-suspend", h.setAutoSuspend)
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/networks", h.setVMNetworks)
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/disks", h.setVMDisks)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/snapshots", h.listSnapshots)
