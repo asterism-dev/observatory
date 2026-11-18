@@ -40,7 +40,8 @@ if [ -n "$repo" ]; then
 else
 	echo "SKIP git ls-remote (no repo given)"
 fi
-check "claude -p" sh -c 'timeout 180 claude -p "say ok" </dev/null | grep -qi ok'
+# -w: an auth error ("…access token is invalid") contains "ok" too.
+check "claude -p" sh -c 'timeout 180 claude -p "say ok" </dev/null | grep -qiw ok'
 check "claude mcp list: linear connected" sh -c 'timeout 60 claude mcp list </dev/null | grep -q "^linear:.*Connected"'
 check "linear graphql viewer email" sh -c 'key=${LINEAR_API_KEY:-$(vmm-token linear)} &&
 	curl -fsS -H "Authorization: $key" -H "Content-Type: application/json" -d "{\"query\":\"{ viewer { email } }\"}" https://api.linear.app/graphql |
