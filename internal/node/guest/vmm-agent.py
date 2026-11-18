@@ -162,7 +162,7 @@ def takeoff(req):
             return
         # A fork's Chrome would otherwise keep the source's profile lock and hostname.
         try:
-            subprocess.run(["systemctl", "--user", "-M", "ubuntu@", "stop", "vmm-desktop.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            subprocess.run(["systemctl", "--user", "-M", "ubuntu@", "stop", "vmm-desktop.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
         except (OSError, subprocess.SubprocessError):
             pass
         run("systemctl", "restart", "ssh.service")

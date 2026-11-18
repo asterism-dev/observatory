@@ -428,7 +428,7 @@ func TestBootScriptInstallsDesktop(t *testing.T) {
 			cmdline = l
 		}
 	}
-	for _, want := range []string{"ExecStart=/usr/bin/xpra start :100 ", "--daemon=no", "--systemd-run=no", "--socket-dir=%t/xpra", "-nolisten tcp", "--html=off", "--mdns=no"} {
+	for _, want := range []string{"ExecStart=/usr/bin/xpra start :100 ", "--daemon=no", "--systemd-run=no", "--bind=noabstract", "--socket-dir=%t/xpra", "-nolisten tcp", "-nolisten local", "-auth $$XAUTHORITY", "--html=off", "--mdns=no"} {
 		if !strings.Contains(cmdline, want) {
 			t.Errorf("ExecStart misses %q: %q", want, cmdline)
 		}

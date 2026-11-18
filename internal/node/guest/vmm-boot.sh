@@ -119,12 +119,13 @@ user_units=$root/etc/systemd/user
 mkdir -p "$user_units" "$root/var/lib/systemd/linger"
 cp "$seed/vmm-desktop" "$bin/vmm-desktop.new"
 # xpra 6.5: an empty --bind-tcp= is rejected (no TCP socket is the default), bind=auto would add an abstract socket, and systemd-run would move xpra out of this unit's cgroup.
+# A custom --xvfb gets no -auth from xpra; without it any local UID could drive the X server ($$ leaves xpra a literal $XAUTHORITY).
 cat >"$user_units/vmm-desktop.service.new" <<'EOF'
 [Unit]
 Description=vmm desktop (xpra on :100)
 
 [Service]
-ExecStart=/usr/bin/xpra start :100 --daemon=no --systemd-run=no --bind=noabstract --socket-dir=%t/xpra --mdns=no --html=off --pulseaudio=no --printing=no --file-transfer=off --notifications=no --clipboard=yes "--xvfb=Xvfb +extension GLX +extension Composite -screen 0 5120x2880x24+32 -nolisten tcp -dpi 96"
+ExecStart=/usr/bin/xpra start :100 --daemon=no --systemd-run=no --bind=noabstract --socket-dir=%t/xpra --mdns=no --html=off --pulseaudio=no --printing=no --file-transfer=off --notifications=no --clipboard=yes "--xvfb=Xvfb +extension GLX +extension Composite -screen 0 5120x2880x24+32 -nolisten tcp -nolisten local -noreset -auth $$XAUTHORITY -dpi 96"
 EOF
 printf '[Unit]\nDescription=vmm desktop idle stop\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/vmm-desktop idle-check\n' >"$user_units/vmm-desktop-idle.service.new"
 printf '[Unit]\nDescription=vmm desktop idle stop\nPartOf=vmm-desktop.service\n\n[Timer]\nOnActiveSec=1min\nOnUnitActiveSec=1min\n' >"$user_units/vmm-desktop-idle.timer.new"
