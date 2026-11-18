@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -607,5 +608,96 @@ func TestRestoreCorruptStateFails(t *testing.T) {
 	if _, err := inst.WaitIP(ctx); err != nil {
 		b, _ := os.ReadFile(filepath.Join(dir, node.ConsoleLog))
 		t.Fatalf("cold boot after a failed restore: %v\n%s", err, b[max(0, len(b)-3000):])
+	}
+}
+
+// blockStorage rejects the node's connections to the NBD server until the returned func runs.
+func blockStorage(t *testing.T, rawURL string) func() {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := fmt.Sprintf("add table inet t3block\nadd chain inet t3block out { type filter hook output priority 0; }\nadd rule inet t3block out ip daddr %s tcp dport %s reject with tcp reset\n", u.Hostname(), u.Port())
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(rule)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("nft: %v: %s", err, out)
+	}
+	unblock := func() { exec.Command("nft", "delete", "table", "inet", "t3block").Run() }
+	t.Cleanup(unblock)
+	return unblock
+}
+
+// A hibernated VM with a disk ends by resuming and shutting down once storage is back, so writes still in the guest's page cache reach the disk.
+func TestHibernatedWithDiskShutsDownAfterStorageReturns(t *testing.T) {
+	nbdURL, psk := os.Getenv("VMM_TEST_NBD"), os.Getenv("VMM_TEST_NBD_PSK")
+	if nbdURL == "" {
+		t.Skip("needs VMM_TEST_NBD and VMM_TEST_NBD_PSK")
+	}
+	p := testProvider(t)
+	key := filepath.Join(t.TempDir(), "id")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	pub, _ := os.ReadFile(key + ".pub")
+	f := testVM("fchibstop")
+	f.Spec.MemoryMB = 512
+	f.Boot = &proto.Boot{SSHPublicKeys: []string{string(pub)}}
+	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: path.Base(nbdURL), MountPath: "/data", URL: nbdURL, PSK: psk}}
+	inst := startVM(t, p, f)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	ip, err := inst.WaitIP(ctx)
+	if err != nil {
+		inst.Kill()
+		t.Fatal(err)
+	}
+	marker := fmt.Sprintf("unsynced-%d", time.Now().UnixNano())
+	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; echo "+marker+" | sudo tee /data/marker >/dev/null")
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	state := hibernate(t, inst, dir)
+
+	unblock := blockStorage(t, nbdURL)
+	u, _ := url.Parse(nbdURL)
+	if c, err := net.DialTimeout("tcp", u.Host, 3*time.Second); err == nil {
+		c.Close()
+		t.Fatal("storage still reachable while blocked")
+	}
+	if inst, err := p.Restore(f, dir, node.RestoreFrom{StateDir: state}); err == nil {
+		inst.Kill()
+		t.Fatal("restored while storage is unreachable")
+	} else {
+		t.Logf("restore while storage is down: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(state, node.MemFile)); err != nil {
+		t.Fatalf("state lost while storage is down: %v", err)
+	}
+	unblock()
+
+	inst, err = p.Restore(f, dir, node.RestoreFrom{StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	began := time.Now()
+	if err := inst.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	<-inst.Done()
+	t.Logf("resumed VM shut down in %s", time.Since(began).Round(100*time.Millisecond))
+	if time.Since(began) >= 10*time.Second {
+		t.Fatal("guest did not shut down on its own")
+	}
+	if inst, err = p.Start(f, dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { inst.Kill(); <-inst.Done() }()
+	ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if _, err := inst.WaitIP(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := sshVM(t, key, ip, "cloud-init status --wait >/dev/null; cat /data/marker"); got != marker {
+		t.Fatalf("marker after shutdown = %q, want %q", got, marker)
 	}
 }

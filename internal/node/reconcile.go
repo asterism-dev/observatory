@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"log"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -37,8 +38,13 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 	a.mu.Unlock()
 	var wg sync.WaitGroup
 	for _, e := range gone {
+		if a.slowDestroy(e) {
+			// It waits on Firecracker, the guest or storage; the disks stay in use until it is done.
+			go func() { a.destroy(ctx, e); a.sendDisks() }()
+			continue
+		}
 		wg.Add(1)
-		go func() { defer wg.Done(); a.destroy(e) }()
+		go func() { defer wg.Done(); a.destroy(ctx, e) }()
 	}
 	// Removals finish first so their resources are free before anything new is prepared.
 	wg.Wait()
@@ -92,10 +98,18 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 		gen := d.Generation
 		f.Boot = d.Boot
 		switch {
-		case !ok:
-			if f.Hibernated {
-				a.endHibernation(f, true)
+		case !ok && f.Hibernated:
+			booted := make(chan struct{})
+			close(booted)
+			e := &vmEntry{file: f, cancel: func() {}, booted: booted}
+			a.mu.Lock()
+			if a.dying == nil {
+				a.dying = map[*vmEntry]bool{}
 			}
+			a.dying[e] = true
+			a.mu.Unlock()
+			go func() { a.destroy(ctx, e); a.sendDisks() }()
+		case !ok:
 			if err := DeleteVMDir(a.VMsDir, f.Spec.ID); err != nil {
 				log.Printf("vm %s: delete dir: %v", f.Spec.ID, err)
 			}
@@ -112,23 +126,40 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 	}
 }
 
-func (a *Agent) destroy(e *vmEntry) {
+// slowDestroy reports whether destroying e waits on a boot, a running operation or a resume to shut down.
+func (a *Agent) slowDestroy(e *vmEntry) bool {
+	select {
+	case <-e.booted:
+	default:
+		return true
+	}
+	if !e.op.TryLock() {
+		return true
+	}
+	e.op.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return e.file.Hibernated && len(e.file.Spec.Attachments) > 0
+}
+
+func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
 	id := e.file.Spec.ID
 	e.cancel()
 	<-e.booted
 	e.op.Lock()
 	defer e.op.Unlock()
-	a.mu.Lock()
-	f := e.file
-	a.mu.Unlock()
-	// A hibernated VM has no live instance; with disks it must still shut down cleanly.
-	if f.Hibernated {
-		a.endHibernation(f, true)
-	}
 	gone := func() {
 		a.mu.Lock()
 		delete(a.dying, e)
 		a.mu.Unlock()
+	}
+	a.mu.Lock()
+	hibernated := e.file.Hibernated
+	a.mu.Unlock()
+	// A hibernated VM has no live instance; with disks it must still shut down cleanly, so it stays until storage is back.
+	if hibernated && !a.endHibernationWait(ctx, e, true, math.MaxUint64) {
+		gone()
+		return
 	}
 	if inst := a.instance(e); inst != nil {
 		e.stopRequested.Store(true)
@@ -198,9 +229,10 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		a.report(st)
 		return
 	}
-	<-e.booted
+	if !a.acquire(ctx, e, d) {
+		return
+	}
 	op := &e.op
-	op.Lock()
 	unlock := true
 	defer func() {
 		if unlock {
@@ -214,6 +246,18 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	f.Power, f.StopMode, f.Generation, f.Boot = d.Power, d.StopMode, d.Generation, d.Boot
 	var reseedErr error
 	halted := !slices.Equal(f.Spec.NICs, d.Spec.NICs) || !slices.Equal(f.Spec.Attachments, d.Spec.Attachments)
+	graceful := d.Power != proto.PowerStopped || d.StopMode != proto.StopHard
+	if f.Hibernated && len(f.Spec.Attachments) > 0 && graceful && (halted || d.Power == proto.PowerStopped) {
+		// Resuming to shut down waits on storage and the guest; d is applied again once the state is gone.
+		unlock = false
+		go func() {
+			defer op.Unlock()
+			if a.endHibernationWait(ctx, e, true, d.Generation) {
+				a.queue(ctx, e, d)
+			}
+		}()
+		return
+	}
 	if halted {
 		e = a.halt(e)
 		f.Hibernated = e.file.Hibernated
@@ -281,7 +325,9 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
 	case f.Power == proto.PowerStopped && f.Hibernated:
 		e.cancel()
-		a.endHibernation(f, f.StopMode != proto.StopHard)
+		if err := a.endHibernation(e, graceful); err != nil {
+			log.Printf("vm %s: end hibernation: %v", f.Spec.ID, err)
+		}
 		f.Hibernated = false
 		if err := SaveVM(a.VMsDir, f); err != nil {
 			log.Printf("vm %s: save: %v", f.Spec.ID, err)
@@ -292,10 +338,27 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
 	case f.Power == proto.PowerStopped:
 		e.cancel() // ends a pending restart backoff
+		if st.State == proto.StateHibernated {
+			// The hibernation was ended (resumed and shut down) before this update was replayed.
+			st = proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped}
+		}
 		a.report(st)
 	default:
 		a.syncPause(e, inst)
 	}
+}
+
+// acquire takes e.op to apply d now, or queues d while e boots or runs another operation.
+func (a *Agent) acquire(ctx context.Context, e *vmEntry, d proto.DesiredVM) bool {
+	select {
+	case <-e.booted:
+		if e.op.TryLock() {
+			return true
+		}
+	default:
+	}
+	a.queue(ctx, e, d)
+	return false
 }
 
 // halt stops e's instance and swaps in an idle stopped entry, so e's boot goroutine neither restarts it nor reports over later updates.
@@ -315,13 +378,17 @@ func (a *Agent) halt(e *vmEntry) *vmEntry {
 		}
 	}
 	a.mu.Lock()
+	hibernated := e.file.Hibernated
+	a.mu.Unlock()
+	// Attached disks change, so the memory state cannot be resumed against them; a VM with disks was resumed and shut down before.
+	if hibernated {
+		if err := a.endHibernation(e, true); err != nil {
+			log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
+		}
+	}
+	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
-	// Attached disks change, so the memory state cannot be resumed against them.
-	if f.Hibernated {
-		a.endHibernation(f, true)
-		f.Hibernated = false
-	}
 	// Cancelling only after exit keeps a pending WaitIP from reporting the cancellation as an error.
 	e.cancel()
 	booted := make(chan struct{})

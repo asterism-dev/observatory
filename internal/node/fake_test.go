@@ -63,6 +63,12 @@ func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
 
 func (i *fakeInstance) SaveState(dir string) error {
 	i.p.record("savestate:" + dir)
+	i.p.mu.Lock()
+	block, fail := i.p.saveBlock, i.p.failSaveState
+	i.p.mu.Unlock()
+	if block != nil {
+		<-block
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -71,30 +77,33 @@ func (i *fakeInstance) SaveState(dir string) error {
 			return err
 		}
 	}
-	return nil
+	return fail
 }
 
 type fakeProvider struct {
-	mu           sync.Mutex
-	prepared     []string
-	started      map[string]*fakeInstance
-	failPrepare  map[string]bool
-	failStart    map[string]bool
-	staleIP      map[string]bool
-	chassis      []chassisconf.Config
-	block        chan struct{} // when set, StartChassis waits for it to close
-	inflight     atomic.Int32
-	maxInflight  atomic.Int32
-	events       []string
-	failDisks    bool
-	failReseed   bool
-	starts       map[string]int
-	boots        map[string]*proto.Boot // Boot of the latest Start per VM
-	bigRoot      bool                   // makes Disks report a different allocation, as if the guest wrote data
-	afterPrepare func(dir string)
-	beforeStart  func(dir string)
-	failRestore  error
-	restores     map[string]int
+	mu            sync.Mutex
+	prepared      []string
+	started       map[string]*fakeInstance
+	failPrepare   map[string]bool
+	failStart     map[string]bool
+	staleIP       map[string]bool
+	chassis       []chassisconf.Config
+	block         chan struct{} // when set, StartChassis waits for it to close
+	inflight      atomic.Int32
+	maxInflight   atomic.Int32
+	events        []string
+	failDisks     bool
+	failReseed    bool
+	starts        map[string]int
+	boots         map[string]*proto.Boot // Boot of the latest Start per VM
+	bigRoot       bool                   // makes Disks report a different allocation, as if the guest wrote data
+	afterPrepare  func(dir string)
+	beforeStart   func(dir string)
+	failRestore   error
+	beforeRestore func(dir string)
+	saveBlock     chan struct{}
+	failSaveState error
+	restores      map[string]int
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -194,10 +203,13 @@ func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
 	return inst, nil
 }
 
-func (p *fakeProvider) Restore(f VMFile, _ string, from RestoreFrom) (Instance, error) {
+func (p *fakeProvider) Restore(f VMFile, dir string, from RestoreFrom) (Instance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, "restore:"+from.StateDir)
+	if p.beforeRestore != nil {
+		p.beforeRestore(dir)
+	}
 	if p.failRestore != nil {
 		return nil, p.failRestore
 	}

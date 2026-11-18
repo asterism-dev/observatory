@@ -85,6 +85,9 @@ type vmEntry struct {
 	// op serializes power operations on the VM; a hibernate holds it from its own goroutine.
 	op     sync.Mutex
 	paused bool // guarded by Agent.mu
+	// pending is the newest desired that arrived while op was taken; a waiting goroutine applies it.
+	pending *proto.DesiredVM
+	waiting bool
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -285,8 +288,8 @@ func dialStorage(f VMFile) error {
 
 func (a *Agent) startVM(ctx context.Context, f VMFile, prepare bool) {
 	state := proto.StateStarting
-	if f.Power == proto.PowerStopped {
-		state = proto.StateStopped
+	if f.Power == proto.PowerStopped || f.Power == proto.PowerHibernated {
+		state = restingState(f)
 	}
 	bootCtx, cancel := context.WithCancel(ctx)
 	e := &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: state}, cancel: cancel, booted: make(chan struct{})}
@@ -401,8 +404,11 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
 func (a *Agent) start(e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
 	if f.Hibernated {
-		inst, err = a.Provider.Restore(f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)})
-		a.discardState(e)
+		// Cleared first: once resumed, the guest writes to its disks, and a crash must then cold-boot.
+		err = a.clearHibernated(e)
+		if err == nil {
+			inst, err = a.Provider.Restore(f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)})
+		}
 		if err == nil {
 			return inst, "", nil
 		}
@@ -421,18 +427,12 @@ func (a *Agent) coldStart(f VMFile, dir string) (Instance, error) {
 	return a.Provider.Start(f, dir)
 }
 
-// discardState clears Hibernated in vm.json before deleting the state, so a crash in between cold-boots.
-func (a *Agent) discardState(e *vmEntry) {
+func (a *Agent) clearHibernated(e *vmEntry) error {
 	a.mu.Lock()
 	e.file.Hibernated = false
 	f := e.file
 	a.mu.Unlock()
-	if err := SaveVM(a.VMsDir, f); err != nil {
-		log.Printf("vm %s: save: %v", f.Spec.ID, err)
-	}
-	if err := os.RemoveAll(filepath.Join(VMDir(a.VMsDir, f.Spec.ID), StateDir)); err != nil {
-		log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
-	}
+	return SaveVM(a.VMsDir, f)
 }
 
 func restingState(f VMFile) proto.VMState {
@@ -490,22 +490,91 @@ func (a *Agent) hibernate(e *vmEntry) error {
 	return inst.Kill()
 }
 
-// endHibernation drops f's memory state; gracefully, a VM with attached disks is resumed and shut down first so guest writes reach the disks.
-func (a *Agent) endHibernation(f VMFile, graceful bool) {
+// endHibernation drops e's memory state, gracefully resuming and shutting down a VM with disks first; it fails, keeping the state, while that resume is impossible.
+func (a *Agent) endHibernation(e *vmEntry, graceful bool) error {
+	a.mu.Lock()
+	f := e.file
+	a.mu.Unlock()
 	dir := VMDir(a.VMsDir, f.Spec.ID)
-	if graceful && len(f.Spec.Attachments) > 0 {
-		if inst, err := a.Provider.Restore(f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)}); err != nil {
-			log.Printf("vm %s: resume to shut down: %v", f.Spec.ID, err)
-		} else {
-			if err := inst.Stop(); err != nil {
-				log.Printf("vm %s: stop: %v", f.Spec.ID, err)
-				inst.Kill()
-			}
-			<-inst.Done()
+	state := filepath.Join(dir, StateDir)
+	if !graceful || len(f.Spec.Attachments) == 0 {
+		if err := a.clearHibernated(e); err != nil {
+			log.Printf("vm %s: save: %v", f.Spec.ID, err)
+		}
+		return os.RemoveAll(state)
+	}
+	if err := checkStorage(f); err != nil {
+		return err
+	}
+	if err := a.clearHibernated(e); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	if inst, err := a.Provider.Restore(f, dir, RestoreFrom{StateDir: state}); err != nil {
+		log.Printf("vm %s: resume to shut down: %v", f.Spec.ID, err)
+	} else {
+		if err := inst.Stop(); err != nil {
+			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
+			inst.Kill()
+		}
+		<-inst.Done()
+	}
+	if err := os.RemoveAll(state); err != nil {
+		log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
+	}
+	return nil
+}
+
+// endHibernationWait retries endHibernation on the restart backoff until it succeeds, ctx ends or a desired generation above gen is queued.
+func (a *Agent) endHibernationWait(ctx context.Context, e *vmEntry, graceful bool, gen uint64) bool {
+	for i := 0; ; i++ {
+		err := a.endHibernation(e, graceful)
+		if err == nil {
+			return true
+		}
+		log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
+		a.reportEntry(e, proto.VMStatus{ID: e.file.Spec.ID, State: proto.StateHibernated, Error: err.Error()})
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(restartBackoff[min(i, len(restartBackoff)-1)]):
+		}
+		a.mu.Lock()
+		newer := e.pending != nil && e.pending.Generation > gen
+		a.mu.Unlock()
+		if newer {
+			return false
 		}
 	}
-	if err := os.RemoveAll(filepath.Join(dir, StateDir)); err != nil {
-		log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
+}
+
+// queue keeps d, unless a newer desired is already queued, to be applied once e's boot and running operation end.
+func (a *Agent) queue(ctx context.Context, e *vmEntry, d proto.DesiredVM) {
+	a.mu.Lock()
+	if e.pending == nil || d.Generation >= e.pending.Generation {
+		e.pending = &d
+	}
+	start := !e.waiting
+	e.waiting = true
+	a.mu.Unlock()
+	if start {
+		go a.applyPending(ctx, e)
+	}
+}
+
+func (a *Agent) applyPending(ctx context.Context, e *vmEntry) {
+	<-e.booted
+	e.op.Lock()
+	e.op.Unlock()
+	a.reconcileMu.Lock()
+	defer a.reconcileMu.Unlock()
+	a.mu.Lock()
+	d := e.pending
+	e.pending, e.waiting = nil, false
+	cur, ok := a.vms[e.file.Spec.ID]
+	apply := ok && d != nil && !cur.placeholder && d.Generation > cur.file.Generation
+	a.mu.Unlock()
+	if apply && ctx.Err() == nil {
+		a.updateDesired(ctx, cur, *d)
 	}
 }
 

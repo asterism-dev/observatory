@@ -1,18 +1,8 @@
 package node
 
-import (
-	"fmt"
+import "fmt"
 
-	"golang.org/x/sys/unix"
-)
-
-var statfsFree = func(dir string) (int64, error) {
-	var st unix.Statfs_t
-	if err := unix.Statfs(dir, &st); err != nil {
-		return 0, err
-	}
-	return int64(st.Bavail) * int64(st.Bsize), nil
-}
+var statfsFree = freeBytes
 
 func checkSpace(dir string, need int64) error {
 	free, err := statfsFree(dir)

@@ -48,10 +48,26 @@ func SaveVM(vmsDir string, f VMFile) error {
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := writeSynced(tmp, b); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, "vm.json"))
+	if err := os.Rename(tmp, filepath.Join(dir, "vm.json")); err != nil {
+		return err
+	}
+	// Hibernated must be on disk before a resumed guest writes to its disks.
+	return syncDir(dir)
+}
+
+func writeSynced(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
 }
 
 func LoadVMs(vmsDir string) ([]VMFile, error) {
