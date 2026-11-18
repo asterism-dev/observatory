@@ -17,6 +17,16 @@ import (
 
 const maxTableLine = 4 << 20
 
+func egressMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// net/http logs raw upstream bytes through the global logger, and the node copies stderr into the journal.
+	log.SetOutput(io.Discard)
+	if err := runEgress(args, stdin, stdout, stderr); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
 // runEgress serves one VM's proxy; every stdin line is a full table, EOF stops it.
 func runEgress(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("egress", flag.ContinueOnError)

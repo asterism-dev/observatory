@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -87,5 +88,20 @@ func TestRunEgressBadPeer(t *testing.T) {
 	err := runEgress([]string{"-listen", "127.0.0.1:0", "-peer", "nope"}, strings.NewReader(""), io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "-peer") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEgressMainDiscardsGlobalLog(t *testing.T) {
+	defer log.SetOutput(log.Writer())
+	var stderr bytes.Buffer
+	line := `{"cas":`
+	if code := egressMain([]string{"-listen", "127.0.0.1:0"}, strings.NewReader(line+"\n"), io.Discard, &stderr); code != 1 {
+		t.Fatalf("exit code %d", code)
+	}
+	if log.Writer() != io.Discard {
+		t.Fatal("global logger still writes")
+	}
+	if got := stderr.String(); got != "egress: invalid table\n" {
+		t.Fatalf("stderr %q", got)
 	}
 }
