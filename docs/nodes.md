@@ -13,7 +13,7 @@ keeps a WebSocket connection to the hub, which pushes the desired VMs.
 - The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
-- Disk under `/var/lib/observatory-node`: about 13 GB for the images (the Ubuntu base image, about 2 GB, plus the
+- Disk under `/var/lib/observatory-node`: about 14 GB for the images (the Ubuntu base image, about 2 GB, plus the
   current and the previous guest image, up to 6 GB each), 10 GB free while a guest image builds, plus each VM's root
   disk and each template (sparse; a template takes about the guest image plus its VM size in RAM).
 - RAM for the guest image build: half of the host's available memory, at least 1.5 GB and at most 4 GB, for about
@@ -118,7 +118,6 @@ and pinned versions are part of the node binary, so a new binary with a changed 
 - **`imageURL`:** `"firecracker": {"imageURL": "..."}` in `node.json` makes the node use that image as is, without a
   build (escape hatch for a stock or own image); the node page shows "custom image". Such VMs have none of the tools,
   desktop or browser unless the image brings them. Remove the setting and restart the node to go back.
-
 
 ## Disks
 

@@ -133,8 +133,9 @@ SSH host keys and machine id, entropy mixed into its RNG.
   variables.
 - Any failure falls back to a cold boot; a failed takeoff also deletes the template.
 - Turn it off with `"firecracker": {"fastBoot": false}` in `node.json`.
-- **Boot time:** a template boot takes under 2 s to a reachable guest on bare metal; on a 2-core nested test host it
-  measured about 1.4–2.5 s (a first cold boot with cloud-init there: about 1 min).
+- **Boot time:** a template boot is meant to take under 1 s to a reachable guest; on a 2-core nested test host it
+  measured about 4 s with the stock image as with the guest image (8 s right after a node restart, with a cold page
+  cache; a first cold boot with cloud-init there: about 1 min).
 
 ## Metrics
 

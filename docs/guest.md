@@ -54,6 +54,8 @@ At start the node checks for `images/guest-<version>.raw`. If it is missing (and
 build script downloads every artifact into a tmpfs, checks it against the manifest, installs, checks each tool's
 `--version`, cleans up and writes `/etc/observatory/image` last. The node keeps the disk only if the guest powered
 off and that file holds the expected version. Details, disk space and failures: [nodes.md](nodes.md#guest-image).
+The image file is sparse with 10 GiB apparent size; about 5–5.7 GiB of it is allocated, although the guest's `df`
+shows about 3.7 GiB used. Firecracker has no discard, so blocks freed during the build stay allocated in the file.
 
 - The node page shows `Guest image <version> · building for 3 min`, then `ready` with the build time, or `failed`
   with the error and the next retry (30 minutes later).
@@ -186,7 +188,9 @@ agent-browser click @e1
 - **Stale locks:** after a fork or a disk-only restore Chrome's `SingletonLock` names another host or a dead PID; the
   wrapper removes the lock files when no Chrome of yours runs.
 - **Loopback only:** the wrapper refuses `--cdp` endpoints, `connect` targets and `--remote-debugging-address` values
-  that are not loopback. DevTools never listens on a network interface.
+  that are not loopback. DevTools never listens on a network interface, but it is a loopback TCP port: any process
+  in the VM can reach it, other UIDs and host-network containers included. The VM is single-user, so this is
+  `ubuntu`'s own browser to drive; do not run untrusted code as another user in a VM with a logged-in browser.
 - **Your settings win:** `AGENT_BROWSER_*` variables you set (e.g. `AGENT_BROWSER_HEADED=0`,
   `AGENT_BROWSER_PROFILE`) override the wrapper's defaults. The wrapper is rewritten at every boot; a different
   `agent-browser` belongs in `~/.local/bin`, which comes first in `PATH` (`npm i -g agent-browser@<v>` puts it there).
