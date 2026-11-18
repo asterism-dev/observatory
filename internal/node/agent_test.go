@@ -3,10 +3,13 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -463,5 +466,98 @@ func TestAgentRebuildAfterDirMissing(t *testing.T) {
 	eventually(t, "running again", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 	if n := len(env.provider.prepared); n != 2 {
 		t.Fatalf("prepared = %v", env.provider.prepared)
+	}
+}
+
+func TestStopAllHibernatesInParallel(t *testing.T) {
+	freeSpace(t, 1<<40)
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1), dv("b", "b", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	waitState(t, a, "b", proto.StateRunning, 1)
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.saveBlock = block
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() { a.stopAll(); close(done) }()
+	eventually(t, "both saving at once", func() bool {
+		return p.hasEvent("savestate:"+filepath.Join(VMDir(a.VMsDir, "a"), "state.tmp")) &&
+			p.hasEvent("savestate:"+filepath.Join(VMDir(a.VMsDir, "b"), "state.tmp"))
+	})
+	close(block)
+	<-done
+	for _, id := range []string{"a", "b"} {
+		if !loadVM(t, a, id).Hibernated {
+			t.Fatalf("%s not hibernated", id)
+		}
+	}
+}
+
+func TestStopAllStopsWhatDoesNotFit(t *testing.T) {
+	// Room for one 1 GiB VM's state (RAM + 1 GiB), not two.
+	freeSpace(t, 3<<30)
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1), dv("b", "b", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	waitState(t, a, "b", proto.StateRunning, 1)
+	a.stopAll()
+	hibernated := 0
+	for _, id := range []string{"a", "b"} {
+		if loadVM(t, a, id).Hibernated {
+			hibernated++
+		}
+	}
+	if hibernated != 1 || countEvent(p, "stop-guest") != 1 {
+		t.Fatalf("hibernated=%d events=%v", hibernated, p.gotEvents())
+	}
+}
+
+func TestStopAllNeverResumesCommittedState(t *testing.T) {
+	freeSpace(t, 1<<40)
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	p.mu.Lock()
+	p.failKill = errors.New("kill boom")
+	p.mu.Unlock()
+	a.stopAll()
+	p.mu.Lock()
+	p.failKill = nil
+	p.mu.Unlock()
+	if !loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json not hibernated")
+	}
+	if ev := p.gotEvents(); slices.Contains(ev, "stop-guest") || slices.Contains(ev, "resume") || countEvent(p, "kill-failed") != 2 {
+		t.Fatalf("events = %v", ev)
+	}
+}
+
+func TestRestoreOfPausedVMStaysPaused(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	var mu sync.Mutex
+	var states []proto.VMState
+	a.send = func(m proto.Message) error {
+		if m.Type == "status" {
+			mu.Lock()
+			states = append(states, m.Status.State)
+			mu.Unlock()
+		}
+		return nil
+	}
+	f := cachedVM("a", "a")
+	f.Power = proto.PowerPaused
+	saveHibernated(t, a, f)
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StatePaused, 1)
+	if !p.hasEvent("restore-paused") || p.hasEvent("pause") || p.hasEvent("resume") {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if slices.Contains(states, proto.StateRunning) {
+		t.Fatalf("states = %v", states)
 	}
 }

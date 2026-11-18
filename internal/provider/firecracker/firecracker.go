@@ -170,7 +170,9 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 			return err
 		}
 	}
-	if err := i.api.Resume(); err != nil {
+	if from.Paused {
+		i.paused = true
+	} else if err := i.api.Resume(); err != nil {
 		return err
 	}
 	if !from.Shared {
@@ -181,6 +183,9 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 		if err := os.RemoveAll(from.StateDir); err != nil {
 			log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
 		}
+	}
+	if from.Paused {
+		return nil
 	}
 	req := node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()}
 	if from.Takeoff {

@@ -414,8 +414,12 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 		if err := a.clearHibernated(e); err != nil {
 			return nil, "", storageError{fmt.Errorf("save: %w", err)}
 		}
-		inst, err = a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)})
+		paused := f.Power == proto.PowerPaused
+		inst, err = a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir), Paused: paused})
 		if err == nil {
+			a.mu.Lock()
+			e.paused = paused
+			a.mu.Unlock()
 			return inst, "", nil
 		}
 		if ctx.Err() != nil {
@@ -426,6 +430,11 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 		note = "hibernation discarded: " + err.Error()
 	}
 	inst, err = a.coldStart(f, dir)
+	if err == nil {
+		a.mu.Lock()
+		e.paused = false
+		a.mu.Unlock()
+	}
 	return inst, note, err
 }
 
@@ -495,7 +504,8 @@ func (a *Agent) hibernate(e *vmEntry) error {
 	if err != nil {
 		os.RemoveAll(tmp)
 		os.RemoveAll(state)
-		if !wasPaused {
+		// After a kill (node stop budget) there is nothing left to resume.
+		if !wasPaused && alive(inst) {
 			if err := inst.Resume(); err != nil {
 				log.Printf("vm %s: resume after failed hibernate: %v", f.Spec.ID, err)
 			}
@@ -676,6 +686,31 @@ func (a *Agent) watch(ctx context.Context, e *vmEntry, id string, inst Instance,
 	report(proto.VMStatus{ID: id, State: restingState(f)})
 }
 
+// hibernateFits picks the live entries whose memory states fit on paths.vms together; the others are stopped gracefully.
+func (a *Agent) hibernateFits(entries map[string]*vmEntry) map[*vmEntry]bool {
+	free, err := statfsFree(a.VMsDir)
+	if err != nil {
+		log.Printf("free space: %v", err)
+		return nil
+	}
+	fits := map[*vmEntry]bool{}
+	for id, e := range entries {
+		if !alive(a.instance(e)) {
+			continue
+		}
+		a.mu.Lock()
+		need := int64(e.file.Spec.MemoryMB)<<20 + 1<<30
+		a.mu.Unlock()
+		if need > free {
+			log.Printf("vm %s: not enough space on node to hibernate, stopping it", id)
+			continue
+		}
+		free -= need
+		fits[e] = true
+	}
+	return fits
+}
+
 func alive(inst Instance) bool {
 	if inst == nil {
 		return false
@@ -724,7 +759,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 	}
 	a.mu.Lock()
 	ok = a.restartable(ctx, e)
-	e.inst, e.paused = inst, false
+	e.inst = inst
 	a.mu.Unlock()
 	if !ok {
 		// A restored guest holds unwritten data, and one with disks has writes in flight; it must shut down, not be cut off.
@@ -752,6 +787,7 @@ func (a *Agent) stopAll() {
 		entries[id] = e
 	}
 	a.mu.Unlock()
+	fits := a.hibernateFits(entries)
 	var expired atomic.Bool
 	kill := func(id string, e *vmEntry, inst Instance) {
 		e.stopRequested.Store(true)
@@ -776,12 +812,26 @@ func (a *Agent) stopAll() {
 				kill(id, e, inst)
 				return
 			}
-			if err := a.hibernate(e); err != nil {
+			if fits[e] {
+				err := a.hibernate(e)
+				if err == nil {
+					return
+				}
 				log.Printf("vm %s: hibernate: %v", id, err)
-				if !expired.Load() {
-					if err := inst.Stop(); err != nil {
-						log.Printf("vm %s: stop: %v", id, err)
+				a.mu.Lock()
+				saved := e.file.Hibernated
+				a.mu.Unlock()
+				if saved {
+					// The state is committed; resuming the guest now would let its disks move on from that memory.
+					if alive(inst) {
+						kill(id, e, inst)
 					}
+					return
+				}
+			}
+			if !expired.Load() {
+				if err := inst.Stop(); err != nil {
+					log.Printf("vm %s: stop: %v", id, err)
 				}
 			}
 		}()
@@ -792,11 +842,14 @@ func (a *Agent) stopAll() {
 	case <-done:
 	case <-time.After(stopBudget):
 		expired.Store(true)
+		var kills sync.WaitGroup
 		for id, e := range entries {
 			if inst := a.instance(e); alive(inst) {
-				kill(id, e, inst)
+				kills.Add(1)
+				go func() { defer kills.Done(); kill(id, e, inst) }()
 			}
 		}
+		kills.Wait()
 		<-done
 	}
 	a.chassisMu.Lock()

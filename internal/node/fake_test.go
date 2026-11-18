@@ -47,6 +47,13 @@ func (i *fakeInstance) Stop() error {
 }
 
 func (i *fakeInstance) Kill() error {
+	i.p.mu.Lock()
+	failKill := i.p.failKill
+	i.p.mu.Unlock()
+	if failKill != nil {
+		i.p.record("kill-failed")
+		return failKill
+	}
 	if i.hang {
 		i.p.record("kill-guest")
 		return nil
@@ -109,6 +116,7 @@ type fakeProvider struct {
 	saveBlock     chan struct{}
 	restoreBlock  chan struct{}
 	failSaveState error
+	failKill      error
 	restores      map[string]int
 }
 
@@ -211,6 +219,9 @@ func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
 
 func (p *fakeProvider) Restore(_ context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error) {
 	p.record("restore:" + from.StateDir)
+	if from.Paused {
+		p.record("restore-paused")
+	}
 	p.mu.Lock()
 	block := p.restoreBlock
 	p.mu.Unlock()

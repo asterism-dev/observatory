@@ -38,4 +38,6 @@ type RestoreFrom struct {
 	Takeoff  bool
 	// Shared state files are linked read-only into the jail and never deleted.
 	Shared bool
+	// Paused leaves the restored VM paused; the guest agent call is skipped, as a paused guest cannot answer it.
+	Paused bool
 }
