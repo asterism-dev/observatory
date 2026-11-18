@@ -23,7 +23,7 @@ const options = computed(() => props.scopes.map((s) => ({ value: scopeKey(s), la
 const lockedSecret = computed(() => props.editing?.kind === 'secret')
 const hosts = computed(() => parseHosts(hostsText.value))
 const wasBound = computed(() => (props.editing?.hosts.length ?? 0) > 0)
-const hostsChanged = computed(() => !props.editing || hosts.value.join('\n') !== props.editing.hosts.join('\n'))
+const hostsChanged = computed(() => !props.editing || hosts.value.join('\n') !== [...props.editing.hosts].sort().join('\n'))
 const tooMany = computed(() => secret.value && hosts.value.length > 10)
 const badHost = computed(() => (secret.value ? invalidHost(hosts.value) : undefined))
 const unbinding = computed(() => secret.value && wasBound.value && hosts.value.length === 0)
