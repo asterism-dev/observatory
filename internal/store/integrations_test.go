@@ -396,6 +396,17 @@ func TestIntegrationRefreshTokenOnlyForOAuth(t *testing.T) {
 	}
 }
 
+func TestIntegrationRefreshNonceRequired(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	exp := time.Now().Add(time.Hour)
+	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeOrg, nil),
+		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
+	if _, err := pool.Exec(ctx, "UPDATE integrations SET refresh_nonce = NULL WHERE id = $1", v.ID); err == nil {
+		t.Fatal("oauth row without refresh nonce accepted")
+	}
+}
+
 func TestIntegrationAccessExpiryOnlyForOAuth(t *testing.T) {
 	ctx := context.Background()
 	s, _, uid, org, _ := newIntegrationStore(t)
