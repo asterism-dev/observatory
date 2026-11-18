@@ -378,7 +378,7 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 			// Counted up front; a run longer than quick resets it.
 			failures++
 			var err error
-			inst, err = a.restart(ctx, e)
+			inst, note, err = a.restart(ctx, e)
 			if err != nil {
 				reason = err
 			} else if inst == nil {
@@ -524,25 +524,32 @@ func (a *Agent) endHibernation(e *vmEntry, graceful bool) error {
 	return nil
 }
 
-// endHibernationWait retries endHibernation on the restart backoff until it succeeds, ctx ends or a desired generation above gen is queued.
-func (a *Agent) endHibernationWait(ctx context.Context, e *vmEntry, graceful bool, gen uint64) bool {
-	for i := 0; ; i++ {
+var errNewerDesired = errors.New("superseded by a newer desired state")
+
+// endHibernationWait retries endHibernation on the restart backoff (unbounded only while storage is unreachable) until ctx ends or a generation above gen is queued.
+func (a *Agent) endHibernationWait(ctx context.Context, e *vmEntry, graceful bool, gen uint64) error {
+	for i, failures := 0, 0; ; i++ {
 		err := a.endHibernation(e, graceful)
 		if err == nil {
-			return true
+			return nil
 		}
 		log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
 		a.reportEntry(e, proto.VMStatus{ID: e.file.Spec.ID, State: proto.StateHibernated, Error: err.Error()})
+		if !errors.As(err, new(storageError)) {
+			if failures++; failures > len(restartBackoff) {
+				return err
+			}
+		}
 		select {
 		case <-ctx.Done():
-			return false
+			return ctx.Err()
 		case <-time.After(restartBackoff[min(i, len(restartBackoff)-1)]):
 		}
 		a.mu.Lock()
 		newer := e.pending != nil && e.pending.Generation > gen
 		a.mu.Unlock()
 		if newer {
-			return false
+			return errNewerDesired
 		}
 	}
 }
@@ -575,6 +582,8 @@ func (a *Agent) applyPending(ctx context.Context, e *vmEntry) {
 	a.mu.Unlock()
 	if apply && ctx.Err() == nil {
 		a.updateDesired(ctx, cur, *d)
+		a.sendDisks() // the replay may have dropped attachments, which the hub waits for
+
 	}
 }
 
@@ -662,28 +671,28 @@ func (a *Agent) restartable(ctx context.Context, e *vmEntry) bool {
 	return ctx.Err() == nil && !a.stopping && !e.stopRequested.Load() && e.file.Power != proto.PowerStopped
 }
 
-// restart starts e again; (nil, nil) means it should no longer run.
-func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, error) {
-	// Holding reconcileMu keeps reconcile from starting a second instance while this one comes up.
-	a.reconcileMu.Lock()
-	defer a.reconcileMu.Unlock()
+// restart starts e again, from its memory state if it is hibernated; a nil Instance without error means it should no longer run.
+func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, error) {
+	// Holding e.op keeps reconcile from starting a second instance while this one comes up, without stalling other VMs.
+	e.op.Lock()
+	defer e.op.Unlock()
 	a.mu.Lock()
 	f, ok := e.file, a.restartable(ctx, e)
 	a.mu.Unlock()
 	if !ok {
-		return nil, nil
+		return nil, "", nil
 	}
 	if f.NeedsPrepare {
 		if err := a.prepare(ctx, e, f); err != nil {
-			return nil, fmt.Errorf("prepare: %w", err)
+			return nil, "", fmt.Errorf("prepare: %w", err)
 		}
 	}
 	if err := checkStorage(f); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	inst, err := a.coldStart(f, VMDir(a.VMsDir, f.Spec.ID))
+	inst, note, err := a.start(e, f, VMDir(a.VMsDir, f.Spec.ID))
 	if err != nil {
-		return nil, fmt.Errorf("start: %w", err)
+		return nil, "", fmt.Errorf("start: %w", err)
 	}
 	a.mu.Lock()
 	ok = a.restartable(ctx, e)
@@ -695,9 +704,9 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, error) {
 		if err := inst.Kill(); err != nil {
 			log.Printf("vm %s: kill: %v", f.Spec.ID, err)
 		}
-		return nil, nil
+		return nil, "", nil
 	}
-	return inst, nil
+	return inst, note, nil
 }
 
 // stopAll shuts guests down cleanly; vz VMs live in this process and would otherwise be killed hard.

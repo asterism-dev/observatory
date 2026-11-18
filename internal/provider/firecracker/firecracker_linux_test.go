@@ -629,8 +629,8 @@ func blockStorage(t *testing.T, rawURL string) func() {
 	return unblock
 }
 
-// A hibernated VM with a disk ends by resuming and shutting down once storage is back, so writes still in the guest's page cache reach the disk.
-func TestHibernatedWithDiskShutsDownAfterStorageReturns(t *testing.T) {
+// A hibernated VM with a disk keeps its state while storage is down; once storage is back it resumes where it was, and its shutdown writes the guest's cached data.
+func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 	nbdURL, psk := os.Getenv("VMM_TEST_NBD"), os.Getenv("VMM_TEST_NBD_PSK")
 	if nbdURL == "" {
 		t.Skip("needs VMM_TEST_NBD and VMM_TEST_NBD_PSK")
@@ -654,7 +654,7 @@ func TestHibernatedWithDiskShutsDownAfterStorageReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := fmt.Sprintf("unsynced-%d", time.Now().UnixNano())
-	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; echo "+marker+" | sudo tee /data/marker >/dev/null")
+	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; echo "+marker+" | sudo tee /data/marker /dev/shm/marker >/dev/null")
 	dir := node.VMDir(p.VMsDir, f.Spec.ID)
 	state := hibernate(t, inst, dir)
 
@@ -678,6 +678,10 @@ func TestHibernatedWithDiskShutsDownAfterStorageReturns(t *testing.T) {
 	inst, err = p.Restore(f, dir, node.RestoreFrom{StateDir: state})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := sshVM(t, key, ip, "cat /dev/shm/marker /data/marker"); got != marker+"\n"+marker {
+		inst.Kill()
+		t.Fatalf("after resume = %q", got)
 	}
 	began := time.Now()
 	if err := inst.Stop(); err != nil {

@@ -1206,3 +1206,128 @@ func TestHibernatedVMReportsHibernatedAtStart(t *testing.T) {
 		t.Fatalf("states = %v", states)
 	}
 }
+
+func TestReplayedDetachSendsDisks(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	freeSpace(t, 1<<40)
+	lastDisks := captureDisks(a)
+	addr := storageAddr(t)
+	d := att("d1", "/data", addr)
+	a.reconcile(context.Background(), 1, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 1, d)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.saveBlock = block
+	p.mu.Unlock()
+	a.reconcile(context.Background(), 2, []proto.DesiredVM{dvAtts("a", proto.PowerHibernated, 2, d)})
+	a.reconcile(context.Background(), 3, []proto.DesiredVM{dvAtts("a", proto.PowerHibernated, 3)})
+	if m := lastDisks(); m.AppliedSeq != 3 || !slices.Equal(m.DisksInUse, []string{"d1"}) {
+		t.Fatalf("disks while hibernating = %+v", m)
+	}
+	close(block)
+	eventually(t, "detach reported", func() bool {
+		m := lastDisks()
+		return m.AppliedSeq == 3 && len(m.DisksInUse) == 0
+	})
+	if f := loadVM(t, a, "a"); len(f.Spec.Attachments) != 0 || f.Generation != 3 {
+		t.Fatalf("vm.json = %+v", f)
+	}
+}
+
+func TestResumeOfHibernatedWaitsForStorage(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	time.Sleep(150 * time.Millisecond)
+	state := filepath.Join(VMDir(a.VMsDir, "a"), StateDir)
+	if _, err := os.Stat(filepath.Join(state, MemFile)); err != nil {
+		t.Fatalf("state discarded while storage is down: %v", err)
+	}
+	up()
+	waitState(t, a, "a", proto.StateRunning, 3)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 1 || !p.hasEvent("restore:"+state) {
+		t.Fatalf("starts = %d (want only the first boot), events = %v", starts, p.gotEvents())
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("state/ left: %v", err)
+	}
+}
+
+func TestDeleteCutShortByShutdownKeepsDisks(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, _ := newReconcileAgent(t)
+	addr, down, _ := flakyStorage(t)
+	hibernatedVM(t, a, att("d1", "/data", addr))
+	down()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.reconcile(ctx, 2, nil)
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	a.mu.Lock()
+	inUse := a.disksInUse()
+	a.mu.Unlock()
+	if !slices.Equal(inUse, []string{"d1"}) {
+		t.Fatalf("disks in use = %v", inUse)
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir, MemFile)); err != nil {
+		t.Fatalf("state gone: %v", err)
+	}
+}
+
+func TestHardStopWithDetachDiscardsHibernation(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	hibernatedVM(t, a, att("d1", "/data", storageAddr(t)))
+	stop := dvAtts("a", proto.PowerStopped, 3)
+	stop.StopMode = proto.StopHard
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	waitState(t, a, "a", proto.StateStopped, 3)
+	for _, e := range p.gotEvents() {
+		if strings.HasPrefix(e, "restore:") {
+			t.Fatalf("events = %v", p.gotEvents())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); !os.IsNotExist(err) {
+		t.Fatalf("state/ left: %v", err)
+	}
+}
+
+func TestDestroyGivesUpOnUnremovableState(t *testing.T) {
+	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond)
+	a, _ := newReconcileAgent(t)
+	hibernatedVM(t, a)
+	locked := filepath.Join(VMDir(a.VMsDir, "a"), StateDir, "locked")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	done := make(chan struct{})
+	go func() { a.reconcile(context.Background(), 2, nil); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reconcile waits on the destroy")
+	}
+	eventually(t, "destroy gave up", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.dying) == 0
+	})
+}

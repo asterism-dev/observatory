@@ -139,7 +139,7 @@ func (a *Agent) slowDestroy(e *vmEntry) bool {
 	e.op.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return e.file.Hibernated && len(e.file.Spec.Attachments) > 0
+	return e.file.Hibernated
 }
 
 func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
@@ -157,9 +157,13 @@ func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
 	hibernated := e.file.Hibernated
 	a.mu.Unlock()
 	// A hibernated VM has no live instance; with disks it must still shut down cleanly, so it stays until storage is back.
-	if hibernated && !a.endHibernationWait(ctx, e, true, math.MaxUint64) {
-		gone()
-		return
+	if hibernated {
+		if err := a.endHibernationWait(ctx, e, true, math.MaxUint64); ctx.Err() != nil {
+			// The node is stopping; the VM dir and its state stay, and so do its disks.
+			return
+		} else if err != nil {
+			log.Printf("vm %s: giving up on its memory state: %v", id, err)
+		}
 	}
 	if inst := a.instance(e); inst != nil {
 		e.stopRequested.Store(true)
@@ -252,14 +256,14 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		unlock = false
 		go func() {
 			defer op.Unlock()
-			if a.endHibernationWait(ctx, e, true, d.Generation) {
+			if err := a.endHibernationWait(ctx, e, true, d.Generation); err == nil {
 				a.queue(ctx, e, d)
 			}
 		}()
 		return
 	}
 	if halted {
-		e = a.halt(e)
+		e = a.halt(e, graceful)
 		f.Hibernated = e.file.Hibernated
 		oldNICs, oldAtts := f.Spec.NICs, f.Spec.Attachments
 		f.Spec.NICs, f.Spec.Attachments = d.Spec.NICs, d.Spec.Attachments
@@ -362,7 +366,7 @@ func (a *Agent) acquire(ctx context.Context, e *vmEntry, d proto.DesiredVM) bool
 }
 
 // halt stops e's instance and swaps in an idle stopped entry, so e's boot goroutine neither restarts it nor reports over later updates.
-func (a *Agent) halt(e *vmEntry) *vmEntry {
+func (a *Agent) halt(e *vmEntry, graceful bool) *vmEntry {
 	e.stopRequested.Store(true)
 	if inst := a.instance(e); inst != nil {
 		select {
@@ -382,7 +386,7 @@ func (a *Agent) halt(e *vmEntry) *vmEntry {
 	a.mu.Unlock()
 	// Attached disks change, so the memory state cannot be resumed against them; a VM with disks was resumed and shut down before.
 	if hibernated {
-		if err := a.endHibernation(e, true); err != nil {
+		if err := a.endHibernation(e, graceful); err != nil {
 			log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
 		}
 	}
