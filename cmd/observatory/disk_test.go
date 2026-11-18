@@ -147,3 +147,18 @@ func TestDiskReleaseConfirms(t *testing.T) {
 		t.Fatal(code, errb())
 	}
 }
+
+func TestOwnerLabelNamesOtherMembers(t *testing.T) {
+	grace := strings.NewReplacer(`"id":"u1","name":"Ada Lovelace"`, `"id":"u2","name":"Grace Hopper"`)
+	h, c, out, errb := diskHub(t, vmOneDisk, true)
+	h.on("GET /api/orgs/o1/disks", 200, `{"disks":[`+grace.Replace(diskA)+`],"storageOnline":true}`)
+	h.on("GET /api/orgs/o1/vms", 200, `{"vms":[`+vmDev+`,`+grace.Replace(strings.NewReplacer(`"id":"v1"`, `"id":"v3"`, `"name":"dev"`, `"name":"gh"`).Replace(vmDev))+`],"nodes":[]}`)
+	for _, args := range [][]string{{"disk", "list"}, {"vm", "list"}} {
+		if code := run(c, args); code != 0 {
+			t.Fatal(code, errb())
+		}
+	}
+	if !strings.Contains(out(), "Grace Hopper") || strings.Count(out(), "private") != 1 {
+		t.Errorf("stdout %q", out())
+	}
+}

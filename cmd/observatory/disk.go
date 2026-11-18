@@ -89,8 +89,6 @@ func (c *cli) findDisk(key string) (diskJSON, error) {
 	return l.Disks[slices.IndexFunc(l.Disks, func(d diskJSON) bool { return d.ID == r.ID })], nil
 }
 
-func (d diskJSON) ownerLabel() string { return scopeLabel(d.Owner.Kind, d.Owner.Name) }
-
 func (d diskJSON) attached() string {
 	if d.Attachment == nil {
 		return "–"
@@ -110,7 +108,7 @@ func cmdDiskList(c *cli, args []string) error {
 	}
 	rows := make([][]string, len(l.Disks))
 	for i, d := range l.Disks {
-		rows[i] = []string{d.Name, fmt.Sprintf("%d GB", d.SizeGB), humanBytes(d.AllocatedBytes), d.ownerLabel(), d.attached(), d.State}
+		rows[i] = []string{d.Name, fmt.Sprintf("%d GB", d.SizeGB), humanBytes(d.AllocatedBytes), c.ownerLabel(d.Owner.Kind, d.Owner.ID, d.Owner.Name), d.attached(), d.State}
 	}
 	if err := c.emit(raw, []string{"name", "size", "used", "owner", "attached", "state"}, rows); err != nil {
 		return err
@@ -147,7 +145,7 @@ func cmdDiskShow(c *cli, args []string) error {
 	}
 	return c.emitKV(raw, [][2]string{
 		{"ID", d.ID}, {"Name", d.Name}, {"Size", fmt.Sprintf("%d GB", d.SizeGB)}, {"Used", humanBytes(d.AllocatedBytes)},
-		{"Owner", d.ownerLabel()}, {"State", state}, {"Attached", d.attached()}, {"Created", ago(c.now(), d.CreatedAt)},
+		{"Owner", c.ownerLabel(d.Owner.Kind, d.Owner.ID, d.Owner.Name)}, {"State", state}, {"Attached", d.attached()}, {"Created", ago(c.now(), d.CreatedAt)},
 	})
 }
 

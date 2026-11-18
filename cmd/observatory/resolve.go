@@ -75,6 +75,14 @@ func (c *cli) resolveScope(s scopeFlags) (apiScope string, teamID *string, err e
 	return "team", &t.ID, nil
 }
 
+// ownerLabel names the owner of another member's VM or disk instead of calling it private.
+func (c *cli) ownerLabel(kind, id, name string) string {
+	if kind == "user" && id != c.userID {
+		return name
+	}
+	return scopeLabel(kind, name)
+}
+
 func scopeLabel(apiScope, teamName string) string {
 	switch apiScope {
 	case "user":

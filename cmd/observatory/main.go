@@ -41,6 +41,7 @@ type cli struct {
 	cfgDir         string
 	cfg            config
 	org            *orgJSON
+	userID         string
 	warnedExpiry   bool
 	progressWhat   string
 	lastProgress   string

@@ -153,8 +153,6 @@ func (v vmJSON) size() string {
 	return fmt.Sprintf("%d vCPU · %s · %d GB", v.CPUs, gb(v.MemoryMB), v.DiskGB)
 }
 
-func (v vmJSON) ownerLabel() string { return scopeLabel(v.Owner.Kind, v.Owner.Name) }
-
 func cmdVMListCmd(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("vm list"), args, 0, 0); err != nil {
 		return err
@@ -165,7 +163,7 @@ func cmdVMListCmd(c *cli, args []string) error {
 	}
 	rows := make([][]string, len(l.VMs))
 	for i, v := range l.VMs {
-		rows[i] = []string{v.Name, v.State, v.ownerLabel(), v.Node.Name, v.size(), orDash(v.IP)}
+		rows[i] = []string{v.Name, v.State, c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name), v.Node.Name, v.size(), orDash(v.IP)}
 	}
 	return c.emit(raw, []string{"name", "state", "owner", "node", "size", "ip"}, rows)
 }
@@ -218,7 +216,7 @@ func cmdVMShow(c *cli, args []string) error {
 		image = v.Image
 	}
 	return c.emitKV(raw, [][2]string{
-		{"name", v.Name}, {"state", state}, {"owner", v.ownerLabel()}, {"node", v.Node.Name},
+		{"name", v.Name}, {"state", state}, {"owner", c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name)}, {"node", v.Node.Name},
 		{"size", v.size()}, {"dns", v.DNSName}, {"ip", orDash(v.IP)},
 		{"networks", orDash(strings.Join(nets, ", "))}, {"disks", orDash(strings.Join(disks, ", "))},
 		{"auto-suspend", suspend}, {"image", image}, {"created", ago(c.now(), v.CreatedAt)},

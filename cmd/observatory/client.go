@@ -229,7 +229,7 @@ func (c *cli) currentOrg() (orgJSON, error) {
 	if err != nil {
 		return o, err
 	}
-	c.org = &o
+	c.org, c.userID = &o, me.User.ID
 	return o, nil
 }
 
