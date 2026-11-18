@@ -329,7 +329,7 @@ func TestIntegrationReplaceAndMode(t *testing.T) {
 	if len(l.Integrations) != 1 || l.Integrations[0].Mode != "vm" || !l.Integrations[0].WasInVM || l.Integrations[0].Account != "hubot" {
 		t.Fatalf("after mode: %+v", l)
 	}
-	if es := e.audit(store.ActionIntegrationSet); len(es) != 3 || es[0].Details["mode"] != "vm" {
+	if es := e.audit(store.ActionIntegrationSet); len(es) != 3 || es[0].Details["mode"] != "vm" || es[0].Details["previousMode"] != "proxy" {
 		t.Fatalf("mode audit: %+v", es)
 	}
 	if rec := e.send("PATCH", path, ownerTok, `{"mode":"nope"}`); rec.Code != 400 {

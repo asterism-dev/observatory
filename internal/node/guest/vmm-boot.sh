@@ -107,7 +107,7 @@ cat >"$root/etc/profile.d/vmm-linear.sh.new" <<'EOF'
 if [ -z "${LINEAR_API_KEY+x}" ] && command -v vmm-token >/dev/null 2>&1 && vmm_linear=$(vmm-token linear); then export LINEAR_API_KEY="$vmm_linear"; fi
 unset vmm_linear
 EOF
-printf '[Unit]\nDescription=vmm integrations sync\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-integrations.py sync\n' >"$units/vmm-integrations.service.new"
+printf '[Unit]\nDescription=vmm integrations sync\n\n[Service]\nType=oneshot\nTimeoutStartSec=6min\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-integrations.py sync\n' >"$units/vmm-integrations.service.new"
 printf '[Unit]\nDescription=vmm integrations sync\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=5min\n\n[Install]\nWantedBy=timers.target\n' >"$units/vmm-integrations.timer.new"
 for f in "$lib/vmm-integrations.py" "$root/etc/vmm/gitconfig" "$root/etc/profile.d/vmm-linear.sh" "$units/vmm-integrations.service" "$units/vmm-integrations.timer" "$bin/vmm-token" "$bin/git-credential-vmm" "$bin/gh"; do
 	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac

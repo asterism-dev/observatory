@@ -321,7 +321,9 @@ func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 		if err := tx.SetIntegrationMode(r.Context(), old, body.Mode, p.User.ID); err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), integrationAudit(r, store.ActionIntegrationSet, v))
+		a := integrationAudit(r, store.ActionIntegrationSet, v)
+		a.Details["previousMode"] = old.Mode
+		return tx.Audit(r.Context(), a)
 	}) {
 		return
 	}

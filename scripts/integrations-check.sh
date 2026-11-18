@@ -1,9 +1,12 @@
 #!/bin/sh
 # usage: [SSH=<ssh command>] integrations-check.sh <ssh-destination> [<owner>/<private-repo>] — in-guest checks, never prints a token
-if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+usage() {
 	echo "usage: $0 <ssh-destination> [<owner>/<private-repo>]" >&2
 	exit 2
-fi
+}
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
+# The repo reaches a remote shell, so only name characters pass.
+case ${2:-} in *[!A-Za-z0-9._/-]*) usage ;; esac
 dest=$1
 shift
 # shellcheck disable=SC2086
