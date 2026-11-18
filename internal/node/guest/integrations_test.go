@@ -117,7 +117,7 @@ func installGuest(t *testing.T) string {
 	root, seed := t.TempDir(), t.TempDir()
 	for name, s := range map[string]string{
 		"vmm-boot.sh": BootScript, "vmm-agent.py": AgentScript, "vmm-integrations.py": IntegrationsScript,
-		"vmm-AGENTS.md": ContextFile, "vmm-env": `{}`, "vmm-authorized-keys": "",
+		"vmm-AGENTS.md": ContextFile, "vmm-desktop": DesktopScript, "vmm-env": `{}`, "vmm-authorized-keys": "",
 	} {
 		if err := os.WriteFile(filepath.Join(seed, name), []byte(s), 0o644); err != nil {
 			t.Fatal(err)

@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// notYetShipped lists names the context file promises that later guest scripts install.
-var notYetShipped = []string{"vmm-desktop"}
-
 func TestContextFileSize(t *testing.T) {
 	if n := len(ContextFile); n == 0 || n > 8192 {
 		t.Fatalf("AGENTS.md is %d bytes; want 1..8192", n)
@@ -29,7 +26,7 @@ func TestContextFileNamesExist(t *testing.T) {
 		}
 		all.Write(b)
 	}
-	all.WriteString(strings.Join(notYetShipped, "\n"))
+	all.WriteString(DesktopScript)
 	spans := regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(ContextFile, -1)
 	if len(spans) == 0 {
 		t.Fatal("no backticked names")

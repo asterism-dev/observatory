@@ -121,6 +121,12 @@ func TestSeedHasContextFile(t *testing.T) {
 	}
 }
 
+func TestSeedHasDesktopScript(t *testing.T) {
+	if got := GuestSeedFiles(VMFile{}, PrimaryNet{})["vmm-desktop"]; string(got) != guest.DesktopScript || len(got) == 0 {
+		t.Fatalf("seed vmm-desktop = %q", got)
+	}
+}
+
 func TestSeedKeysTrimmed(t *testing.T) {
 	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one@host\n", "", "  \n", "ssh-rsa BB\nssh-rsa CC", " ssh-rsa DD two\r\n"}}}, PrimaryNet{})
 	if got := string(files["vmm-authorized-keys"]); got != "ssh-ed25519 AAAA one@host\nssh-rsa DD two\n" {
@@ -393,4 +399,53 @@ func TestBootScriptInstallsIntegrations(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestBootScriptInstallsDesktop(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	runBoot(t, root, GuestSeedFiles(VMFile{}, PrimaryNet{}))
+	for path, mode := range map[string]os.FileMode{
+		"usr/local/bin/vmm-desktop":                 0o755,
+		"etc/systemd/user/vmm-desktop.service":      0o644,
+		"etc/systemd/user/vmm-desktop-idle.service": 0o644,
+		"etc/systemd/user/vmm-desktop-idle.timer":   0o644,
+		"var/lib/systemd/linger/ubuntu":             0o644,
+	} {
+		st, err := os.Stat(filepath.Join(root, path))
+		if err != nil || st.Mode().Perm() != mode {
+			t.Errorf("%s: %v, %v; want %v", path, st, err, mode)
+		}
+	}
+	if got := readFile(t, filepath.Join(root, "usr/local/bin/vmm-desktop")); got != guest.DesktopScript {
+		t.Error("installed vmm-desktop differs from the seed's")
+	}
+	var cmdline string
+	for l := range strings.Lines(readFile(t, filepath.Join(root, "etc/systemd/user/vmm-desktop.service"))) {
+		if strings.HasPrefix(l, "ExecStart=") {
+			cmdline = l
+		}
+	}
+	for _, want := range []string{"ExecStart=/usr/bin/xpra start :100 ", "--daemon=no", "--systemd-run=no", "--socket-dir=%t/xpra", "-nolisten tcp", "--html=off", "--mdns=no"} {
+		if !strings.Contains(cmdline, want) {
+			t.Errorf("ExecStart misses %q: %q", want, cmdline)
+		}
+	}
+	// xpra 6.5 rejects an empty --bind-tcp=, and auto binds also listen on an abstract socket any local UID can reach.
+	for _, bad := range []string{"--bind-tcp", "--bind-ws", "--bind-ssl", "--bind-vsock", "--bind=auto"} {
+		if strings.Contains(cmdline, bad) {
+			t.Errorf("ExecStart has %q: %q", bad, cmdline)
+		}
+	}
+	timer := readFile(t, filepath.Join(root, "etc/systemd/user/vmm-desktop-idle.timer"))
+	for _, want := range []string{"PartOf=vmm-desktop.service\n", "OnActiveSec=1min\n", "OnUnitActiveSec=1min\n"} {
+		if !strings.Contains(timer, want) {
+			t.Errorf("idle timer misses %q: %q", want, timer)
+		}
+	}
+	if got := readFile(t, filepath.Join(root, "etc/systemd/user/vmm-desktop-idle.service")); !strings.Contains(got, "ExecStart=/usr/local/bin/vmm-desktop idle-check\n") {
+		t.Errorf("idle service = %q", got)
+	}
 }

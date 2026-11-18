@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/netip"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -254,5 +255,15 @@ func TestBuildScriptSyntax(t *testing.T) {
 	}
 	if out, err := exec.Command(sc, "-s", "sh", "vmm-image-build.sh").CombinedOutput(); err != nil {
 		t.Fatalf("shellcheck: %v\n%s", err, out)
+	}
+}
+
+func TestBuildScriptMasksXpraSystemServer(t *testing.T) {
+	b, err := os.ReadFile("vmm-image-build.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^systemctl mask xpra-server\.socket xpra-server\.service$`).Match(b) {
+		t.Error("build script leaves the xpra system proxy (TCP 14500) enabled")
 	}
 }

@@ -16,3 +16,6 @@ var IntegrationsScript string
 
 //go:embed AGENTS.md
 var ContextFile string
+
+//go:embed vmm-desktop
+var DesktopScript string

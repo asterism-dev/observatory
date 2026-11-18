@@ -114,6 +114,27 @@ for f in "$lib/vmm-integrations.py" "$root/usr/local/share/vmm/AGENTS.md" "$root
 	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac
 	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$units"/*) reload=1 ;; esac; fi
 done
+desktop=
+user_units=$root/etc/systemd/user
+mkdir -p "$user_units" "$root/var/lib/systemd/linger"
+cp "$seed/vmm-desktop" "$bin/vmm-desktop.new"
+# xpra 6.5: an empty --bind-tcp= is rejected (no TCP socket is the default), bind=auto would add an abstract socket, and systemd-run would move xpra out of this unit's cgroup.
+cat >"$user_units/vmm-desktop.service.new" <<'EOF'
+[Unit]
+Description=vmm desktop (xpra on :100)
+
+[Service]
+ExecStart=/usr/bin/xpra start :100 --daemon=no --systemd-run=no --bind=noabstract --socket-dir=%t/xpra --mdns=no --html=off --pulseaudio=no --printing=no --file-transfer=off --notifications=no --clipboard=yes "--xvfb=Xvfb +extension GLX +extension Composite -screen 0 5120x2880x24+32 -nolisten tcp -dpi 96"
+EOF
+printf '[Unit]\nDescription=vmm desktop idle stop\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/vmm-desktop idle-check\n' >"$user_units/vmm-desktop-idle.service.new"
+printf '[Unit]\nDescription=vmm desktop idle stop\nPartOf=vmm-desktop.service\n\n[Timer]\nOnActiveSec=1min\nOnUnitActiveSec=1min\n' >"$user_units/vmm-desktop-idle.timer.new"
+for f in "$bin/vmm-desktop" "$user_units/vmm-desktop.service" "$user_units/vmm-desktop-idle.service" "$user_units/vmm-desktop-idle.timer"; do
+	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac
+	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$user_units"/*) desktop=1 ;; esac; fi
+done
+# Linger runs ubuntu's user manager without a login, so the wrappers can start the desktop; the file works before cloud-init creates the user.
+[ -e "$root/var/lib/systemd/linger/ubuntu" ] || touch "$root/var/lib/systemd/linger/ubuntu"
+
 # Claude Code's managed memory; a file or link the admin put there stays.
 [ -e "$root/etc/claude-code/CLAUDE.md" ] || [ -L "$root/etc/claude-code/CLAUDE.md" ] || ln -s /usr/local/share/vmm/AGENTS.md "$root/etc/claude-code/CLAUDE.md"
 
@@ -136,5 +157,9 @@ if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	fi
 	systemctl is-enabled -q vmm-integrations.timer || systemctl enable vmm-integrations.timer >/dev/null 2>&1
 	systemctl --no-block start vmm-integrations.timer vmm-integrations.service >/dev/null 2>&1
+	if id ubuntu >/dev/null 2>&1; then
+		loginctl enable-linger ubuntu >/dev/null 2>&1
+		[ -z "$desktop" ] || systemctl --user -M ubuntu@ daemon-reload >/dev/null 2>&1
+	fi
 fi
 exit 0

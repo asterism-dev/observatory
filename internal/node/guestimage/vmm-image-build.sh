@@ -220,6 +220,8 @@ fi
 rm -f "$tmp/check-config" "$tmp/check-config.out"
 
 begin config
+# The xpra package enables a system proxy on TCP 14500 and /run/xpra; the desktop is a per-user unit reached over SSH only.
+systemctl mask xpra-server.socket xpra-server.service
 echo "prefix=\${HOME}/.local" >/usr/local/etc/npmrc
 grep -qx 'DISABLE_AUTOUPDATER=1' /etc/environment || echo 'DISABLE_AUTOUPDATER=1' >>/etc/environment
 # Noble restricts unprivileged user namespaces to profiled binaries; Chrome's sandbox needs them.
