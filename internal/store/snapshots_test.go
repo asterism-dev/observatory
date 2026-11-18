@@ -234,7 +234,7 @@ func TestFailStaleSnapshots(t *testing.T) {
 	got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, s.ID)
 	copyID := got.Disks[0].ID
 
-	orgs, err := e.s.FailStaleSnapshots(ctx, time.Now().Add(-2*time.Minute))
+	orgs, err := e.s.FailStaleSnapshots(ctx, 2*time.Minute)
 	if err != nil || len(orgs) != 1 || orgs[0] != e.org.ID {
 		t.Fatalf("orgs: %v %v", orgs, err)
 	}
@@ -651,5 +651,153 @@ func TestRequestRestoreWhileSnapshotting(t *testing.T) {
 	}
 	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, ready.ID, false, true); err != nil {
 		t.Fatalf("after the snapshot is gone: %v", err)
+	}
+}
+
+func snapshotErrorReport(t *testing.T, e vmEnv, vm, snap uuid.UUID, msg string) {
+	t.Helper()
+	if _, err := e.s.ApplySnapshotStatus(context.Background(), e.node.ID, proto.VMStatus{ID: vm.String(), Snapshots: []proto.SnapshotInfo{{ID: snap.String(), Error: msg}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplySnapshotStatusErrorAfterReport(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, _ := vmWithDisk(t, e, "v")
+	s := mustSnapshot(t, e, vm.ID, "s", false)
+	reportSnapshot(t, e, e.node.ID, vm.ID, s.ID)
+	snapshotErrorReport(t, e, vm.ID, s.ID, "VM resumed before the snapshot completed")
+	got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, s.ID)
+	if got.State != "error" || got.Error != "VM resumed before the snapshot completed" || len(got.Disks) != 0 {
+		t.Fatalf("creating: %+v", got)
+	}
+	storeAllFiles(t, e)
+	if got, _ = e.s.Snapshot(ctx, e.org.ID, vm.ID, s.ID); got.State != "error" {
+		t.Fatalf("after files: %+v", got)
+	}
+
+	ready := readySnapshot(t, e, vm.ID, "r")
+	snapshotErrorReport(t, e, vm.ID, ready.ID, "VM resumed before the snapshot completed")
+	if got, _ = e.s.Snapshot(ctx, e.org.ID, vm.ID, ready.ID); got.State != "error" || len(got.Disks) != 0 {
+		t.Fatalf("ready: %+v", got)
+	}
+}
+
+func TestLateStorageCopyDoesNotReadySnapshot(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, _ := vmWithDisk(t, e, "v")
+	s := mustSnapshot(t, e, vm.ID, "s", false)
+	reportSnapshot(t, e, e.node.ID, vm.ID, s.ID)
+	execSQL(t, e.pool, "UPDATE vm_snapshots SET reported_at = now() - interval '3 minutes' WHERE id = $1", s.ID)
+	storeAllFiles(t, e)
+	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, s.ID); got.State != "creating" {
+		t.Fatalf("late copy: %+v", got)
+	}
+}
+
+func TestFailUnreportedSnapshots(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm := mustStoppedVM(t, e, "v", nil)
+	lost := mustSnapshot(t, e, vm.ID, "lost", false)
+	fresh := mustSnapshot(t, e, vm.ID, "fresh", false)
+	execSQL(t, e.pool, "UPDATE vm_snapshots SET created_at = now() - interval '11 minutes' WHERE id = $1", lost.ID)
+	if orgs, err := e.s.FailStaleSnapshots(ctx, 2*time.Minute); err != nil || len(orgs) != 1 {
+		t.Fatalf("orgs: %v %v", orgs, err)
+	}
+	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, lost.ID); got.State != "error" || got.Error != "snapshot never reached the node" {
+		t.Fatalf("lost: %+v", got)
+	}
+	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, fresh.ID); got.State != "creating" {
+		t.Fatalf("fresh: %+v", got)
+	}
+}
+
+func TestCreateSnapshotDuringRestore(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, _ := vmWithDisk(t, e, "v")
+	snap := readySnapshot(t, e, vm.ID, "s")
+	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, snap.ID, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateSnapshot(ctx, e.org.ID, vm.ID, "n", false, e.user); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("restore on the node: %v", err)
+	}
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node.ID, proto.VMStatus{ID: vm.ID.String(), RestoredSeq: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateSnapshot(ctx, e.org.ID, vm.ID, "n", false, e.user); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("restore on storage: %v", err)
+	}
+}
+
+func TestDiskWithPendingRestoreNotAttachable(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, d := vmWithDisk(t, e, "v")
+	other := mustStoppedVM(t, e, "w", nil)
+	snap := readySnapshot(t, e, vm.ID, "s")
+	if _, err := e.s.RequestRestore(ctx, e.org.ID, vm.ID, snap.ID, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node.ID, proto.VMStatus{ID: vm.ID.String(), RestoredSeq: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.ForceRelease(ctx, e.org.ID, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, other.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("attach during restore: %v", err)
+	}
+}
+
+func TestHibernatedForkIsProvisioned(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, _ := vmWithDisk(t, e, "v")
+	snap := readySnapshot(t, e, vm.ID, "s")
+	fork, err := e.s.ForkVM(ctx, e.org.ID, snap, "f", false, e.user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeAllFiles(t, e)
+	if err := e.s.SetVMStatus(ctx, e.node.ID, proto.VMStatus{ID: fork.ID.String(), State: proto.StateHibernated}); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := e.s.NodeVMPlans(ctx, e.node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := plans[fork.ID]; p.Fork != nil || p.Hold {
+		t.Fatalf("plan: %+v", p)
+	}
+}
+
+func TestForkDiskNamesStayValid(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	long := strings.Repeat("a", 58)
+	for _, tc := range []struct{ vm, disk, want string }{
+		{long, long + "-data", "^" + long + "-[0-9a-f]{4}$"},
+		{"v", "v-data-ab12", "^v-data-[0-9a-f]{4}$"},
+	} {
+		vm, d := vmWithDisk(t, e, tc.vm)
+		execSQL(t, e.pool, "UPDATE disks SET name = $2 WHERE id = $1", d.ID, tc.disk)
+		snap := readySnapshot(t, e, vm.ID, "s")
+		fork, err := e.s.ForkVM(ctx, e.org.ID, snap, tc.vm[:1]+"-fork", false, e.user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		disks, _ := e.s.VMDisks(ctx, fork.ID)
+		got, _ := e.s.Disk(ctx, e.org.ID, disks[0].DiskID)
+		if !regexp.MustCompile(tc.want).MatchString(got.Name) {
+			t.Fatalf("name %q, want %s", got.Name, tc.want)
+		}
 	}
 }

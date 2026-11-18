@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,9 @@ import (
 )
 
 const MaxSnapshotsPerVM = 10
+
+// SnapshotCopyTimeout bounds how long a reported snapshot may wait for its storage copies; nodes keep the VM paused a bit longer.
+const SnapshotCopyTimeout = 120 * time.Second
 
 var ErrShapeChanged = errors.New("VM changed since the snapshot; restore without memory")
 
@@ -117,7 +121,18 @@ func (s *Store) CreateSnapshot(ctx context.Context, org, vm uuid.UUID, name stri
 		if err := tx.LockOrg(ctx, org); err != nil {
 			return err
 		}
-		v, err := scanVM(tx.q.QueryRow(ctx, "SELECT "+vmColumns+" FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", vm, org))
+		var restoreState string
+		err := tx.q.QueryRow(ctx, "SELECT restore_state FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", vm, org).Scan(&restoreState)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		// A restore rewrites the root disk and attached disks underneath the snapshot.
+		if restoreState == "node" || restoreState == "storage" {
+			return ErrConflict
+		}
+		v, err := tx.VM(ctx, org, vm)
 		if err != nil {
 			return err
 		}
@@ -218,11 +233,18 @@ func (s *Store) ApplySnapshotStatus(ctx context.Context, node uuid.UUID, st prot
 			}
 			const first = " WHERE id = $1 AND vm_id = $2 AND state = 'creating' AND reported_at IS NULL"
 			if info.Error != "" {
-				tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET state = 'error', error = left($3, 500), reported_at = now()"+first, id, vm, info.Error)
+				// Also after a report: a node that resumed the VM before completion fails the snapshot, whatever the copies did.
+				var failed bool
+				err := tx.q.QueryRow(ctx, `
+					WITH failed AS (
+						UPDATE vm_snapshots SET state = 'error', error = left($3, 500), reported_at = coalesce(reported_at, now())
+						WHERE id = $1 AND vm_id = $2 AND state IN ('creating', 'ready') RETURNING id),
+					copies AS (UPDATE snapshot_disks SET deleted_at = now() WHERE snapshot_id IN (SELECT id FROM failed) AND deleted_at IS NULL)
+					SELECT EXISTS (SELECT 1 FROM failed)`, id, vm, info.Error).Scan(&failed)
 				if err != nil {
 					return err
 				}
-				changed = changed || tag.RowsAffected() > 0
+				changed = changed || failed
 				continue
 			}
 			tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET reported_at = now(), size_bytes = greatest($3::bigint, 0), memory = memory AND $4"+first,
@@ -305,14 +327,16 @@ func (s *Store) ApplyStorageRestored(ctx context.Context, tokens []string) ([]uu
 	return uniqueIDs(orgs), err
 }
 
-// FailStaleSnapshots fails snapshots whose storage copies were not ready in time, so their nodes resume the VMs.
-func (s *Store) FailStaleSnapshots(ctx context.Context, before time.Time) ([]uuid.UUID, error) {
+// FailStaleSnapshots fails snapshots whose storage copies were not ready within timeout, so their nodes resume the VMs, and those no node ever reported.
+func (s *Store) FailStaleSnapshots(ctx context.Context, timeout time.Duration) ([]uuid.UUID, error) {
 	return collectIDs(s.q.Query(ctx, `
 		WITH failed AS (
-			UPDATE vm_snapshots SET state = 'error', error = 'storage copy timed out'
-			WHERE state = 'creating' AND reported_at < $1 RETURNING id, org_id),
+			UPDATE vm_snapshots SET state = 'error',
+				error = CASE WHEN reported_at IS NULL THEN 'snapshot never reached the node' ELSE 'storage copy timed out' END
+			WHERE state = 'creating' AND (reported_at < now() - make_interval(secs => $1)
+				OR reported_at IS NULL AND created_at < now() - interval '10 minutes') RETURNING id, org_id),
 		copies AS (UPDATE snapshot_disks SET deleted_at = now() WHERE snapshot_id IN (SELECT id FROM failed) AND deleted_at IS NULL)
-		SELECT DISTINCT org_id FROM failed ORDER BY 1`, before))
+		SELECT DISTINCT org_id FROM failed ORDER BY 1`, timeout.Seconds()))
 }
 
 // MemoryRestorable reports whether sn has memory and v still has the vCPUs, RAM, networks and attachments it was taken with.
@@ -446,7 +470,7 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 			err := tx.q.QueryRow(ctx, `
 				INSERT INTO disks (org_id, user_id, team_id, name, size_gb, copy_from_snapshot, created_by)
 				VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-				org, src.UserID, src.TeamID, d.DiskName+"-"+hex.EncodeToString(suffix), d.SizeGB, d.ID, createdBy).Scan(&disk)
+				org, src.UserID, src.TeamID, forkDiskName(d.DiskName, hex.EncodeToString(suffix)), d.SizeGB, d.ID, createdBy).Scan(&disk)
 			if isUniqueViolation(err) {
 				return ErrConflict
 			} else if err != nil {
@@ -533,4 +557,12 @@ func (s *Store) NodeVMPlans(ctx context.Context, node uuid.UUID) (map[uuid.UUID]
 func uniqueIDs(ids []uuid.UUID) []uuid.UUID {
 	slices.SortFunc(ids, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
 	return slices.Compact(ids)
+}
+
+var forkSuffix = regexp.MustCompile(`-[0-9a-f]{4}$`)
+
+// forkDiskName keeps "<name>-<suffix>" within the 63 characters of a disk name, replacing an earlier fork's suffix.
+func forkDiskName(name, suffix string) string {
+	name = forkSuffix.ReplaceAllString(name, "")
+	return name[:min(len(name), 62-len(suffix))] + "-" + suffix
 }

@@ -58,6 +58,12 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.StorageStatus) error {
 	if err != nil {
 		return err
 	}
+	// The files are committed: their orgs hear about them even when the restores fail.
+	defer func() {
+		for _, org := range orgs {
+			h.notify(org)
+		}
+	}()
 	restored, err := h.store.ApplyStorageRestored(ctx, st.Restored)
 	if err != nil {
 		return err
@@ -66,9 +72,6 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.StorageStatus) error {
 	h.mu.Lock()
 	h.reportedAt, h.files, h.exportErrs, h.version = h.now(), files, errs, st.Version
 	h.mu.Unlock()
-	for _, org := range orgs {
-		h.notify(org)
-	}
 	return nil
 }
 

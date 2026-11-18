@@ -89,7 +89,8 @@ func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDis
 		}
 		rows, err = tx.q.Query(ctx, `
 			SELECT d.id, d.user_id IS NOT DISTINCT FROM $3 AND d.team_id IS NOT DISTINCT FROM $4,
-				vd.vm_id IS NOT NULL AND vd.vm_id <> $5, e.disk_id IS NOT NULL AND (e.releasing OR vd.vm_id IS NULL)
+				vd.vm_id IS NOT NULL AND vd.vm_id <> $5, e.disk_id IS NOT NULL AND (e.releasing OR vd.vm_id IS NULL),
+				d.restore_token IS NOT NULL
 			FROM disks d LEFT JOIN vm_disks vd ON vd.disk_id = d.id LEFT JOIN disk_exports e ON e.disk_id = d.id
 			WHERE d.org_id = $1 AND d.id = ANY($2) AND d.deleted_at IS NULL FOR UPDATE OF d`,
 			org, ids, v.UserID, v.TeamID, vm)
@@ -104,8 +105,8 @@ func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDis
 		found := 0
 		for rows.Next() {
 			var id uuid.UUID
-			var sameOwner, elsewhere, exported bool
-			if err := rows.Scan(&id, &sameOwner, &elsewhere, &exported); err != nil {
+			var sameOwner, elsewhere, exported, restoring bool
+			if err := rows.Scan(&id, &sameOwner, &elsewhere, &exported, &restoring); err != nil {
 				rows.Close()
 				return err
 			}
@@ -113,7 +114,8 @@ func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDis
 			switch {
 			case !sameOwner:
 				err = ErrOwnerMismatch
-			case elsewhere || exported:
+			// The storage server rewrites a restoring disk in place; only its own VM may keep it.
+			case elsewhere || exported || restoring && !attachedHere[id]:
 				err = ErrConflict
 			case !attachedHere[id]:
 				added = append(added, id)

@@ -138,7 +138,7 @@ func (f *Fleet) SweepSnapshots(ctx context.Context, every, timeout time.Duration
 			return
 		case <-t.C:
 		}
-		orgs, err := f.store.FailStaleSnapshots(ctx, time.Now().Add(-timeout))
+		orgs, err := f.store.FailStaleSnapshots(ctx, timeout)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Error("sweep snapshots", "err", err)

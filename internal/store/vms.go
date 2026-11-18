@@ -230,7 +230,7 @@ func (s *Store) SetVMStatus(ctx context.Context, node uuid.UUID, st proto.VMStat
 	}
 	_, err = s.q.Exec(ctx, `
 		UPDATE vms SET state = $3, ip = $4, error = $5,
-			provisioned = provisioned OR $3 IN ('starting', 'running', 'stopped')
+			provisioned = provisioned OR $3 IN ('starting', 'running', 'stopped', 'paused', 'hibernated', 'suspended')
 		WHERE id = $1 AND node_id = $2`, id, node, st.State, st.IP, st.Error)
 	return err
 }

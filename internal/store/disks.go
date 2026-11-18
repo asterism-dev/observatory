@@ -292,10 +292,12 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 				UPDATE snapshot_disks SET ready_gb = size_gb WHERE id IN (SELECT sd.id `+copied+` AND s.org_id = ANY($3))
 				RETURNING id, snapshot_id)
 			-- The statement still sees the copies as not ready, hence the exclusion.
+			-- A copy finishing after the sweep timeout (e.g. right after a hub restart) may postdate the VM's resume.
 			UPDATE vm_snapshots s SET state = 'ready' WHERE s.state = 'creating' AND s.id IN (SELECT snapshot_id FROM copies)
+				AND s.reported_at > now() - make_interval(secs => $4)
 				AND NOT EXISTS (SELECT 1 FROM snapshot_disks sd WHERE sd.snapshot_id = s.id AND sd.deleted_at IS NULL
 					AND sd.ready_gb = 0 AND sd.id NOT IN (SELECT id FROM copies))
-			RETURNING s.org_id`, ids, sizes, candidates))
+			RETURNING s.org_id`, ids, sizes, candidates, SnapshotCopyTimeout.Seconds()))
 		if err != nil {
 			return err
 		}

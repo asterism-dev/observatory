@@ -53,7 +53,10 @@ its memory.
   node with 512 MB VMs: 0.7 s without attached disks, about 4 s with a 20 GB disk on XFS, about 6 s with a 2 GB disk
   on ext4; without reflinks the pause grows with the disk data.
   A snapshot that is not `ready` 120 s after the node reported it becomes `error`, its disk copies are deleted and
-  the VM resumes. If the hub is gone the node resumes the VM on its own after 180 s.
+  the VM resumes. If the hub is gone the node resumes the VM on its own after 180 s, and a node restart during the
+  pause resumes it too; in both cases the snapshot becomes `error` ("VM resumed before the snapshot completed"), as
+  its disk copies would no longer match the memory. A snapshot no node picks up within 10 minutes becomes `error` too.
+  A snapshot cannot be taken while a restore of the VM is in progress (`409`).
 - **States:** `creating`, `ready`, `error`. Only `ready` snapshots can be restored or forked.
 - **Size:** the node reports the snapshot's size on disk; it is shown, but not counted against the disk GB limits.
 - **Limits:** the `snapshotCount` limit (user, team, org; `null` = unlimited) plus a hard cap of 10 snapshots per VM.
