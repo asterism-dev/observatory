@@ -319,6 +319,10 @@ func (a *Agent) restoreLocal(e *vmEntry, r proto.Restore) error {
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		return err
 	}
+	// A failure below must leave memory agreeing with vm.json: off and without state.
+	a.mu.Lock()
+	e.file = f
+	a.mu.Unlock()
 	state := filepath.Join(dir, StateDir)
 	if err := os.RemoveAll(state); err != nil {
 		return err

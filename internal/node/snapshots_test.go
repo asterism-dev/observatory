@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -288,4 +289,29 @@ func TestForkMissingSnapshot(t *testing.T) {
 		st, _ := a.vmStatus("f")
 		return st.State == proto.StateError && st.Error == "snapshot files missing"
 	})
+}
+
+func TestRestoreFailureAfterKillKeepsFileInSync(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	hibernatedVM(t, a)
+	dir := VMDir(a.VMsDir, "a")
+	writeFile(t, filepath.Join(dir, "root.img"), "new")
+	snap := snapshotOf(t, a, "a", "old", false)
+	if err := os.Chmod(filepath.Join(snap, "root.img"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(snap, "root.img"), 0o600) })
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withRestore(dv("a", "a", proto.PowerHibernated, 3), 1, false, false)})
+	eventually(t, "restore error", func() bool { st, _ := a.vmStatus("a"); return strings.HasPrefix(st.Error, "restore: ") })
+	a.mu.Lock()
+	mem := a.vms["a"].file
+	a.mu.Unlock()
+	if disk := loadVM(t, a, "a"); mem.Hibernated || disk.Hibernated || mem.Power != disk.Power {
+		t.Fatalf("memory %+v, vm.json %+v", mem, disk)
+	}
+	s1 := proto.SnapshotRef{ID: "s1", Complete: true}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withSnaps(dv("a", "a", proto.PowerHibernated, 3), s1, proto.SnapshotRef{ID: "s2", Memory: true})})
+	if info := waitSnapshot(t, a, "s2"); info.Error != "" || info.Memory {
+		t.Fatalf("info = %+v", info)
+	}
 }
