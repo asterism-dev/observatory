@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -67,6 +68,8 @@ func (i *fakeInstance) Kill() error {
 
 func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
 func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
+
+func (i *fakeInstance) ReloadSeed() error { i.p.record("reload-seed"); return nil }
 
 func (i *fakeInstance) GuestResume(context.Context) error {
 	i.p.mu.Lock()
@@ -200,6 +203,9 @@ func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, "reseed:"+f.Spec.Name)
+	if f.Boot != nil {
+		p.events = append(p.events, "reseed-keys:"+strings.Join(f.Boot.SSHPublicKeys, ","))
+	}
 	if p.failReseed {
 		return errors.New("reseed boom")
 	}

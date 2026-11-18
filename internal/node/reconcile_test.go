@@ -1498,6 +1498,25 @@ func TestUnpauseCallsGuestResume(t *testing.T) {
 	eventually(t, "guest resume", func() bool { return guestResumedSince(p, since) })
 }
 
+func TestUnpauseReloadsSeedFirst(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	p.mu.Lock()
+	p.events = nil
+	p.mu.Unlock()
+	d := dv("a", "a", proto.PowerRunning, 3)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 new"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 3)
+	want := []string{"reseed:a", "reseed-keys:ssh-ed25519 new", "reload-seed", "resume"}
+	if got := p.gotEvents(); !slices.Equal(got, want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+}
+
 func TestPausedRestoreCallsGuestResumeOnUnpause(t *testing.T) {
 	a, p := newReconcileAgent(t)
 	f := cachedVM("a", "a")

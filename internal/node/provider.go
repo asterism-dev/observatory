@@ -11,7 +11,7 @@ type Provider interface {
 	Name() string
 	// Prepare runs once at create time; Start runs on create and again after every node restart.
 	Prepare(ctx context.Context, f VMFile, dir string) error
-	// Reseed rewrites only the cloud-init seed of a prepared, stopped VM; disks are left alone.
+	// Reseed rewrites only the cloud-init seed of a prepared, stopped or paused VM; disks are left alone.
 	Reseed(ctx context.Context, f VMFile, dir string) error
 	Start(f VMFile, dir string) (Instance, error)
 	Restore(ctx context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error)
@@ -33,6 +33,8 @@ type Instance interface {
 	SaveState(dir string) error
 	// GuestResume tells the guest agent it was resumed, so it sets its clock and re-reads its seed.
 	GuestResume(ctx context.Context) error
+	// ReloadSeed makes the VM read the seed Reseed last wrote, so a paused guest resumes with the current keys and variables.
+	ReloadSeed() error
 }
 
 type RestoreFrom struct {

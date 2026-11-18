@@ -625,6 +625,8 @@ func (a *Agent) syncPause(e *vmEntry, inst Instance) {
 		pause := inst.Resume
 		if want {
 			pause = inst.Pause
+		} else {
+			a.reloadSeed(e, inst)
 		}
 		if err := pause(); err != nil {
 			st.Error = err.Error()
@@ -647,6 +649,20 @@ func (a *Agent) syncPause(e *vmEntry, inst Instance) {
 		}
 	}
 	a.reportEntry(e, st)
+}
+
+// reloadSeed brings keys and variables changed while paused into the seed the guest agent re-reads on resume; the VM resumes with the old seed on failure.
+func (a *Agent) reloadSeed(e *vmEntry, inst Instance) {
+	a.mu.Lock()
+	f := e.file
+	a.mu.Unlock()
+	err := a.Provider.Reseed(context.Background(), f, VMDir(a.VMsDir, f.Spec.ID))
+	if err == nil {
+		err = inst.ReloadSeed()
+	}
+	if err != nil {
+		log.Printf("vm %s: reload seed: %v", f.Spec.ID, err)
+	}
 }
 
 // guestResume lets the guest catch up on its clock and seed after a pause; it keeps running without that.

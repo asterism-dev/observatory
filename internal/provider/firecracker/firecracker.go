@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
@@ -383,6 +384,27 @@ func (i *instance) Resume() error {
 	}
 	i.paused = false
 	return nil
+}
+
+// ReloadSeed links the VM dir's seed into the jail again, as Reseed renames a new file over it, and has Firecracker reopen it.
+func (i *instance) ReloadSeed() error {
+	dst := filepath.Join(jailRoot(i.dir), node.SeedISO)
+	var st syscall.Stat_t
+	if err := syscall.Stat(dst, &st); err != nil {
+		return err
+	}
+	tmp := dst + ".new"
+	os.Remove(tmp)
+	// The jailed seed is root's with the VM's UID as group, so that group is the jail UID.
+	if err := jailOne(jailFile{path: filepath.Join(i.dir, node.SeedISO), readOnly: true}, tmp, int(st.Gid)); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return i.api.PatchDrive("seed", "/"+node.SeedISO)
 }
 
 func (i *instance) GuestResume(ctx context.Context) error {
