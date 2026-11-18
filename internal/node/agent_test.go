@@ -705,3 +705,21 @@ func TestAgentStopWhileWaitingForImage(t *testing.T) {
 		t.Fatalf("prepared = %v", got)
 	}
 }
+
+func TestAgentSameGenerationKeepsWaitingForImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	env.agent.mu.Lock()
+	e := env.agent.vms[vm.ID]
+	d := proto.DesiredVM{Spec: e.file.Spec, Power: proto.PowerRunning, Generation: e.file.Generation}
+	env.agent.mu.Unlock()
+	// A restore that is due queues at the same generation, which applyPending then skips.
+	env.agent.queue(context.Background(), e, d)
+	time.Sleep(50 * time.Millisecond)
+	if st, _ := env.agent.vmStatus(vm.ID); st.State != proto.StateStarting || st.Error != PreparingImage {
+		t.Fatalf("status = %+v", st)
+	}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+}

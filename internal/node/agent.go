@@ -472,7 +472,7 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
 	var shown string
 	for {
 		a.mu.Lock()
-		img, changed, newer, id := a.image, a.imageChanged, e.pending != nil, e.file.Spec.ID
+		img, changed, newer, id := a.image, a.imageChanged, e.pending != nil && e.pending.Generation > e.file.Generation, e.file.Spec.ID
 		a.mu.Unlock()
 		switch {
 		case img != nil && img.State == proto.ImageReady:
