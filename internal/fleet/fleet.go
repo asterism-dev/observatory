@@ -128,6 +128,20 @@ func (f *Fleet) detach(c *conn) {
 	}
 }
 
+// failSnapshots runs when a node's connection ends: a stopping or restarting node resumes the VMs it paused, so copies made later would not match.
+func (f *Fleet) failSnapshots(node uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	orgs, err := f.store.FailNodeSnapshots(ctx, node)
+	if err != nil {
+		slog.Error("fail snapshots of disconnected node", "node", node, "err", err)
+		return
+	}
+	for _, org := range orgs {
+		f.NotifyOrg(org)
+	}
+}
+
 // SweepSnapshots fails snapshots whose storage copies took longer than timeout, so their nodes resume the VMs; it returns when ctx ends.
 func (f *Fleet) SweepSnapshots(ctx context.Context, every, timeout time.Duration) {
 	t := time.NewTicker(every)

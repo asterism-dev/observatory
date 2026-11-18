@@ -1141,3 +1141,28 @@ func TestSweepSnapshotsFailsStaleAndNotifies(t *testing.T) {
 		t.Fatalf("state %q", got.State)
 	}
 }
+
+func TestDisconnectFailsSnapshotWaitingForCopies(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.readyDisk(v, "data")
+	sn := e.snapshot(v, "s")
+	node := e.connect(cred)
+	node.desired()
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning,
+		Snapshots: []proto.SnapshotInfo{{ID: sn.ID.String(), SizeBytes: 1}}}})
+	node.desired()
+	node.sess.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := e.s.Snapshot(context.Background(), e.org.ID, v.ID, sn.ID)
+		if got.State == "error" && len(got.Disks) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("snapshot after disconnect: %+v", got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

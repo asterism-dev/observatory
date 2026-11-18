@@ -91,6 +91,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1)}
 	f.attach(c)
 	defer f.detach(c)
+	defer f.failSnapshots(node.ID)
 	// A Disconnect racing with this handshake ran before attach; recheck so a revoked credential never stays connected.
 	if _, err := f.store.NodeByCredential(ctx, cred); err != nil {
 		return

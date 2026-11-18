@@ -339,6 +339,17 @@ func (s *Store) FailStaleSnapshots(ctx context.Context, timeout time.Duration) (
 		SELECT DISTINCT org_id FROM failed ORDER BY 1`, timeout.Seconds()))
 }
 
+// FailNodeSnapshots fails the node's snapshots still waiting for copies: a node that went away may have resumed their VMs.
+func (s *Store) FailNodeSnapshots(ctx context.Context, node uuid.UUID) ([]uuid.UUID, error) {
+	return collectIDs(s.q.Query(ctx, `
+		WITH failed AS (
+			UPDATE vm_snapshots s SET state = 'error', error = 'node disconnected before the snapshot completed'
+			FROM vms v WHERE v.id = s.vm_id AND v.node_id = $1 AND s.state = 'creating' AND s.reported_at IS NOT NULL
+			RETURNING s.id, s.org_id),
+		copies AS (UPDATE snapshot_disks SET deleted_at = now() WHERE snapshot_id IN (SELECT id FROM failed) AND deleted_at IS NULL)
+		SELECT DISTINCT org_id FROM failed ORDER BY 1`, node))
+}
+
 // MemoryRestorable reports whether sn has memory and v still has the vCPUs, RAM, networks and attachments it was taken with.
 func (s *Store) MemoryRestorable(ctx context.Context, v VM, sn Snapshot) (bool, error) {
 	if !sn.Memory || v.CPUs != sn.CPUs || v.MemoryMB != sn.MemoryMB {
