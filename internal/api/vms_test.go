@@ -16,10 +16,11 @@ import (
 func vmsPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/vms" }
 
 type vmJSONTest struct {
-	ID, Name, State, Power string
-	Owner                  struct{ Kind, ID, Name string }
-	Node                   struct{ ID, Name string }
-	CanPower, CanDelete    bool
+	ID, Name, State, Power           string
+	Owner                            struct{ Kind, ID, Name string }
+	Node                             struct{ ID, Name string }
+	CanPower, CanDelete              bool
+	CanSnapshot, CanRestore, CanFork bool
 }
 
 func vmBody(name, owner, node string) string {
@@ -152,6 +153,9 @@ func TestVMTeamPermissions(t *testing.T) {
 	if len(bobList.VMs) != 1 || !bobList.VMs[0].CanPower || bobList.VMs[0].CanDelete {
 		t.Fatalf("bob list: %+v", bobList.VMs)
 	}
+	if b := bobList.VMs[0]; !b.CanSnapshot || b.CanRestore || b.CanFork {
+		t.Fatalf("team member snapshot flags: %+v", b)
+	}
 	if !slices.ContainsFunc(bobList.Nodes, func(n struct {
 		ID, Name string
 		Online   bool
@@ -195,6 +199,14 @@ func TestVMPowerAndVisibility(t *testing.T) {
 
 	if got := e.listVMs(carolTok, org).VMs; len(got) != 0 {
 		t.Fatalf("carol sees %+v", got)
+	}
+	if got := e.listVMs(bobTok, org).VMs; len(got) != 1 || !got[0].CanSnapshot || !got[0].CanRestore || !got[0].CanFork {
+		t.Fatalf("owner snapshot flags: %+v", got)
+	}
+	dan, danTok := e.user("dan")
+	e.addMember(org, dan, store.RoleAdmin)
+	if got := e.listVMs(danTok, org).VMs; len(got) != 1 || !got[0].CanSnapshot || !got[0].CanRestore || got[0].CanFork {
+		t.Fatalf("admin snapshot flags: %+v", got)
 	}
 	if rec := e.do("GET", vmsPath(org)+"/"+v.ID, carolTok); rec.Code != 403 {
 		t.Fatalf("carol get: %d", rec.Code)

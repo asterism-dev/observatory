@@ -53,7 +53,9 @@ async function load() {
   const id = props.vm.id
   try {
     const res = await api<Snapshot[]>(base())
-    if (id === props.vm.id) snapshots.value = res
+    if (id !== props.vm.id) return
+    snapshots.value = res
+    error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
