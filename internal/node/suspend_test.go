@@ -184,3 +184,20 @@ func TestDesiredWakeWaitsForTapTeardown(t *testing.T) {
 		t.Fatalf("events = %s", ev)
 	}
 }
+
+func TestCancelBeforeWaitWakeTouchesNoTaps(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	f.Hibernated, f.Suspended = true, true
+	ctx, cancel := context.WithCancel(context.Background())
+	booted := make(chan struct{})
+	close(booted)
+	e := &vmEntry{file: f, ctx: ctx, root: context.Background(), cancel: cancel, booted: booted}
+	a.vms["a"] = e
+	// The cancel lands between releasing e.op (or e.booted) and waitWake publishing wakeDone.
+	cancel()
+	a.waitWake(e)
+	if p.hasEvent("wait-wake") {
+		t.Fatalf("WaitWake ran after the cancel: %v", p.gotEvents())
+	}
+}

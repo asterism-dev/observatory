@@ -93,6 +93,11 @@ func (a *Agent) waitWake(e *vmEntry) {
 func (a *Agent) waitForWake(e *vmEntry) bool {
 	done := make(chan struct{})
 	a.mu.Lock()
+	// e.cancel cancels before it reads wakeDone, so a cancel that misses done is seen here, before any tap is touched.
+	if e.ctx.Err() != nil {
+		a.mu.Unlock()
+		return false
+	}
 	e.wakeDone = done
 	a.mu.Unlock()
 	defer close(done)

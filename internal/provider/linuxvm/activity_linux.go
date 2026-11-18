@@ -38,6 +38,9 @@ func WaitIdle(ctx context.Context, taps []string, idle time.Duration) error {
 
 // WaitWake recreates f's taps and reads them until an activity frame arrives; the taps stay for Restore, which needs them closed here first.
 func WaitWake(ctx context.Context, f node.VMFile, owner int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := SetupTaps(f, owner); err != nil {
 		RemoveTaps(f)
 		return fmt.Errorf("taps: %w", err)
