@@ -35,6 +35,8 @@ type VMFile struct {
 	Egress *proto.Egress `json:"-"`
 	// Integrations are the token service's answers: memory only, refreshed with Egress.
 	Integrations []proto.IntegrationToken `json:"-"`
+	// IntegrationsUnresolved makes the token service answer unavailable: the hub could not read the VM's integrations and none were known before.
+	IntegrationsUnresolved bool `json:"-"`
 }
 
 const (

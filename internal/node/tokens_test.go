@@ -231,6 +231,24 @@ func TestIntegrationTokenLookup(t *testing.T) {
 	wantToken(t, b, TokenUnavailable)
 }
 
+func TestIntegrationsUnresolvedKeepsLastTokens(t *testing.T) {
+	unresolved := dv("a", "a", proto.PowerRunning, 1)
+	unresolved.Boot, unresolved.IntegrationsUnresolved = &proto.Boot{}, true
+
+	a, _ := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{unresolved})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	wantToken(t, a, TokenUnavailable)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withGitHub(dv("a", "a", proto.PowerRunning, 1))})
+	wantToken(t, a, "ok")
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{unresolved})
+	wantToken(t, a, "ok")
+	without := dv("a", "a", proto.PowerRunning, 1)
+	without.Boot = &proto.Boot{}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{without})
+	wantToken(t, a, TokenNotConnected)
+}
+
 func TestIntegrationsNeverPersisted(t *testing.T) {
 	dir := t.TempDir()
 	f := cachedVM("a", "a")

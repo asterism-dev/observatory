@@ -33,6 +33,7 @@ type Fleet struct {
 	conns    map[uuid.UUID]*conn
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 	metrics  map[uuid.UUID][]MetricSample
+	retrying map[uuid.UUID]bool // orgs with a pending integrationRetry push
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -40,7 +41,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}}
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }
@@ -96,6 +97,22 @@ func (f *Fleet) NotifyOrg(org uuid.UUID) {
 			c.kick()
 		}
 	}
+}
+
+// retryIntegrations pushes the org again after integrationRetry; retries already pending absorb later calls.
+func (f *Fleet) retryIntegrations(org uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.retrying[org] {
+		return
+	}
+	f.retrying[org] = true
+	time.AfterFunc(integrationRetry, func() {
+		f.mu.Lock()
+		delete(f.retrying, org)
+		f.mu.Unlock()
+		f.NotifyOrg(org)
+	})
 }
 
 func (f *Fleet) Disconnect(node uuid.UUID) {
@@ -205,9 +222,12 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if plan.Hold {
 			continue
 		}
-		boot, bound, tokens, err := f.boot(ctx, org, v)
+		boot, bound, tokens, unresolved, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
+		}
+		if unresolved {
+			f.retryIntegrations(org)
 		}
 		eg, cas, err := f.egress(ctx, org, v, bound)
 		switch {
@@ -227,6 +247,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
 			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg, Integrations: tokens,
+			IntegrationsUnresolved: unresolved,
 		})
 	}
 	return out, releasing, nil
@@ -252,7 +273,7 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 }
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
-func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, []proto.HostBoundSecret, []proto.IntegrationToken, error) {
+func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.Boot, _ []proto.HostBoundSecret, _ []proto.IntegrationToken, unresolved bool, _ error) {
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -262,7 +283,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 		owner = authz.TeamSubject(*v.TeamID)
 		members, err := f.store.TeamMembers(ctx, org, *v.TeamID)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		for _, m := range members {
 			users = append(users, m.User.ID)
@@ -270,17 +291,18 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 	}
 	keys, err := f.store.SSHKeysOf(ctx, users)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	env, bound, err := f.store.ResolveVMEnv(ctx, f.authz.Enforcer(), org, owner)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, false, err
 	}
 	var tokens []proto.IntegrationToken
 	res, err := f.store.ResolveVMIntegrations(ctx, f.authz.Enforcer(), org, owner)
 	if err != nil {
 		// Like egress, one VM's integration trouble must not stall the node's list.
 		slog.Error("integrations for vm", "vm", v.ID, "reason", "resolve failed")
+		unresolved = true
 	} else {
 		var ib []proto.HostBoundSecret
 		ib, tokens = IntegrationEntries(res)
@@ -289,7 +311,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 	if keys == nil {
 		keys = []string{}
 	}
-	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, nil
+	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, unresolved, nil
 }
 
 // IntegrationEntries turns resolved integrations into proxy secrets (proxy mode) and the tokens a VM receives.

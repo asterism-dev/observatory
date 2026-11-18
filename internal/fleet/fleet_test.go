@@ -1685,3 +1685,49 @@ func TestRefreshIntegrationsBackoff(t *testing.T) {
 		}
 	}
 }
+
+func TestDesiredIntegrationsUnresolvedKeepsOtherVMs(t *testing.T) {
+	old := *fleet.IntegrationRetry
+	*fleet.IntegrationRetry = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.IntegrationRetry = old })
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
+		t.Fatal(err)
+	}
+	broken := e.vm(e.org.ID, n.ID, "broken", &e.owner, nil)
+	ok := e.vm(e.org.ID, n.ID, "ok", nil, &team.ID)
+	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil, integrations.ModeVM, store.IntegrationSecret{Token: intToken})
+	bad := e.integration(integrations.Linear, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeVM, store.IntegrationSecret{Token: intToken})
+	if _, err := e.pool.Exec(ctx, "UPDATE integrations SET ciphertext = 'garbage' WHERE id = $1", bad.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	node := e.connect(cred)
+	m := node.desired()
+	if d := desiredVM(t, m, broken.ID); d == nil || !d.IntegrationsUnresolved || len(d.Integrations) != 0 {
+		t.Fatalf("broken VM = %+v", d)
+	}
+	if d := desiredVM(t, m, ok.ID); d == nil || d.IntegrationsUnresolved || len(d.Integrations) != 1 {
+		t.Fatalf("ok VM = %+v", d)
+	}
+	// The hub pushes again by itself until the integration resolves.
+	if again := node.desired(); again.Seq <= m.Seq {
+		t.Fatalf("seq %d after %d", again.Seq, m.Seq)
+	}
+	if _, err := e.pool.Exec(ctx, "DELETE FROM integrations WHERE id = $1", bad.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	for range 5 {
+		if d := desiredVM(t, node.desired(), broken.ID); !d.IntegrationsUnresolved {
+			return
+		}
+	}
+	t.Fatal("still unresolved after the integration was deleted")
+}

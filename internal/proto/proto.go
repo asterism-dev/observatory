@@ -143,6 +143,8 @@ type DesiredVM struct {
 	Egress *Egress `json:"egress,omitempty"`
 	// Integrations follow the Egress rules: only to the VM's node, memory only.
 	Integrations []IntegrationToken `json:"integrations,omitempty"`
+	// IntegrationsUnresolved means the hub failed to read the VM's integrations, so Integrations says nothing about them.
+	IntegrationsUnresolved bool `json:"integrationsUnresolved,omitempty"`
 }
 
 type Register struct {

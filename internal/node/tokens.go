@@ -102,7 +102,7 @@ func (a *Agent) integrationToken(vmID, kind string) (proto.IntegrationToken, str
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	e, ok := a.vms[vmID]
-	if !ok || e.file.Boot == nil {
+	if !ok || e.file.Boot == nil || e.file.IntegrationsUnresolved {
 		return proto.IntegrationToken{}, TokenUnavailable
 	}
 	for _, t := range e.file.Integrations {
