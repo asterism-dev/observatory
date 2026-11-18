@@ -25,6 +25,7 @@ const confirmDelete = ref(false)
 const networksOpen = ref(false)
 const disksOpen = ref(false)
 const copyFailed = ref(false)
+const egress = ref<{ secrets: number; hosts: string[]; caNotAfter: string | null; trustChanged: boolean } | null>(null)
 
 const base = () => `/api/orgs/${org.value?.id}/vms/${vmId.value}`
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -35,6 +36,8 @@ async function load() {
   try {
     const res = await api<VmInfo>(base())
     if (id === org.value?.id) vm.value = res
+    const eg = await api<NonNullable<typeof egress.value>>(`${base()}/egress`)
+    if (id === org.value?.id) egress.value = eg
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return router.replace(`/orgs/${id}/vms`)
     error.value = message(e)
@@ -105,6 +108,7 @@ watch(
   () => [org.value?.id, vmId.value],
   () => {
     vm.value = null
+    egress.value = null
     error.value = ''
     load()
   },
@@ -140,6 +144,16 @@ watch(
             <code>ssh ubuntu@{{ vm.dnsName }}</code>
             <Button size="sm" @click="copySsh">{{ t('networks.copy') }}</Button>
             <small v-if="copyFailed" role="alert">{{ t('networks.copyFailed') }}</small>
+          </template>
+          <template v-else>–</template>
+        </dd>
+        <dt>{{ t('vms.egress') }}</dt>
+        <dd>
+          <template v-if="egress">
+            {{ t('vms.egressSecrets', { n: egress.secrets }) }}
+            <Badge v-for="h in egress.hosts" :key="h">{{ h }}</Badge>
+            <template v-if="egress.caNotAfter">, {{ t('vms.egressCa', { date: d(new Date(egress.caNotAfter), { dateStyle: 'short' }) }) }}</template>
+            <small v-if="egress.trustChanged" role="status"> {{ t('vms.egressRestart') }}</small>
           </template>
           <template v-else>–</template>
         </dd>
