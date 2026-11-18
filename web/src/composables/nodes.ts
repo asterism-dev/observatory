@@ -35,6 +35,9 @@ export interface VmInfo {
   canNetwork: boolean
   disks: { id: string; name: string; mountPath: string; sizeGB: number; state: string; error?: string }[]
   canDisks: boolean
+  canSnapshot: boolean
+  canRestore: boolean
+  canFork: boolean
   cpus: number
   memoryMB: number
   diskGB: number

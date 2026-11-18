@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '@/api'
 import VMDisksDialog from '@/components/VMDisksDialog.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
+import VMSnapshots from '@/components/VMSnapshots.vue'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
@@ -136,6 +137,7 @@ watch(
       <p v-else>{{ t('vmDisks.none') }}</p>
       <p v-if="vm.canDisks"><Button :disabled="busy" @click="disksOpen = true">{{ t('vmDisks.change') }}</Button></p>
       <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
+      <VMSnapshots :org-id="org.id" :vm="vm" @changed="load" />
       <p v-if="vm.canPower || vm.canDelete" class="row">
         <template v-if="vm.canPower">
           <Button v-for="a in powerActions(vm.state)" :key="a" :disabled="busy" @click="power(a)">{{ t(`vms.${a}`) }}</Button>

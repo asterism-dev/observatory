@@ -53,6 +53,10 @@ type vmJSON struct {
 	CanNetwork bool           `json:"canNetwork"`
 	Disks      []vmDiskJSON   `json:"disks"`
 	CanDisks   bool           `json:"canDisks"`
+
+	CanSnapshot bool `json:"canSnapshot"`
+	CanRestore  bool `json:"canRestore"`
+	CanFork     bool `json:"canFork"`
 }
 
 type vmDiskJSON struct {
@@ -137,8 +141,9 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		StopMode: v.StopMode, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
-		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks),
-		DNSName:  v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
+		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
+		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
+		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}

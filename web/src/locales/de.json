@@ -171,7 +171,8 @@
     "vmCount": "VMs",
     "unlimited": "Unbegrenzt",
     "required": "Wert eingeben oder unbegrenzt wählen",
-    "invalid": "Ganze Zahl ab 0 verwenden"
+    "invalid": "Ganze Zahl ab 0 verwenden",
+    "snapshotCount": "Snapshots"
   },
   "admin": {
     "members": "Mitglieder",
@@ -415,5 +416,37 @@
     "delete": "Löschen",
     "deleteTitle": "Disk löschen",
     "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
+  },
+  "snapshots": {
+    "section": "Snapshots",
+    "take": "Snapshot erstellen",
+    "takeTitle": "Snapshot erstellen",
+    "name": "Name",
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit einem Buchstaben beginnen; maximal 31 Zeichen.",
+    "includeMemory": "Arbeitsspeicher einschließen (laufende Prozesse)",
+    "memory": "Arbeitsspeicher",
+    "disks": "Disks",
+    "size": "Größe",
+    "yes": "ja",
+    "no": "nein",
+    "empty": "Noch keine Snapshots.",
+    "states": {
+      "creating": "wird erstellt",
+      "ready": "bereit",
+      "error": "Fehler"
+    },
+    "restore": "Wiederherstellen",
+    "restoreTitle": "{name} wiederherstellen",
+    "restoreBody": "{name} läuft und wird neu gestartet, um den Snapshot wiederherzustellen.",
+    "restoreBodySaved": "{name} ist pausiert oder im Ruhezustand. Das Wiederherstellen verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
+    "restoreBodyStopped": "Die Disks von {name} auf diesen Snapshot zurücksetzen. Spätere Änderungen gehen verloren.",
+    "restoreMemory": "Auch Arbeitsspeicher wiederherstellen (laufende Prozesse fortsetzen)",
+    "fork": "Kopie erstellen",
+    "forkTitle": "Kopie von {name} erstellen",
+    "forkName": "Name der neuen VM",
+    "forkMemory": "Vom gespeicherten Arbeitsspeicher starten",
+    "delete": "Löschen",
+    "deleteTitle": "Snapshot löschen",
+    "deleteBody": "Snapshot {name} löschen?"
   }
 }

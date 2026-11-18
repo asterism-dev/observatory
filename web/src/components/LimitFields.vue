@@ -8,6 +8,7 @@ export interface Limits {
   ramMb: number | null
   diskGb: number | null
   vmCount: number | null
+  snapshotCount: number | null
 }
 
 const model = defineModel<Limits>({ required: true })
@@ -15,7 +16,7 @@ const valid = defineModel<boolean>('valid', { default: true })
 defineProps<{ disabled?: boolean }>()
 const { t } = useI18n()
 
-const fields = ['vcpu', 'ramMb', 'diskGb', 'vmCount'] as const
+const fields = ['vcpu', 'ramMb', 'diskGb', 'vmCount', 'snapshotCount'] as const
 
 // Unlimited is driven only by the checkbox; an empty input is "no value yet", not unlimited.
 const unlimited = reactive(Object.fromEntries(fields.map((k) => [k, model.value[k] === null])) as Record<keyof Limits, boolean>)

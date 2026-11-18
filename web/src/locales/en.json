@@ -171,7 +171,8 @@
     "vmCount": "VMs",
     "unlimited": "Unlimited",
     "required": "Enter a value or select unlimited",
-    "invalid": "Use a whole number, 0 or more"
+    "invalid": "Use a whole number, 0 or more",
+    "snapshotCount": "Snapshots"
   },
   "admin": {
     "members": "Members",
@@ -415,5 +416,37 @@
     "delete": "Delete",
     "deleteTitle": "Delete disk",
     "deleteBody": "Delete {name}? Its data is permanently lost."
+  },
+  "snapshots": {
+    "section": "Snapshots",
+    "take": "Take snapshot",
+    "takeTitle": "Take snapshot",
+    "name": "Name",
+    "invalidName": "Lowercase letters, digits and hyphens; must start with a letter; max 31 characters.",
+    "includeMemory": "Include memory (running processes)",
+    "memory": "Memory",
+    "disks": "Disks",
+    "size": "Size",
+    "yes": "yes",
+    "no": "no",
+    "empty": "No snapshots yet.",
+    "states": {
+      "creating": "creating",
+      "ready": "ready",
+      "error": "error"
+    },
+    "restore": "Restore",
+    "restoreTitle": "Restore {name}",
+    "restoreBody": "{name} is running and restarts to restore the snapshot.",
+    "restoreBodySaved": "{name} is paused or hibernated. Restoring the snapshot discards the saved memory state and boots it fresh.",
+    "restoreBodyStopped": "Restore the disks of {name} to this snapshot. Changes made since are lost.",
+    "restoreMemory": "Also restore memory (resume running processes)",
+    "fork": "Fork",
+    "forkTitle": "Fork {name}",
+    "forkName": "Name of the new VM",
+    "forkMemory": "Start from the saved memory",
+    "delete": "Delete",
+    "deleteTitle": "Delete snapshot",
+    "deleteBody": "Delete snapshot {name}?"
   }
 }
