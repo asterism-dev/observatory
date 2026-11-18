@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -17,6 +18,8 @@ type Provider interface {
 	Restore(ctx context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error)
 	// Disks lists the block devices Start attaches, in attach order.
 	Disks(f VMFile, dir string) ([]proto.Disk, error)
+	WaitIdle(ctx context.Context, f VMFile, idle time.Duration) error
+	WaitWake(ctx context.Context, f VMFile) error
 	StartChassis(ctx context.Context, c chassisconf.Config) error
 	StopChassis() error
 }

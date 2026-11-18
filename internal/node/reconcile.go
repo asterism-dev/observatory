@@ -64,6 +64,9 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 			}
 		}
 		a.mu.Unlock()
+		if ok && !e.placeholder {
+			a.syncSuspend(e, d)
+		}
 		switch {
 		case !ok || e.placeholder && !d.Provisioned && d.Generation > gen:
 			a.createDesired(ctx, d)
@@ -216,7 +219,8 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		a.startVM(ctx, f, false)
 		return
 	}
-	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot}
+	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot,
+		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())
 		return
@@ -280,6 +284,8 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	}
 	// A new Boot takes effect at the next start, which reseeds; it does not restart the VM.
 	f.Power, f.StopMode, f.Generation, f.Boot = d.Power, d.StopMode, d.Generation, d.Boot
+	// A desired change wakes a suspended VM, or leaves it hibernated, stopped or paused as asked.
+	f.Suspended = false
 	var reseedErr error
 	halted := !slices.Equal(f.Spec.NICs, d.Spec.NICs) || !slices.Equal(f.Spec.Attachments, d.Spec.Attachments)
 	graceful := d.Power != proto.PowerStopped || d.StopMode != proto.StopHard

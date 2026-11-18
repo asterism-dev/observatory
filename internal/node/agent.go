@@ -93,6 +93,11 @@ type vmEntry struct {
 	// pending is the newest desired that arrived while op was taken; a waiting goroutine applies it.
 	pending *proto.DesiredVM
 	waiting bool
+	// ctx is the boot context, which cancel ends; root is the agent's, for a resumed successor.
+	ctx, root context.Context
+	// idleStop ends the idle watch; wake ends a suspended VM's WaitWake to resume it, as does woken set before it waits. Guarded by Agent.mu.
+	idleStop, wake context.CancelFunc
+	woken          bool
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -293,11 +298,11 @@ func dialStorage(f VMFile) error {
 
 func (a *Agent) startVM(ctx context.Context, f VMFile, prepare bool) {
 	state := proto.StateStarting
-	if f.Power == proto.PowerStopped || f.Power == proto.PowerHibernated {
+	if f.Power == proto.PowerStopped || f.Power == proto.PowerHibernated || suspended(f) {
 		state = restingState(f)
 	}
 	bootCtx, cancel := context.WithCancel(ctx)
-	e := &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: state}, cancel: cancel, booted: make(chan struct{})}
+	e := &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: state}, cancel: cancel, booted: make(chan struct{}), ctx: bootCtx, root: ctx}
 	a.mu.Lock()
 	a.vms[f.Spec.ID] = e
 	a.mu.Unlock()
@@ -323,6 +328,12 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	if f.Power == proto.PowerStopped || f.Power == proto.PowerHibernated {
 		close(e.booted)
 		report(proto.VMStatus{ID: id, State: restingState(f)})
+		return
+	}
+	if suspended(f) {
+		close(e.booted)
+		report(proto.VMStatus{ID: id, State: restingState(f)})
+		a.waitWake(e)
 		return
 	}
 	var inst Instance
@@ -454,17 +465,20 @@ func (a *Agent) clearHibernated(e *vmEntry) error {
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
-	f.Hibernated, f.Takeoff = false, false
+	f.Hibernated, f.Takeoff, f.Suspended = false, false, false
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		return err
 	}
 	a.mu.Lock()
-	e.file.Hibernated, e.file.Takeoff = false, false
+	e.file.Hibernated, e.file.Takeoff, e.file.Suspended = false, false, false
 	a.mu.Unlock()
 	return nil
 }
 
 func restingState(f VMFile) proto.VMState {
+	if suspended(f) {
+		return proto.StateSuspended
+	}
 	if f.Hibernated {
 		return proto.StateHibernated
 	}
@@ -708,12 +722,19 @@ func (a *Agent) watch(ctx context.Context, e *vmEntry, id string, inst Instance,
 			if pause {
 				a.syncPause(e, inst)
 			}
+			a.mu.Lock()
+			a.watchIdleLocked(e)
+			a.mu.Unlock()
 			e.op.Unlock()
 		}
 	}
 	<-inst.Done()
 	a.mu.Lock()
 	f := e.file
+	if e.idleStop != nil {
+		e.idleStop()
+		e.idleStop = nil
+	}
 	a.mu.Unlock()
 	report(proto.VMStatus{ID: id, State: restingState(f)})
 }

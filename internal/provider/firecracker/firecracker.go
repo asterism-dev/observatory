@@ -329,6 +329,29 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	return proc, filepath.Join(jailRoot(dir), "fc.sock"), uid, err
 }
 
+func (p *Provider) WaitIdle(ctx context.Context, f node.VMFile, idle time.Duration) error {
+	taps := []string{linuxvm.TapName(f.Spec.ID, 0)}
+	for i := range f.Spec.NICs {
+		taps = append(taps, linuxvm.TapName(f.Spec.ID, i+1))
+	}
+	return linuxvm.WaitIdle(ctx, taps, idle)
+}
+
+// WaitWake creates the taps owned by the VM's jail UID, as Restore's Spawn does, so Firecracker can attach to them.
+func (p *Provider) WaitWake(ctx context.Context, f node.VMFile) error {
+	p.mu.Lock()
+	ip, err := linuxvm.AllocNATIP(p.VMsDir, f.Spec.ID)
+	p.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	uid, err := jailUID(ip)
+	if err != nil {
+		return err
+	}
+	return linuxvm.WaitWake(ctx, f, uid)
+}
+
 // StartChassis gives up when the node stops: systemd queues an ovn-controller restart behind the node's own stop job.
 func (p *Provider) StartChassis(ctx context.Context, c chassisconf.Config) error {
 	ctx, cancel := context.WithTimeout(ctx, chassisTimeout)

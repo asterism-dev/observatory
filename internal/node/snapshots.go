@@ -315,7 +315,7 @@ func (a *Agent) restoreLocal(e *vmEntry, r proto.Restore) error {
 	}
 	e.cancel()
 	// Off and without memory first, so a crash midway leaves a VM that neither boots nor resumes stale memory.
-	f.Hibernated, f.Takeoff, f.Power = false, false, proto.PowerStopped
+	f.Hibernated, f.Takeoff, f.Suspended, f.Power = false, false, false, proto.PowerStopped
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		return err
 	}
@@ -380,7 +380,8 @@ func (a *Agent) forkLocal(d proto.DesiredVM) (VMFile, error) {
 			return VMFile{}, errSnapshotMissing
 		}
 	}
-	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, Boot: d.Boot}
+	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, Boot: d.Boot,
+		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	dir := VMDir(a.VMsDir, f.Spec.ID)
 	state := filepath.Join(dir, StateDir)
 	err := os.MkdirAll(dir, 0o700)

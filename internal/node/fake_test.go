@@ -130,6 +130,7 @@ type fakeProvider struct {
 	failKill      error
 	guestResumes  []time.Time
 	restores      map[string]int
+	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -181,7 +182,7 @@ func (p *fakeProvider) gotChassis() []chassisconf.Config {
 }
 
 func newFakeProvider() *fakeProvider {
-	return &fakeProvider{started: map[string]*fakeInstance{}, starts: map[string]int{}, failPrepare: map[string]bool{}, failStart: map[string]bool{}, staleIP: map[string]bool{}}
+	return &fakeProvider{idle: make(chan struct{}), wake: make(chan struct{}), started: map[string]*fakeInstance{}, starts: map[string]int{}, failPrepare: map[string]bool{}, failStart: map[string]bool{}, staleIP: map[string]bool{}}
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -264,6 +265,25 @@ func (p *fakeProvider) Restore(_ context.Context, f VMFile, dir string, from Res
 	inst := &fakeInstance{p: p, done: make(chan struct{})}
 	p.started[f.Spec.Name] = inst
 	return inst, nil
+}
+
+func (p *fakeProvider) WaitIdle(ctx context.Context, _ VMFile, _ time.Duration) error {
+	return p.wait(ctx, p.idle, "wait-idle")
+}
+
+func (p *fakeProvider) WaitWake(ctx context.Context, _ VMFile) error {
+	return p.wait(ctx, p.wake, "wait-wake")
+}
+
+func (p *fakeProvider) wait(ctx context.Context, ch chan struct{}, name string) error {
+	p.record(name)
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		p.record(name + "-cancelled")
+		return ctx.Err()
+	}
 }
 
 func (p *fakeProvider) startedBoot(name string) *proto.Boot {

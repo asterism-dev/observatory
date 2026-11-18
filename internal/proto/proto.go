@@ -17,9 +17,10 @@ const (
 	StateStopped  VMState = "stopped"
 	StateError    VMState = "error"
 	StateUnknown  VMState = "unknown"
-	// StatePaused keeps the VM's process and RAM with its vCPUs stopped; StateHibernated keeps its memory on the node's disk.
+	// StatePaused keeps the VM's process and RAM with its vCPUs stopped; StateHibernated keeps its memory on the node's disk, StateSuspended too, by auto-suspend.
 	StatePaused     VMState = "paused"
 	StateHibernated VMState = "hibernated"
+	StateSuspended  VMState = "suspended"
 )
 
 type VMSpec struct {
@@ -125,15 +126,17 @@ const (
 const ErrVMDirMissing = "VM directory missing"
 
 type DesiredVM struct {
-	Spec        VMSpec        `json:"spec"`
-	Power       Power         `json:"power"`
-	StopMode    StopMode      `json:"stopMode,omitempty"`
-	Generation  uint64        `json:"generation"`
-	Provisioned bool          `json:"provisioned"`
-	Boot        *Boot         `json:"boot,omitempty"`
-	Snapshots   []SnapshotRef `json:"snapshots,omitempty"`
-	Restore     *Restore      `json:"restore,omitempty"`
-	Fork        *Fork         `json:"fork,omitempty"`
+	Spec               VMSpec        `json:"spec"`
+	Power              Power         `json:"power"`
+	StopMode           StopMode      `json:"stopMode,omitempty"`
+	Generation         uint64        `json:"generation"`
+	Provisioned        bool          `json:"provisioned"`
+	Boot               *Boot         `json:"boot,omitempty"`
+	Snapshots          []SnapshotRef `json:"snapshots,omitempty"`
+	Restore            *Restore      `json:"restore,omitempty"`
+	Fork               *Fork         `json:"fork,omitempty"`
+	AutoSuspendMinutes int           `json:"autoSuspendMinutes,omitempty"`
+	WakeSeq            uint64        `json:"wakeSeq,omitempty"`
 }
 
 type Register struct {

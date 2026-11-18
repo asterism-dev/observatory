@@ -22,6 +22,10 @@ type VMFile struct {
 	NeedsPrepare bool `json:"needsPrepare,omitempty"`
 	// Hibernated is set only once StateDir holds a complete, fsynced memory state.
 	Hibernated bool `json:"hibernated,omitempty"`
+	// Suspended marks a hibernation by auto-suspend, which traffic ends; it counts only together with Hibernated.
+	Suspended          bool   `json:"suspended,omitempty"`
+	WakeSeq            uint64 `json:"wakeSeq,omitempty"`
+	AutoSuspendMinutes int    `json:"autoSuspendMinutes,omitempty"`
 	// Takeoff makes the next resume of the memory state give the guest this VM's identity (a fork's first start).
 	Takeoff     bool   `json:"takeoff,omitempty"`
 	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
