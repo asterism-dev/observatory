@@ -73,6 +73,9 @@ func TestSecretSources(t *testing.T) {
 	if v, err := c.secret("Value: ", ""); err != nil || v != "pw" {
 		t.Fatalf("terminal: %q %v", v, err)
 	}
+	if v, err := c.secret("Value: ", "-"); err != nil || v != "pw" {
+		t.Fatalf("terminal dash reads without echo: %q %v", v, err)
+	}
 	if !strings.Contains(stderr.String(), "Value: ") {
 		t.Fatalf("prompt: %q", stderr)
 	}

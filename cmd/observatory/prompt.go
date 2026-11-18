@@ -38,7 +38,7 @@ func (c *cli) secret(prompt, file string) (string, error) {
 		}
 		defer f.Close()
 		b, err = readLimited(f)
-	case file == "" && c.terminal:
+	case (file == "" || file == "-") && c.terminal:
 		fmt.Fprint(c.stderr, prompt)
 		b, err = c.readPassword()
 		fmt.Fprintln(c.stderr)
