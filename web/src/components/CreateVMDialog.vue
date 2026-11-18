@@ -113,6 +113,7 @@ async function create() {
         <NumberInput v-model="memoryGB" :aria-label="t('vms.memory')" :invalid="!!problems.memory" />
       </label>
       <small v-if="problems.memory" role="alert">{{ problems.memory }}</small>
+      <small v-else>{{ t('vms.memoryHint') }}</small>
       <label>
         {{ t('vms.disk') }} (GB)
         <NumberInput v-model="diskGB" :aria-label="t('vms.disk')" :invalid="!!problems.disk" />

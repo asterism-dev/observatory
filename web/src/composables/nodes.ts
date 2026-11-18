@@ -14,6 +14,14 @@ export interface NodeInfo {
   canDelete: boolean
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
   quarantined: boolean
+  image: {
+    state: 'building' | 'ready' | 'failed' | 'custom'
+    version: string
+    startedAt?: string
+    builtAt?: string
+    error?: string
+    retryAt?: string
+  } | null
 }
 
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const
@@ -45,6 +53,7 @@ export interface VmInfo {
   canPower: boolean
   autoSuspendMinutes: number
   canDelete: boolean
+  image: string
 }
 
 export const vmTones = {
@@ -66,4 +75,22 @@ export const powerActions = (state: VmInfo['state']) => {
   if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
   if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'shutdown', 'stop']
   return ['start']
+}
+
+export function relativeTime(iso: string, locale: string) {
+  const sec = Math.round((new Date(iso).getTime() - Date.now()) / 1000)
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [['day', 86400], ['hour', 3600], ['minute', 60]]
+  const [unit, size] = units.find(([, s]) => Math.abs(sec) >= s) ?? ['second', 1]
+  return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)
+}
+
+export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<string, unknown>) => string, locale: string) {
+  if (!img) return '–'
+  const at = (iso?: string) => (iso ? relativeTime(iso, locale) : '–')
+  switch (img.state) {
+    case 'ready': return `${img.version} · ${t('nodes.image.ready', { time: at(img.builtAt) })}`
+    case 'building': return `${img.version} · ${t('nodes.image.building', { time: at(img.startedAt) })}`
+    case 'failed': return `${img.version} · ${t('nodes.image.failed', { error: img.error ?? '', time: at(img.retryAt) })}`
+    default: return t('nodes.image.custom')
+  }
 }

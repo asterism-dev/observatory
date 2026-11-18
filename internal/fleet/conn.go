@@ -126,6 +126,8 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		case m.Type == "image" && m.Image != nil:
 			if err := f.store.SetNodeImage(ctx, node.ID, *m.Image); err != nil {
 				slog.Error("node image", "node", node.ID, "err", err)
+			} else {
+				f.NotifyOrg(node.OrgID)
 			}
 		}
 	}

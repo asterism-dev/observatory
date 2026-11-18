@@ -104,6 +104,15 @@ const remove = () =>
     router.replace(`/orgs/${org.value?.id}/vms`)
   })
 
+async function copyDesktop() {
+  copyFailed.value = false
+  try {
+    await navigator.clipboard.writeText(`xpra attach ssh://ubuntu@${vm.value?.dnsName}/100`)
+  } catch {
+    copyFailed.value = true
+  }
+}
+
 async function copySsh() {
   copyFailed.value = false
   try {
@@ -160,6 +169,16 @@ watch(
           </template>
           <template v-else>–</template>
         </dd>
+        <dt>{{ t('vms.image') }}</dt>
+        <dd>{{ vm.image || t('vms.imageStock') }}</dd>
+        <template v-if="vm.image && vm.dnsName">
+          <dt>{{ t('vms.desktop') }}</dt>
+          <dd>
+            <code>xpra attach ssh://ubuntu@{{ vm.dnsName }}/100</code>
+            <Button size="sm" @click="copyDesktop">{{ t('networks.copy') }}</Button>
+            <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
+          </dd>
+        </template>
         <template v-if="egress">
           <dt>{{ t('vms.egress') }}</dt>
           <dd>
