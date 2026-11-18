@@ -267,6 +267,9 @@ func TestRestoreSequence(t *testing.T) {
 	if err != nil || got.Generation <= vm.Generation {
 		t.Fatalf("restore: %+v %v", got, err)
 	}
+	if v, err := e.s.VM(ctx, e.org.ID, vm.ID); err != nil || v.RestoreState != "node" {
+		t.Fatalf("VM restore state: %+v %v", v, err)
+	}
 	if seq, state := restoreRow(t, e, vm.ID); seq != 1 || state != "node" {
 		t.Fatalf("after request: %d %q", seq, state)
 	}
@@ -313,7 +316,7 @@ func TestRestoreSequence(t *testing.T) {
 	if _, state := restoreRow(t, e, vm.ID); state != "done" {
 		t.Fatalf("state %q", state)
 	}
-	if after, _ := e.s.VM(ctx, e.org.ID, vm.ID); after.Generation <= before.Generation {
+	if after, _ := e.s.VM(ctx, e.org.ID, vm.ID); after.RestoreState != "done" || after.Generation <= before.Generation {
 		t.Fatal("done without a generation bump")
 	}
 	if sd := storageDisk(t, e, d.ID); sd.RestoreFrom != "" || sd.RestoreToken != "" {
