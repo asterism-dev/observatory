@@ -313,15 +313,21 @@ func TestRestoreMissingSource(t *testing.T) {
 	}
 }
 
-func TestRestoreRejectsEscapingSource(t *testing.T) {
+func TestRestoreRejectsBadSource(t *testing.T) {
 	outside := t.TempDir()
 	writeDisk(t, filepath.Join(outside, "x.img"), "XXXX", 1<<20)
 	d := Dir{t.TempDir()}
 	writeDisk(t, d.File("a"), "AAAA", 1<<20)
+	writeDisk(t, filepath.Join(d.Path, "big.img"), "BBBB", 2<<20)
+	os.MkdirAll(filepath.Join(d.Path, partialDir), 0o755)
+	writeDisk(t, filepath.Join(d.Path, partialDir, "p.img"), "PPPP", 1<<20)
 	if err := os.Symlink(outside, filepath.Join(d.Path, "link")); err != nil {
 		t.Fatal(err)
 	}
-	for _, from := range []string{"../x.img", filepath.Join(outside, "x.img"), "link/x.img", "sub/../../x.img", ""} {
+	if err := os.Symlink(filepath.Join(outside, "x.img"), filepath.Join(d.Path, "linkfile.img")); err != nil {
+		t.Fatal(err)
+	}
+	for _, from := range []string{"../x.img", filepath.Join(outside, "x.img"), "link/x.img", "link", "linkfile.img", ".partial/p.img", "big.img", ""} {
 		if err := d.Restore(proto.StorageDisk{ID: "a", SizeBytes: 1 << 20, RestoreFrom: from}); err == nil || err.Error() == "file missing" {
 			t.Errorf("%q: err %v", from, err)
 		}

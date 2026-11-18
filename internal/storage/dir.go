@@ -64,28 +64,60 @@ func (d Dir) Apply(disks []proto.StorageDisk, deleted []string) error {
 	return errors.Join(errs...)
 }
 
-// Restore replaces the disk file with the content of d.RestoreFrom; the target is untouched on failure.
-func (d Dir) Restore(disk proto.StorageDisk) error {
-	if !plainName(disk.ID) {
-		return fmt.Errorf("disk %q: not a plain file name", disk.ID)
+// StartRestore validates and starts replacing the disk file with the snapshot file d.RestoreFrom; done gets the result and the target is untouched on failure.
+func (d Dir) StartRestore(disk proto.StorageDisk, done func(error)) error {
+	if !plainName(disk.ID) || !plainName(disk.RestoreFrom) {
+		return fmt.Errorf("restore %q from %q: not a plain file name", disk.ID, disk.RestoreFrom)
 	}
 	target := d.File(disk.ID)
 	if _, err := os.Stat(target); err != nil {
 		return d.restoreErr(err)
 	}
-	srcPath, err := d.resolveInside(disk.RestoreFrom)
+	srcPath := filepath.Join(d.Path, disk.RestoreFrom)
+	st, err := os.Lstat(srcPath)
 	if err != nil {
 		return d.restoreErr(err)
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("restore source %q: not a regular file", disk.RestoreFrom)
+	}
+	if st.Size() > disk.SizeBytes {
+		return fmt.Errorf("restore source %q: %d bytes exceed the disk size %d", disk.RestoreFrom, st.Size(), disk.SizeBytes)
 	}
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return d.restoreErr(err)
 	}
-	defer src.Close()
 	if err := os.MkdirAll(filepath.Join(d.Path, partialDir), 0o755); err != nil {
+		src.Close()
 		return err
 	}
-	return d.build(context.Background(), target, src, disk.SizeBytes)
+	copiesMu.Lock()
+	defer copiesMu.Unlock()
+	if _, running := copies[target]; running {
+		src.Close()
+		return errors.New("a copy of the disk is running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	copies[target] = cancel
+	go func() {
+		defer src.Close()
+		err := d.build(ctx, target, src, disk.SizeBytes)
+		copiesMu.Lock()
+		delete(copies, target)
+		copiesMu.Unlock()
+		done(err)
+	}()
+	return nil
+}
+
+// Restore is StartRestore waiting for the result.
+func (d Dir) Restore(disk proto.StorageDisk) error {
+	res := make(chan error, 1)
+	if err := d.StartRestore(disk, func(err error) { res <- err }); err != nil {
+		return err
+	}
+	return <-res
 }
 
 func (d Dir) restoreErr(err error) error {
@@ -93,25 +125,6 @@ func (d Dir) restoreErr(err error) error {
 		return errors.New("file missing")
 	}
 	return err
-}
-
-// resolveInside returns the real path of a clean relative name, rejecting anything that leaves Path.
-func (d Dir) resolveInside(name string) (string, error) {
-	if !filepath.IsLocal(name) {
-		return "", fmt.Errorf("restore source %q: not a path inside the storage root", name)
-	}
-	root, err := filepath.EvalSymlinks(d.Path)
-	if err != nil {
-		return "", err
-	}
-	real, err := filepath.EvalSymlinks(filepath.Join(root, name))
-	if err != nil {
-		return "", err
-	}
-	if rel, err := filepath.Rel(root, real); err != nil || !filepath.IsLocal(rel) {
-		return "", fmt.Errorf("restore source %q: resolves outside the storage root", name)
-	}
-	return real, nil
 }
 
 // plainName rejects IDs that would resolve outside Path.

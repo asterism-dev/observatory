@@ -150,7 +150,7 @@ func TestExportsRemovesStaleKeysOnFirstApply(t *testing.T) {
 	}
 }
 
-func TestRestoreRestartsExport(t *testing.T) {
+func TestExportsRestart(t *testing.T) {
 	ex, f := newExports(t, "d1")
 	want := []proto.StorageExport{{DiskID: "d1", Port: 10810, PSK: psk1}}
 	ex.Apply(want)
