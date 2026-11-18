@@ -3,20 +3,26 @@ package egress
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -542,5 +548,135 @@ func TestForwardedDropped(t *testing.T) {
 	r.do(r.client(false), get(t, "https://a.test/", "Forwarded", "for=198.51.100.1"))
 	if h := r.last().header.Get("Forwarded"); h != "" {
 		t.Fatalf("upstream saw Forwarded %q", h)
+	}
+}
+
+var ghMasked = strings.Repeat("*", len(ghValue))
+
+func TestScrubHeadersAndTrailers(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", "X-Trail")
+		w.Header().Set("X-Echo", "token "+ghValue)
+		w.Write([]byte("body " + ghValue))
+		// Flushing keeps the upstream from declaring a Content-Length, which would drop trailers on HTTP/1.1.
+		w.(http.Flusher).Flush()
+		w.Header().Set("X-Trail", ghValue)
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	for _, h2 := range []bool{false, true} {
+		res, body := r.do(r.client(h2), get(t, "https://a.test/"))
+		if res.Header.Get("X-Echo") != "token "+ghMasked || res.Trailer.Get("X-Trail") != ghMasked || body != "body "+ghMasked {
+			t.Fatalf("h2=%v header %q trailer %q body %q", h2, res.Header.Get("X-Echo"), res.Trailer.Get("X-Trail"), body)
+		}
+	}
+}
+
+func TestScrubRewrittenBasic(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		io.WriteString(w, req.Header.Get("Authorization"))
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	req := get(t, "https://a.test/")
+	req.SetBasicAuth("x", ghPH)
+	_, body := r.do(r.client(false), req)
+	enc := base64.StdEncoding.EncodeToString([]byte("x:" + ghValue))
+	if body != "Basic "+strings.Repeat("*", len(enc)) {
+		t.Fatalf("body %q", body)
+	}
+}
+
+func TestScrubGzip(t *testing.T) {
+	for _, enc := range []string{"gzip", "deflate"} {
+		h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Encoding", enc)
+			var zw io.WriteCloser = gzip.NewWriter(w)
+			if enc == "deflate" {
+				zw = zlib.NewWriter(w)
+			}
+			io.WriteString(zw, "pre "+ghValue+" post")
+			zw.Close()
+		})
+		r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+		res, body := r.do(r.client(false), get(t, "https://a.test/", "Accept-Encoding", "gzip"))
+		if res.Header.Get("Content-Encoding") != "" || body != "pre "+ghMasked+" post" {
+			t.Fatalf("%s: encoding %q body %q", enc, res.Header.Get("Content-Encoding"), body)
+		}
+	}
+}
+
+func TestScrubBrotli502(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "br")
+		w.Write([]byte(ghValue))
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	res, body := r.do(r.client(false), get(t, "https://a.test/"))
+	if res.StatusCode != http.StatusBadGateway || body != "egress: upstream sent br; cannot scrub" {
+		t.Fatalf("status %d body %q", res.StatusCode, body)
+	}
+}
+
+func TestScrubContentLengthPreserved(t *testing.T) {
+	payload := "a " + ghValue + " b"
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		io.WriteString(w, payload)
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	res, body := r.do(r.client(false), get(t, "https://a.test/"))
+	if res.ContentLength != int64(len(payload)) || body != "a "+ghMasked+" b" {
+		t.Fatalf("length %d body %q", res.ContentLength, body)
+	}
+}
+
+func TestAltSvcRemoved(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Alt-Svc", `h3=":443"; ma=86400`)
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	res, _ := r.do(r.client(false), get(t, "https://a.test/"))
+	if v := res.Header.Get("Alt-Svc"); v != "" {
+		t.Fatalf("Alt-Svc %q", v)
+	}
+}
+
+func TestWebSocketScrub(t *testing.T) {
+	fromClient := make(chan string, 1)
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c, err := websocket.Accept(w, req, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		_, msg, err := c.Read(req.Context())
+		if err != nil {
+			return
+		}
+		fromClient <- string(msg)
+		c.Write(req.Context(), websocket.MessageText, []byte("echo "+ghValue))
+		c.Read(req.Context())
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	hc := *r.client(false)
+	hc.Timeout = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "wss://a.test/ws", &websocket.DialOptions{HTTPClient: &hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	if err := c.Write(ctx, websocket.MessageText, []byte("hello "+ghPH)); err != nil {
+		t.Fatal(err)
+	}
+	_, msg, err := c.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := <-fromClient; got != "hello "+ghPH {
+		t.Fatalf("upstream got %q", got)
+	}
+	if string(msg) != "echo "+ghMasked {
+		t.Fatalf("client got %q", msg)
 	}
 }

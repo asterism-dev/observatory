@@ -180,6 +180,12 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			return scrubResponse(res, t.scrub, sent)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			var encErr unsupportedEncodingError
+			if errors.As(err, &encErr) {
+				st.err = "encoding"
+				fail(w, st, http.StatusBadGateway, "egress: upstream sent "+string(encErr)+"; cannot scrub")
+				return
+			}
 			st.err = upstreamReason(err)
 			fail(w, st, http.StatusBadGateway, "egress: "+st.err)
 		},
@@ -207,9 +213,6 @@ func upstreamReason(err error) string {
 	}
 	return "upstream"
 }
-
-// ponytail: no-op until response scrubbing lands; values and sent are what it must mask.
-func scrubResponse(*http.Response, [][]byte, []string) error { return nil }
 
 func (p *Proxy) upstream() *http.Transport {
 	p.upstreamOnce.Do(func() {
