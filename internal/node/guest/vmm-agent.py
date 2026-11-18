@@ -170,7 +170,7 @@ def adopt_instance(iid):
     if not os.path.islink(link):
         return
     old = os.path.basename(os.readlink(link))
-    if old != iid:
+    if old != iid and os.path.isdir(cloud + "/instances/" + old):
         if os.path.exists(cloud + "/instances/" + iid):
             shutil.rmtree(cloud + "/instances/" + iid)
         os.rename(cloud + "/instances/" + old, cloud + "/instances/" + iid)

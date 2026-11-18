@@ -146,6 +146,29 @@ func TestAgentTakeoffNewIdentity(t *testing.T) {
 	}
 }
 
+func TestAgentTakeoffDanglingInstanceLink(t *testing.T) {
+	root := t.TempDir()
+	cloud := filepath.Join(root, "var/lib/cloud")
+	for _, d := range []string{cloud, filepath.Join(root, "etc")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("/var/lib/cloud/instances/gone", filepath.Join(cloud, "instance")); err != nil {
+		t.Fatal(err)
+	}
+	sock := startAgent(t, root)
+	if r := callAgent(t, sock, `{"op":"takeoff","time":5,"entropy":"AAEC"}`); !r.OK {
+		t.Fatalf("takeoff: %+v", r)
+	}
+	if l, _ := os.Readlink(filepath.Join(cloud, "instance")); l != "/var/lib/cloud/instances/i-1" {
+		t.Errorf("instance link = %q", l)
+	}
+	if b, _ := os.ReadFile(filepath.Join(cloud, "data/instance-id")); string(b) != "i-1\n" {
+		t.Errorf("data/instance-id = %q", b)
+	}
+}
+
 func TestAgentUnknownOp(t *testing.T) {
 	sock := startAgent(t, t.TempDir())
 	if r := callAgent(t, sock, `{"op":"rm"}`); r.OK || r.Error != "unknown op" {

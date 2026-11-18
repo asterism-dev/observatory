@@ -158,6 +158,10 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 				return inst, nil
 			}
 			if ctx.Err() != nil {
+				// The marker is gone and the guest may have written to the disk: the next start must not boot it.
+				if cerr := p.cloneBase(f, dir); cerr != nil {
+					log.Printf("vm %s: %v", f.Spec.ID, cerr)
+				}
 				return nil, err
 			}
 			log.Printf("vm %s: start from template %s: %v; deleting the template and booting cold", f.Spec.ID, key, err)
