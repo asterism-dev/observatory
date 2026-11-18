@@ -44,6 +44,20 @@ func TestVarListGolden(t *testing.T) {
 	}
 }
 
+func TestVarListEscapesControlCharacters(t *testing.T) {
+	evil := strings.Replace(varFoo, `"value":"bar-plain"`, `"value":"\u001b]0;pwned\u0007\u001b[31mred"`, 1)
+	_, c, out, errb := varHub(t, `{"vars":[`+evil+`]}`)
+	if code := run(c, []string{"var", "list"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	if strings.ContainsAny(out(), "\x1b\x07") || !strings.Contains(out(), "?]0;pwned??[31mred") {
+		t.Errorf("table %q", out())
+	}
+	if code := run(c, []string{"var", "list", "--json"}); code != 0 || !strings.Contains(out(), `\u001b[31mred`) {
+		t.Errorf("--json must stay unchanged: %q", out())
+	}
+}
+
 func TestVarListFilter(t *testing.T) {
 	_, c, out, errb := varHub(t, varsBody)
 	if code := run(c, []string{"var", "list", "--team", "backend"}); code != 0 {

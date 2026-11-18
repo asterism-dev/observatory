@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 )
 
 func (c *cli) printJSON(raw json.RawMessage) error {
@@ -27,7 +28,11 @@ func (c *cli) emit(raw json.RawMessage, header []string, rows [][]string) error 
 	tw := tabwriter.NewWriter(c.stdout, 0, 8, 2, ' ', 0)
 	fmt.Fprintln(tw, strings.ToUpper(strings.Join(header, "\t")))
 	for _, r := range rows {
-		fmt.Fprintln(tw, strings.Join(r, "\t"))
+		cells := make([]string, len(r))
+		for i, cell := range r {
+			cells[i] = noControl(cell)
+		}
+		fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	return tw.Flush()
 }
@@ -41,11 +46,21 @@ func (c *cli) emitKV(raw json.RawMessage, pairs [][2]string) error {
 		w = max(w, len(p[0])+1)
 	}
 	for _, p := range pairs {
-		if _, err := fmt.Fprintf(c.stdout, "%-*s %s\n", w, p[0]+":", p[1]); err != nil {
+		if _, err := fmt.Fprintf(c.stdout, "%-*s %s\n", w, p[0]+":", noControl(p[1])); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// noControl keeps values set by other users from sending escape sequences to the terminal.
+func noControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 func (c *cli) done(raw json.RawMessage, format string, a ...any) error {
