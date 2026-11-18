@@ -254,6 +254,9 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	if f.Hibernated && len(f.Spec.Attachments) > 0 && graceful && (halted || d.Power == proto.PowerStopped) {
 		// Resuming to shut down waits on storage and the guest; d is applied again once the state is gone.
 		unlock = false
+		// A restart waiting for storage must not resume or cold-boot the VM before d applies.
+		e.stopRequested.Store(true)
+		e.cancel()
 		go func() {
 			defer op.Unlock()
 			if err := a.endHibernationWait(ctx, e, true, d.Generation); err == nil {

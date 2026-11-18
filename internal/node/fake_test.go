@@ -102,6 +102,7 @@ type fakeProvider struct {
 	failRestore   error
 	beforeRestore func(dir string)
 	saveBlock     chan struct{}
+	restoreBlock  chan struct{}
 	failSaveState error
 	restores      map[string]int
 }
@@ -204,9 +205,15 @@ func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
 }
 
 func (p *fakeProvider) Restore(f VMFile, dir string, from RestoreFrom) (Instance, error) {
+	p.record("restore:" + from.StateDir)
+	p.mu.Lock()
+	block := p.restoreBlock
+	p.mu.Unlock()
+	if block != nil {
+		<-block
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.events = append(p.events, "restore:"+from.StateDir)
 	if p.beforeRestore != nil {
 		p.beforeRestore(dir)
 	}

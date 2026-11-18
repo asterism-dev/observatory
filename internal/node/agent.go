@@ -429,10 +429,16 @@ func (a *Agent) coldStart(f VMFile, dir string) (Instance, error) {
 
 func (a *Agent) clearHibernated(e *vmEntry) error {
 	a.mu.Lock()
-	e.file.Hibernated = false
 	f := e.file
 	a.mu.Unlock()
-	return SaveVM(a.VMsDir, f)
+	f.Hibernated = false
+	if err := SaveVM(a.VMsDir, f); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	e.file.Hibernated = false
+	a.mu.Unlock()
+	return nil
 }
 
 func restingState(f VMFile) proto.VMState {
@@ -696,14 +702,20 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 	}
 	a.mu.Lock()
 	ok = a.restartable(ctx, e)
-	if ok {
-		e.inst, e.paused = inst, false
-	}
+	e.inst, e.paused = inst, false
 	a.mu.Unlock()
 	if !ok {
-		if err := inst.Kill(); err != nil {
-			log.Printf("vm %s: kill: %v", f.Spec.ID, err)
+		// A restored guest holds unwritten data, and one with disks has writes in flight; it must shut down, not be cut off.
+		end := inst.Kill
+		if f.Hibernated || len(f.Spec.Attachments) > 0 {
+			e.stopRequested.Store(true)
+			end = inst.Stop
 		}
+		if err := end(); err != nil {
+			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
+			inst.Kill()
+		}
+		<-inst.Done()
 		return nil, "", nil
 	}
 	return inst, note, nil
@@ -724,6 +736,9 @@ func (a *Agent) stopAll() {
 		go func() {
 			defer wg.Done()
 			<-e.booted
+			// Waits for a restart or other operation in flight, so its instance is the one stopped.
+			e.op.Lock()
+			defer e.op.Unlock()
 			if inst := a.instance(e); inst != nil {
 				if err := inst.Stop(); err != nil {
 					log.Printf("vm %s: stop: %v", id, err)

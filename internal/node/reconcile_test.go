@@ -1331,3 +1331,116 @@ func TestDestroyGivesUpOnUnremovableState(t *testing.T) {
 		return len(a.dying) == 0
 	})
 }
+
+// restoringVM leaves VM "a" hibernated with a disk and a resume to running blocked inside Restore.
+func restoringVM(t *testing.T, a *Agent, p *fakeProvider) (release func()) {
+	t.Helper()
+	fastRestarts(t, 20*time.Millisecond)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.restoreBlock = block
+	p.mu.Unlock()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	up()
+	eventually(t, "restore started", func() bool { return countEvent(p, "restore:"+filepath.Join(VMDir(a.VMsDir, "a"), StateDir)) == 1 })
+	return func() { close(block) }
+}
+
+// afterRestore returns the events after the first restore.
+func afterRestore(p *fakeProvider) []string {
+	ev := p.gotEvents()
+	r := slices.IndexFunc(ev, func(e string) bool { return strings.HasPrefix(e, "restore:") })
+	return ev[r+1:]
+}
+
+func TestDestroyDuringRestoreStopsGracefully(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	release := restoringVM(t, a, p)
+	a.reconcile(context.Background(), 4, nil)
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(VMDir(a.VMsDir, "a")); err != nil {
+		t.Fatalf("dir deleted while restoring: %v", err)
+	}
+	release()
+	eventually(t, "dir deleted", func() bool {
+		_, err := os.Stat(VMDir(a.VMsDir, "a"))
+		return os.IsNotExist(err)
+	})
+	if ev := afterRestore(p); !slices.Contains(ev, "stop-guest") || slices.Contains(ev, "kill-guest") {
+		t.Fatalf("events after restore = %v", ev)
+	}
+}
+
+func TestStopAllDuringRestoreStopsGracefully(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	release := restoringVM(t, a, p)
+	stopped := make(chan struct{})
+	go func() { a.stopAll(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("stopAll returned while a restore was in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	<-stopped
+	if ev := afterRestore(p); !slices.Contains(ev, "stop-guest") || slices.Contains(ev, "kill-guest") {
+		t.Fatalf("events after restore = %v", ev)
+	}
+}
+
+func TestGracefulStopDuringResumeWaitDoesNotBoot(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	stop := dvAtts("a", proto.PowerStopped, 4, d)
+	stop.StopMode = proto.StopGraceful
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	time.Sleep(50 * time.Millisecond)
+	up()
+	waitState(t, a, "a", proto.StateStopped, 4)
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if n := countEvent(p, "restore:"+filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); starts != 1 || n != 1 {
+		t.Fatalf("starts = %d, restores = %d, events = %v", starts, n, p.gotEvents())
+	}
+	if st, _ := a.vmStatus("a"); st.State != proto.StateStopped {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestClearHibernatedKeepsFlagWhenSaveFails(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	saveHibernated(t, a, f)
+	f.Hibernated = true
+	e := &vmEntry{file: f}
+	dir := VMDir(a.VMsDir, "a")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := a.clearHibernated(e); err == nil {
+		t.Fatal("clearHibernated succeeded on a read-only dir")
+	}
+	if !e.file.Hibernated {
+		t.Fatal("Hibernated cleared in memory although vm.json still says hibernated")
+	}
+}
