@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -554,5 +555,60 @@ func TestStorageStateNeverExportsSnapshotDisks(t *testing.T) {
 	}
 	if storageDisk(t, e, snap.Disks[0].ID) == nil {
 		t.Fatal("copy missing from disks")
+	}
+}
+
+func TestDeleteDiskWithSnapshotCopyInFlight(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm, d := vmWithDisk(t, e, "v")
+	s := mustSnapshot(t, e, vm.ID, "s", false)
+	reportSnapshot(t, e, e.node.ID, vm.ID, s.ID)
+	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm.ID, []store.VMDisk{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.ForceRelease(ctx, e.org.ID, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.DeleteDisk(ctx, e.org.ID, d.ID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("copy in flight: %v", err)
+	}
+	storeAllFiles(t, e)
+	if err := e.s.DeleteDisk(ctx, e.org.ID, d.ID); err != nil {
+		t.Fatalf("copy ready: %v", err)
+	}
+}
+
+func TestForkVMTakesSnapshotShape(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm := mustStoppedVM(t, e, "v", nil)
+	snap := readySnapshot(t, e, vm.ID, "s")
+	execSQL(t, e.pool, "UPDATE vms SET cpus = 2, memory_mb = 2, disk_gb = 2 WHERE id = $1", vm.ID)
+	f, err := e.s.ForkVM(ctx, e.org.ID, snap, "f", false, e.user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.CPUs != snap.CPUs || f.MemoryMB != snap.MemoryMB || f.DiskGB != snap.DiskGB {
+		t.Fatalf("fork %+v, snapshot %+v", f, snap)
+	}
+}
+
+func TestApplySnapshotStatusSanitizesNodeValues(t *testing.T) {
+	ctx := context.Background()
+	e := newDiskEnv(t)
+	vm := mustStoppedVM(t, e, "v", nil)
+	neg := mustSnapshot(t, e, vm.ID, "neg", false)
+	bad := mustSnapshot(t, e, vm.ID, "bad", false)
+	long := strings.Repeat("x", 1000)
+	if _, err := e.s.ApplySnapshotStatus(ctx, e.node.ID, proto.VMStatus{ID: vm.ID.String(), Snapshots: []proto.SnapshotInfo{
+		{ID: neg.ID.String(), SizeBytes: -5}, {ID: bad.ID.String(), Error: long}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, neg.ID); got.SizeBytes != 0 {
+		t.Fatalf("size %d", got.SizeBytes)
+	}
+	if got, _ := e.s.Snapshot(ctx, e.org.ID, vm.ID, bad.ID); got.State != "error" || len(got.Error) != 500 {
+		t.Fatalf("error length %d", len(got.Error))
 	}
 }

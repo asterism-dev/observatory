@@ -218,14 +218,14 @@ func (s *Store) ApplySnapshotStatus(ctx context.Context, node uuid.UUID, st prot
 			}
 			const first = " WHERE id = $1 AND vm_id = $2 AND state = 'creating' AND reported_at IS NULL"
 			if info.Error != "" {
-				tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET state = 'error', error = $3, reported_at = now()"+first, id, vm, info.Error)
+				tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET state = 'error', error = left($3, 500), reported_at = now()"+first, id, vm, info.Error)
 				if err != nil {
 					return err
 				}
 				changed = changed || tag.RowsAffected() > 0
 				continue
 			}
-			tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET reported_at = now(), size_bytes = $3, memory = memory AND $4"+first,
+			tag, err := tx.q.Exec(ctx, "UPDATE vm_snapshots SET reported_at = now(), size_bytes = greatest($3::bigint, 0), memory = memory AND $4"+first,
 				id, vm, info.SizeBytes, info.Memory)
 			if err != nil {
 				return err
@@ -392,11 +392,12 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 		if memory && len(nets) != len(sn.Networks) {
 			return ErrShapeChanged
 		}
-		diskGB := src.DiskGB
+		// Root disk and memory state are the snapshot's, so the fork takes its shape, not the source's current one.
+		diskGB := sn.DiskGB
 		for _, d := range sn.Disks {
 			diskGB += d.SizeGB
 		}
-		if err := tx.checkLimits(ctx, org, src.UserID, src.TeamID, Limits{VCPU: &src.CPUs, RAMMB: &src.MemoryMB, DiskGB: &diskGB, VMCount: ptr(1)}); err != nil {
+		if err := tx.checkLimits(ctx, org, src.UserID, src.TeamID, Limits{VCPU: &sn.CPUs, RAMMB: &sn.MemoryMB, DiskGB: &diskGB, VMCount: ptr(1)}); err != nil {
 			return err
 		}
 		mgmtIP, err := tx.nextMgmtIP(ctx, org)
@@ -408,7 +409,7 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip,
 				fork_snapshot_id, fork_source_vm, fork_memory)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-			org, src.NodeID, src.UserID, src.TeamID, name, src.CPUs, src.MemoryMB, src.DiskGB, createdBy, mgmtIP, sn.ID, src.ID, memory).Scan(&id)
+			org, src.NodeID, src.UserID, src.TeamID, name, sn.CPUs, sn.MemoryMB, sn.DiskGB, createdBy, mgmtIP, sn.ID, src.ID, memory).Scan(&id)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		} else if err != nil {

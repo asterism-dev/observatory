@@ -151,6 +151,8 @@ func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 			SELECT EXISTS (SELECT 1 FROM vm_disks WHERE disk_id = d.id)
 				OR EXISTS (SELECT 1 FROM disk_exports WHERE disk_id = d.id)
 				OR EXISTS (SELECT 1 FROM disks c WHERE c.copy_from = d.id AND c.deleted_at IS NULL)
+				OR EXISTS (SELECT 1 FROM snapshot_disks sd WHERE sd.source_disk_id = d.id AND sd.ready_gb = 0
+					AND sd.deleted_at IS NULL AND sd.snapshot_id IS NOT NULL)
 			FROM disks d WHERE d.id = $1 AND d.org_id = $2 AND d.deleted_at IS NULL`, id, org).Scan(&busy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
