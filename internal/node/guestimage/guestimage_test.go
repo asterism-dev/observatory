@@ -267,3 +267,13 @@ func TestBuildScriptMasksXpraSystemServer(t *testing.T) {
 		t.Error("build script leaves the xpra system proxy (TCP 14500) enabled")
 	}
 }
+
+func TestBuildScriptRepoCheckFailsClosed(t *testing.T) {
+	b, err := os.ReadFile("vmm-image-build.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^\[ -s "\$tmp/offered" \] \|\| fail `).Match(b) {
+		t.Error("an empty list of third-party packages passes the repo check")
+	}
+}

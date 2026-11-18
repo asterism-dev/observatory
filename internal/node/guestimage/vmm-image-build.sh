@@ -187,6 +187,7 @@ apt_get clean
 for host in $hosts; do
 	awk '/^Package: /{ p = $2 } /^Version: /{ print p "=" $2 }' /var/lib/apt/lists/"${host}"_*_Packages
 done | sort -u >"$tmp/offered"
+[ -s "$tmp/offered" ] || fail "no package lists for$hosts"
 dpkg-query -W -f='${db:Status-Status} ${Package}=${Version}\n' | awk '$1 == "installed" { print $2 }' | sort -u >"$tmp/installed"
 printf '%s\n' $pkgs >"$tmp/pinned"
 unpinned=$(comm -12 "$tmp/offered" "$tmp/installed" | grep -vxF -f "$tmp/pinned" || true)
