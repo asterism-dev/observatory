@@ -210,7 +210,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		eg, cas, err := f.egress(ctx, org, v, bound)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
-			continue // deleted since VMsOnNode
+			continue // only the vms-row lookup returns ErrNotFound here, so the VM was deleted since VMsOnNode
 		case err != nil:
 			// One VM's CA trouble must not stall the node's list; its placeholders just reach providers unsubstituted.
 			slog.Error("egress for vm", "vm", v.ID, "err", err)

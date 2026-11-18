@@ -45,8 +45,7 @@ func nameservers(resolvConf string) []netip.Addr {
 	return out
 }
 
-// egressRules recreates the node's egress tables; deleting them in the same transaction drops a previous run's elements atomically.
-// DNS to the node's nameservers is let through before the rejects, as a local resolver (127.0.0.53) would otherwise be one.
+// egressRules recreates the node's egress tables atomically and lets proxy DNS to the node's nameservers (e.g. 127.0.0.53) pass before the rejects.
 func egressRules(dns []netip.Addr) string {
 	var deny4, deny6 strings.Builder
 	for _, p := range egress.Forbidden {

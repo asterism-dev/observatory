@@ -15,11 +15,12 @@ curl -u x:$GH_TOKEN https://example.com             # example.com gets the place
 On the Environment page, check "secret" and fill in "Bind to hosts", or send `hosts` with `POST`/`PATCH
 /api/orgs/{org}/env[/{id}]`:
 
-- 1–10 exact DNS names, lower-case, no wildcard, no IP literal, no port. Only secrets can be bound, and the value must
+- 1–10 exact DNS names, no wildcard, no IP literal, no port. Input is case-insensitive; names are stored lower-cased. Only secrets can be bound, and the value must
   be at least 12 bytes (shorter values would mask unrelated response bytes).
 - Scopes and resolution are unchanged: a user VM gets its owner's private scope, a team VM never a private one, the
   narrowest scope wins per name ([permissions.md](permissions.md#environment-variables)).
-- A VM can have at most 100 bound host names across all its secrets.
+- A VM can have at most 100 bound host names across all its secrets. Above that the hub cannot mint the VM's CA and
+  logs an error; the VM runs without a proxy and its bound hosts get the placeholder and fail authentication.
 
 The placeholder is `obsph_` followed by 32 random base32 characters. It is generated when hosts are first set and
 stays the same for the variable's life (value changes, renames, moves, host edits), so hibernate, restore and fork
@@ -37,8 +38,9 @@ knows only its own VM's secrets.
 ## What the proxy does
 
 The node redirects every TCP connection to port 443 that a VM with bound secrets opens to the internet to that VM's
-proxy (IPv4 only; VMs have no IPv6 egress). The proxy reads the TLS ClientHello (up to 16 KiB; nothing within 1 s
-or not TLS: pass through) and then:
+proxy (IPv4 only: the VM NAT network has no IPv6). A guest with IPv6 egress of its own reaches bound hosts directly
+with the placeholder: no substitution, so nothing leaks, but those requests fail. The proxy reads the TLS ClientHello
+(up to 16 KiB; nothing within 1 s or not TLS: pass through) and then:
 
 - **Unbound name, no SNI, or ALPN other than `h2`/`http/1.1`/none:** splices the connection to the original
   destination IP and port, replaying the ClientHello byte for byte. The VM sees the server's real certificate;
@@ -81,8 +83,9 @@ The node journal (`journalctl -u observatory-node`) gets one line per request to
 vm <id> egress: egress vm=<id> host=httpbin.org method=GET path=/headers status=200 bytes=229 dur=98ms vars=GH_TOKEN
 ```
 
-`path` is without the query; `vars` lists the names of the substituted variables. Header values, queries, bodies and
-values are never logged. Unbound connections are not logged. Audit rows of `env.set` contain the host names, never
+`path` is without the query, with the VM's placeholders masked as `***` (URL-escaped: `%2A%2A%2A`). Values the client
+itself puts into a path are masked only while they are this VM's current values; guests normally hold only
+placeholders. `vars` lists the names of the substituted variables. Header values, queries and bodies are never logged. Unbound connections are not logged. Audit rows of `env.set` contain the host names, never
 values or placeholders.
 
 ## Trust in the guest
@@ -101,7 +104,8 @@ issues 24 h leaves from the **oldest** valid CA covering the host, so processes 
   `/etc/systemd/system.conf.d/` and `user.conf.d/`, so services get them too. They never change, so a VM's first bound
   secret needs no reboot.
 - Processes read trust at start. A process started before its VM got a CA for a new host does not trust that host
-  until restarted; the VM page says "Restart long-running programs to trust new hosts." while that is the case.
+  until restarted; the VM page says "Restart long-running programs to trust new hosts." until the older CA expires
+  (at most 30 days).
 - Fork copies the source's CAs; restore keeps the VM's current ones.
 
 ## On the node
@@ -120,7 +124,8 @@ issues 24 h leaves from the **oldest** valid CA covering the host, so processes 
 - Outbound policy for proxy UIDs (`71002–71253`, nftables and the proxy's dialer): no loopback, no node addresses,
   `0.0.0.0/8`, `169.254.0.0/16`, `10.64.0.0/10`, `10.192.0.0/16`, `10.198.0.0/16`, `10.199.0.0/30`,
   `10.210.0.0/16`, `192.168.64.0/24`, `::`, `::1`, `fe80::/10`, `fc00::/7`. DNS (port 53) is allowed only to the
-  nameservers in the node's `/etc/resolv.conf`, so a local resolver such as `127.0.0.53` works.
+  nameservers in the node's `/etc/resolv.conf`, so a local resolver such as `127.0.0.53` works. The rule is built from
+  that file at node start; restart the node after the nameservers change.
 - After a node restart the proxies start empty; until the hub's first push, bound hosts are passed through like
   unbound ones and receive the placeholder.
 
@@ -151,7 +156,8 @@ Future VM sharing must not reopen this.
   disks. This is the node trust boundary (one org per node).
 - A node only receives values of VMs scheduled on it. A node of another org never receives them.
 - Snapshots, hibernate state and forks never contain real host-bound values.
-- A leaked CA key can sign only for its VM's bound hosts, for 30 days at most.
+- A leaked CA key can sign only for the hosts bound to its VM when it was minted (and their subdomains), for 30 days at
+  most.
 - A compromised process in the VM can use a bound secret against its bound hosts while it runs; it cannot take the
   value away.
 - `vm:read` holders (e.g. org admins) see a VM's bound host names and how many of the owner's secrets are bound

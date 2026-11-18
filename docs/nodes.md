@@ -104,7 +104,7 @@ tables are left alone. If it cannot load them it refuses to start.
   `15002–15253` otherwise.
 - Proxies run as UID/GID `71000 + n`; for UIDs `71002–71253` the output chain rejects loopback, the node's own
   addresses and the internal ranges listed in [egress.md](egress.md#on-the-node), and allows DNS only to the
-  nameservers in `/etc/resolv.conf` as read at node start.
+  nameservers in `/etc/resolv.conf` as read at node start (restart the node after they change).
 
 The root-only Linux tests (`go test -run TestEgress ./internal/provider/linuxvm/`) recreate these tables too and add
 addresses to `vmm0`: on a live node they wipe the running VMs' redirects until the node restarts. Run them in a
