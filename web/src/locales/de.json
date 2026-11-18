@@ -306,10 +306,13 @@
     "never": "Nie",
     "guestImage": "Gast-Image",
     "image": {
-      "ready": "bereit (gebaut {time})",
-      "building": "wird gebaut (gestartet {time})",
-      "failed": "fehlgeschlagen: {error} (nächster Versuch {time})",
-      "custom": "eigenes Image"
+      "ready": "bereit",
+      "readyAt": "bereit (gebaut {time})",
+      "building": "wird gebaut",
+      "buildingFor": "wird seit {time} gebaut",
+      "failed": "fehlgeschlagen: {error}",
+      "failedRetry": "fehlgeschlagen: {error} (nächster Versuch {time})",
+      "custom": "eigenes Image ({key})"
     }
   },
   "vms": {

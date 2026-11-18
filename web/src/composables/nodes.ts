@@ -84,13 +84,24 @@ export function relativeTime(iso: string, locale: string) {
   return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)
 }
 
+export function elapsed(iso: string, locale: string) {
+  const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
+  const [unit, n] = min >= 1440 ? ['day', Math.floor(min / 1440)] : min >= 60 ? ['hour', Math.floor(min / 60)] : ['minute', min]
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'short' }).format(n)
+}
+
 export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<string, unknown>) => string, locale: string) {
   if (!img) return '–'
-  const at = (iso?: string) => (iso ? relativeTime(iso, locale) : '–')
+  const v = img.version
   switch (img.state) {
-    case 'ready': return `${img.version} · ${t('nodes.image.ready', { time: at(img.builtAt) })}`
-    case 'building': return `${img.version} · ${t('nodes.image.building', { time: at(img.startedAt) })}`
-    case 'failed': return `${img.version} · ${t('nodes.image.failed', { error: img.error ?? '', time: at(img.retryAt) })}`
-    default: return t('nodes.image.custom')
+    case 'ready':
+      return `${v} · ${img.builtAt ? t('nodes.image.readyAt', { time: relativeTime(img.builtAt, locale) }) : t('nodes.image.ready')}`
+    case 'building':
+      return `${v} · ${img.startedAt ? t('nodes.image.buildingFor', { time: elapsed(img.startedAt, locale) }) : t('nodes.image.building')}`
+    case 'failed': {
+      const error = img.error ?? ''
+      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}`
+    }
+    default: return ''
   }
 }

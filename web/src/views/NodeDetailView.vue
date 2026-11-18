@@ -126,7 +126,8 @@ watch(
         <dt>{{ t('nodes.memory') }}</dt>
         <dd>{{ gb(node.usedMemoryMB) }} / {{ gb(node.memoryMB) }} GB</dd>
         <dt>{{ t('nodes.guestImage') }}</dt>
-        <dd>{{ imageLine(node.image, t, locale) }}</dd>
+        <dd><i18n-t v-if="node.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
+        <template v-else>{{ imageLine(node.image, t, locale) }}</template></dd>
         <dt>{{ t('nodes.lastSeen') }}</dt>
         <dd>{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</dd>
         <template v-if="node.underlay">

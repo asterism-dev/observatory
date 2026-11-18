@@ -67,7 +67,8 @@ watch(
     <Table :columns="columns" :rows="nodes" row-key="id">
       <template #cell-state="{ row }"><Badge :tone="stateTones[row.state as NodeInfo['state']]">{{ t(`nodes.states.${row.state}`) }}</Badge></template>
       <template #cell-version="{ row }">{{ row.version || '–' }}</template>
-      <template #cell-image="{ row }">{{ imageLine(row.image, t, locale) }}</template>
+      <template #cell-image="{ row }"><i18n-t v-if="row.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
+        <template v-else>{{ imageLine(row.image, t, locale) }}</template></template>
       <template #cell-cpu="{ row }">{{ row.state === 'pending' ? '–' : `${row.usedCPUs} / ${row.cpus}` }}</template>
       <template #cell-memory="{ row }">{{ row.state === 'pending' ? '–' : `${gb(row.usedMemoryMB)} / ${gb(row.memoryMB)} GB` }}</template>
       <template #cell-actions="{ row }">

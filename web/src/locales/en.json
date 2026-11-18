@@ -306,10 +306,13 @@
     "never": "Never",
     "guestImage": "Guest image",
     "image": {
-      "ready": "ready (built {time})",
-      "building": "building (started {time})",
-      "failed": "failed: {error} (next try {time})",
-      "custom": "custom image"
+      "ready": "ready",
+      "readyAt": "ready (built {time})",
+      "building": "building",
+      "buildingFor": "building for {time}",
+      "failed": "failed: {error}",
+      "failedRetry": "failed: {error} (next try {time})",
+      "custom": "custom image ({key})"
     }
   },
   "vms": {
