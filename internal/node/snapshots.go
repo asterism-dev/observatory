@@ -20,6 +20,8 @@ var snapshotWait = 180 * time.Second
 
 var errSnapshotMissing = errors.New("snapshot files missing")
 
+const errResumedEarly = "VM resumed before the snapshot completed"
+
 type snapKey struct{ vm, snap string }
 
 // snapshotJob is a snapshot this node process took; release ends its wait for the hub.
@@ -54,17 +56,33 @@ func (a *Agent) syncSnapshots(d proto.DesiredVM) {
 		}
 	}
 	a.mu.Unlock()
-	// A snapshot on disk without a job was taken before the node restarted.
-	start = slices.DeleteFunc(start, func(ref proto.SnapshotRef) bool { return exists(filepath.Join(snaps, ref.ID)) })
-	a.mu.Lock()
-	for _, ref := range start {
-		if a.snapJobs == nil {
-			a.snapJobs = map[snapKey]*snapshotJob{}
+	// A snapshot on disk without a job was taken before the node restarted, which resumed its VM: the hub must not copy the disks now.
+	var orphans []string
+	start = slices.DeleteFunc(start, func(ref proto.SnapshotRef) bool {
+		if !exists(filepath.Join(snaps, ref.ID)) {
+			return false
 		}
+		if err := os.RemoveAll(filepath.Join(snaps, ref.ID)); err != nil {
+			log.Printf("vm %s: remove snapshot %s: %v", id, ref.ID, err)
+		}
+		orphans = append(orphans, ref.ID)
+		return true
+	})
+	a.mu.Lock()
+	if a.snapJobs == nil {
+		a.snapJobs = map[snapKey]*snapshotJob{}
+	}
+	for _, ref := range start {
 		a.snapJobs[snapKey{id, ref.ID}] = &snapshotJob{release: make(chan struct{})}
+	}
+	for _, snap := range orphans {
+		a.snapJobs[snapKey{id, snap}] = &snapshotJob{release: make(chan struct{}), released: true, err: errResumedEarly}
 	}
 	a.mu.Unlock()
 	a.gcSnapshots(id, d.Snapshots)
+	if len(orphans) > 0 {
+		a.reportCurrent(id)
+	}
 	for _, ref := range start {
 		go a.takeSnapshot(id, ref)
 	}
@@ -145,7 +163,8 @@ func (a *Agent) takeSnapshot(id string, ref proto.SnapshotRef) {
 					err = inst.Flush()
 				}
 			}
-		case f.Hibernated && ref.Memory:
+		// An unstarted fork's state is its source's memory, which must never resume under the source's identity.
+		case f.Hibernated && ref.Memory && !f.Takeoff:
 			err = linkState(filepath.Join(dir, StateDir), tmp)
 		default:
 			err = os.Mkdir(tmp, 0o700)
@@ -184,6 +203,14 @@ func (a *Agent) takeSnapshot(id string, ref proto.SnapshotRef) {
 		case <-job.release:
 		case <-time.After(snapshotWait):
 			log.Printf("vm %s: snapshot %s not completed within %s, going on", id, ref.ID, snapshotWait)
+			// Disk copies the hub queues from now on would postdate the memory.
+			if err := os.RemoveAll(filepath.Join(snaps, ref.ID)); err != nil {
+				log.Printf("vm %s: remove snapshot %s: %v", id, ref.ID, err)
+			}
+			a.mu.Lock()
+			job.err = errResumedEarly
+			a.mu.Unlock()
+			a.reportCurrent(id)
 		}
 	}
 	if live && !wasPaused && alive(inst) {
@@ -244,12 +271,25 @@ func (a *Agent) reportCurrent(id string) {
 	}
 }
 
+// snapshotInfos reports the snapshots this process took: an earlier process's dir is either already reported or failed.
 func (a *Agent) snapshotInfos(id string) []proto.SnapshotInfo {
+	var out []proto.SnapshotInfo
+	taken := map[string]bool{}
+	a.mu.Lock()
+	for k, j := range a.snapJobs {
+		switch {
+		case k.vm != id:
+		case j.err != "":
+			out = append(out, proto.SnapshotInfo{ID: k.snap, Error: j.err})
+		default:
+			taken[k.snap] = true
+		}
+	}
+	a.mu.Unlock()
 	snaps := filepath.Join(VMDir(a.VMsDir, id), SnapshotsDir)
 	entries, _ := os.ReadDir(snaps)
-	var out []proto.SnapshotInfo
 	for _, en := range entries {
-		if !en.IsDir() || strings.HasSuffix(en.Name(), ".tmp") {
+		if !en.IsDir() || !taken[en.Name()] {
 			continue
 		}
 		info := proto.SnapshotInfo{ID: en.Name()}
@@ -265,13 +305,6 @@ func (a *Agent) snapshotInfos(id string) []proto.SnapshotInfo {
 		}
 		out = append(out, info)
 	}
-	a.mu.Lock()
-	for k, j := range a.snapJobs {
-		if k.vm == id && j.err != "" {
-			out = append(out, proto.SnapshotInfo{ID: k.snap, Error: j.err})
-		}
-	}
-	a.mu.Unlock()
 	slices.SortFunc(out, func(x, y proto.SnapshotInfo) int { return strings.Compare(x.ID, y.ID) })
 	return out
 }

@@ -554,7 +554,8 @@ func (a *Agent) endHibernation(ctx context.Context, e *vmEntry, graceful bool) e
 	a.mu.Unlock()
 	dir := VMDir(a.VMsDir, f.Spec.ID)
 	state := filepath.Join(dir, StateDir)
-	if !graceful || len(f.Spec.Attachments) == 0 {
+	// An unstarted fork's state is its source's memory: resuming it would bring the source's identity up on the fork's NICs.
+	if !graceful || len(f.Spec.Attachments) == 0 || f.Takeoff {
 		if err := a.clearHibernated(e); err != nil {
 			log.Printf("vm %s: save: %v", f.Spec.ID, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +293,9 @@ func TestForkMissingSnapshot(t *testing.T) {
 }
 
 func TestRestoreFailureAfterKillKeepsFileInSync(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0 file")
+	}
 	a, _ := newReconcileAgent(t)
 	hibernatedVM(t, a)
 	dir := VMDir(a.VMsDir, "a")
@@ -313,5 +317,96 @@ func TestRestoreFailureAfterKillKeepsFileInSync(t *testing.T) {
 	a.reconcile(context.Background(), 0, []proto.DesiredVM{withSnaps(dv("a", "a", proto.PowerHibernated, 3), s1, proto.SnapshotRef{ID: "s2", Memory: true})})
 	if info := waitSnapshot(t, a, "s2"); info.Error != "" || info.Memory {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+func snapshotErr(t *testing.T, a *Agent, id string) string {
+	t.Helper()
+	st, _ := a.vmStatus("a")
+	for _, s := range st.Snapshots {
+		if s.ID == id {
+			return s.Error
+		}
+	}
+	return ""
+}
+
+func TestSnapshotTimeoutFailsSnapshot(t *testing.T) {
+	old := snapshotWait
+	snapshotWait = 50 * time.Millisecond
+	t.Cleanup(func() { snapshotWait = old })
+	a, p := newReconcileAgent(t)
+	dir := runningVM(t, a, "old")
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withSnaps(dv("a", "a", proto.PowerRunning, 1), proto.SnapshotRef{ID: "s1", Memory: true})})
+	eventually(t, "resume", func() bool { return countEvent(p, "resume") == 1 })
+	eventually(t, "error", func() bool { return snapshotErr(t, a, "s1") == errResumedEarly })
+	if _, err := os.Stat(filepath.Join(dir, SnapshotsDir, "s1")); !os.IsNotExist(err) {
+		t.Fatalf("snapshot dir left: %v", err)
+	}
+}
+
+func TestSnapshotLeftByEarlierProcessFails(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	dir := runningVM(t, a, "old")
+	snapshotOf(t, a, "a", "old", true)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withSnaps(dv("a", "a", proto.PowerRunning, 1), proto.SnapshotRef{ID: "s1", Memory: true})})
+	eventually(t, "error", func() bool { return snapshotErr(t, a, "s1") == errResumedEarly })
+	st, _ := a.vmStatus("a")
+	if len(st.Snapshots) != 1 {
+		t.Fatalf("snapshots = %+v", st.Snapshots)
+	}
+	if _, err := os.Stat(filepath.Join(dir, SnapshotsDir, "s1")); !os.IsNotExist(err) {
+		t.Fatalf("snapshot dir left: %v", err)
+	}
+	if p.hasEvent("pause") || slices.ContainsFunc(p.gotEvents(), func(e string) bool { return strings.HasPrefix(e, "savestate:") }) {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+}
+
+func TestSnapshotOnlyReportsOwnJobs(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	runningVM(t, a, "old")
+	snapshotOf(t, a, "a", "old", false)
+	if infos := a.snapshotInfos("a"); len(infos) != 0 {
+		t.Fatalf("infos = %+v", infos)
+	}
+}
+
+// unstartedFork builds memory fork "a" that stays hibernated, with attachments atts.
+func unstartedFork(t *testing.T, a *Agent, atts ...proto.DiskAttachment) {
+	t.Helper()
+	freeSpace(t, 1<<40)
+	snapshotOf(t, a, "src", "root", true)
+	d := dvAtts("a", proto.PowerHibernated, 1, atts...)
+	d.Fork = &proto.Fork{SourceVMID: "src", SnapshotID: "s1", Memory: true}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateHibernated, 1)
+	if !loadVM(t, a, "a").Takeoff {
+		t.Fatal("fork not waiting for takeoff")
+	}
+}
+
+func TestSnapshotOfUnstartedForkHasNoMemory(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	unstartedFork(t, a)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withSnaps(dv("a", "a", proto.PowerHibernated, 1), proto.SnapshotRef{ID: "s2", Memory: true})})
+	if info := waitSnapshot(t, a, "s2"); info.Memory || info.Error != "" {
+		t.Fatalf("info = %+v", info)
+	}
+}
+
+func TestStopUnstartedForkNeverResumes(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	d := att("d1", "/data", storageAddr(t))
+	unstartedFork(t, a, d)
+	stop := dvAtts("a", proto.PowerStopped, 2, d)
+	stop.StopMode = proto.StopGraceful
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	waitState(t, a, "a", proto.StateStopped, 2)
+	if slices.ContainsFunc(p.gotEvents(), func(e string) bool { return strings.HasPrefix(e, "restore") }) {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+	if f := loadVM(t, a, "a"); f.Hibernated || f.Takeoff {
+		t.Fatalf("vm.json = %+v", f)
 	}
 }
