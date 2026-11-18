@@ -74,7 +74,8 @@ type Agent struct {
 	deferred   []VMFile
 	appliedSeq uint64
 	// dying holds removed entries whose instance may still run; their disks stay in use until it exits.
-	dying map[*vmEntry]bool
+	dying    map[*vmEntry]bool
+	snapJobs map[snapKey]*snapshotJob
 }
 
 type vmEntry struct {
@@ -416,8 +417,9 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 		if err := a.clearHibernated(e); err != nil {
 			return nil, "", storageError{fmt.Errorf("save: %w", err)}
 		}
-		paused := f.Power == proto.PowerPaused
-		inst, err = a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir), Paused: paused})
+		// A paused guest cannot take off; it is paused once it has.
+		paused := f.Power == proto.PowerPaused && !f.Takeoff
+		inst, err = a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir), Paused: paused, Takeoff: f.Takeoff})
 		if err == nil {
 			a.mu.Lock()
 			e.paused = paused
@@ -452,12 +454,12 @@ func (a *Agent) clearHibernated(e *vmEntry) error {
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
-	f.Hibernated = false
+	f.Hibernated, f.Takeoff = false, false
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		return err
 	}
 	a.mu.Lock()
-	e.file.Hibernated = false
+	e.file.Hibernated, e.file.Takeoff = false, false
 	a.mu.Unlock()
 	return nil
 }
@@ -817,6 +819,7 @@ func (a *Agent) stopAll() {
 		entries[id] = e
 	}
 	a.mu.Unlock()
+	a.releaseSnapshots()
 	fits := a.hibernateFits(entries)
 	var expired atomic.Bool
 	kill := func(id string, e *vmEntry, inst Instance) {
@@ -906,6 +909,8 @@ func (a *Agent) reportEntry(want *vmEntry, st proto.VMStatus) {
 	a.mu.Unlock()
 	if ok {
 		st.Disks = a.disks(f)
+		st.Snapshots = a.snapshotInfos(f.Spec.ID)
+		st.RestoredSeq = f.RestoredSeq
 	}
 	a.mu.Lock()
 	e, ok = a.vms[st.ID]

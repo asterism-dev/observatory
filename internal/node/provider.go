@@ -29,6 +29,8 @@ type Instance interface {
 	Done() <-chan struct{}
 	Pause() error
 	Resume() error
+	// Flush writes what the paused guest sent to its NBD disks through to the storage server.
+	Flush() error
 	// SaveState pauses the VM, flushes its disks and writes StateFile and MemFile into dir; the VM stays paused.
 	SaveState(dir string) error
 	// GuestResume tells the guest agent it was resumed, so it sets its clock and re-reads its seed.

@@ -22,6 +22,9 @@ type VMFile struct {
 	NeedsPrepare bool `json:"needsPrepare,omitempty"`
 	// Hibernated is set only once StateDir holds a complete, fsynced memory state.
 	Hibernated bool `json:"hibernated,omitempty"`
+	// Takeoff makes the next resume of the memory state give the guest this VM's identity (a fork's first start).
+	Takeoff     bool   `json:"takeoff,omitempty"`
+	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
 }

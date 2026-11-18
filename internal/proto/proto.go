@@ -72,7 +72,38 @@ type VMStatus struct {
 	Error string  `json:"error,omitempty"`
 	Disks []Disk  `json:"disks,omitempty"`
 	// Generation echoes the DesiredVM generation this status reflects.
-	Generation uint64 `json:"generation,omitempty"`
+	Generation  uint64         `json:"generation,omitempty"`
+	Snapshots   []SnapshotInfo `json:"snapshots,omitempty"`
+	RestoredSeq uint64         `json:"restoredSeq,omitempty"`
+}
+
+// SnapshotRef is a snapshot the hub wants the node to keep; Complete lets the node resume the VM it paused for it.
+type SnapshotRef struct {
+	ID       string `json:"id"`
+	Memory   bool   `json:"memory"`
+	Complete bool   `json:"complete,omitempty"`
+}
+
+// Restore asks the node to roll a VM back to one of its snapshots; Ready means the attached disks are restored too.
+type Restore struct {
+	SnapshotID string `json:"snapshotId"`
+	Seq        uint64 `json:"seq"`
+	Memory     bool   `json:"memory"`
+	Ready      bool   `json:"ready,omitempty"`
+}
+
+// Fork builds a new VM from a snapshot of another VM on the same node.
+type Fork struct {
+	SourceVMID string `json:"sourceVmId"`
+	SnapshotID string `json:"snapshotId"`
+	Memory     bool   `json:"memory"`
+}
+
+type SnapshotInfo struct {
+	ID        string `json:"id"`
+	Memory    bool   `json:"memory"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Error     string `json:"error,omitempty"`
 }
 
 type Power string
@@ -94,12 +125,15 @@ const (
 const ErrVMDirMissing = "VM directory missing"
 
 type DesiredVM struct {
-	Spec        VMSpec   `json:"spec"`
-	Power       Power    `json:"power"`
-	StopMode    StopMode `json:"stopMode,omitempty"`
-	Generation  uint64   `json:"generation"`
-	Provisioned bool     `json:"provisioned"`
-	Boot        *Boot    `json:"boot,omitempty"`
+	Spec        VMSpec        `json:"spec"`
+	Power       Power         `json:"power"`
+	StopMode    StopMode      `json:"stopMode,omitempty"`
+	Generation  uint64        `json:"generation"`
+	Provisioned bool          `json:"provisioned"`
+	Boot        *Boot         `json:"boot,omitempty"`
+	Snapshots   []SnapshotRef `json:"snapshots,omitempty"`
+	Restore     *Restore      `json:"restore,omitempty"`
+	Fork        *Fork         `json:"fork,omitempty"`
 }
 
 type Register struct {

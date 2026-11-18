@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -406,12 +407,25 @@ func (i *instance) GuestResume(ctx context.Context) error {
 	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
 }
 
+func (i *instance) Flush() error {
+	for _, dev := range i.nbdDevs {
+		if err := linuxvm.FlushNBD(dev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (i *instance) SaveState(dir string) error {
 	if err := i.Pause(); err != nil {
 		return err
 	}
-	for _, dev := range i.nbdDevs {
-		if err := linuxvm.FlushNBD(dev); err != nil {
+	if err := i.Flush(); err != nil {
+		return err
+	}
+	// A file left at these paths may be a link to a snapshot's or template's state, which Firecracker would truncate.
+	for _, n := range []string{node.StateFile, node.MemFile} {
+		if err := os.Remove(filepath.Join(jailRoot(i.dir), n)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}

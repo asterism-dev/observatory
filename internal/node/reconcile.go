@@ -38,6 +38,7 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 	a.mu.Unlock()
 	var wg sync.WaitGroup
 	for _, e := range gone {
+		a.gcSnapshots(e.file.Spec.ID, nil)
 		if a.slowDestroy(e) {
 			// It waits on Firecracker, the guest or storage; the disks stay in use until it is done.
 			go func() { a.destroy(ctx, e); a.sendDisks() }()
@@ -54,8 +55,9 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 		a.mu.Lock()
 		e, ok := a.vms[d.Spec.ID]
 		var gen uint64
+		var due bool
 		if ok {
-			gen = e.file.Generation
+			gen, due = e.file.Generation, restoreDue(e.file, d)
 			// Key and variable changes keep the generation; the new Boot applies at the next (re)start.
 			if !e.placeholder && d.Generation <= gen {
 				e.file.Boot = d.Boot
@@ -65,8 +67,11 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 		switch {
 		case !ok || e.placeholder && !d.Provisioned && d.Generation > gen:
 			a.createDesired(ctx, d)
-		case d.Generation > gen:
+		case d.Generation > gen || due:
 			a.updateDesired(ctx, e, d)
+		}
+		if ok && !e.placeholder {
+			a.syncSnapshots(d)
 		}
 	}
 
@@ -202,6 +207,15 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		a.placeholder(d, proto.ErrVMDirMissing)
 		return
 	}
+	if d.Fork != nil {
+		f, err := a.forkLocal(d)
+		if err != nil {
+			a.placeholder(d, err.Error())
+			return
+		}
+		a.startVM(ctx, f, false)
+		return
+	}
 	f := VMFile{Spec: d.Spec, MAC: randomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())
@@ -246,6 +260,24 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
+	// The VM stays as the restore left it until the hub has restored its disks too.
+	if d.Restore != nil && (restoreDue(f, d) || !d.Restore.Ready) {
+		if restoreDue(f, d) {
+			unlock = false
+			go func() {
+				defer op.Unlock()
+				if err := a.restoreLocal(e, *d.Restore); err != nil {
+					log.Printf("vm %s: restore: %v", f.Spec.ID, err)
+					a.mu.Lock()
+					st := e.status
+					a.mu.Unlock()
+					st.Error = "restore: " + err.Error()
+					a.reportEntry(e, st)
+				}
+			}()
+		}
+		return
+	}
 	// A new Boot takes effect at the next start, which reseeds; it does not restart the VM.
 	f.Power, f.StopMode, f.Generation, f.Boot = d.Power, d.StopMode, d.Generation, d.Boot
 	var reseedErr error

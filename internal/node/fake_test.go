@@ -68,6 +68,7 @@ func (i *fakeInstance) Kill() error {
 
 func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
 func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
+func (i *fakeInstance) Flush() error  { i.p.record("flush"); return nil }
 
 func (i *fakeInstance) ReloadSeed() error { i.p.record("reload-seed"); return nil }
 
@@ -235,6 +236,9 @@ func (p *fakeProvider) Restore(_ context.Context, f VMFile, dir string, from Res
 	p.record("restore:" + from.StateDir)
 	if from.Paused {
 		p.record("restore-paused")
+	}
+	if from.Takeoff {
+		p.record("restore-takeoff")
 	}
 	p.mu.Lock()
 	block := p.restoreBlock
