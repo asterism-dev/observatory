@@ -16,7 +16,7 @@ git clone git@github.com:me/private  # works: rewritten to HTTPS, the credential
 | Kind | Sources | Verified with | Account shown | Bound hosts (proxy mode) |
 |---|---|---|---|---|
 | `github` | `pat` (classic or fine-grained) | `GET api.github.com/user` | login, scopes, expiry when GitHub sends it | `github.com`, `api.github.com`, `uploads.github.com` |
-| `claude` | `setup-token` (`claude setup-token`, `sk-ant-oat…`), `oauth` (sign-in) | `GET api.anthropic.com/v1/models` | none | `api.anthropic.com` |
+| `claude` | `setup-token` (`claude setup-token`, `sk-ant-oat…`), `oauth` (sign-in) | `GET api.anthropic.com/v1/models` | email after sign-in; none for setup tokens | `api.anthropic.com` |
 | `linear` | `api-key` | GraphQL `{ viewer { email } }` | email | `api.linear.app`, `mcp.linear.app` |
 
 The proxy substitutes the `Authorization` header only.
@@ -76,7 +76,8 @@ Integrations page (`/orgs/:orgId/integrations`, tabs All / Org / Teams / Private
 | `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below) |
 
 Request bodies of these endpoints are never logged. Audit rows `integration:set` (create, replace, sign-in, mode
-change) and `integration:delete` carry kind, source, scope, owner, mode and account, never a token.
+change) and `integration:delete` carry kind, source, scope, owner, mode and account, never a token; a mode change also
+carries `previousMode`.
 
 ### Claude sign-in
 
@@ -104,7 +105,7 @@ user is `ubuntu`.
 | `/usr/local/bin/git-credential-vmm` | git credential helper: answers `get` for `https://github.com` only, as `x-access-token`. |
 | `/etc/vmm/gitconfig` | `helper = vmm` for `https://github.com`; `insteadOf` turns `git@github.com:` and `ssh://git@github.com/` into HTTPS. |
 | `/etc/gitconfig` | Gets an `[include]` of `/etc/vmm/gitconfig` while GitHub is connected; the sync removes only that include. |
-| `/usr/local/bin/gh` | Wrapper: sets `GH_TOKEN` from `vmm-token github` and runs `/usr/bin/gh`, unless `GH_TOKEN` or `GITHUB_TOKEN` is set or `gh auth login` stored a `github.com` login. |
+| `/usr/local/bin/gh` | Wrapper: sets `GH_TOKEN` from `vmm-token github` and runs `/usr/bin/gh`, unless `GH_TOKEN` or `GITHUB_TOKEN` is set or `gh auth login` stored a `github.com` login. Overwritten at every boot; a `gh` of your own belongs in `/usr/bin/gh` or earlier in `PATH`. |
 | `~/.claude/.credentials.json` | `{"claudeAiOauth":{"accessToken":…,"refreshToken":null,"expiresAt":null,"scopes":["user:inference"]}}`, mode 0600. With no expiry Claude Code never tries to refresh. Written even before Claude Code is installed. |
 | Linear MCP | `claude mcp add --transport http --scope user linear https://mcp.linear.app/mcp --header "Authorization: Bearer <token>"`, once `claude` exists. |
 | `/etc/profile.d/vmm-linear.sh` | Exports `LINEAR_API_KEY` from `vmm-token linear` in login shells. |
@@ -117,13 +118,26 @@ planted link never gets root access. Its bookkeeping (hashes, never tokens) is i
 `v.sock_1051` inside the VM's jail, so the socket a request arrives on is the VM's identity
 ([nodes.md](nodes.md#integrations)). Any process in the guest may ask: in `vm` mode the token is meant to be there, in
 proxy mode the answer is a placeholder. After a node restart the service answers "unavailable" until the hub's first
-push; the helpers keep what they already wrote.
+push; the helpers keep what they already wrote. The same holds while the hub cannot read a VM's integrations (for
+example a database error): the push marks them unresolved, the node keeps the last tokens it had (or answers
+"unavailable" if it had none) and the hub pushes again a minute later.
 
 ### What is never overwritten
 
 - A Claude login of your own (`claude /login`): the sync writes the credentials file only if it is missing or holds
   the token it wrote itself, and removes only its own file.
-- Your own git credential helpers: the include adds a helper for `https://github.com` only; git asks yours too.
+- Your own git credential helpers for other hosts: the include adds a helper for `https://github.com` only. For
+  `https://github.com`, git reads `/etc/gitconfig` first, so `vmm` answers before helpers in `~/.gitconfig`. To use
+  your own, reset the list with an empty value and add yours after it:
+
+  ```
+  [credential "https://github.com"]
+  	helper =
+  	helper = <yours>
+  ```
+- SSH remotes: the include rewrites `git@github.com:` and `ssh://git@github.com/` to HTTPS. To keep SSH for a remote,
+  spell it so neither prefix matches, e.g. `ssh://git@github.com:22/<owner>/<repo>` or a `Host` alias from
+  `~/.ssh/config`; `GIT_CONFIG_NOSYSTEM=1` drops the include (helper and rewrite) for one command.
 - `GH_TOKEN`, `GITHUB_TOKEN` or a `gh auth login`: the wrapper steps aside.
 - `LINEAR_API_KEY`: set only when unset.
 - A `linear` MCP entry of your own: the sync records only an entry it added itself ("we added it") and never adds over
@@ -169,8 +183,11 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
   an npm global prefix elsewhere is not found, so the Linear MCP entry is not added (until project 7 installs it).
 - **Hub crash during a Claude refresh** can require signing in again: the provider rotates the refresh token when it
   answers, and if the hub dies before storing the new one the stored token is no longer valid.
-- **Transient resolve error:** if the hub cannot resolve a VM's integrations while building a push, it pushes that VM
-  without them (logged) until the next push.
+- **Transient resolve error in proxy mode:** while the hub cannot read a VM's integrations, the guest keeps its tokens
+  but the node's proxy loses the integration's values, so placeholders reach the provider unsubstituted until the
+  retry a minute later succeeds.
+- **`LINEAR_API_KEY` after disconnect:** shells opened before the disconnect keep the exported value (the
+  placeholder, or the key in `vm` mode) until they exit.
 - **No GitHub App, no OAuth for GitHub or Linear, no GitHub Enterprise Server, no `ghcr.io`/`docker login`.**
 
 ## Real-credential checklist

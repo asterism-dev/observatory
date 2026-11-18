@@ -115,8 +115,9 @@ separate network namespace or on a host without VMs.
 The node runs a token service for every VM it runs ([integrations.md](integrations.md)). The guest connects over
 vsock to the host (CID 2, port 1051); Firecracker turns that into a connection to the Unix socket `v.sock_1051` in the
 VM's jail root (`<vm dir>/jail/firecracker/vm/root/`). The node creates the socket before the VM boots or resumes,
-owned by the VM's jail UID with mode 0600 in the jail's 0700 root, so another VM's Firecracker cannot open it, and
-removes it when the VM stops. The guest agent's port 1050 never carries secrets.
+owned by the VM's jail UID with mode 0600 (the jail root is 0755 inside the VM's 0700 directory), so another VM's
+Firecracker cannot open it. The socket goes away with the jail, not when its listener closes. The guest agent's port
+1050 never carries secrets.
 
 - One JSON line per connection (`{"op":"token","kind":"github"}`), 4 KiB request limit, 2 s timeout, 16 concurrent
   connections per VM; answers `{"ok":true,"token":…,"expiresAt":…}` or `{"ok":false,"error":"not-connected"|"unavailable"}`.
