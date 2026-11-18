@@ -16,9 +16,9 @@ import (
 // Claude Code's public OAuth client; it has no revoke endpoint, so disconnect only drops the tokens.
 const (
 	ClaudeClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	ClaudeAuthorizeURL = "https://claude.ai/oauth/authorize"
-	ClaudeTokenURL     = "https://console.anthropic.com/v1/oauth/token"
-	ClaudeRedirectURL  = "https://console.anthropic.com/oauth/code/callback"
+	ClaudeAuthorizeURL = "https://claude.com/cai/oauth/authorize"
+	ClaudeTokenURL     = "https://platform.claude.com/v1/oauth/token"
+	ClaudeRedirectURL  = "https://platform.claude.com/oauth/code/callback"
 	ClaudeScopes       = "user:profile user:inference"
 )
 
