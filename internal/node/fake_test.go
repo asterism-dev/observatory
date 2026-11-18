@@ -215,7 +215,7 @@ func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
 	return nil
 }
 
-func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
+func (p *fakeProvider) Start(_ context.Context, f VMFile, dir string) (Instance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.beforeStart != nil {

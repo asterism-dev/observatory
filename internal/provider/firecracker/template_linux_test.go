@@ -45,7 +45,7 @@ func keyFor(t *testing.T, p *Provider, f node.VMFile) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := templateKey(base, f)
+	key, err := templateKey(base, p.fcVersion, f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestFastBoot(t *testing.T) {
 			t.Fatalf("%s: no template marker: %v", id, err)
 		}
 		start := time.Now()
-		inst, err := p.Start(f, dir)
+		inst, err := p.Start(context.Background(), f, dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,6 +193,28 @@ func TestFastBoot(t *testing.T) {
 			t.Errorf("%s: no SSH host key", id)
 		}
 		ids = append(ids, g)
+		if id == "fcfb3" {
+			// A cold boot of a clone must not look like a new cloud-init instance, which would make new host keys.
+			if err := inst.Stop(); err != nil {
+				t.Fatal(err)
+			}
+			if inst, err = p.Start(context.Background(), f, dir); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+			defer cancel()
+			if _, err := inst.WaitIP(ctx); err != nil {
+				t.Fatal(err)
+			}
+			sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null || true")
+			after, err := exec.Command("sh", "-c", "ssh-keyscan -t ed25519 "+ip+" 2>/dev/null | ssh-keygen -lf -").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(after)); got != g.hostKey {
+				t.Errorf("%s: host key changed on reboot: %s, was %s", id, got, g.hostKey)
+			}
+		}
 	}
 	a, b := ids[0], ids[1]
 	if a.machineID == b.machineID || a.macs == b.macs || a.hostKey == b.hostKey || a.random == b.random {
@@ -224,7 +246,7 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null; sudo systemctl stop vmm-agent")
+	templateID := sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null; sudo systemctl stop vmm-agent; cat /etc/machine-id")
 	tpl := p.templateDir(keyFor(t, p, f0))
 	if err := saveTemplate(inst0, node.VMDir(p.VMsDir, f0.Spec.ID), tpl); err != nil {
 		t.Fatal(err)
@@ -236,7 +258,7 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, templateMarker)); err != nil {
 		t.Fatalf("no template marker: %v", err)
 	}
-	inst, err := p.Start(f, dir)
+	inst, err := p.Start(context.Background(), f, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,8 +268,12 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	if _, err := inst.WaitIP(ctx); err != nil {
+	ip, err = inst.WaitIP(ctx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if id := sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null; cat /etc/machine-id"); id == templateID {
+		t.Errorf("fallback VM booted the template's disk: machine id %s", id)
 	}
 	if _, err := os.Stat(tpl); !os.IsNotExist(err) {
 		t.Errorf("template left after a failed takeoff: %v", err)

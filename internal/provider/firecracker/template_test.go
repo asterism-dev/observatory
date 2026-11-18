@@ -17,9 +17,10 @@ func TestTemplateKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := node.VMFile{Spec: proto.VMSpec{ID: "a", Name: "a", CPUs: 1, MemoryMB: 512, DiskGB: 10, NICs: []proto.NIC{{MAC: "02:00:00:00:00:01"}}}}
+	fcVersion := "Firecracker v1.18.0"
 	key := func(f node.VMFile) string {
 		t.Helper()
-		k, err := templateKey(base, f)
+		k, err := templateKey(base, fcVersion, f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,6 +53,18 @@ func TestTemplateKey(t *testing.T) {
 	}
 	if key(f) == k {
 		t.Error("changed base mtime gave the same key")
+	}
+	k = key(f)
+	fcVersion = "Firecracker v1.19.0"
+	if key(f) == k {
+		t.Error("changed Firecracker version gave the same key")
+	}
+	k = key(f)
+	oldBoot := guest.BootScript
+	defer func() { guest.BootScript = oldBoot }()
+	guest.BootScript += "\n"
+	if key(f) == k {
+		t.Error("changed seed gave the same key")
 	}
 	k = key(f)
 	old := guest.AgentScript

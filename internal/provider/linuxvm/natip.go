@@ -14,6 +14,8 @@ const DefaultImageURL = "https://cloud-images.ubuntu.com/releases/noble/release/
 const (
 	natFile    = "nat-ip"
 	NATGateway = "192.168.64.1"
+	// TemplateNATIP is never given to a VM: template clones resume with it until takeoff sets their own.
+	TemplateNATIP = "192.168.64.254"
 )
 
 // AllocNATIP keeps the VM's eth0 address in its VM dir, so deleting the VM frees it; callers serialize calls.
@@ -34,7 +36,7 @@ func AllocNATIP(vmsDir, vmID string) (string, error) {
 			used[strings.TrimSpace(string(b))] = true
 		}
 	}
-	for i := 2; i <= 254; i++ {
+	for i := 2; i <= 253; i++ {
 		ip := fmt.Sprintf("192.168.64.%d", i)
 		if used[ip] {
 			continue

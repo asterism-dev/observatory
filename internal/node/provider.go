@@ -14,7 +14,7 @@ type Provider interface {
 	Prepare(ctx context.Context, f VMFile, dir string) error
 	// Reseed rewrites only the cloud-init seed of a prepared, stopped or paused VM; disks are left alone.
 	Reseed(ctx context.Context, f VMFile, dir string) error
-	Start(f VMFile, dir string) (Instance, error)
+	Start(ctx context.Context, f VMFile, dir string) (Instance, error)
 	Restore(ctx context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error)
 	// Disks lists the block devices Start attaches, in attach order.
 	Disks(f VMFile, dir string) ([]proto.Disk, error)

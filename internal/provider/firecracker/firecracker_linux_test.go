@@ -75,7 +75,7 @@ func startVM(t *testing.T, p *Provider, f node.VMFile) node.Instance {
 	if err := p.Prepare(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	inst, err := p.Start(f, dir)
+	inst, err := p.Start(context.Background(), f, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestRestartVM(t *testing.T) {
 	if _, err := os.Stat(jailBase(node.VMDir(p.VMsDir, f.Spec.ID))); !os.IsNotExist(err) {
 		t.Fatalf("jail still exists after the VM stopped: %v", err)
 	}
-	inst, err := p.Start(f, node.VMDir(p.VMsDir, f.Spec.ID))
+	inst, err := p.Start(context.Background(), f, node.VMDir(p.VMsDir, f.Spec.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -607,7 +607,7 @@ func TestRestoreCorruptStateFails(t *testing.T) {
 	if _, err := os.Stat(jailBase(dir)); !os.IsNotExist(err) {
 		t.Errorf("jail left after a failed restore: %v", err)
 	}
-	inst, err := p.Start(f, dir)
+	inst, err := p.Start(context.Background(), f, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +701,7 @@ func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 	if time.Since(began) >= 10*time.Second {
 		t.Fatal("guest did not shut down on its own")
 	}
-	if inst, err = p.Start(f, dir); err != nil {
+	if inst, err = p.Start(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { inst.Kill(); <-inst.Done() }()

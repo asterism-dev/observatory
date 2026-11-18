@@ -108,9 +108,31 @@ func TestAgentTakeoffNewIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "etc/machine-id"), []byte(old+"\n"), 0o444); err != nil {
 		t.Fatal(err)
 	}
+	cloud := filepath.Join(root, "var/lib/cloud")
+	if err := os.MkdirAll(filepath.Join(cloud, "instances/tpl-1/sem"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cloud, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(cloud, "instances/tpl-1/sem/config_ssh"), nil, 0o644)
+	os.WriteFile(filepath.Join(cloud, "data/instance-id"), []byte("tpl-1\n"), 0o644)
+	if err := os.Symlink("/var/lib/cloud/instances/tpl-1", filepath.Join(cloud, "instance")); err != nil {
+		t.Fatal(err)
+	}
 	sock := startAgent(t, root)
 	if r := callAgent(t, sock, `{"op":"takeoff","time":5,"entropy":"AAEC"}`); !r.OK {
 		t.Fatalf("takeoff: %+v", r)
+	}
+	// cloud-init must see the seed's instance as the one already set up, or the first reboot makes new host keys.
+	if _, err := os.Stat(filepath.Join(cloud, "instances/i-1/sem/config_ssh")); err != nil {
+		t.Errorf("instance dir not moved to i-1: %v", err)
+	}
+	if l, _ := os.Readlink(filepath.Join(cloud, "instance")); l != "/var/lib/cloud/instances/i-1" {
+		t.Errorf("instance link = %q", l)
+	}
+	if b, _ := os.ReadFile(filepath.Join(cloud, "data/instance-id")); string(b) != "i-1\n" {
+		t.Errorf("data/instance-id = %q", b)
 	}
 	id, _ := os.ReadFile(filepath.Join(root, "etc/machine-id"))
 	if s := strings.TrimSpace(string(id)); !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(s) || s == old {

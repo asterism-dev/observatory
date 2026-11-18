@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import threading
@@ -117,15 +118,17 @@ def resume(req):
 
 
 def takeoff(req):
+    # MACs first: anything the resumed guest sends (timers fire once the clock moves) must not carry the template's MAC.
+    if not ROOT:
+        set_macs(req["macs"])
     set_clock(req["time"])
     if not ROOT:
         reseed_rng(req["entropy"])
     seed = mount_seed()
     try:
-        if not ROOT:
-            set_macs(req["macs"])
         with open(seed + "/meta-data") as f:
-            m = re.search(r"^local-hostname:\s*(\S+)\s*$", f.read(), re.M)
+            meta = f.read()
+        m = re.search(r"^local-hostname:\s*(\S+)\s*$", meta, re.M)
         if m and HOSTNAME.fullmatch(m.group(1)):
             write(ROOT + "/etc/hostname", m.group(1) + "\n")
             if not ROOT:
@@ -141,20 +144,46 @@ def takeoff(req):
         write(ROOT + "/etc/netplan/50-cloud-init.yaml", "network:\n" + "".join("  " + l for l in net.splitlines(True)), 0o600)
         # Before the network: networkd derives DHCP client ids from the machine id.
         write(ROOT + "/etc/machine-id", uuid.uuid4().hex + "\n", 0o444)
-        if not ROOT:
-            apply_network()
+        m = re.search(r"^instance-id:\s*(\S+)\s*$", meta, re.M)
+        if m and HOSTNAME.fullmatch(m.group(1)):
+            adopt_instance(m.group(1))
+        # Keys before the network, so the template's host key never answers on the VM's address.
         new_host_keys()
         if ROOT:
             boot(seed)
-        else:
-            # growpart mostly waits for the kernel and udev, so it overlaps the rest.
-            with concurrent.futures.ThreadPoolExecutor(1) as pool:
-                grown = pool.submit(grow_root)
-                run("sh", seed + "/vmm-disks.sh", env=dict(os.environ, VMM_AGENT="1"))
-                run("systemctl", "restart", "ssh.service")
-                grown.result()
+            return
+        run("systemctl", "restart", "ssh.service")
+        apply_network()
+        # growpart mostly waits for the kernel and udev, so it overlaps the rest.
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            grown = pool.submit(grow_root)
+            run("sh", seed + "/vmm-disks.sh", env=dict(os.environ, VMM_AGENT="1"))
+            grown.result()
     finally:
         umount_seed()
+
+
+def adopt_instance(iid):
+    # cloud-init would take the VM's instance id for a new instance on the next boot and make new host keys.
+    cloud = ROOT + "/var/lib/cloud"
+    link = cloud + "/instance"
+    if not os.path.islink(link):
+        return
+    old = os.path.basename(os.readlink(link))
+    if old != iid:
+        if os.path.exists(cloud + "/instances/" + iid):
+            shutil.rmtree(cloud + "/instances/" + iid)
+        os.rename(cloud + "/instances/" + old, cloud + "/instances/" + iid)
+        # The cached datasource still names the old instance.
+        for f in glob.glob(cloud + "/instances/" + iid + "/obj.pkl"):
+            os.remove(f)
+    if os.path.lexists(link + ".new"):
+        os.remove(link + ".new")
+    os.symlink("/var/lib/cloud/instances/" + iid, link + ".new")
+    os.replace(link + ".new", link)
+    os.makedirs(cloud + "/data", exist_ok=True)
+    for name in ("instance-id", "previous-instance-id"):
+        write(cloud + "/data/" + name, iid + "\n")
 
 
 def apply_network():

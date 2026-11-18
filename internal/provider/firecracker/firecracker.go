@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,8 +34,9 @@ type Provider struct {
 	mu  sync.Mutex // serializes base image downloads and NAT address allocation
 	nbd linuxvm.NBDWatch
 
-	fastBoot bool
-	building sync.Mutex // held while a template builds; builds never queue
+	fastBoot  bool
+	fcVersion string
+	building  sync.Mutex // held while a template builds; builds never queue
 }
 
 func New(c node.Config) (*Provider, error) {
@@ -52,25 +54,46 @@ func New(c node.Config) (*Provider, error) {
 	if p.ImageURL == "" {
 		p.ImageURL = DefaultImageURL
 	}
+	out, err := exec.Command("firecracker", "--version").Output()
+	if err != nil {
+		return nil, fmt.Errorf("firecracker --version: %w", err)
+	}
+	p.fcVersion, _, _ = strings.Cut(string(out), "\n")
 	p.removeUnfinishedTemplates()
 	return p, nil
 }
 
 func (p *Provider) Name() string { return "firecracker" }
 
-func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error {
+func (p *Provider) baseImage() (string, error) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
-	p.mu.Unlock()
 	if err != nil {
-		return fmt.Errorf("base image: %w", err)
+		return "", fmt.Errorf("base image: %w", err)
+	}
+	return base, nil
+}
+
+func (p *Provider) cloneBase(f node.VMFile, dir string) error {
+	base, err := p.baseImage()
+	if err != nil {
+		return err
+	}
+	return node.CloneResize(base, filepath.Join(dir, "root.img"), f.Spec.DiskGB)
+}
+
+func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error {
+	base, err := p.baseImage()
+	if err != nil {
+		return err
 	}
 	marker := filepath.Join(dir, templateMarker)
 	if err := os.Remove(marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if p.fastBoot && len(f.Spec.Attachments) == 0 && f.Spec.DiskGB >= templateDiskGB {
-		key, err := templateKey(base, f)
+		key, err := templateKey(base, p.fcVersion, f)
 		if err != nil {
 			return err
 		}
@@ -122,23 +145,32 @@ func (p *Provider) Disks(f node.VMFile, dir string) ([]proto.Disk, error) {
 	return node.ListDisks(f, dir, func(diskID string) string { return p.nbd.Err(f.Spec.ID, diskID) })
 }
 
-func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
+func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.Instance, error) {
 	marker := filepath.Join(dir, templateMarker)
 	if key, err := os.ReadFile(marker); err == nil {
 		os.Remove(marker)
-		tpl := p.templateDir(string(key))
-		began := time.Now()
-		inst, err := p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: tpl, Takeoff: true, Shared: true})
-		if err == nil {
-			log.Printf("vm %s: started from template %s in %s", f.Spec.ID, key, time.Since(began).Round(time.Millisecond))
-			return inst, nil
+		if len(f.Spec.Attachments) == 0 {
+			tpl := p.templateDir(string(key))
+			began := time.Now()
+			inst, err := p.Restore(ctx, f, dir, node.RestoreFrom{StateDir: tpl, Takeoff: true, Shared: true})
+			if err == nil {
+				log.Printf("vm %s: started from template %s in %s", f.Spec.ID, key, time.Since(began).Round(time.Millisecond))
+				return inst, nil
+			}
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			log.Printf("vm %s: start from template %s: %v; deleting the template and booting cold", f.Spec.ID, key, err)
+			if err := os.RemoveAll(tpl); err != nil {
+				log.Printf("template %s: %v", key, err)
+			}
 		}
-		log.Printf("vm %s: start from template %s: %v; deleting the template and booting cold", f.Spec.ID, key, err)
-		if err := os.RemoveAll(tpl); err != nil {
-			log.Printf("template %s: %v", key, err)
+		// The template's disk carries its machine id and cloud-init state; a cold boot starts from the base image instead.
+		if err := p.cloneBase(f, dir); err != nil {
+			return nil, err
 		}
 	}
-	if err := p.Reseed(context.Background(), f, dir); err != nil {
+	if err := p.Reseed(ctx, f, dir); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
 	kernel, initrd, err := bootFiles(filepath.Join(dir, "root.img"), dir)

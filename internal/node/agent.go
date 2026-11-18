@@ -455,7 +455,7 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 		log.Printf("vm %s: restore: %v", f.Spec.ID, err)
 		note = "hibernation discarded: " + err.Error()
 	}
-	inst, err = a.coldStart(f, dir)
+	inst, err = a.coldStart(ctx, f, dir)
 	if err == nil {
 		a.mu.Lock()
 		e.paused = false
@@ -465,11 +465,11 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 }
 
 // coldStart boots f from its disks; a memory state left behind must never be resumed against them later.
-func (a *Agent) coldStart(f VMFile, dir string) (Instance, error) {
+func (a *Agent) coldStart(ctx context.Context, f VMFile, dir string) (Instance, error) {
 	if err := os.RemoveAll(filepath.Join(dir, StateDir)); err != nil {
 		return nil, err
 	}
-	return a.Provider.Start(f, dir)
+	return a.Provider.Start(ctx, f, dir)
 }
 
 func (a *Agent) clearHibernated(e *vmEntry) error {

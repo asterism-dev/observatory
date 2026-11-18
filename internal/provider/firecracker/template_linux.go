@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/node"
-	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
 
 const templateBuildTimeout = 10 * time.Minute
@@ -34,18 +34,15 @@ func (p *Provider) buildTemplate(ctx context.Context, key string, f node.VMFile)
 	}
 	ctx, cancel := context.WithTimeout(ctx, templateBuildTimeout)
 	defer cancel()
-	p.mu.Lock()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
-	p.mu.Unlock()
+	base, err := p.baseImage()
 	if err != nil {
 		return err
 	}
-	t := node.VMFile{MAC: node.RandomMAC(), Spec: proto.VMSpec{ID: "tpl-" + key[:8], Name: "template", CPUs: f.Spec.CPUs, MemoryMB: f.Spec.MemoryMB, DiskGB: templateDiskGB}}
-	for i := range f.Spec.NICs {
-		// No OVN logical port has this name (the hub names ports after VM ids), so the template never joins a network.
-		t.Spec.NICs = append(t.Spec.NICs, proto.NIC{Network: "template", MAC: node.RandomMAC(), Port: fmt.Sprintf("%s-%d", t.Spec.ID, i)})
+	t := templateFile("tpl-"+key[:8], f)
+	t.MAC = node.RandomMAC()
+	for i := range t.Spec.NICs {
+		t.Spec.NICs[i].MAC = node.RandomMAC()
 	}
-	// The build dir holds the template VM's NAT address; removing it frees the address.
 	dir := node.VMDir(p.VMsDir, t.Spec.ID)
 	defer os.RemoveAll(dir)
 	if err := os.RemoveAll(dir); err != nil {
@@ -54,11 +51,15 @@ func (p *Provider) buildTemplate(ctx context.Context, key string, f node.VMFile)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// The reserved address, which AllocNATIP reads back from the VM dir; builds run one at a time.
+	if err := os.WriteFile(filepath.Join(dir, "nat-ip"), []byte(linuxvm.TemplateNATIP+"\n"), 0o644); err != nil {
+		return err
+	}
 	if err := node.CloneResize(base, filepath.Join(dir, "root.img"), templateDiskGB); err != nil {
 		return err
 	}
 	began := time.Now()
-	inst, err := p.Start(t, dir)
+	inst, err := p.Start(ctx, t, dir)
 	if err != nil {
 		return err
 	}
