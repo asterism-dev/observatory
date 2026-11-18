@@ -28,6 +28,7 @@ var (
 
 const maxResponse = 1 << 20
 
+// A caller-supplied Client is used with redirects disabled, so a token never follows a redirect.
 type HTTPVerifier struct {
 	Client                             *http.Client
 	GitHubAPI, LinearAPI, AnthropicAPI string
@@ -60,8 +61,8 @@ func (v HTTPVerifier) github(ctx context.Context, token string) (Account, error)
 		return Account{}, err
 	}
 	return Account{
-		Name:      body.Login,
-		Scopes:    resp.Header.Get("X-OAuth-Scopes"),
+		Name:      truncate(body.Login),
+		Scopes:    truncate(resp.Header.Get("X-OAuth-Scopes")),
 		ExpiresAt: parseGitHubExpiry(resp.Header.Get("github-authentication-token-expiration")),
 	}, nil
 }
@@ -94,7 +95,7 @@ func (v HTTPVerifier) linear(ctx context.Context, token string) (Account, error)
 	if body.Data.Viewer == nil {
 		return Account{}, fmt.Errorf("%w: %s: no viewer", ErrRejected, Linear)
 	}
-	return Account{Name: body.Data.Viewer.Email}, nil
+	return Account{Name: truncate(body.Data.Viewer.Email)}, nil
 }
 
 func (v HTTPVerifier) claude(ctx context.Context, source Source, token string) (Account, error) {
@@ -116,10 +117,7 @@ func (v HTTPVerifier) claude(ctx context.Context, source Source, token string) (
 
 // Errors carry only kind and a fixed reason; transport errors and provider bodies are dropped so no token can leak.
 func do(c *http.Client, req *http.Request, kind Kind, out any) (*http.Response, error) {
-	if c == nil {
-		c = &http.Client{Timeout: 15 * time.Second}
-	}
-	resp, err := c.Do(req)
+	resp, err := noRedirects(c).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: request failed", ErrUnreachable, kind)
 	}
@@ -132,12 +130,33 @@ func do(c *http.Client, req *http.Request, kind Kind, out any) (*http.Response, 
 	case resp.StatusCode >= 300:
 		return nil, fmt.Errorf("%w: %s: HTTP %d", ErrUnreachable, kind, resp.StatusCode)
 	}
-	if out != nil {
+	if out == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponse))
+	} else {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponse)).Decode(out); err != nil {
 			return nil, fmt.Errorf("%w: %s: malformed response", ErrUnreachable, kind)
 		}
 	}
 	return resp, nil
+}
+
+// Go forwards Authorization to subdomains and re-sends bodies on 307/308; a 3xx must end as ErrUnreachable instead.
+func noRedirects(c *http.Client) *http.Client {
+	cp := http.Client{Timeout: 15 * time.Second}
+	if c != nil {
+		cp = *c
+	}
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &cp
+}
+
+const maxAccountField = 256
+
+func truncate(s string) string {
+	if len(s) <= maxAccountField {
+		return s
+	}
+	return strings.ToValidUTF8(s[:maxAccountField], "")
 }
 
 func orDefault(s, def string) string {

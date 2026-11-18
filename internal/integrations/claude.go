@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -21,6 +22,8 @@ const (
 	ClaudeScopes       = "user:profile user:inference"
 )
 
+const maxExpiresIn = 365 * 24 * 3600
+
 var ErrInvalidGrant = errors.New("refresh token rejected")
 
 type OAuthTokens struct {
@@ -29,8 +32,10 @@ type OAuthTokens struct {
 	Email           string
 }
 
-func (OAuthTokens) String() string   { return "OAuthTokens{redacted}" }
-func (OAuthTokens) GoString() string { return "OAuthTokens{redacted}" }
+func (OAuthTokens) String() string               { return "OAuthTokens{redacted}" }
+func (OAuthTokens) GoString() string             { return "OAuthTokens{redacted}" }
+func (OAuthTokens) MarshalJSON() ([]byte, error) { return []byte(`"redacted"`), nil }
+func (OAuthTokens) LogValue() slog.Value         { return slog.StringValue("redacted") }
 
 type ClaudeOAuth interface {
 	AuthorizeURL(state, challenge string) string
@@ -38,6 +43,7 @@ type ClaudeOAuth interface {
 	Refresh(ctx context.Context, refresh string) (OAuthTokens, error)
 }
 
+// A caller-supplied Client is used with redirects disabled, so the code verifier and tokens never follow a redirect.
 type HTTPClaudeOAuth struct {
 	Client   *http.Client
 	TokenURL string
@@ -86,11 +92,7 @@ func (c HTTPClaudeOAuth) post(ctx context.Context, fields map[string]string) (OA
 		return OAuthTokens{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := c.Client
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
-	}
-	resp, err := client.Do(req)
+	resp, err := noRedirects(c.Client).Do(req)
 	if err != nil {
 		return OAuthTokens{}, fmt.Errorf("%w: %s: token request failed", ErrUnreachable, Claude)
 	}
@@ -108,17 +110,17 @@ func (c HTTPClaudeOAuth) post(ctx context.Context, fields map[string]string) (OA
 	switch {
 	case resp.StatusCode == http.StatusBadRequest && out.Error == "invalid_grant":
 		return OAuthTokens{}, ErrInvalidGrant
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 || resp.StatusCode/100 == 3:
 		return OAuthTokens{}, fmt.Errorf("%w: %s: HTTP %d", ErrUnreachable, Claude, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
 		return OAuthTokens{}, fmt.Errorf("%w: %s: HTTP %d", ErrRejected, Claude, resp.StatusCode)
-	case decodeErr != nil || out.AccessToken == "":
+	case decodeErr != nil || out.AccessToken == "" || out.ExpiresIn <= 0:
 		return OAuthTokens{}, fmt.Errorf("%w: %s: malformed token response", ErrUnreachable, Claude)
 	}
 	return OAuthTokens{
 		Access:    out.AccessToken,
 		Refresh:   out.RefreshToken,
-		ExpiresAt: time.Now().Add(time.Duration(out.ExpiresIn) * time.Second),
+		ExpiresAt: time.Now().Add(time.Duration(min(out.ExpiresIn, maxExpiresIn)) * time.Second),
 		Email:     out.Account.EmailAddress,
 	}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/google/uuid"
@@ -294,5 +296,125 @@ func TestSignIns(t *testing.T) {
 	now = now.Add(10*time.Minute + time.Second)
 	if _, _, ok := s.Take(state, user, org); ok {
 		t.Fatal("expired take")
+	}
+}
+
+func TestSignInsCaps(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := NewSignIns[int](10*time.Minute, func() time.Time { return now })
+	user, org := uuid.New(), uuid.New()
+	var states []string
+	for i := range maxSignInsPerUser + 1 {
+		now = now.Add(time.Second)
+		state, _, err := s.Start(user, org, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		states = append(states, state)
+	}
+	if _, _, ok := s.Take(states[0], user, org); ok {
+		t.Fatal("oldest entry of the user was not evicted")
+	}
+	if _, v, ok := s.Take(states[1], user, org); !ok || v != 1 {
+		t.Fatalf("second entry: %v %v", v, ok)
+	}
+
+	s = NewSignIns[int](10*time.Minute, func() time.Time { return now })
+	for range maxSignIns {
+		if _, _, err := s.Start(uuid.New(), org, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.Start(uuid.New(), org, 0); !errors.Is(err, ErrTooManySignIns) {
+		t.Fatalf("global cap: %v", err)
+	}
+	now = now.Add(11 * time.Minute)
+	if _, _, err := s.Start(uuid.New(), org, 0); err != nil {
+		t.Fatalf("after expiry: %v", err)
+	}
+}
+
+func TestNoRedirects(t *testing.T) {
+	targetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetHit = true }))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	for _, client := range []*http.Client{nil, {}} {
+		if _, err := (HTTPVerifier{Client: client, GitHubAPI: srv.URL}).Verify(ctx, GitHub, SourcePAT, dummyGitHub); !errors.Is(err, ErrUnreachable) {
+			t.Errorf("verify: %v", err)
+		}
+		if _, err := (HTTPClaudeOAuth{Client: client, TokenURL: srv.URL}).Refresh(ctx, dummyRefresh); !errors.Is(err, ErrUnreachable) {
+			t.Errorf("refresh: %v", err)
+		}
+	}
+	if targetHit {
+		t.Fatal("redirect was followed")
+	}
+}
+
+func TestClaudeExpiresIn(t *testing.T) {
+	var expiresIn int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"access_token":%q,"refresh_token":%q,"expires_in":%d}`, dummyClaude, dummyRefresh, expiresIn)
+	}))
+	defer srv.Close()
+	c := HTTPClaudeOAuth{TokenURL: srv.URL}
+	for _, expiresIn = range []int64{0, -5} {
+		if _, err := c.Refresh(context.Background(), dummyRefresh); !errors.Is(err, ErrUnreachable) {
+			t.Errorf("expires_in %d: %v", expiresIn, err)
+		}
+	}
+	expiresIn = 1 << 40
+	tok, err := c.Refresh(context.Background(), dummyRefresh)
+	if err != nil || time.Until(tok.ExpiresAt) > 366*24*time.Hour {
+		t.Fatalf("clamp: %v %v", tok.ExpiresAt, err)
+	}
+}
+
+func TestOAuthTokensRedactedInJSONAndLogs(t *testing.T) {
+	tok := OAuthTokens{Access: dummyClaude, Refresh: dummyRefresh}
+	b, err := json.Marshal(struct{ T OAuthTokens }{tok})
+	if err != nil || string(b) != `{"T":"redacted"}` {
+		t.Fatalf("json: %s %v", b, err)
+	}
+	var buf strings.Builder
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("x", "tokens", tok)
+	if strings.Contains(buf.String(), dummyClaude) || strings.Contains(buf.String(), dummyRefresh) || !strings.Contains(buf.String(), "redacted") {
+		t.Fatalf("log: %s", buf.String())
+	}
+}
+
+func TestResponseLimits(t *testing.T) {
+	big := strings.Repeat("a", maxResponse+1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			fmt.Fprintf(w, `{"login":%q}`, big)
+			return
+		}
+		fmt.Fprintf(w, `{"access_token":%q,"expires_in":60}`, big)
+	}))
+	defer srv.Close()
+	if _, err := (HTTPVerifier{GitHubAPI: srv.URL}).Verify(context.Background(), GitHub, SourcePAT, dummyGitHub); !errors.Is(err, ErrUnreachable) {
+		t.Errorf("verify: %v", err)
+	}
+	if _, err := (HTTPClaudeOAuth{TokenURL: srv.URL + "/token"}).Refresh(context.Background(), dummyRefresh); !errors.Is(err, ErrUnreachable) {
+		t.Errorf("refresh: %v", err)
+	}
+}
+
+func TestAccountFieldsTruncated(t *testing.T) {
+	long := "a" + strings.Repeat("é", 200)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", long)
+		fmt.Fprintf(w, `{"login":%q}`, long)
+	}))
+	defer srv.Close()
+	acc, err := HTTPVerifier{GitHubAPI: srv.URL}.Verify(context.Background(), GitHub, SourcePAT, dummyGitHub)
+	if err != nil || len(acc.Name) != 255 || len(acc.Scopes) != 255 || !utf8.ValidString(acc.Name) {
+		t.Fatalf("got %d %d %v", len(acc.Name), len(acc.Scopes), err)
 	}
 }

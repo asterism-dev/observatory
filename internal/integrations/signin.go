@@ -4,11 +4,19 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const (
+	maxSignIns        = 10_000
+	maxSignInsPerUser = 5
+)
+
+var ErrTooManySignIns = errors.New("too many pending sign-ins")
 
 // SignIns holds pending PKCE sign-ins in memory; a hub restart means "start again".
 type SignIns[T any] struct {
@@ -41,10 +49,24 @@ func (s *SignIns[T]) Start(user, org uuid.UUID, v T) (state, challenge string, e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
+	var mine int
+	oldest := ""
 	for k, e := range s.pending {
-		if s.expired(e, now) {
+		switch {
+		case s.expired(e, now):
 			delete(s.pending, k)
+		case e.user == user:
+			mine++
+			if oldest == "" || e.started.Before(s.pending[oldest].started) {
+				oldest = k
+			}
 		}
+	}
+	if mine >= maxSignInsPerUser {
+		delete(s.pending, oldest)
+	}
+	if len(s.pending) >= maxSignIns {
+		return "", "", ErrTooManySignIns
 	}
 	s.pending[state] = signIn[T]{verifier: verifier, user: user, org: org, value: v, started: now}
 	return state, base64.RawURLEncoding.EncodeToString(sum[:]), nil
