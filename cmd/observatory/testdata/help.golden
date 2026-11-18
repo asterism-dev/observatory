@@ -1,10 +1,12 @@
 usage: observatory <command> [args] [flags]
 
-  login        log in with your browser (device flow)
-  logout       revoke this CLI session
-  whoami       show the user, orgs and session
-  version      print the CLI version
-  help [noun]  show this help
+  login                                  log in with your browser (device flow)
+  logout                                 revoke this CLI session
+  whoami                                 show the user, orgs and session
+  version                                print the CLI version
+  help [noun]                            show this help
+  ssh <vm> [--user ubuntu] [-- args...]  ssh into a VM
+  desktop <vm> [--user ubuntu]           start the VM desktop and attach with xpra
 
 org:
   org list           list your orgs
@@ -29,5 +31,10 @@ vm:
   vm metrics <vm>                     show recent CPU and memory samples
   vm egress <vm>                      show egress proxy hosts and CA of a VM
   vm integrations <vm>                show the integrations a VM gets
+
+ssh-key:
+  ssh-key list                   list your SSH keys
+  ssh-key add [FILE] [--name N]  add a public key (default ~/.ssh/id_ed25519.pub)
+  ssh-key delete <key>           delete an SSH key
 
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help

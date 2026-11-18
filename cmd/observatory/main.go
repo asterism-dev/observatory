@@ -84,7 +84,7 @@ func commands() []command {
 		{"org create", "<name>", "create an org", cmdOrgCreate},
 		{"org rename", "<name>", "rename the current org", cmdOrgRename},
 		{"org audit", "[flags]", "show the org's audit log", cmdOrgAudit},
-	}, vmCommands())
+	}, vmCommands(), connectCommands())
 }
 
 func main() {
