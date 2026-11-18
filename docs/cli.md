@@ -27,10 +27,13 @@ than 3 days before the end every command warns on stderr, and after it (or after
 "session expired or revoked, run observatory login" (exit 3).
 
 - `observatory whoami`: user, orgs with your role, and where the session comes from.
-- `observatory logout`: revokes this CLI session at the hub and removes the token (hub and default org stay).
+- `observatory logout`: revokes this CLI session at the hub and removes the token (hub and default org stay). With
+  `OBSERVATORY_TOKEN` set it revokes that session and keeps the stored one.
 - `observatory session list` / `session revoke <id>`: your sessions (web and CLI); `*` marks the current one.
 - `OBSERVATORY_TOKEN`: a CLI session token for CI. It overrides the file and is never written to it; it never comes
   from a flag.
+- The stored token is only sent to the hub it was issued for: with `--hub` or `OBSERVATORY_HUB` naming another hub,
+  commands fail with exit 3 until you log in there.
 
 ## Hub and org selection
 
@@ -125,7 +128,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | Command | Does |
 |---|---|
 | `node list` / `node show <node>` | incl. image state |
-| `node add <name>` / `node token <node>` | register a node / issue a new install command; both print it |
+| `node add <name>` / `node token <node>` | register a node / issue a new install command; both print it. `token` revokes the current credential, so an enrolled node disconnects until reinstalled (confirms) |
 | `node rename <node> <name>` / `node delete <node>` | delete confirms |
 | `team list` / `team show <team>` / `team create <name>` / `team rename <team> <name>` / `team delete <team>` | delete confirms |
 | `team add <team> <member> [--admin]` / `team remove <team> <member>` | remove confirms |
@@ -160,7 +163,7 @@ stdout carries only the result; prompts, warnings, `--wait` progress (on a termi
 | Code | When |
 |---|---|
 | 0 | success |
-| 1 | any other failure: API error not below, network error, a VM ended in `error` while waiting |
+| 1 | any other failure: any other API error, a network error, a VM ended in `error` while waiting |
 | 2 | usage: unknown command or flag, wrong arguments, no org chosen, confirmation needed but stdin is not a terminal |
 | 3 | not logged in, or the session expired or was revoked (`401`) |
 | 4 | forbidden (`403`) |
@@ -180,15 +183,17 @@ Commands return as soon as the hub accepted the request. `--wait` polls every 2 
 | `vm stop` / `pause` / `hibernate` | `stopped` / `paused` / `hibernated` |
 | `vm delete` | the VM is gone |
 | `snapshot create` | snapshot `ready` |
-| `snapshot restore` | the restore finished and the VM is back in its power state |
+| `snapshot restore` | the restore finished and the VM is back in its power state (`suspended` counts as `running`) |
 | `disk create` / `copy` | disk `ready` |
 
-A VM or snapshot in `error` ends the wait with exit 1. `vm restart` always waits for `stopped` between stop and start.
+A VM or snapshot in `error` ends the wait with exit 1. Hub errors (5xx) and network errors while polling are retried
+until the timeout. `vm restart` always waits for `stopped` between stop and start.
 
 ## Confirmation
 
 Destructive commands (`vm delete`, `snapshot restore`, `snapshot delete`, `disk delete`, `disk release`,
-`network delete`, `device delete`, `ssh-key delete`, `var delete`, `integration disconnect`, `node delete`,
+`network delete`, `device delete`, `ssh-key delete`, `var delete`, `integration disconnect`, `node token` (enrolled
+node), `node delete`,
 `team delete`, `team remove`, `member remove`, `invite revoke`, `role delete`, `binding delete`, `session revoke`) ask
 `[y/N]` on a terminal. `--yes` skips the question; without a terminal and without `--yes` they make no request and exit
 2 ("pass --yes to confirm"). `vm stop --force` and attach/detach with `--restart` do not ask.
