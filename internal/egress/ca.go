@@ -34,10 +34,25 @@ type MintedCA struct {
 }
 
 func serial() (*big.Int, error) {
-	return rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
+	n, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
+	return n.Add(n, big.NewInt(1)), nil
 }
 
+func (MintedCA) String() string   { return "MintedCA{redacted}" }
+func (MintedCA) GoString() string { return "MintedCA{redacted}" }
+
 func NewCA(hosts []string, now time.Time) (MintedCA, error) {
+	if len(hosts) == 0 {
+		return MintedCA{}, fmt.Errorf("%w: a CA needs at least one host", ErrInvalidHost)
+	}
+	for _, h := range hosts {
+		if err := validHost(h); err != nil {
+			return MintedCA{}, err
+		}
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return MintedCA{}, err
@@ -111,6 +126,9 @@ func NewIssuer(cas []proto.EgressCA, now func() time.Time) (*Issuer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("egress CA %s: invalid key", c.ID)
 		}
+		if !cert.IsCA || !key.PublicKey.Equal(cert.PublicKey) {
+			return nil, fmt.Errorf("egress CA %s: not a CA or key does not match", c.ID)
+		}
 		iss.cas = append(iss.cas, issuerCA{cert, key})
 	}
 	sort.SliceStable(iss.cas, func(i, j int) bool { return iss.cas[i].cert.NotBefore.Before(iss.cas[j].cert.NotBefore) })
@@ -124,22 +142,31 @@ func (i *Issuer) Leaf(host string) (*tls.Certificate, error) {
 	if c, ok := i.cache[host]; ok && now.Before(c.expires) {
 		return c.leaf, nil
 	}
-	for _, ca := range i.cas {
+	var pick *issuerCA
+	for n := range i.cas {
+		ca := &i.cas[n]
 		if !now.Before(ca.cert.NotAfter) || !covers(ca.cert, host) {
 			continue
 		}
-		leaf, err := i.issue(ca, host, now)
-		if err != nil {
-			return nil, err
+		if pick == nil {
+			pick = ca
 		}
-		exp := leaf.Leaf.NotAfter
-		if ca.cert.NotAfter.Before(exp) {
-			exp = ca.cert.NotAfter
+		if ca.cert.NotAfter.Sub(now) >= time.Hour {
+			if pick.cert.NotAfter.Sub(now) < time.Hour {
+				pick = ca
+			}
+			break
 		}
-		i.cache[host] = cachedLeaf{leaf, exp.Add(-time.Hour)}
-		return leaf, nil
 	}
-	return nil, ErrNoCA
+	if pick == nil {
+		return nil, ErrNoCA
+	}
+	leaf, err := i.issue(*pick, host, now)
+	if err != nil {
+		return nil, err
+	}
+	i.cache[host] = cachedLeaf{leaf, leaf.Leaf.NotAfter.Add(-time.Hour)}
+	return leaf, nil
 }
 
 func covers(ca *x509.Certificate, host string) bool {
@@ -165,7 +192,7 @@ func (i *Issuer) issue(ca issuerCA, host string, now time.Time) (*tls.Certificat
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
 		NotBefore:    now.Add(-backdate),
-		NotAfter:     now.Add(LeafValidity),
+		NotAfter:     minTime(now.Add(LeafValidity), ca.cert.NotAfter),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -178,4 +205,11 @@ func (i *Issuer) issue(ca issuerCA, host string, now time.Time) (*tls.Certificat
 		return nil, err
 	}
 	return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: parsed}, nil
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
 }

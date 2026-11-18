@@ -259,3 +259,6 @@ type EgressCA struct {
 	CertPEM string `json:"certPem"`
 	KeyPEM  string `json:"keyPem"`
 }
+
+func (EgressCA) String() string   { return "EgressCA{redacted}" }
+func (EgressCA) GoString() string { return "EgressCA{redacted}" }

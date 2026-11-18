@@ -58,7 +58,18 @@ func validHost(h string) error {
 			return bad()
 		}
 	}
+	if endsInNumber(labels[len(labels)-1]) {
+		return bad()
+	}
 	return nil
+}
+
+// A numeric last label is parsed as an IPv4 address by inet_aton-style resolvers (127.1, 0x7f.1).
+func endsInNumber(label string) bool {
+	if strings.HasPrefix(label, "0x") {
+		return strings.Trim(label[2:], "0123456789abcdef") == ""
+	}
+	return strings.Trim(label, "0123456789") == ""
 }
 
 func NormalizeSNI(s string) string {

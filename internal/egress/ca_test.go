@@ -9,12 +9,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,19 +49,17 @@ func parseCA(t *testing.T, ca MintedCA) (*x509.Certificate, *ecdsa.PrivateKey) {
 	return cert, key
 }
 
-func rogueLeaf(t *testing.T, ca MintedCA, dns string, ip net.IP) *tls.Certificate {
+func rogueLeaf(t *testing.T, ca MintedCA, dns []string, ip net.IP, now time.Time) *tls.Certificate {
 	t.Helper()
 	caCert, caKey := parseCA(t, ca)
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: "rogue"},
-		NotBefore:    t0.Add(-time.Hour), NotAfter: t0.Add(time.Hour),
+		NotBefore:    now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	if dns != "" {
-		tmpl.DNSNames = []string{dns}
+		DNSNames:    dns,
 	}
 	if ip != nil {
 		tmpl.IPAddresses = []net.IP{ip}
@@ -126,10 +126,10 @@ func TestCANameConstraints(t *testing.T) {
 	if err := verify(t, leaf, roots, "a.test", t0); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify(t, rogueLeaf(t, ca, "evil.test", nil), roots, "evil.test", t0); err == nil {
+	if err := verify(t, rogueLeaf(t, ca, []string{"evil.test"}, nil, t0), roots, "evil.test", t0); err == nil {
 		t.Fatal("evil.test verified")
 	}
-	if err := verify(t, rogueLeaf(t, ca, "", net.ParseIP("1.2.3.4")), roots, "", t0); err == nil {
+	if err := verify(t, rogueLeaf(t, ca, []string{"a.test"}, net.ParseIP("1.2.3.4"), t0), roots, "", t0); err == nil {
 		t.Fatal("IP SAN verified")
 	}
 }
@@ -143,22 +143,65 @@ func writePEM(t *testing.T, dir, name string, der []byte) string {
 	return p
 }
 
+func opensslVerify(path, caFile, leafFile string) (string, error) {
+	out, err := exec.Command(path, "verify", "-CAfile", caFile, leafFile).CombinedOutput()
+	return string(out), err
+}
+
+const nodeScript = `const https=require('https'),fs=require('fs');
+https.get({host:'127.0.0.1',port:+process.argv[1],servername:process.argv[2],ca:fs.readFileSync(process.argv[3]),agent:false},
+ r=>{console.log('connected');process.exit(0)}).on('error',e=>{console.log(e.code+' '+e.message);process.exit(1)});`
+
+func serveTLS(t *testing.T, c *tls.Certificate) int {
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{*c}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				c := conn.(*tls.Conn)
+				if c.Handshake() == nil {
+					c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+				}
+				conn.Close()
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
 func TestCAConstraintsOpenSSLNode(t *testing.T) {
-	ca := mustCA(t, time.Now(), "a.test")
+	now := time.Now()
+	ca := mustCA(t, now, "a.test")
 	dir := t.TempDir()
 	caFile := filepath.Join(dir, "ca.pem")
 	if err := os.WriteFile(caFile, []byte(ca.CertPEM), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	evil := rogueLeaf(t, ca, "evil.test", nil)
-	ipLeaf := rogueLeaf(t, ca, "", net.ParseIP("127.0.0.1"))
+	good, err := issuerFor(t, now, ca).Leaf("a.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evil := rogueLeaf(t, ca, []string{"evil.test"}, nil, now)
+	ipLeaf := rogueLeaf(t, ca, []string{"a.test"}, net.ParseIP("127.0.0.1"), now)
 
 	if path, err := exec.LookPath("openssl"); err != nil {
 		t.Log("openssl not found, skipping that part")
 	} else {
-		f := writePEM(t, dir, "evil.pem", evil.Certificate[0])
-		if err := exec.Command(path, "verify", "-CAfile", caFile, f).Run(); err == nil {
-			t.Error("openssl accepted evil.test leaf")
+		if out, err := opensslVerify(path, caFile, writePEM(t, dir, "good.pem", good.Certificate[0])); err != nil {
+			t.Fatalf("openssl positive control: %v\n%s", err, out)
+		}
+		for name, c := range map[string]*tls.Certificate{"evil": evil, "ip": ipLeaf} {
+			out, err := opensslVerify(path, caFile, writePEM(t, dir, name+".pem", c.Certificate[0]))
+			if err == nil || !strings.Contains(out, "subtree violation") {
+				t.Errorf("openssl %s: err=%v out=%s", name, err, out)
+			}
 		}
 	}
 
@@ -166,33 +209,78 @@ func TestCAConstraintsOpenSSLNode(t *testing.T) {
 	if err != nil {
 		t.Skip("node not found")
 	}
-	script := `const https=require('https'),fs=require('fs');
-https.get({host:'127.0.0.1',port:+process.argv[1],servername:process.argv[2],ca:fs.readFileSync(process.argv[3]),agent:false},
- r=>{console.log('connected');process.exit(0)}).on('error',e=>{process.exit(1)});`
-	for name, c := range map[string]*tls.Certificate{"evil.test": evil, "": ipLeaf} {
-		ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{*c}})
-		if err != nil {
-			t.Fatal(err)
+	run := func(c *tls.Certificate, sni string) (string, error) {
+		out, err := exec.Command(node, "-e", nodeScript, strconv.Itoa(serveTLS(t, c)), sni, caFile).CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run(good, "a.test"); err != nil || !strings.Contains(out, "connected") {
+		t.Fatalf("node positive control: %v\n%s", err, out)
+	}
+	for name, tc := range map[string]struct {
+		c   *tls.Certificate
+		sni string
+	}{"evil": {evil, "evil.test"}, "ip": {ipLeaf, "a.test"}} {
+		out, err := run(tc.c, tc.sni)
+		if err == nil || !strings.Contains(out, "subtree violation") {
+			t.Errorf("node %s: err=%v out=%s", name, err, out)
 		}
-		go func() {
-			for {
-				conn, err := ln.Accept()
-				if err != nil {
-					return
-				}
-				go func() { conn.(*tls.Conn).Handshake(); conn.Close() }()
+	}
+}
+
+func TestCAKeyNotPrinted(t *testing.T) {
+	ca := mustCA(t, t0, "a.test")
+	e := proto.EgressCA{ID: "1", CertPEM: ca.CertPEM, KeyPEM: ca.KeyPEM}
+	for _, v := range []any{ca, &ca, e, &e} {
+		for _, f := range []string{"%v", "%+v", "%#v", "%s"} {
+			if got := fmt.Sprintf(f, v); strings.Contains(got, "PRIVATE KEY") || strings.Contains(got, ca.KeyPEM) {
+				t.Errorf("%s leaks key: %s", f, got)
 			}
-		}()
-		port := ln.Addr().(*net.TCPAddr).Port
-		sni := name
-		if sni == "" {
-			sni = "a.test"
 		}
-		cmd := exec.Command(node, "-e", script, strconv.Itoa(port), sni, caFile)
-		if err := cmd.Run(); err == nil {
-			t.Errorf("node accepted leaf %q", name)
+	}
+}
+
+func TestNewCARejectsBadHosts(t *testing.T) {
+	for _, h := range [][]string{nil, {}, {"*.a.test"}, {"127.1"}} {
+		if _, err := NewCA(h, t0); err == nil {
+			t.Errorf("%v accepted", h)
 		}
-		ln.Close()
+	}
+}
+
+func TestNewIssuerRejectsMismatch(t *testing.T) {
+	a, b := mustCA(t, t0, "a.test"), mustCA(t, t0, "a.test")
+	if _, err := NewIssuer([]proto.EgressCA{{ID: "x", CertPEM: a.CertPEM, KeyPEM: b.KeyPEM}}, time.Now); err == nil {
+		t.Fatal("mismatched key accepted")
+	}
+	leaf, _ := issuerFor(t, t0, a).Leaf("a.test")
+	pemLeaf := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]}))
+	kd, _ := x509.MarshalECPrivateKey(leaf.PrivateKey.(*ecdsa.PrivateKey))
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kd}))
+	if _, err := NewIssuer([]proto.EgressCA{{ID: "x", CertPEM: pemLeaf, KeyPEM: pemKey}}, time.Now); err == nil {
+		t.Fatal("non-CA accepted")
+	}
+}
+
+func TestLeafClampedAndNearExpiryCA(t *testing.T) {
+	old := mustCA(t, t0.Add(-CAValidity+30*time.Minute), "a.test")
+	newer := mustCA(t, t0, "a.test")
+	oldCert, _ := parseCA(t, old)
+	iss := issuerFor(t, t0, old, newer)
+	leaf, err := iss.Leaf("a.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(t, leaf, pool(t, newer), "a.test", t0); err != nil {
+		t.Fatalf("near-expiry CA not skipped: %v", err)
+	}
+	only := issuerFor(t, t0, old)
+	l2, err := only.Leaf("a.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := x509.ParseCertificate(l2.Certificate[0])
+	if c.NotAfter.After(oldCert.NotAfter) {
+		t.Fatalf("leaf outlives CA: %v > %v", c.NotAfter, oldCert.NotAfter)
 	}
 }
 

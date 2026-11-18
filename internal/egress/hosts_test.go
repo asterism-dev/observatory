@@ -22,7 +22,7 @@ func TestNormalizeHosts(t *testing.T) {
 		eleven[i] = fmt.Sprintf("h%d.test", i)
 	}
 	bad := [][]string{
-		{"*.github.com"}, {"1.2.3.4"}, {"::1"}, {"github.com:443"}, {"localhost"}, {"a..b"},
+		{"*.github.com"}, {"1.2.3.4"}, {"::1"}, {"github.com:443"}, {"localhost"}, {"a..b"}, {"127.1"}, {"1.2.3.04"}, {"010.0.0.1"}, {"0x7f.1"}, {"a.0x1f"}, {"a.123"},
 		{strings.Repeat("a", 64) + ".test"}, eleven,
 	}
 	for _, in := range bad {
