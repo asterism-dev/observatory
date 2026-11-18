@@ -586,8 +586,8 @@ func TestAgentWaitsForGuestImage(t *testing.T) {
 	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
 	vm := env.hub.create("dev")
 	waitPreparingImage(t, env, vm.ID, PreparingImage)
-	if v, _ := env.hub.vm(vm.ID); v.Error != PreparingImage {
-		t.Fatalf("error = %q", v.Error)
+	if v, _ := env.hub.vm(vm.ID); v.Error != PreparingImage || len(v.Disks) != 0 {
+		t.Fatalf("error = %q, disks before the root disk exists = %+v", v.Error, v.Disks)
 	}
 	if got := env.provider.gotPrepared(); len(got) != 0 {
 		t.Fatalf("prepared before the image was ready: %v", got)

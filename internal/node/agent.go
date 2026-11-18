@@ -1047,7 +1047,10 @@ func (a *Agent) reportEntry(want *vmEntry, st proto.VMStatus) {
 	}
 	a.mu.Unlock()
 	if ok {
-		st.Disks = a.disks(f)
+		// Before Prepare there is no root.img; asking for disks would only log an error on every status.
+		if !f.NeedsPrepare {
+			st.Disks = a.disks(f)
+		}
 		st.Snapshots = a.snapshotInfos(f.Spec.ID)
 		st.RestoredSeq = f.RestoredSeq
 		st.Image = f.Image
