@@ -423,6 +423,13 @@
     "deleteTitle": "Disk löschen",
     "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
   },
+  "usage": {
+    "section": "Auslastung",
+    "cpu": "CPU",
+    "ram": "RAM",
+    "none": "Noch keine Daten. Messwerte erscheinen, solange die VM läuft.",
+    "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart."
+  },
   "snapshots": {
     "section": "Snapshots",
     "take": "Snapshot erstellen",

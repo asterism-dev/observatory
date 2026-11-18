@@ -175,6 +175,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	log.Printf("connected to hub %s", a.HubURL)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
+	go a.metricsLoop(connCtx)
 	defer func() {
 		stopRefresh()
 		a.mu.Lock()

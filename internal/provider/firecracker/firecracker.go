@@ -467,6 +467,32 @@ func (i *instance) WaitIP(ctx context.Context) (string, error) {
 	return i.Process.WaitIP(ctx)
 }
 
+// CPUTicks reads the jailed Firecracker, the shell's only child, by its host PID.
+func (i *instance) CPUTicks() (uint64, error) {
+	sh := strconv.Itoa(i.Cmd.Process.Pid)
+	b, err := os.ReadFile("/proc/" + sh + "/task/" + sh + "/children")
+	if err != nil {
+		return 0, err
+	}
+	kids := strings.Fields(string(b))
+	if len(kids) == 0 {
+		return 0, errors.New("firecracker process not found")
+	}
+	child, err := strconv.Atoi(kids[0])
+	if err != nil {
+		return 0, err
+	}
+	return node.ProcTicks(child)
+}
+
+func (i *instance) Memory() (int, int, error) {
+	st, err := i.api.BalloonStats()
+	if err != nil || st.TotalMemory == 0 {
+		return 0, 0, err
+	}
+	return int(st.TotalMemory >> 20), int((st.TotalMemory - min(st.AvailableMemory, st.TotalMemory)) >> 20), nil
+}
+
 func (i *instance) Pause() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()

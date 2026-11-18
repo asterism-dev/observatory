@@ -423,6 +423,13 @@
     "deleteTitle": "Delete disk",
     "deleteBody": "Delete {name}? Its data is permanently lost."
   },
+  "usage": {
+    "section": "Usage",
+    "cpu": "CPU",
+    "ram": "RAM",
+    "none": "No data yet. Metrics appear while the VM is running.",
+    "noRam": "RAM statistics are available after the next cold boot."
+  },
   "snapshots": {
     "section": "Snapshots",
     "take": "Take snapshot",

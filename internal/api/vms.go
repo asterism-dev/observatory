@@ -399,8 +399,29 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.DropMetrics(v.ID)
 	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) vmMetrics(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, "vm:read")
+	if !ok {
+		return
+	}
+	samples := h.fleet.Metrics(v.ID)
+	out := make([]metricJSON, len(samples))
+	for i, s := range samples {
+		out[i] = metricJSON(s)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"samples": out})
+}
+
+type metricJSON struct {
+	At         time.Time `json:"at"`
+	CPUPercent float64   `json:"cpuPercent"`
+	MemTotalMB int       `json:"memTotalMB"`
+	MemUsedMB  int       `json:"memUsedMB"`
 }
 
 func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {

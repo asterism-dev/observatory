@@ -29,6 +29,7 @@ type Fleet struct {
 	mu       sync.Mutex
 	conns    map[uuid.UUID]*conn
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
+	metrics  map[uuid.UUID][]MetricSample
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -36,7 +37,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}}
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }

@@ -552,3 +552,19 @@ func TestStartWakesSuspended(t *testing.T) {
 		t.Fatalf("running start must not bump wake_seq: %d", got.WakeSeq)
 	}
 }
+
+func TestMetricsAPIRequiresRead(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	_, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	path := vmsPath(org) + "/" + v.ID + "/metrics"
+	if rec := e.do("GET", path, bobTok); rec.Code != 403 && rec.Code != 404 {
+		t.Fatalf("outsider: %d", rec.Code)
+	}
+	rec := e.do("GET", path, tok)
+	if rec.Code != 200 || rec.Body.String() != "{\"samples\":[]}\n" {
+		t.Fatalf("owner: %d %q", rec.Code, rec.Body.String())
+	}
+}

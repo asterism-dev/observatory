@@ -39,6 +39,8 @@ type fakeHub struct {
 	seq      uint64
 	nextID   int
 	underlay *proto.Underlay
+	cpus     int // CPUs of VMs from create; zero means 1
+	metrics  []proto.Message
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -109,6 +111,11 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 		if err := dec.Decode(&m); err != nil {
 			return
 		}
+		if m.Type == "metrics" {
+			h.mu.Lock()
+			h.metrics = append(h.metrics, m)
+			h.mu.Unlock()
+		}
 		if m.Type == "status" && m.Status != nil {
 			h.mu.Lock()
 			if vm, ok := h.vmsByID[m.Status.ID]; ok {
@@ -150,8 +157,9 @@ func (h *fakeHub) create(name string) hubVM {
 	h.mu.Lock()
 	h.nextID++
 	id := "vm" + string(rune('a'+h.nextID))
+	cpus := max(h.cpus, 1)
 	vm := &hubVM{
-		Spec:   proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10},
+		Spec:   proto.VMSpec{ID: id, Name: name, CPUs: cpus, MemoryMB: 1024, DiskGB: 10},
 		Boot:   &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAA"}},
 		NodeID: "n1", Power: proto.PowerRunning, Generation: 1, VMStatus: proto.VMStatus{ID: id, State: proto.StatePending},
 	}

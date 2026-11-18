@@ -8,6 +8,7 @@ import { api, ApiError } from '@/api'
 import VMDisksDialog from '@/components/VMDisksDialog.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import VMSnapshots from '@/components/VMSnapshots.vue'
+import VMUsage from '@/components/VMUsage.vue'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
@@ -161,6 +162,7 @@ watch(
       <p v-else>{{ t('vmDisks.none') }}</p>
       <p v-if="vm.canDisks"><Button :disabled="busy" @click="disksOpen = true">{{ t('vmDisks.change') }}</Button></p>
       <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
+      <VMUsage :org-id="org.id" :vm="vm" />
       <VMSnapshots :org-id="org.id" :vm="vm" @changed="load" />
       <template v-if="vm.canPower">
         <h2>{{ t('vms.autoSuspend') }}</h2>

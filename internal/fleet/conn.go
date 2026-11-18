@@ -115,6 +115,8 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			} else if changed {
 				f.NotifyOrg(node.OrgID)
 			}
+		case m.Type == "metrics":
+			f.noteMetrics(ctx, node.ID, m.Metrics)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		}
