@@ -7,6 +7,7 @@ import DisksView from '@/views/DisksView.vue'
 import DevicesView from '@/views/DevicesView.vue'
 import NetworksView from '@/views/NetworksView.vue'
 import EnvView from '@/views/EnvView.vue'
+import IntegrationsView from '@/views/IntegrationsView.vue'
 import NodeDetailView from '@/views/NodeDetailView.vue'
 import NodesView from '@/views/NodesView.vue'
 import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
@@ -50,6 +51,7 @@ export const router = createRouter({
     { path: '/orgs/:orgId/networks', component: NetworksView, meta: { title: 'nav.networks' } },
     { path: '/orgs/:orgId/devices', component: DevicesView, meta: { title: 'nav.devices' } },
     { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
+    { path: '/orgs/:orgId/integrations', component: IntegrationsView, meta: { title: 'nav.integrations' } },
     {
       path: '/orgs/:orgId',
       component: OrgSettingsLayout,
