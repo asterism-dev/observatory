@@ -262,3 +262,15 @@ type EgressCA struct {
 
 func (EgressCA) String() string   { return "EgressCA{redacted}" }
 func (EgressCA) GoString() string { return "EgressCA{redacted}" }
+
+type HostBoundSecret struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Placeholder string   `json:"placeholder"`
+	Value       string   `json:"value"`
+	Hosts       []string `json:"hosts"`
+	Headers     []string `json:"headers,omitempty"`
+}
+
+func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
+func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }

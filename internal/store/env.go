@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,12 +14,16 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/egress"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
 var (
 	ErrNoMasterKey       = errors.New("no master key configured")
 	ErrMasterKeyMismatch = errors.New("org keys are wrapped by a different master key than OBSERVATORY_SECRETS_KEY")
+	ErrHostsNeedSecret   = errors.New("only secrets can be bound to hosts")
+	ErrValueTooShort     = errors.New("a host-bound secret needs a value of at least 12 bytes")
 )
 
 type EnvKind string
@@ -35,21 +41,22 @@ const (
 	EnvScopeUser EnvScope = "user"
 )
 
-// OwnerID is the team or user id, nil for org scope.
+// OwnerID is the team or user id, nil for org scope; Hosts is nil unless the secret is host-bound.
 type EnvVar struct {
 	ID, OrgID            uuid.UUID
 	Kind                 EnvKind
 	Scope                EnvScope
 	OwnerID              *uuid.UUID
 	Name                 string
+	Hosts                []string
 	CreatedBy, UpdatedBy uuid.UUID
 	CreatedAt, UpdatedAt time.Time
 }
 
-const envCols = "id, org_id, kind, scope, coalesce(team_id, user_id), name, created_by, updated_by, created_at, updated_at"
+const envCols = "id, org_id, kind, scope, coalesce(team_id, user_id), name, hosts, created_by, updated_by, created_at, updated_at"
 
 func scanEnvVar(r pgx.Row) (v EnvVar, err error) {
-	err = r.Scan(&v.ID, &v.OrgID, &v.Kind, &v.Scope, &v.OwnerID, &v.Name, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt)
+	err = r.Scan(&v.ID, &v.OrgID, &v.Kind, &v.Scope, &v.OwnerID, &v.Name, &v.Hosts, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -64,6 +71,24 @@ func envOwnerColumns(v EnvVar) (teamID, userID *uuid.UUID) {
 		return nil, v.OwnerID
 	}
 	return nil, nil
+}
+
+// bindingColumns validates v's hosts against its kind and value length; placeholder is non-nil when hosts are set.
+func bindingColumns(v EnvVar, value string) (hosts []string, placeholder *string, err error) {
+	if len(v.Hosts) == 0 {
+		return nil, nil, nil
+	}
+	if v.Kind != EnvSecret {
+		return nil, nil, ErrHostsNeedSecret
+	}
+	if len(value) < egress.MinValueLen {
+		return nil, nil, ErrValueTooShort
+	}
+	p, err := egress.NewPlaceholder()
+	if err != nil {
+		return nil, nil, err
+	}
+	return v.Hosts, &p, nil
 }
 
 // orgKey returns the org's data key, creating it on first use.
@@ -180,15 +205,19 @@ func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVa
 			return err
 		}
 		v.ID = uuid.New()
+		hosts, placeholder, err := bindingColumns(v, value)
+		if err != nil {
+			return err
+		}
 		nonce, ct, err := seal.Seal(key, []byte(value), envAAD(v.OrgID, v.ID, v.Kind))
 		if err != nil {
 			return err
 		}
 		teamID, userID := envOwnerColumns(v)
 		err = tx.q.QueryRow(ctx, `
-			INSERT INTO env_vars (id, org_id, kind, scope, team_id, user_id, name, nonce, ciphertext, created_by, updated_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING created_at, updated_at`,
-			v.ID, v.OrgID, v.Kind, v.Scope, teamID, userID, v.Name, nonce, ct, v.CreatedBy).Scan(&v.CreatedAt, &v.UpdatedAt)
+			INSERT INTO env_vars (id, org_id, kind, scope, team_id, user_id, name, nonce, ciphertext, created_by, updated_by, hosts, placeholder)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12) RETURNING created_at, updated_at`,
+			v.ID, v.OrgID, v.Kind, v.Scope, teamID, userID, v.Name, nonce, ct, v.CreatedBy, hosts, placeholder).Scan(&v.CreatedAt, &v.UpdatedAt)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -214,9 +243,12 @@ func envGuardArgs(old EnvVar, rest ...any) []any {
 
 // UpdateEnvVar sets name, kind and updated_by from v if the row still matches old; a nil value keeps the stored value.
 func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) error {
+	if len(v.Hosts) > 0 && v.Kind != EnvSecret {
+		return ErrHostsNeedSecret
+	}
 	return s.InTx(ctx, func(tx *Store) error {
-		if value == nil && v.Kind != old.Kind {
-			// The kind is in the AAD, so the kept value is re-sealed; the lock keeps it from changing meanwhile.
+		if value == nil && (v.Kind != old.Kind || len(v.Hosts) > 0) {
+			// The kind is in the AAD, so the kept value is re-sealed; the lock keeps it from changing meanwhile. Binding needs the plain value for the length check.
 			var nonce, ct []byte
 			err := tx.q.QueryRow(ctx, "SELECT nonce, ciphertext FROM env_vars WHERE "+envGuard+" FOR UPDATE", envGuardArgs(old)...).Scan(&nonce, &ct)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -235,6 +267,14 @@ func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) 
 			kept := string(plain)
 			value = &kept
 		}
+		var plain string
+		if value != nil {
+			plain = *value
+		}
+		hosts, placeholder, err := bindingColumns(v, plain)
+		if err != nil {
+			return err
+		}
 		var nonce, ct []byte
 		if value != nil {
 			key, err := tx.orgKey(ctx, old.OrgID)
@@ -247,8 +287,9 @@ func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) 
 		}
 		tag, err := tx.q.Exec(ctx, `
 			UPDATE env_vars SET name = $7, kind = $8, updated_by = $9, updated_at = now(),
-			  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext)
-			WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct)...)
+			  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext),
+			  hosts = $12, placeholder = CASE WHEN $12::text[] IS NULL THEN placeholder ELSE coalesce(placeholder, $13) END
+			WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct, hosts, placeholder)...)
 		return tx.envWriteResult(ctx, old, tag.RowsAffected(), err)
 	})
 }
@@ -292,12 +333,18 @@ func (s *Store) envWriteResult(ctx context.Context, old EnvVar, rows int64, err 
 	return ErrNotFound
 }
 
-// ResolveEnv returns the decrypted variables owner (a user or team subject) may use; the narrowest scope wins per name.
+// ResolveEnv returns the decrypted variables owner may use, with host-bound secrets as placeholders.
 func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID, owner string) (map[string]string, error) {
+	env, _, err := s.ResolveVMEnv(ctx, e, org, owner)
+	return env, err
+}
+
+// ResolveVMEnv is ResolveEnv plus the host-bound winners (sorted by name) with their real values.
+func (s *Store) ResolveVMEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID, owner string) (env map[string]string, bound []proto.HostBoundSecret, err error) {
 	scope, idStr, ok := strings.Cut(owner, ":")
 	id, idErr := uuid.Parse(idStr)
 	if !ok || idErr != nil || (scope != "user" && scope != "team") {
-		return nil, fmt.Errorf("unsupported env owner %q", owner)
+		return nil, nil, fmt.Errorf("unsupported env owner %q", owner)
 	}
 	ownScope, ownObj := EnvScopeUser, authz.UserEnvObject(id)
 	if scope == "team" {
@@ -306,36 +353,39 @@ func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID
 	orgOK := e.Allowed(owner, org, authz.ObjEnv, "env:use")
 	ownOK := e.Allowed(owner, org, ownObj, "env:use")
 	if !orgOK && !ownOK {
-		return map[string]string{}, nil
+		return map[string]string{}, nil, nil
 	}
 	rows, err := s.q.Query(ctx, `
-		SELECT id, kind, scope, name, nonce, ciphertext FROM env_vars
+		SELECT id, kind, scope, name, nonce, ciphertext, hosts, coalesce(placeholder, '') FROM env_vars
 		WHERE org_id = $1 AND (scope = 'org' OR (scope = $2 AND coalesce(team_id, user_id) = $3))`, org, ownScope, id)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type row struct {
-		id        uuid.UUID
-		kind      EnvKind
-		scope     EnvScope
-		name      string
-		nonce, ct []byte
+		id          uuid.UUID
+		kind        EnvKind
+		scope       EnvScope
+		name        string
+		nonce, ct   []byte
+		hosts       []string
+		placeholder string
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (x row, err error) {
-		err = r.Scan(&x.id, &x.kind, &x.scope, &x.name, &x.nonce, &x.ct)
+		err = r.Scan(&x.id, &x.kind, &x.scope, &x.name, &x.nonce, &x.ct, &x.hosts, &x.placeholder)
 		return
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	out := map[string]string{}
+	env = map[string]string{}
 	if len(list) == 0 {
-		return out, nil
+		return env, nil, nil
 	}
 	key, err := s.orgKey(ctx, org)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	winners := map[string]proto.HostBoundSecret{}
 	for _, pass := range []EnvScope{EnvScopeOrg, ownScope} {
 		if (pass == EnvScopeOrg && !orgOK) || (pass == ownScope && !ownOK) {
 			continue
@@ -346,10 +396,19 @@ func (s *Store) ResolveEnv(ctx context.Context, e *authz.Enforcer, org uuid.UUID
 			}
 			plain, err := seal.Open(key, r.nonce, r.ct, envAAD(org, r.id, r.kind))
 			if err != nil {
-				return nil, fmt.Errorf("decrypt env var %s: %w", r.id, err)
+				return nil, nil, fmt.Errorf("decrypt env var %s: %w", r.id, err)
 			}
-			out[r.name] = string(plain)
+			if len(r.hosts) == 0 {
+				env[r.name] = string(plain)
+				delete(winners, r.name)
+				continue
+			}
+			env[r.name] = r.placeholder
+			winners[r.name] = proto.HostBoundSecret{ID: r.id.String(), Name: r.name, Placeholder: r.placeholder, Value: string(plain), Hosts: r.hosts}
 		}
 	}
-	return out, nil
+	for _, name := range slices.Sorted(maps.Keys(winners)) {
+		bound = append(bound, winners[name])
+	}
+	return env, bound, nil
 }
