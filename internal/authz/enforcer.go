@@ -110,6 +110,7 @@ func New(p Policy) (*Enforcer, error) {
 		// Users may do everything with their own resources; org deny rules still win.
 		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
 		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
+		rules = append(rules, []string{u, org, UserIntegrationsObject(mr.UserID), "integration:*", string(Allow)})
 		for _, act := range []string{"device:create", "device:list", "device:delete"} {
 			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
 		}
@@ -120,6 +121,7 @@ func New(p Policy) (*Enforcer, error) {
 		if tm.Admin {
 			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "team:manage-members", string(Allow)})
 			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamIntegrationsObject(tm.TeamID), "integration:*", string(Allow)})
 			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "vm:create", string(Allow)})
 			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "disk:create", string(Allow)})
 			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
@@ -131,6 +133,9 @@ func New(p Policy) (*Enforcer, error) {
 			[]string{sub, org, TeamEnvObject(t.ID), "env:list", string(Allow)},
 			[]string{sub, org, TeamEnvObject(t.ID), "env:use", string(Allow)},
 			[]string{sub, org, ObjEnv, "env:use", string(Allow)},
+			[]string{sub, org, TeamIntegrationsObject(t.ID), "integration:list", string(Allow)},
+			[]string{sub, org, TeamIntegrationsObject(t.ID), "integration:use", string(Allow)},
+			[]string{sub, org, ObjIntegrations, "integration:use", string(Allow)},
 		)
 	}
 	for _, vm := range p.VMs {

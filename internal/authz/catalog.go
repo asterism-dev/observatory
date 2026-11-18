@@ -11,18 +11,21 @@ import (
 )
 
 const (
-	ObjSettings = "org/settings"
-	ObjMembers  = "org/members"
-	ObjTeams    = "org/teams"
-	ObjRoles    = "org/roles"
-	ObjLimits   = "org/limits"
-	ObjAudit    = "org/audit"
-	ObjEnv      = "org/env"
-	ObjTeamEnv  = "org/team-env"
-	ObjUserEnv  = "org/user-env"
-	ObjNodes    = "org/nodes"
-	ObjVMs      = "org/vms"
-	ObjTeamVMs  = "org/team-vms"
+	ObjSettings         = "org/settings"
+	ObjMembers          = "org/members"
+	ObjTeams            = "org/teams"
+	ObjRoles            = "org/roles"
+	ObjLimits           = "org/limits"
+	ObjAudit            = "org/audit"
+	ObjEnv              = "org/env"
+	ObjTeamEnv          = "org/team-env"
+	ObjUserEnv          = "org/user-env"
+	ObjIntegrations     = "org/integrations"
+	ObjTeamIntegrations = "org/team-integrations"
+	ObjUserIntegrations = "org/user-integrations"
+	ObjNodes            = "org/nodes"
+	ObjVMs              = "org/vms"
+	ObjTeamVMs          = "org/team-vms"
 
 	ObjUserDevices = "org/user-devices"
 	ObjNetworks    = "org/networks"
@@ -44,6 +47,11 @@ func TeamEnvObject(id uuid.UUID) string { return ObjTeamEnv + "/" + id.String() 
 
 // UserEnvObject is a member's private env scope; no built-in role reaches it, only its user.
 func UserEnvObject(id uuid.UUID) string { return ObjUserEnv + "/" + id.String() }
+
+func TeamIntegrationsObject(id uuid.UUID) string { return ObjTeamIntegrations + "/" + id.String() }
+
+// UserIntegrationsObject is a member's private integration scope; no built-in role reaches it, only its user.
+func UserIntegrationsObject(id uuid.UUID) string { return ObjUserIntegrations + "/" + id.String() }
 
 func NodeObject(id uuid.UUID) string { return ObjNodes + "/" + id.String() }
 
@@ -109,6 +117,18 @@ var Catalog = []Permission{
 	{"env:set", ObjUserEnv + "/*"},
 	{"env:delete", ObjUserEnv + "/*"},
 	{"env:use", ObjUserEnv + "/*"},
+	{"integration:list", ObjIntegrations},
+	{"integration:set", ObjIntegrations},
+	{"integration:delete", ObjIntegrations},
+	{"integration:use", ObjIntegrations},
+	{"integration:list", ObjTeamIntegrations + "/*"},
+	{"integration:set", ObjTeamIntegrations + "/*"},
+	{"integration:delete", ObjTeamIntegrations + "/*"},
+	{"integration:use", ObjTeamIntegrations + "/*"},
+	{"integration:list", ObjUserIntegrations + "/*"},
+	{"integration:set", ObjUserIntegrations + "/*"},
+	{"integration:delete", ObjUserIntegrations + "/*"},
+	{"integration:use", ObjUserIntegrations + "/*"},
 	{"node:read", ObjNodes},
 	{"node:create", ObjNodes},
 	{"node:read", ObjNodes + "/*"},
@@ -151,6 +171,8 @@ func BuiltinRules(key string) []Rule {
 		{Allow, ObjLimits, "limit:read"},
 		{Allow, ObjEnv, "env:list"},
 		{Allow, ObjEnv, "env:use"},
+		{Allow, ObjIntegrations, "integration:list"},
+		{Allow, ObjIntegrations, "integration:use"},
 		{Allow, ObjNodes, "node:read"},
 		{Allow, ObjNodes + "/*", "node:read"},
 		{Allow, ObjNodes + "/*", "node:use"},
@@ -171,6 +193,8 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjAudit, "audit:read"},
 		Rule{Allow, ObjEnv, "env:*"},
 		Rule{Allow, ObjTeamEnv + "/*", "env:*"},
+		Rule{Allow, ObjIntegrations, "integration:*"},
+		Rule{Allow, ObjTeamIntegrations + "/*", "integration:*"},
 		Rule{Allow, ObjNodes, "node:*"},
 		Rule{Allow, ObjNodes + "/*", "node:*"},
 		// Explicit VM actions, never vm:*: admins must not gain vm:connect or future VM actions.
