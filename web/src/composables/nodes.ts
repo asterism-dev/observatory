@@ -55,6 +55,7 @@ export interface VmInfo {
   autoSuspendMinutes: number
   canDelete: boolean
   image: string
+  stockImage: boolean
 }
 
 export const vmTones = {

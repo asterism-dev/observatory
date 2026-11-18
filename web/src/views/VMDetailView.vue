@@ -171,7 +171,7 @@ watch(
           <template v-else>–</template>
         </dd>
         <dt>{{ t('vms.image') }}</dt>
-        <dd>{{ vm.image || t('vms.imageStock') }}</dd>
+        <dd>{{ vm.image || (vm.stockImage ? t('vms.imageStock') : '–') }}</dd>
         <template v-if="vm.image && vm.dnsName">
           <dt>{{ t('vms.desktop') }}</dt>
           <dd>

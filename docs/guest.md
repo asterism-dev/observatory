@@ -60,8 +60,8 @@ off and that file holds the expected version. Details, disk space and failures: 
 - VMs created while the image builds use the previous guest image if the node has one. On a node without any (its
   first build) they stay `starting` with "preparing guest image" and start once it is ready. They never fall back to
   the stock image.
-- The VM page shows the image a VM was created from ("stock" for VMs created before guest images, and for VMs still
-  waiting for theirs).
+- The VM page shows the image a VM was created from: "stock" for VMs created before guest images, "–" for VMs that
+  have not started yet and for VMs on a node with a custom image (`imageURL`).
 
 ## Updates
 

@@ -48,6 +48,7 @@ type vmJSON struct {
 	MemoryMB   int            `json:"memoryMB"`
 	DiskGB     int            `json:"diskGB"`
 	Image      string         `json:"image"`
+	StockImage bool           `json:"stockImage"` // ran without a guest image on a node that has guest images
 	CreatedAt  time.Time      `json:"createdAt"`
 	CanPower   bool           `json:"canPower"`
 	CanDelete  bool           `json:"canDelete"`
@@ -148,6 +149,11 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
+	}
+	if v.Image == "" && v.Provisioned {
+		j.StockImage = !slices.ContainsFunc(names.nodeList, func(n store.Node) bool {
+			return n.ID == v.NodeID && n.Image != nil && n.Image.State == proto.ImageCustom
+		})
 	}
 	for _, nic := range names.nics[v.ID] {
 		nn := names.networks[nic.NetworkID]

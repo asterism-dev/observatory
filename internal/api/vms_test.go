@@ -604,6 +604,35 @@ func TestVMJSONImage(t *testing.T) {
 	}
 }
 
+func TestVMJSONStockImage(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	vm := e.createVM(tok, org, vmBody("a", userOwner(), node))
+	nodeID, _ := uuid.Parse(node)
+	stock := func() bool {
+		var got struct{ StockImage bool }
+		decode(t, e.do("GET", vmsPath(org)+"/"+vm.ID, tok), &got)
+		return got.StockImage
+	}
+	if stock() {
+		t.Fatal("stock before the VM ever ran")
+	}
+	if err := e.store.SetVMStatus(context.Background(), nodeID, proto.VMStatus{ID: vm.ID, State: proto.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if !stock() {
+		t.Fatal("not stock after running without a guest image")
+	}
+	if err := e.store.SetNodeImage(context.Background(), nodeID, proto.ImageStatus{State: proto.ImageCustom}); err != nil {
+		t.Fatal(err)
+	}
+	if stock() {
+		t.Fatal("stock on a custom-image node")
+	}
+}
+
 func TestCreateVMDiskMinimum(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user("alice")
