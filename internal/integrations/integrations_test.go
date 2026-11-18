@@ -1,0 +1,298 @@
+package integrations
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/asterism-dev/observatory/internal/egress"
+	"github.com/google/uuid"
+)
+
+const (
+	dummyGitHub  = "ghp_dummy0000000000000000"
+	dummyLinear  = "lin_api_dummy000000000000"
+	dummyClaude  = "sk-ant-oat01-dummy000000000000"
+	dummyRefresh = "sk-ant-ort01-dummy000000000000"
+)
+
+func TestNormalizeToken(t *testing.T) {
+	got, err := NormalizeToken(" " + dummyGitHub + "\n")
+	if err != nil || got != dummyGitHub {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	for _, bad := range []string{"ghp_a b0000000000", "ghp\n00000000000", strings.Repeat("a", 11), strings.Repeat("a", 4097), ""} {
+		if _, err := NormalizeToken(bad); !errors.Is(err, ErrInvalidToken) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	if _, err := NormalizeToken(strings.Repeat("a", 4096)); err != nil {
+		t.Errorf("4096 bytes: %v", err)
+	}
+}
+
+func TestKindsTable(t *testing.T) {
+	want := map[Kind][]string{
+		GitHub: {"api.github.com", "github.com", "uploads.github.com"},
+		Claude: {"api.anthropic.com"},
+		Linear: {"api.linear.app", "mcp.linear.app"},
+	}
+	if len(Kinds) != len(want) {
+		t.Fatalf("kinds: %v", Kinds)
+	}
+	for k, hosts := range want {
+		spec, ok := Kinds[k]
+		if !ok || !reflect.DeepEqual(spec.Hosts, hosts) || !reflect.DeepEqual(spec.Headers, []string{"Authorization"}) {
+			t.Errorf("%s: %+v", k, spec)
+		}
+		if norm, err := egress.NormalizeHosts(spec.Hosts); err != nil || !reflect.DeepEqual(norm, spec.Hosts) {
+			t.Errorf("%s: normalized %v, %v", k, norm, err)
+		}
+		if !strings.HasPrefix(spec.TokenPage, "https://") {
+			t.Errorf("%s: token page %q", k, spec.TokenPage)
+		}
+	}
+	if !reflect.DeepEqual(Kinds[Claude].Sources, []Source{SourceSetupToken, SourceOAuth}) {
+		t.Errorf("claude sources: %v", Kinds[Claude].Sources)
+	}
+}
+
+func noToken(t *testing.T, err error, tokens ...string) {
+	t.Helper()
+	for _, tok := range tokens {
+		if err != nil && strings.Contains(err.Error(), tok) {
+			t.Errorf("error contains token: %v", err)
+		}
+	}
+}
+
+func TestVerifyGitHub(t *testing.T) {
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/user" || r.Header.Get("Authorization") != "Bearer "+dummyGitHub {
+			t.Errorf("request: %s %s %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("X-OAuth-Scopes", "repo")
+		w.Header().Set("github-authentication-token-expiration", "2026-12-31 00:00:00 UTC")
+		w.WriteHeader(status)
+		fmt.Fprintf(w, `{"login":"octocat","echo":%q}`, dummyGitHub)
+	}))
+	defer srv.Close()
+	v := HTTPVerifier{GitHubAPI: srv.URL}
+	ctx := context.Background()
+
+	acc, err := v.Verify(ctx, GitHub, SourcePAT, dummyGitHub)
+	want := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	if err != nil || acc.Name != "octocat" || acc.Scopes != "repo" || acc.ExpiresAt == nil || !acc.ExpiresAt.Equal(want) {
+		t.Fatalf("got %+v, %v", acc, err)
+	}
+
+	status = http.StatusUnauthorized
+	_, err = v.Verify(ctx, GitHub, SourcePAT, dummyGitHub)
+	if !errors.Is(err, ErrRejected) {
+		t.Fatalf("401: %v", err)
+	}
+	noToken(t, err, dummyGitHub)
+
+	status = http.StatusBadGateway
+	_, err = v.Verify(ctx, GitHub, SourcePAT, dummyGitHub)
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("502: %v", err)
+	}
+	noToken(t, err, dummyGitHub)
+
+	srv.Close()
+	_, err = v.Verify(ctx, GitHub, SourcePAT, dummyGitHub)
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("closed: %v", err)
+	}
+	noToken(t, err, dummyGitHub)
+}
+
+func TestGitHubExpiryFormats(t *testing.T) {
+	want := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	if got := parseGitHubExpiry("2026-12-31 01:00:00 +0100"); got == nil || !got.Equal(want) {
+		t.Errorf("offset form: %v", got)
+	}
+	if got := parseGitHubExpiry("soon"); got != nil {
+		t.Errorf("unparsable: %v", got)
+	}
+}
+
+func TestVerifyLinear(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var q struct{ Query string }
+		_ = json.Unmarshal(body, &q)
+		if r.Method != http.MethodPost || r.URL.Path != "/graphql" || r.Header.Get("Authorization") != dummyLinear || q.Query != "{ viewer { email } }" {
+			t.Errorf("request: %s %s %q %s", r.Method, r.URL.Path, r.Header.Get("Authorization"), body)
+		}
+		fmt.Fprint(w, `{"data":{"viewer":{"email":"bot@example.com"}}}`)
+	}))
+	defer srv.Close()
+	acc, err := HTTPVerifier{LinearAPI: srv.URL}.Verify(context.Background(), Linear, SourceAPIKey, dummyLinear)
+	if err != nil || acc.Name != "bot@example.com" {
+		t.Fatalf("got %+v, %v", acc, err)
+	}
+}
+
+func TestVerifyClaude(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path != "/v1/models" || r.Header.Get("Authorization") != "Bearer "+dummyClaude ||
+			r.Header.Get("anthropic-version") != "2023-06-01" || r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
+			t.Errorf("request: %s %v", r.URL.Path, r.Header)
+		}
+		fmt.Fprint(w, `{"data":[]}`)
+	}))
+	defer srv.Close()
+	v := HTTPVerifier{AnthropicAPI: srv.URL}
+
+	_, err := v.Verify(context.Background(), Claude, SourceSetupToken, "sk-ant-api03-dummy000000000")
+	if !errors.Is(err, ErrRejected) || calls != 0 {
+		t.Fatalf("no prefix: %v, calls %d", err, calls)
+	}
+	acc, err := v.Verify(context.Background(), Claude, SourceSetupToken, dummyClaude)
+	if err != nil || acc.Name != "" || calls != 1 {
+		t.Fatalf("got %+v, %v, calls %d", acc, err, calls)
+	}
+}
+
+func TestVerifyUnknownSource(t *testing.T) {
+	if _, err := (HTTPVerifier{}).Verify(context.Background(), GitHub, SourceAPIKey, dummyGitHub); !errors.Is(err, ErrRejected) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestClaudeExchangeAndRefresh(t *testing.T) {
+	var status int
+	var body string
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("request: %s %v", r.Method, r.Header)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(status)
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+	c := HTTPClaudeOAuth{TokenURL: srv.URL}
+	ctx := context.Background()
+
+	status = http.StatusOK
+	body = fmt.Sprintf(`{"access_token":%q,"refresh_token":%q,"expires_in":28800,"account":{"email_address":"me@example.com"}}`, dummyClaude, dummyRefresh)
+	tok, err := c.Exchange(ctx, "the-code", "the-state", "the-verifier")
+	if err != nil || tok.Access != dummyClaude || tok.Refresh != dummyRefresh || tok.Email != "me@example.com" {
+		t.Fatalf("exchange: %v", err)
+	}
+	if d := time.Until(tok.ExpiresAt) - 8*time.Hour; d > time.Minute || d < -time.Minute {
+		t.Errorf("expires at %v", tok.ExpiresAt)
+	}
+	wantEx := map[string]string{
+		"grant_type": "authorization_code", "code": "the-code", "state": "the-state",
+		"client_id": ClaudeClientID, "redirect_uri": ClaudeRedirectURL, "code_verifier": "the-verifier",
+	}
+	if !reflect.DeepEqual(got, wantEx) {
+		t.Errorf("exchange body: %v", got)
+	}
+	for _, s := range []string{fmt.Sprint(tok), fmt.Sprintf("%+v", tok), fmt.Sprintf("%#v", tok)} {
+		if strings.Contains(s, dummyClaude) || strings.Contains(s, dummyRefresh) {
+			t.Errorf("printed tokens: %s", s)
+		}
+	}
+
+	tok, err = c.Refresh(ctx, dummyRefresh)
+	if err != nil || tok.Access != dummyClaude {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !reflect.DeepEqual(got, map[string]string{"grant_type": "refresh_token", "refresh_token": dummyRefresh, "client_id": ClaudeClientID}) {
+		t.Errorf("refresh body: %v", got)
+	}
+
+	status, body = http.StatusBadRequest, `{"error":"invalid_grant","error_description":"`+dummyRefresh+`"}`
+	_, err = c.Refresh(ctx, dummyRefresh)
+	if !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("400: %v", err)
+	}
+	noToken(t, err, dummyRefresh)
+
+	status, body = http.StatusServiceUnavailable, ""
+	_, err = c.Refresh(ctx, dummyRefresh)
+	if err == nil || errors.Is(err, ErrInvalidGrant) || !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("503: %v", err)
+	}
+	noToken(t, err, dummyRefresh)
+}
+
+func TestAuthorizeURL(t *testing.T) {
+	user, org := uuid.New(), uuid.New()
+	s := NewSignIns[string](10*time.Minute, time.Now)
+	state, challenge, err := s.Start(user, org, "team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(HTTPClaudeOAuth{}.AuthorizeURL(state, challenge))
+	if err != nil || u.Scheme+"://"+u.Host+u.Path != ClaudeAuthorizeURL {
+		t.Fatalf("url %v, %v", u, err)
+	}
+	q := u.Query()
+	want := map[string]string{
+		"code": "true", "response_type": "code", "client_id": ClaudeClientID, "redirect_uri": ClaudeRedirectURL,
+		"scope": ClaudeScopes, "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
+	}
+	for k, v := range want {
+		if q.Get(k) != v {
+			t.Errorf("%s = %q, want %q", k, q.Get(k), v)
+		}
+	}
+	verifier, v, ok := s.Take(state, user, org)
+	sum := sha256.Sum256([]byte(verifier))
+	if !ok || v != "team" || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
+		t.Fatalf("take: %q %q %v", verifier, v, ok)
+	}
+	if len(verifier) != 43 || len(state) != 43 {
+		t.Errorf("lengths: %d %d", len(verifier), len(state))
+	}
+}
+
+func TestSignIns(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := NewSignIns[int](10*time.Minute, func() time.Time { return now })
+	user, org := uuid.New(), uuid.New()
+	state, _, err := s.Start(user, org, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.Take(state, uuid.New(), org); ok {
+		t.Fatal("other user took it")
+	}
+	if _, _, ok := s.Take(state, user, uuid.New()); ok {
+		t.Fatal("other org took it")
+	}
+	if _, v, ok := s.Take(state, user, org); !ok || v != 7 {
+		t.Fatalf("owner: %v %v", v, ok)
+	}
+	if _, _, ok := s.Take(state, user, org); ok {
+		t.Fatal("second take")
+	}
+
+	state, _, _ = s.Start(user, org, 8)
+	now = now.Add(10*time.Minute + time.Second)
+	if _, _, ok := s.Take(state, user, org); ok {
+		t.Fatal("expired take")
+	}
+}
