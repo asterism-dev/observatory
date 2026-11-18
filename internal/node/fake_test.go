@@ -129,6 +129,7 @@ type fakeProvider struct {
 	mu            sync.Mutex
 	prepared      []string
 	preparedImage map[string]string // f.Image of the latest Prepare per VM
+	startedImage  map[string]string // f.Image of the latest Start per VM
 	started       map[string]*fakeInstance
 	failPrepare   map[string]bool
 	failStart     map[string]bool
@@ -291,6 +292,10 @@ func (p *fakeProvider) Start(_ context.Context, f VMFile, dir string) (Instance,
 		p.boots = map[string]*proto.Boot{}
 	}
 	p.boots[f.Spec.Name] = f.Boot
+	if p.startedImage == nil {
+		p.startedImage = map[string]string{}
+	}
+	p.startedImage[f.Spec.Name] = f.Image
 	inst := &fakeInstance{p: p, done: make(chan struct{}), staleIP: p.staleIP[f.Spec.Name]}
 	p.started[f.Spec.Name] = inst
 	return inst, nil

@@ -21,16 +21,18 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node"
+	"github.com/asterism-dev/observatory/internal/node/guestimage"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
-
-const DefaultImageURL = linuxvm.DefaultImageURL
 
 const chassisTimeout = 60 * time.Second
 
 type Provider struct {
 	VMsDir, ImagesDir, ImageURL string
+
+	custom bool // imageURL set in node.json: VMs boot that image as is
+	image  guestimage.Image
 
 	mu  sync.Mutex // serializes base image downloads and NAT address allocation
 	nbd linuxvm.NBDWatch
@@ -53,10 +55,11 @@ func New(c node.Config) (*Provider, error) {
 	if err := linuxvm.CheckHost("firecracker", "jailer", "qemu-nbd"); err != nil {
 		return nil, err
 	}
-	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL, fastBoot: s.FastBoot == nil || *s.FastBoot}
-	if p.ImageURL == "" {
-		p.ImageURL = DefaultImageURL
+	img, err := guestimage.Current()
+	if err != nil {
+		return nil, err
 	}
+	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL, custom: s.ImageURL != "", image: img, fastBoot: s.FastBoot == nil || *s.FastBoot}
 	out, err := exec.Command("firecracker", "--version").Output()
 	if err != nil {
 		return nil, fmt.Errorf("firecracker --version: %w", err)
@@ -68,18 +71,35 @@ func New(c node.Config) (*Provider, error) {
 
 func (p *Provider) Name() string { return "firecracker" }
 
-func (p *Provider) baseImage() (string, error) {
+// stockBase is the custom image, or else the pinned cloud image guest images are built from.
+func (p *Provider) stockBase() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
+	url, sha := p.image.Manifest.Base.URL, p.image.Manifest.Base.SHA256
+	if p.custom {
+		url, sha = p.ImageURL, ""
+	}
+	base, err := node.EnsureBaseImage(p.ImagesDir, url, sha)
 	if err != nil {
 		return "", fmt.Errorf("base image: %w", err)
 	}
 	return base, nil
 }
 
+// baseFor is the image f was (or is to be) cloned from; it is needed only while cloning, VMs own their root.img.
+func (p *Provider) baseFor(f node.VMFile) (string, error) {
+	if f.Image == "" {
+		return p.stockBase()
+	}
+	base := guestImagePath(p.ImagesDir, f.Image)
+	if _, err := os.Stat(base); err != nil {
+		return "", fmt.Errorf("guest image %s is gone", f.Image)
+	}
+	return base, nil
+}
+
 func (p *Provider) cloneBase(f node.VMFile, dir string) error {
-	base, err := p.baseImage()
+	base, err := p.baseFor(f)
 	if err != nil {
 		return err
 	}
@@ -98,7 +118,7 @@ func (p *Provider) recloneBase(f node.VMFile, dir, marker string) error {
 }
 
 func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error {
-	base, err := p.baseImage()
+	base, err := p.baseFor(f)
 	if err != nil {
 		return err
 	}
@@ -114,7 +134,7 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 		tpl := p.templateDir(key)
 		if _, err := os.Stat(tpl); err != nil {
 			go func() {
-				if err := p.buildTemplate(context.Background(), key, f); err != nil {
+				if err := p.buildTemplate(context.Background(), key, base, f); err != nil {
 					log.Printf("template %s: %v", key, err)
 				}
 			}()

@@ -605,6 +605,19 @@ func TestAgentWaitsForGuestImage(t *testing.T) {
 	}
 }
 
+// Start falls back to cloning the VM's image when a template restore fails, so it must see the image Prepare used.
+func TestAgentStartGetsImage(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.provider.mu.Lock()
+	img := env.provider.startedImage["dev"]
+	env.provider.mu.Unlock()
+	if img != testImage {
+		t.Fatalf("Start got image %q", img)
+	}
+}
+
 func TestAgentNeverFallsBackToStock(t *testing.T) {
 	retry := time.Date(2026, 11, 18, 12, 30, 0, 0, time.UTC)
 	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry})

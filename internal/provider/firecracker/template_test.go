@@ -75,6 +75,38 @@ func TestTemplateKey(t *testing.T) {
 	}
 }
 
+func TestTemplateKeyFollowsImage(t *testing.T) {
+	dir := t.TempDir()
+	a, b := guestImagePath(dir, "a"), guestImagePath(dir, "b")
+	mod := time.Now()
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte("img"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := func(base, image string) string {
+		t.Helper()
+		f := node.VMFile{Image: image, Spec: proto.VMSpec{ID: "x", Name: "x", CPUs: 1, MemoryMB: 512, DiskGB: 10}}
+		k, err := templateKey(base, "Firecracker v1.18.0", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	if key(a, "a") == key(b, "b") {
+		t.Error("two guest images gave the same key")
+	}
+	if key(a, "a") != key(a, "a") {
+		t.Error("same image gave different keys")
+	}
+	if templateFile("tpl", node.VMFile{Image: "a"}).Image != "a" {
+		t.Error("template file lost the image")
+	}
+}
+
 func TestEvictTemplates(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()

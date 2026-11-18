@@ -352,7 +352,7 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 		report(proto.VMStatus{ID: id, State: proto.StateError, Error: fmt.Sprintf("%s: %v", step, err)})
 	}
 	if prepare {
-		if err := a.prepare(ctx, e, f); err != nil {
+		if err := a.prepare(ctx, e, &f); err != nil {
 			if ctx.Err() != nil || errors.Is(err, errNewerDesired) {
 				// Deleted, or a queued desired applies once booted closes: it must find the VM at rest.
 				report(proto.VMStatus{ID: id, State: restingState(f)})
@@ -447,7 +447,8 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	}
 }
 
-func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
+// prepare sets f.Image to the image it prepared from, which Start needs again for a cold-boot fallback.
+func (a *Agent) prepare(ctx context.Context, e *vmEntry, f *VMFile) error {
 	if _, ok := a.Provider.(GuestImages); ok && f.Image == "" {
 		img, err := a.waitImage(ctx, e)
 		if err != nil {
@@ -455,7 +456,7 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
 		}
 		f.Image = img
 	}
-	if err := a.Provider.Prepare(ctx, f, VMDir(a.VMsDir, f.Spec.ID)); err != nil {
+	if err := a.Provider.Prepare(ctx, *f, VMDir(a.VMsDir, f.Spec.ID)); err != nil {
 		return err
 	}
 	a.mu.Lock()
@@ -912,7 +913,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 		return nil, "", nil
 	}
 	if f.NeedsPrepare {
-		if err := a.prepare(ctx, e, f); err != nil {
+		if err := a.prepare(ctx, e, &f); err != nil {
 			return nil, "", fmt.Errorf("prepare: %w", err)
 		}
 	}
