@@ -147,7 +147,7 @@ watch(
       <p v-if="teamVmWarning" role="alert">{{ t('integrations.teamVmWarning') }}</p>
       <p v-if="revokeNeeded" role="alert">
         {{ t('integrations.revokeBody') }}
-        <a v-if="modeTarget" :href="tokenPages[modeTarget.kind]" target="_blank" rel="noopener">{{ t('integrations.revokeLink', { kind: kindLabels[modeTarget.kind] }) }}</a>
+        <a v-if="modeTarget" :href="tokenPages[modeTarget.kind]" target="_blank" rel="noopener noreferrer">{{ t('integrations.revokeLink', { kind: kindLabels[modeTarget.kind] }) }}</a>
       </p>
       <template #actions>
         <Button :disabled="busy" @click="modeTarget = null">{{ t('profile.cancel') }}</Button>
@@ -162,7 +162,7 @@ watch(
     >
       <p v-if="pendingDelete?.wasInVm" role="alert">
         {{ t('integrations.revokeBody') }}
-        <a :href="tokenPages[pendingDelete.kind]" target="_blank" rel="noopener">{{ t('integrations.revokeLink', { kind: kindLabels[pendingDelete.kind] }) }}</a>
+        <a :href="tokenPages[pendingDelete.kind]" target="_blank" rel="noopener noreferrer">{{ t('integrations.revokeLink', { kind: kindLabels[pendingDelete.kind] }) }}</a>
       </p>
       <template #actions>
         <Button :disabled="busy" @click="pendingDelete = null">{{ t('profile.cancel') }}</Button>

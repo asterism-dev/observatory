@@ -42,12 +42,12 @@ const ready = computed(() => (props.replacing || !!target.value) && !busy.value)
 watch(
   () => props.open,
   (o) => {
-    if (!o) return
-    error.value = ''
     token.value = code.value = checked.value = ''
     signIn.value = null
+    if (!o) return
+    error.value = ''
     mode.value = 'proxy'
-    claudeSource.value = 'oauth'
+    claudeSource.value = props.replacing?.source === 'setup-token' ? 'setup-token' : 'oauth'
     kind.value = props.replacing?.kind ?? 'github'
     scope.value = scopeOptions.value[0]?.value ?? ''
   },
@@ -105,7 +105,7 @@ async function startSignIn() {
   const res = await call(() => api<{ url: string; state: string }>(`${base()}/claude/sign-in`, { method: 'POST', body: JSON.stringify(body) }))
   if (!res) return
   signIn.value = res
-  window.open(res.url, '_blank', 'noopener')
+  window.open(res.url, '_blank', 'noopener,noreferrer')
 }
 
 async function finishSignIn() {
@@ -135,7 +135,7 @@ function done() {
       <template v-if="signIn">
         <p>
           {{ t('integrations.signInHint') }}
-          <a :href="signIn.url" target="_blank" rel="noopener">{{ t('integrations.signInOpen') }}</a>
+          <a :href="signIn.url" target="_blank" rel="noopener noreferrer">{{ t('integrations.signInOpen') }}</a>
         </p>
         <TextInput v-model="code" type="password" autocomplete="off" :aria-label="t('integrations.code')" :placeholder="t('integrations.code')" />
       </template>

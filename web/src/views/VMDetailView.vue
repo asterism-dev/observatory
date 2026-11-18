@@ -36,11 +36,15 @@ async function load() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const [res, eg] = await Promise.all([api<VmInfo>(base()), api<NonNullable<typeof egress.value>>(`${base()}/egress`).catch(() => null)])
+    const [res, eg, ig] = await Promise.all([
+      api<VmInfo>(base()),
+      api<NonNullable<typeof egress.value>>(`${base()}/egress`).catch(() => null),
+      api<{ integrations: typeof integrations.value }>(`${base()}/integrations`).then((r) => r.integrations, () => []),
+    ])
     if (id !== org.value?.id) return
     vm.value = res
     egress.value = eg
-    integrations.value = await api<{ integrations: typeof integrations.value }>(`${base()}/integrations`).then((r) => r.integrations, () => [])
+    integrations.value = ig
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return router.replace(`/orgs/${id}/vms`)
     error.value = message(e)
