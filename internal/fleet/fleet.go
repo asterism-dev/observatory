@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -203,7 +204,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if plan.Hold {
 			continue
 		}
-		boot, bound, err := f.boot(ctx, org, v)
+		boot, bound, tokens, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -224,7 +225,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
-			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg,
+			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg, Integrations: tokens,
 		})
 	}
 	return out, releasing, nil
@@ -250,7 +251,7 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 }
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
-func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, []proto.HostBoundSecret, error) {
+func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, []proto.HostBoundSecret, []proto.IntegrationToken, error) {
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -260,7 +261,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 		owner = authz.TeamSubject(*v.TeamID)
 		members, err := f.store.TeamMembers(ctx, org, *v.TeamID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, m := range members {
 			users = append(users, m.User.ID)
@@ -268,17 +269,41 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 	}
 	keys, err := f.store.SSHKeysOf(ctx, users)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	// bound is the EgressSecrets hook: integrations append their proxy-mode entries here.
 	env, bound, err := f.store.ResolveVMEnv(ctx, f.authz.Enforcer(), org, owner)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	var tokens []proto.IntegrationToken
+	res, err := f.store.ResolveVMIntegrations(ctx, f.authz.Enforcer(), org, owner)
+	if err != nil {
+		// Like egress, one VM's integration trouble must not stall the node's list.
+		slog.Error("integrations for vm", "vm", v.ID, "reason", "resolve failed")
+	} else {
+		var ib []proto.HostBoundSecret
+		ib, tokens = IntegrationEntries(res)
+		bound = append(bound, ib...)
 	}
 	if keys == nil {
 		keys = []string{}
 	}
-	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, nil
+	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, nil
+}
+
+// IntegrationEntries turns resolved integrations into proxy secrets (proxy mode) and the tokens a VM receives.
+func IntegrationEntries(res []store.ResolvedIntegration) (bound []proto.HostBoundSecret, tokens []proto.IntegrationToken) {
+	for _, r := range res {
+		if r.Mode == integrations.ModeVM {
+			tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Token, ExpiresAt: r.AccessExpiresAt})
+			continue
+		}
+		spec := integrations.Kinds[r.Kind]
+		bound = append(bound, proto.HostBoundSecret{ID: "integration:" + r.ID.String(), Name: string(r.Kind) + " integration",
+			Placeholder: r.Placeholder, Value: r.Token, Hosts: spec.Hosts, Headers: spec.Headers})
+		tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Placeholder})
+	}
+	return bound, tokens
 }
 
 // egress keeps the VM's CAs current for the bound hosts and returns its egress entry plus the public certs by CA ID; nil, nil when nothing is bound.

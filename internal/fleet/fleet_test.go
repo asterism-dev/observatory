@@ -34,6 +34,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -1407,5 +1408,171 @@ func TestDesiredEgressFailureKeepsOtherVMs(t *testing.T) {
 	}
 	if d := desiredVM(t, m, ok.ID); d == nil || d.Egress == nil {
 		t.Fatalf("ok VM = %+v", d)
+	}
+}
+
+const (
+	intToken   = "ghp_dummy0000000000000000"
+	intRefresh = "rt-dummy-0000000000"
+)
+
+func (e *env) integration(kind integrations.Kind, source integrations.Source, scope store.EnvScope, owner *uuid.UUID, mode integrations.Mode, sec store.IntegrationSecret) store.Integration {
+	e.t.Helper()
+	ctx := context.Background()
+	v, err := e.s.CreateIntegration(ctx, store.Integration{OrgID: e.org.ID, Kind: kind, Source: source, Scope: scope, OwnerID: owner, Mode: mode, CreatedBy: e.owner, UpdatedBy: e.owner}, sec)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		e.t.Fatal(err)
+	}
+	return v
+}
+
+func TestDesiredIntegrationProxy(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
+
+	d := e.connect(cred).desired().Desired[0]
+	if len(d.Integrations) != 1 || d.Integrations[0].Kind != "github" || !strings.HasPrefix(d.Integrations[0].Token, "obsph_") || d.Integrations[0].ExpiresAt != nil {
+		t.Fatalf("integrations = %#v", d.Integrations)
+	}
+	if d.Egress == nil || len(d.Egress.Secrets) != 1 {
+		t.Fatalf("egress = %+v", d.Egress)
+	}
+	s := d.Egress.Secrets[0]
+	if s.Name != "github integration" || s.Value != intToken || s.Placeholder != d.Integrations[0].Token ||
+		!slices.Equal(s.Hosts, []string{"api.github.com", "github.com", "uploads.github.com"}) || !slices.Equal(s.Headers, []string{"Authorization"}) {
+		t.Fatalf("secret = %+v", s)
+	}
+	if len(d.Egress.CAs) != 1 {
+		t.Fatalf("cas = %d", len(d.Egress.CAs))
+	}
+	b, err := json.Marshal(d.Boot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str := string(b); strings.Contains(str, intToken) || strings.Contains(str, s.Placeholder) {
+		t.Fatalf("boot leaks: %s", str)
+	}
+}
+
+func TestDesiredIntegrationVMMode(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeVM, store.IntegrationSecret{Token: intToken, AccessExpiresAt: &exp})
+
+	d := e.connect(cred).desired().Desired[0]
+	if len(d.Integrations) != 1 || d.Integrations[0].Token != intToken || d.Integrations[0].ExpiresAt == nil || !d.Integrations[0].ExpiresAt.Equal(exp) {
+		t.Fatalf("integrations = %#v", d.Integrations)
+	}
+	if d.Egress != nil {
+		t.Fatalf("egress = %+v", d.Egress)
+	}
+}
+
+func TestDesiredTeamVMNoPrivateIntegration(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
+		t.Fatal(err)
+	}
+	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+
+	d := e.connect(cred).desired().Desired[0]
+	if len(d.Integrations) != 0 || d.Egress != nil {
+		t.Fatalf("team VM integrations = %#v, egress = %+v", d.Integrations, d.Egress)
+	}
+}
+
+func TestDesiredIntegrationsOtherOrg(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	nA, _ := e.node(e.org.ID, "a")
+	e.vm(e.org.ID, nA.ID, "vm-a", &e.owner, nil)
+	v := e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
+	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nB, credB := e.node(orgB.ID, "b")
+	e.vm(orgB.ID, nB.ID, "vm-b", &e.owner, nil)
+	m := e.connect(credB).desired()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := e.s.ResolveVMIntegrations(ctx, e.z.Enforcer(), e.org.ID, authz.UserSubject(e.owner))
+	if err != nil || len(resolved) != 1 || resolved[0].ID != v.ID {
+		t.Fatalf("resolve: %v %v", resolved, err)
+	}
+	if s := string(b); strings.Contains(s, intToken) || strings.Contains(s, resolved[0].Placeholder) {
+		t.Fatalf("org B desired leaks: %s", s)
+	}
+}
+
+func TestIntegrationChangePushes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	in := e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
+
+	node := e.connect(cred)
+	before := desiredVM(t, node.desired(), v.ID)
+	if before.Integrations[0].Token == intToken {
+		t.Fatal("proxy mode delivered the value")
+	}
+	if err := e.s.SetIntegrationMode(ctx, in, integrations.ModeVM, e.owner); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	after := desiredVM(t, node.desired(), v.ID)
+	if after.Integrations[0].Token != intToken || after.Generation != before.Generation {
+		t.Fatalf("after mode change: %#v gen %d vs %d", after.Integrations, after.Generation, before.Generation)
+	}
+	cur, err := e.s.Integration(ctx, e.org.ID, in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.DeleteIntegration(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	if d := desiredVM(t, node.desired(), v.ID); len(d.Integrations) != 0 {
+		t.Fatalf("after delete: %#v", d.Integrations)
+	}
+}
+
+func TestDesiredNeverRefreshToken(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	exp := time.Now().Add(time.Hour)
+	for _, mode := range []integrations.Mode{integrations.ModeProxy, integrations.ModeVM} {
+		in := e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, mode, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &exp})
+		b, err := json.Marshal(e.connect(cred).desired())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), intRefresh) {
+			t.Fatalf("%s mode leaks refresh token", mode)
+		}
+		if err := e.s.DeleteIntegration(context.Background(), in); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

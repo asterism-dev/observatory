@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"time"
 )
 
 type VMState string
@@ -140,6 +141,8 @@ type DesiredVM struct {
 	WakeSeq            uint64        `json:"wakeSeq,omitempty"`
 	// Egress goes only to the VM's node and lives only in its memory.
 	Egress *Egress `json:"egress,omitempty"`
+	// Integrations follow the Egress rules: only to the VM's node, memory only.
+	Integrations []IntegrationToken `json:"integrations,omitempty"`
 }
 
 type Register struct {
@@ -277,6 +280,15 @@ type HostBoundSecret struct {
 
 func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
 func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }
+
+type IntegrationToken struct {
+	Kind      string     `json:"kind"`
+	Token     string     `json:"token"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+func (IntegrationToken) String() string   { return "IntegrationToken{redacted}" }
+func (IntegrationToken) GoString() string { return "IntegrationToken{redacted}" }
 
 type Egress struct {
 	CAs     []EgressCA        `json:"cas"`
