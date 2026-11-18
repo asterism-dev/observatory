@@ -64,6 +64,6 @@ export const keepsMemory = (vm: VmInfo) => vm.power === 'paused' || vm.power ===
 
 export const powerActions = (state: VmInfo['state']) => {
   if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
-  if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'stop']
+  if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'shutdown', 'stop']
   return ['start']
 }
