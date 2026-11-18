@@ -96,6 +96,7 @@ var storeErrorStatus = []struct {
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
 	{store.ErrRestartRequired, http.StatusConflict},
+	{store.ErrShapeChanged, http.StatusConflict},
 	{store.ErrInvalidSize, http.StatusBadRequest},
 	{store.ErrOwnerMismatch, http.StatusConflict},
 	{store.ErrNoStoragePort, http.StatusConflict},

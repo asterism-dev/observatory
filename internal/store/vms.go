@@ -57,7 +57,7 @@ func collectVMs(rows pgx.Rows, err error) ([]VM, error) {
 
 // usage sums the VMs matching the filter, whatever their power state, plus live standalone disks.
 func (s *Store) usage(ctx context.Context, orgID uuid.UUID, ownerCol string, owner *uuid.UUID) (u Limits, err error) {
-	var count, cpus, mem, disk int
+	var count, cpus, mem, disk, snaps int
 	filter := ""
 	args := []any{orgID}
 	if owner != nil {
@@ -65,12 +65,13 @@ func (s *Store) usage(ctx context.Context, orgID uuid.UUID, ownerCol string, own
 		args = append(args, *owner)
 	}
 	q := "SELECT count(*), coalesce(sum(cpus), 0), coalesce(sum(memory_mb), 0), coalesce(sum(disk_gb), 0) + " +
-		"(SELECT coalesce(sum(size_gb), 0) FROM disks WHERE org_id = $1 AND deleted_at IS NULL" + filter + ") " +
+		"(SELECT coalesce(sum(size_gb), 0) FROM disks WHERE org_id = $1 AND deleted_at IS NULL" + filter + "), " +
+		"(SELECT count(*) FROM vm_snapshots sn JOIN vms ON vms.id = sn.vm_id WHERE vms.org_id = $1" + filter + ") " +
 		"FROM vms WHERE org_id = $1" + filter
-	if err = s.q.QueryRow(ctx, q, args...).Scan(&count, &cpus, &mem, &disk); err != nil {
+	if err = s.q.QueryRow(ctx, q, args...).Scan(&count, &cpus, &mem, &disk, &snaps); err != nil {
 		return
 	}
-	return Limits{VCPU: &cpus, RAMMB: &mem, DiskGB: &disk, VMCount: &count}, nil
+	return Limits{VCPU: &cpus, RAMMB: &mem, DiskGB: &disk, VMCount: &count, SnapshotCount: &snaps}, nil
 }
 
 // plus leaves a dimension nil (unchecked) when the addend has none, so an operation is only held to the limits it uses.
@@ -81,7 +82,8 @@ func (u Limits) plus(a Limits) Limits {
 		}
 		return ptr(*used + *n)
 	}
-	return Limits{VCPU: add(u.VCPU, a.VCPU), RAMMB: add(u.RAMMB, a.RAMMB), DiskGB: add(u.DiskGB, a.DiskGB), VMCount: add(u.VMCount, a.VMCount)}
+	return Limits{VCPU: add(u.VCPU, a.VCPU), RAMMB: add(u.RAMMB, a.RAMMB), DiskGB: add(u.DiskGB, a.DiskGB), VMCount: add(u.VMCount, a.VMCount),
+		SnapshotCount: add(u.SnapshotCount, a.SnapshotCount)}
 }
 
 // checkLimits checks that the owner belongs to the org and that adding add stays within the org and owner limits.

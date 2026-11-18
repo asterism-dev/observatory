@@ -160,7 +160,11 @@ func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 		if busy {
 			return ErrConflict
 		}
-		_, err = tx.q.Exec(ctx, "UPDATE disks SET deleted_at = now() WHERE id = $1", id)
+		// A pending restore of a deleted disk is abandoned, so its VM need not wait for it.
+		if _, err = tx.q.Exec(ctx, "UPDATE disks SET deleted_at = now(), restore_from = NULL, restore_token = NULL WHERE id = $1", id); err != nil {
+			return err
+		}
+		_, err = tx.finishRestores(ctx, []uuid.UUID{org})
 		return err
 	})
 }
@@ -182,16 +186,26 @@ func (s *Store) StorageState(ctx context.Context) (proto.StorageState, error) {
 
 func (s *Store) readStorageState(ctx context.Context, q querier) (proto.StorageState, error) {
 	st := proto.StorageState{Disks: []proto.StorageDisk{}, Deleted: []string{}, Exports: []proto.StorageExport{}}
-	rows, err := q.Query(ctx, "SELECT id, size_gb, ready_gb, copy_from, deleted_at IS NOT NULL FROM disks ORDER BY id")
+	// Snapshot copies are files like disks; one still read by a live disk's copy or restore stays until that is done.
+	rows, err := q.Query(ctx, `
+		SELECT id, size_gb, ready_gb, coalesce(copy_from, copy_from_snapshot), restore_from, restore_token, deleted_at IS NOT NULL
+		FROM disks
+		UNION ALL
+		SELECT sd.id, sd.size_gb, sd.ready_gb, CASE WHEN sd.ready_gb = 0 THEN sd.source_disk_id END, NULL, NULL,
+			(sd.deleted_at IS NOT NULL OR sd.snapshot_id IS NULL) AND NOT EXISTS (SELECT 1 FROM disks d
+				WHERE d.deleted_at IS NULL AND (d.copy_from_snapshot = sd.id OR d.restore_from = sd.id))
+		FROM snapshot_disks sd
+		ORDER BY 1`)
 	if err != nil {
 		return st, err
 	}
 	for rows.Next() {
 		var id uuid.UUID
 		var size, ready int
-		var copyFrom *uuid.UUID
+		var copyFrom, restoreFrom *uuid.UUID
+		var restoreToken *string
 		var deleted bool
-		if err := rows.Scan(&id, &size, &ready, &copyFrom, &deleted); err != nil {
+		if err := rows.Scan(&id, &size, &ready, &copyFrom, &restoreFrom, &restoreToken, &deleted); err != nil {
 			rows.Close()
 			return st, err
 		}
@@ -202,6 +216,9 @@ func (s *Store) readStorageState(ctx context.Context, q querier) (proto.StorageS
 		d := proto.StorageDisk{ID: id.String(), SizeBytes: int64(size) << 30, Create: ready == 0}
 		if copyFrom != nil {
 			d.CopyFrom = copyFrom.String()
+		}
+		if restoreFrom != nil && restoreToken != nil {
+			d.RestoreFrom, d.RestoreToken = proto.StorageFileName(restoreFrom.String()), *restoreToken
 		}
 		st.Disks = append(st.Disks, d)
 	}
@@ -245,7 +262,10 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 	err := s.InTx(ctx, func(tx *Store) error {
 		const grown = `FROM disks d JOIN unnest($1::uuid[], $2::bigint[]) f(id, size) ON f.id = d.id
 			WHERE d.deleted_at IS NULL AND d.ready_gb <> d.size_gb AND f.size >= d.size_gb::bigint << 30`
-		candidates, err := collectIDs(tx.q.Query(ctx, "SELECT DISTINCT d.org_id "+grown+" ORDER BY 1", ids, sizes))
+		const copied = `FROM snapshot_disks sd JOIN unnest($1::uuid[], $2::bigint[]) f(id, size) ON f.id = sd.id
+			JOIN vm_snapshots s ON s.id = sd.snapshot_id
+			WHERE sd.deleted_at IS NULL AND sd.ready_gb = 0 AND f.size >= sd.size_gb::bigint << 30`
+		candidates, err := collectIDs(tx.q.Query(ctx, "SELECT d.org_id "+grown+" UNION SELECT s.org_id "+copied+" ORDER BY 1", ids, sizes))
 		if err != nil {
 			return err
 		}
@@ -265,10 +285,30 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 			WHERE vd.vm_id = v.id AND (r.restart OR v.power = 'stopped') RETURNING v.org_id`, ids, sizes, candidates)); err != nil {
 			return err
 		}
-		if _, err := tx.q.Exec(ctx, "UPDATE disks SET copy_from = NULL WHERE id = ANY($1) AND copy_from IS NOT NULL", ids); err != nil {
+		ready, err := collectIDs(tx.q.Query(ctx, `
+			WITH copies AS (
+				UPDATE snapshot_disks SET ready_gb = size_gb WHERE id IN (SELECT sd.id `+copied+` AND s.org_id = ANY($3))
+				RETURNING id, snapshot_id)
+			-- The statement still sees the copies as not ready, hence the exclusion.
+			UPDATE vm_snapshots s SET state = 'ready' WHERE s.state = 'creating' AND s.id IN (SELECT snapshot_id FROM copies)
+				AND NOT EXISTS (SELECT 1 FROM snapshot_disks sd WHERE sd.snapshot_id = s.id AND sd.deleted_at IS NULL
+					AND sd.ready_gb = 0 AND sd.id NOT IN (SELECT id FROM copies))
+			RETURNING s.org_id`, ids, sizes, candidates))
+		if err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(ctx, "DELETE FROM disks WHERE deleted_at IS NOT NULL AND id <> ALL($1)", ids)
+		orgs = append(orgs, ready...)
+		if _, err := tx.q.Exec(ctx, `
+			UPDATE disks SET copy_from = NULL, copy_from_snapshot = NULL
+			WHERE id = ANY($1) AND (copy_from IS NOT NULL OR copy_from_snapshot IS NOT NULL)`, ids); err != nil {
+			return err
+		}
+		if _, err = tx.q.Exec(ctx, "DELETE FROM disks WHERE deleted_at IS NOT NULL AND id <> ALL($1)", ids); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, `
+			DELETE FROM snapshot_disks sd WHERE (sd.deleted_at IS NOT NULL OR sd.snapshot_id IS NULL) AND sd.id <> ALL($1)
+				AND NOT EXISTS (SELECT 1 FROM disks d WHERE d.copy_from_snapshot = sd.id OR d.restore_from = sd.id)`, ids)
 		return err
 	})
 	if err != nil {

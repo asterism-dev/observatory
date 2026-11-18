@@ -11,17 +11,20 @@ import (
 )
 
 type limitsJSON struct {
-	VCPU    *int `json:"vcpu"`
-	RAMMB   *int `json:"ramMb"`
-	DiskGB  *int `json:"diskGb"`
-	VMCount *int `json:"vmCount"`
+	VCPU          *int `json:"vcpu"`
+	RAMMB         *int `json:"ramMb"`
+	DiskGB        *int `json:"diskGb"`
+	VMCount       *int `json:"vmCount"`
+	SnapshotCount *int `json:"snapshotCount"`
 }
 
 func (l limitsJSON) store() store.Limits {
-	return store.Limits{VCPU: l.VCPU, RAMMB: l.RAMMB, DiskGB: l.DiskGB, VMCount: l.VMCount}
+	return store.Limits{VCPU: l.VCPU, RAMMB: l.RAMMB, DiskGB: l.DiskGB, VMCount: l.VMCount, SnapshotCount: l.SnapshotCount}
 }
 
-func toLimitsJSON(l store.Limits) limitsJSON { return limitsJSON{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount} }
+func toLimitsJSON(l store.Limits) limitsJSON {
+	return limitsJSON{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount}
+}
 
 type orgLimitsJSON struct {
 	Org     limitsJSON            `json:"org"`
@@ -48,7 +51,7 @@ func readLimits(w http.ResponseWriter, r *http.Request) (store.Limits, bool) {
 	if !readJSON(w, r, &body) {
 		return store.Limits{}, false
 	}
-	for _, v := range []*int{body.VCPU, body.RAMMB, body.DiskGB, body.VMCount} {
+	for _, v := range []*int{body.VCPU, body.RAMMB, body.DiskGB, body.VMCount, body.SnapshotCount} {
 		if v != nil && (*v < 0 || *v > math.MaxInt32) {
 			writeError(w, http.StatusBadRequest, "invalid limit")
 			return store.Limits{}, false
@@ -58,7 +61,7 @@ func readLimits(w http.ResponseWriter, r *http.Request) (store.Limits, bool) {
 }
 
 func limitDetails(l store.Limits) map[string]any {
-	return map[string]any{"vcpu": l.VCPU, "ramMb": l.RAMMB, "diskGb": l.DiskGB, "vmCount": l.VMCount}
+	return map[string]any{"vcpu": l.VCPU, "ramMb": l.RAMMB, "diskGb": l.DiskGB, "vmCount": l.VMCount, "snapshotCount": l.SnapshotCount}
 }
 
 func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {
