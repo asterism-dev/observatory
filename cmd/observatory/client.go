@@ -165,7 +165,10 @@ func (c *cli) me(raw *json.RawMessage) (meJSON, error) {
 	if raw != nil {
 		*raw = b
 	}
-	return me, json.Unmarshal(b, &me)
+	if err := json.Unmarshal(b, &me); err != nil {
+		return me, err
+	}
+	return me, nil
 }
 
 func findOrg(orgs []orgJSON, key string) (orgJSON, error) {

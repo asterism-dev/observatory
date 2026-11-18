@@ -34,7 +34,10 @@ func (c *cli) networkList() ([]networkJSON, json.RawMessage, error) {
 	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
 		return nil, nil, err
 	}
-	return l, raw, json.Unmarshal(raw, &l)
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return nil, nil, err
+	}
+	return l, raw, nil
 }
 
 func (c *cli) findNetwork(key string) (networkJSON, error) {

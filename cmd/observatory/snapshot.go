@@ -39,7 +39,10 @@ func (c *cli) snapshotList(vm vmJSON) ([]snapshotJSON, json.RawMessage, error) {
 		return nil, nil, err
 	}
 	var l []snapshotJSON
-	return l, raw, json.Unmarshal(raw, &l)
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return nil, nil, err
+	}
+	return l, raw, nil
 }
 
 func (c *cli) findSnapshot(vm vmJSON, key string) (snapshotJSON, error) {

@@ -42,7 +42,10 @@ func (c *cli) varList() ([]envVarJSON, json.RawMessage, error) {
 		return nil, nil, err
 	}
 	var l struct{ Vars []envVarJSON }
-	return l.Vars, raw, json.Unmarshal(raw, &l)
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return nil, nil, err
+	}
+	return l.Vars, raw, nil
 }
 
 func matchesScope(v envVarJSON, apiScope string, teamID *string) bool {

@@ -84,7 +84,10 @@ func (c *cli) vmList() (vmList, json.RawMessage, error) {
 	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
 		return l, nil, err
 	}
-	return l, raw, json.Unmarshal(raw, &l)
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return l, nil, err
+	}
+	return l, raw, nil
 }
 
 func (c *cli) findVM(key string) (vmJSON, error) {
@@ -306,7 +309,10 @@ func (c *cli) vmPost(v vmJSON, action string) (json.RawMessage, error) {
 		return nil, err
 	}
 	var raw json.RawMessage
-	return raw, c.call(http.MethodPost, path, nil, &raw)
+	if err := c.call(http.MethodPost, path, nil, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func (c *cli) powered(raw json.RawMessage, v vmJSON, verb, target string, wait bool) error {

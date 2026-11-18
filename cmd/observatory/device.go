@@ -53,7 +53,10 @@ func (c *cli) deviceList() ([]deviceJSON, json.RawMessage, error) {
 		return nil, nil, err
 	}
 	var ds []deviceJSON
-	return ds, raw, json.Unmarshal(raw, &ds)
+	if err := json.Unmarshal(raw, &ds); err != nil {
+		return nil, nil, err
+	}
+	return ds, raw, nil
 }
 
 func cmdDeviceList(c *cli, args []string) error {
