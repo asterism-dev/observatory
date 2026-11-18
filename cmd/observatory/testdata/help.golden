@@ -60,4 +60,11 @@ disk:
   disk attach <disk> <vm> [--mount PATH] [--restart]  attach a disk to a VM
   disk detach <disk> <vm> [--restart]                 detach a disk from a VM
 
+network:
+  network list                           list networks
+  network create <name> [--subnet CIDR]  create a network
+  network delete <net>                   delete a network
+  network attach <net> <vm> [--restart]  attach a VM to a network
+  network detach <net> <vm> [--restart]  detach a VM from a network
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help
