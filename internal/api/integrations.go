@@ -364,16 +364,13 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	if si.Mode == "" {
 		si.Mode = integrations.ModeProxy
 	}
+	var replaceKind integrations.Kind
 	if body.ReplaceID != nil {
 		old, ok := h.loadIntegration(w, r, m.Org.ID, *body.ReplaceID)
 		if !ok {
 			return
 		}
-		if old.Kind != integrations.Claude {
-			writeError(w, http.StatusBadRequest, "not a claude integration")
-			return
-		}
-		si.Scope, si.OwnerID, si.ReplaceID = old.Scope, old.OwnerID, &old.ID
+		replaceKind, si.Scope, si.OwnerID, si.ReplaceID = old.Kind, old.Scope, old.OwnerID, &old.ID
 	} else {
 		if !validMode(si.Mode) {
 			writeError(w, http.StatusBadRequest, "invalid mode")
@@ -387,6 +384,24 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), store.ActionIntegrationSet) {
 		return
+	}
+	if si.ReplaceID != nil && replaceKind != integrations.Claude {
+		writeError(w, http.StatusBadRequest, "not a claude integration")
+		return
+	}
+	if si.ReplaceID == nil {
+		list, err := h.store.Integrations(r.Context(), m.Org.ID)
+		if err != nil {
+			serverError(w, "integrations", err)
+			return
+		}
+		// Refuse before the user signs in rather than with a conflict at finish.
+		if slices.ContainsFunc(list, func(v store.Integration) bool {
+			return v.Kind == integrations.Claude && integrationObject(v.Scope, v.OwnerID) == integrationObject(si.Scope, si.OwnerID)
+		}) {
+			writeError(w, http.StatusConflict, store.ErrConflict.Error())
+			return
+		}
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	state, challenge, err := h.signIns.Start(p.User.ID, m.Org.ID, si)
@@ -438,6 +453,10 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	t, err := h.ig.OAuth.Exchange(r.Context(), code, body.State, verifier)
 	if err != nil {
 		providerError(w, err, "sign-in failed: provider rejected the code")
+		return
+	}
+	if t.Refresh == "" {
+		writeError(w, http.StatusBadGateway, "provider returned no refresh token")
 		return
 	}
 	access, err := integrations.NormalizeToken(t.Access)
@@ -498,8 +517,9 @@ func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
 		if !private && e.Allowed(sub, v.OrgID, integrationObject(ri.Scope, ri.OwnerID), "integration:list") {
 			j.Scope, j.Mode = ri.Scope, ri.Mode
 			if ri.Scope == store.EnvScopeTeam {
+				// A team deleted since the resolve just loses its name.
 				t, err := h.store.Team(ctx, v.OrgID, *ri.OwnerID)
-				if err != nil {
+				if err != nil && !errors.Is(err, store.ErrNotFound) {
 					serverError(w, "team", err)
 					return
 				}

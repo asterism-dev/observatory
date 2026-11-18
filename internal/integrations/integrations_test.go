@@ -201,6 +201,10 @@ func TestClaudeExchangeAndRefresh(t *testing.T) {
 	if err != nil || tok.Access != dummyClaude || tok.Refresh != dummyRefresh || tok.Email != "me@example.com" {
 		t.Fatalf("exchange: %v", err)
 	}
+	body = fmt.Sprintf(`{"access_token":%q,"refresh_token":%q,"expires_in":28800,"account":{"email_address":%q}}`, dummyClaude, dummyRefresh, strings.Repeat("é", 200))
+	if long, err := c.Exchange(ctx, "the-code", "the-state", "the-verifier"); err != nil || len(long.Email) > 256 || !utf8.ValidString(long.Email) {
+		t.Fatalf("long email: %d %v", len(long.Email), err)
+	}
 	if d := time.Until(tok.ExpiresAt) - 8*time.Hour; d > time.Minute || d < -time.Minute {
 		t.Errorf("expires at %v", tok.ExpiresAt)
 	}

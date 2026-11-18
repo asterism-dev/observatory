@@ -44,8 +44,9 @@ func (f *fakeVerifier) Verify(_ context.Context, _ integrations.Kind, _ integrat
 }
 
 type fakeOAuth struct {
-	mu    sync.Mutex
-	codes []string
+	mu        sync.Mutex
+	codes     []string
+	noRefresh bool
 }
 
 func (*fakeOAuth) AuthorizeURL(state, challenge string) string {
@@ -59,7 +60,11 @@ func (f *fakeOAuth) Exchange(_ context.Context, code, _, verifier string) (integ
 	if verifier == "" {
 		return integrations.OAuthTokens{}, integrations.ErrRejected
 	}
-	return integrations.OAuthTokens{Access: dummyAccess, Refresh: dummyRefres, ExpiresAt: time.Now().Add(8 * time.Hour), Email: "me@example.com"}, nil
+	refresh := dummyRefres
+	if f.noRefresh {
+		refresh = ""
+	}
+	return integrations.OAuthTokens{Access: dummyAccess, Refresh: refresh, ExpiresAt: time.Now().Add(8 * time.Hour), Email: "me@example.com"}, nil
 }
 
 func (*fakeOAuth) Refresh(context.Context, string) (integrations.OAuthTokens, error) {
@@ -343,8 +348,8 @@ func TestOAuthStateBoundToUser(t *testing.T) {
 	now := time.Now()
 	e.api.signIns = integrations.NewSignIns[signIn](10*time.Minute, func() time.Time { return now })
 
-	start := func() string {
-		rec := e.send("POST", integrationsPath(org)+"/claude/sign-in", aliceTok, `{"scope":"user"}`)
+	start := func(scope string) string {
+		rec := e.send("POST", integrationsPath(org)+"/claude/sign-in", aliceTok, `{"scope":"`+scope+`"}`)
 		var got struct{ URL, State string }
 		decode(t, rec, &got)
 		if rec.Code != 200 || got.State == "" || !strings.Contains(got.URL, got.State) {
@@ -357,7 +362,7 @@ func TestOAuthStateBoundToUser(t *testing.T) {
 		noSecrets(t, "finish", rec.Body.String())
 		return rec.Code
 	}
-	state := start()
+	state := start("user")
 	if c := finish(org, bobTok, state, "code1"); c != 400 {
 		t.Fatalf("other user: %d", c)
 	}
@@ -384,7 +389,7 @@ func TestOAuthStateBoundToUser(t *testing.T) {
 		t.Fatalf("list: %+v", l)
 	}
 
-	state = start()
+	state = start("org")
 	now = now.Add(11 * time.Minute)
 	if c := finish(org, aliceTok, state, "code2"); c != 400 {
 		t.Fatalf("expired: %d", c)
@@ -460,5 +465,45 @@ func TestVMEgressInfoCountsIntegrations(t *testing.T) {
 	}
 	if got := get(); got.Secrets != 0 {
 		t.Fatalf("vm mode: %+v", got)
+	}
+}
+
+func TestSignInStartAndFinishGuards(t *testing.T) {
+	e := newEnv(t)
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	path := integrationsPath(org) + "/claude/sign-in"
+	start := func(tok, body string) (int, string) {
+		rec := e.send("POST", path, tok, body)
+		var got struct{ State string }
+		decode(t, rec, &got)
+		return rec.Code, got.State
+	}
+
+	e.oauth.noRefresh = true
+	_, state := start(aliceTok, `{"scope":"user"}`)
+	rec := e.send("POST", path+"/finish", aliceTok, `{"state":"`+state+`","code":"c"}`)
+	if rec.Code != 502 || len(e.listIntegrations(aliceTok, org).Integrations) != 0 || len(e.audit(store.ActionIntegrationSet)) != 0 {
+		t.Fatalf("no refresh: %d %s", rec.Code, rec.Body.String())
+	}
+	noSecrets(t, "no refresh", rec.Body.String())
+	e.oauth.noRefresh = false
+
+	e.connect(aliceTok, org, `{"kind":"claude","source":"setup-token","scope":"user","token":"`+dummyAccess+`"}`)
+	if c, _ := start(aliceTok, `{"scope":"user"}`); c != 409 {
+		t.Fatalf("already connected: %d", c)
+	}
+	if c, _ := start(aliceTok, `{"scope":"org"}`); c != 200 {
+		t.Fatalf("org scope free: %d", c)
+	}
+
+	orgGitHub := e.connect(aliceTok, org, githubBody("org", ""))
+	if c, _ := start(aliceTok, `{"replaceId":"`+orgGitHub+`"}`); c != 400 {
+		t.Fatalf("replace non-claude: %d", c)
+	}
+	if c, _ := start(bobTok, `{"replaceId":"`+orgGitHub+`"}`); c != 403 {
+		t.Fatalf("replace non-claude without rights: %d", c)
 	}
 }

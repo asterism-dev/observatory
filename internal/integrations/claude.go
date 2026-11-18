@@ -121,6 +121,6 @@ func (c HTTPClaudeOAuth) post(ctx context.Context, fields map[string]string) (OA
 		Access:    out.AccessToken,
 		Refresh:   out.RefreshToken,
 		ExpiresAt: time.Now().Add(time.Duration(min(out.ExpiresIn, maxExpiresIn)) * time.Second),
-		Email:     out.Account.EmailAddress,
+		Email:     truncate(out.Account.EmailAddress),
 	}, nil
 }
