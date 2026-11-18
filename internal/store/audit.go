@@ -59,6 +59,8 @@ const (
 	ActionEnvSet              = "env:set"
 	ActionEnvMove             = "env:move"
 	ActionEnvDelete           = "env:delete"
+	ActionIntegrationSet      = "integration:set"
+	ActionIntegrationDelete   = "integration:delete"
 	ActionNodeCreate          = "node:create"
 	ActionNodeUpdate          = "node:update"
 	ActionNodeEnroll          = "node:enroll"
