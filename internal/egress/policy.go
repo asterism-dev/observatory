@@ -82,6 +82,7 @@ func (p Policy) Allowed(ip netip.Addr) bool {
 // Dialer checks the address actually connected to, so names resolved by the dialer are filtered too.
 func (p Policy) Dialer() *net.Dialer {
 	return &net.Dialer{
+		Timeout:   10 * time.Second,
 		KeepAlive: 30 * time.Second,
 		ControlContext: func(_ context.Context, _, address string, _ syscall.RawConn) error {
 			ap, err := netip.ParseAddrPort(address)

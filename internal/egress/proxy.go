@@ -2,10 +2,14 @@ package egress
 
 import (
 	"crypto/x509"
+	"errors"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/netip"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,8 +26,10 @@ type Proxy struct {
 	UpstreamAddr  func(host string) string
 	UpstreamRoots *x509.CertPool
 
-	table  atomic.Pointer[table]
-	active atomic.Int64
+	table        atomic.Pointer[table]
+	active       atomic.Int64
+	upstreamOnce sync.Once
+	upstreamTr   *http.Transport
 }
 
 // table is immutable once stored; SetTable swaps in a new one, issuer included.
@@ -57,11 +63,19 @@ func (p *Proxy) SetTable(e proto.Egress) error {
 }
 
 func (p *Proxy) Serve(l net.Listener) error {
+	var delay time.Duration
 	for {
 		c, err := l.Accept()
 		if err != nil {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Temporary() {
+				delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+				time.Sleep(delay)
+				continue
+			}
 			return err
 		}
+		delay = 0
 		if p.active.Add(1) > int64(p.MaxConns) {
 			p.active.Add(-1)
 			c.Close()
@@ -81,7 +95,7 @@ func (p *Proxy) handle(c net.Conn) {
 		p.Log.Printf("egress vm %s: original destination: %v", p.VMID, err)
 		return
 	}
-	if self, ok := c.LocalAddr().(*net.TCPAddr); ok && self.AddrPort() == dst {
+	if self, ok := c.LocalAddr().(*net.TCPAddr); ok && unmap(self.AddrPort()) == unmap(dst) {
 		return
 	}
 	raw, hello, err := peekClientHello(c)
@@ -92,8 +106,20 @@ func (p *Proxy) handle(c net.Conn) {
 	if hello != nil {
 		sni = NormalizeSNI(hello.ServerName)
 	}
-	// ponytail: bound SNIs splice too until termination (Task 8) routes them to p.terminate.
+	if hello != nil && len(p.table.Load().bound[sni]) > 0 && httpALPN(hello.SupportedProtos) {
+		p.terminate(c, raw, sni)
+		return
+	}
 	p.splice(c, raw, dst, sni)
+}
+
+func unmap(a netip.AddrPort) netip.AddrPort {
+	return netip.AddrPortFrom(a.Addr().Unmap(), a.Port())
+}
+
+// httpALPN accepts no ALPN or an offer we can negotiate; anything else (acme-tls/1, ...) is not ours to terminate.
+func httpALPN(protos []string) bool {
+	return len(protos) == 0 || slices.Contains(protos, "h2") || slices.Contains(protos, "http/1.1")
 }
 
 func (p *Proxy) splice(c net.Conn, raw []byte, dst netip.AddrPort, sni string) {

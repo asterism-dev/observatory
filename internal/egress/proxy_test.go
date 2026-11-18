@@ -329,23 +329,133 @@ func TestPolicyRefusesForbidden(t *testing.T) {
 }
 
 func TestDirectConnectionToProxyClosed(t *testing.T) {
-	var calls atomic.Int32
-	addr := startProxy(t, nil, func(p *Proxy, self net.Addr) {
-		p.OrigDst = func(net.Conn) (netip.AddrPort, error) {
-			calls.Add(1)
-			return self.(*net.TCPAddr).AddrPort(), nil
+	for _, mapped := range []bool{false, true} {
+		var calls atomic.Int32
+		addr := startProxy(t, nil, func(p *Proxy, self net.Addr) {
+			p.OrigDst = func(net.Conn) (netip.AddrPort, error) {
+				calls.Add(1)
+				ap := self.(*net.TCPAddr).AddrPort()
+				if mapped {
+					ap = netip.AddrPortFrom(netip.AddrFrom16(ap.Addr().As16()), ap.Port())
+				}
+				return ap, nil
+			}
+		})
+		c, err := net.Dial("tcp", addr.String())
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
+		c.Write([]byte("x"))
+		expectClosed(t, c, 2*time.Second)
+		c.Close()
+		time.Sleep(50 * time.Millisecond)
+		if n := calls.Load(); n != 1 {
+			t.Fatalf("mapped %v: proxy dialed itself (%d connections)", mapped, n)
+		}
+	}
+}
+
+func TestPeekSplitHello(t *testing.T) {
+	hello := clientHello(t, "example.test")
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		third := len(hello) / 3
+		for _, seg := range [][]byte{hello[:third], hello[third : 2*third], hello[2*third:]} {
+			a.Write(seg)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+	raw, info, err := peekClientHello(b)
+	if err != nil || info == nil || !bytes.Equal(raw, hello) {
+		t.Fatalf("hello %v err %v", info, err)
+	}
+}
+
+func TestSpliceLargeHello(t *testing.T) {
+	body := bytes.Repeat([]byte{0xab}, 20<<10)
+	msg := append([]byte{0x01, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}, body...)
+	var hello []byte
+	for len(msg) > 0 {
+		n := min(len(msg), 16<<10)
+		hello = append(hello, 0x16, 0x03, 0x01, byte(n>>8), byte(n))
+		hello = append(hello, msg[:n]...)
+		msg = msg[n:]
+	}
+	up := listen(t)
+	got := make(chan []byte, 1)
+	go func() {
+		c, err := up.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		b, _ := io.ReadAll(c)
+		got <- b
+	}()
+	addr := startProxy(t, fixedDst(up.Addr()))
 	c, err := net.Dial("tcp", addr.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	c.Write([]byte("x"))
-	expectClosed(t, c, 2*time.Second)
-	time.Sleep(50 * time.Millisecond)
-	if n := calls.Load(); n != 1 {
-		t.Fatalf("proxy dialed itself (%d connections)", n)
+	go func() {
+		c.Write(hello)
+		c.(*net.TCPConn).CloseWrite()
+	}()
+	select {
+	case b := <-got:
+		if !bytes.Equal(b, hello) {
+			t.Fatalf("upstream got %d bytes, want %d identical", len(b), len(hello))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream got nothing")
+	}
+}
+
+type tempErr struct{}
+
+func (tempErr) Error() string   { return "temporary" }
+func (tempErr) Timeout() bool   { return false }
+func (tempErr) Temporary() bool { return true }
+
+type flakyListener struct {
+	net.Listener
+	fails atomic.Int32
+}
+
+func (l *flakyListener) Accept() (net.Conn, error) {
+	if l.fails.Add(-1) >= 0 {
+		return nil, tempErr{}
+	}
+	return l.Listener.Accept()
+}
+
+func TestServeRetriesTemporaryAcceptErrors(t *testing.T) {
+	up := listen(t)
+	go func() {
+		c, err := up.Accept()
+		if err == nil {
+			c.Write([]byte("hi"))
+			c.Close()
+		}
+	}()
+	l := &flakyListener{Listener: listen(t)}
+	l.fails.Store(3)
+	p := New("vm1", log.New(io.Discard, "", 0))
+	p.Policy = Policy{}
+	p.OrigDst = fixedDst(up.Addr())
+	go p.Serve(l)
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	b := make([]byte, 2)
+	if _, err := io.ReadFull(c, b); err != nil || string(b) != "hi" {
+		t.Fatalf("got %q err %v", b, err)
 	}
 }
 
