@@ -117,8 +117,13 @@ def takeoff(req):
                 run("hostname", m.group(1))
         os.makedirs(ROOT + "/etc/netplan", exist_ok=True)
         with open(seed + "/network-config") as f:
-            # The seed holds a bare v2 config; netplan needs it under "network:" like cloud-init writes it.
-            write(ROOT + "/etc/netplan/50-cloud-init.yaml", "network:\n" + "".join("  " + l for l in f.read().splitlines(True)), 0o600)
+            net = f.read()
+        if not ROOT:
+            # netplan matches the permanent MAC, which a restored NIC keeps from the snapshot; match the NICs by name instead.
+            for name, mac in zip(nics(), req["macs"]):
+                net = net.replace('macaddress: "%s"' % mac, 'name: "%s"' % name)
+        # The seed holds a bare v2 config; netplan needs it under "network:" like cloud-init writes it.
+        write(ROOT + "/etc/netplan/50-cloud-init.yaml", "network:\n" + "".join("  " + l for l in net.splitlines(True)), 0o600)
         if not ROOT:
             run("netplan", "apply")
         for k in glob.glob(ROOT + "/etc/ssh/ssh_host_*"):
