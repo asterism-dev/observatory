@@ -86,6 +86,7 @@ for f in "$root/usr/local/lib/vmm/vmm-agent.py" "$root/etc/systemd/system/vmm-ag
 	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod 644 "$f.new" && mv "$f.new" "$f" && changed=1; fi
 done
 
+reload=
 # Static glue only: the scripts ask the node's token service on demand, so no token is ever written here.
 lib=$root/usr/local/lib/vmm bin=$root/usr/local/bin units=$root/etc/systemd/system
 mkdir -p "$bin"
@@ -103,14 +104,14 @@ fi
 exec "${VMM_GH_BIN:-/usr/bin/gh}" "$@"
 EOF
 cat >"$root/etc/profile.d/vmm-linear.sh.new" <<'EOF'
-if [ -z "${LINEAR_API_KEY+x}" ] && vmm_linear=$(vmm-token linear); then export LINEAR_API_KEY="$vmm_linear"; fi
+if [ -z "${LINEAR_API_KEY+x}" ] && command -v vmm-token >/dev/null 2>&1 && vmm_linear=$(vmm-token linear); then export LINEAR_API_KEY="$vmm_linear"; fi
 unset vmm_linear
 EOF
 printf '[Unit]\nDescription=vmm integrations sync\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-integrations.py sync\n' >"$units/vmm-integrations.service.new"
 printf '[Unit]\nDescription=vmm integrations sync\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=5min\n\n[Install]\nWantedBy=timers.target\n' >"$units/vmm-integrations.timer.new"
 for f in "$lib/vmm-integrations.py" "$root/etc/vmm/gitconfig" "$root/etc/profile.d/vmm-linear.sh" "$units/vmm-integrations.service" "$units/vmm-integrations.timer" "$bin/vmm-token" "$bin/git-credential-vmm" "$bin/gh"; do
 	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac
-	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$units"/*) changed=1 ;; esac; fi
+	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$units"/*) reload=1 ;; esac; fi
 done
 
 # A running sshd reads its config only on start or reload.
@@ -119,7 +120,7 @@ if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	# Only a re-executed manager reads DefaultEnvironment again; it reloads the units as well.
 	if [ -n "$reexec" ]; then
 		systemctl daemon-reexec >/dev/null 2>&1
-	elif [ -n "$changed" ]; then
+	elif [ -n "$changed$reload" ]; then
 		systemctl daemon-reload >/dev/null 2>&1
 	fi
 	# enable reloads systemd, which costs a fast-booted VM half a second.

@@ -1,15 +1,22 @@
 #!/usr/bin/python3
 """Guest client of the node's token service; never prints a token except as token's stdout and credential's answer."""
+import hashlib
 import json
 import os
+import pwd
 import re
+import shutil
 import socket
+import subprocess
 import sys
 import time
 
 PORT = 1051
 TIMEOUT = 3
 ROOT = os.environ.get("VMM_ROOT", "")
+USER = os.environ.get("VMM_USER", "ubuntu")
+STATE_DIR = ROOT + "/var/lib/vmm/" + USER
+LINEAR_MCP = "https://mcp.linear.app/mcp"
 # A token with a newline would inject lines into git's credential protocol.
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=_-]{12,4096}")
 NOT_CONNECTED, UNAVAILABLE = 3, 4
@@ -40,7 +47,8 @@ def fetch(kind):
                     break
                 buf += chunk
         reply = json.loads(buf.split(b"\n", 1)[0])
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
+        # AttributeError: a Python without socket.AF_VSOCK.
         return UNAVAILABLE, None
     if not isinstance(reply, dict):
         return UNAVAILABLE, None
@@ -111,8 +119,148 @@ def sync_git():
     os.replace(tmp, path)
 
 
+def log(msg):
+    sys.stderr.write("vmm-integrations: %s\n" % msg)
+
+
+def digest(tok):
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def write_private(path, text):
+    tmp = path + ".vmm-new"
+    if os.path.lexists(tmp):
+        os.remove(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def file_token_hash(path):
+    """Hash of the file's claudeAiOauth.accessToken; "" when missing, None when unreadable or without one."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            tok = json.load(f)["claudeAiOauth"]["accessToken"]
+    except FileNotFoundError:
+        return ""
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return digest(tok) if isinstance(tok, str) else None
+
+
+def sync_claude(home, state):
+    code, tok = fetch("claude")
+    if code == UNAVAILABLE:
+        return
+    path = home + "/.claude/.credentials.json"
+    current = file_token_hash(path)
+    ours = current is not None and current == state.get("claude")
+    if code == NOT_CONNECTED:
+        if ours:
+            os.remove(path)
+        state.pop("claude", None)
+        return
+    if current != "" and not ours:
+        # The user's own login (or a file we cannot read): never ours to replace.
+        state.pop("claude", None)
+        return
+    if current != digest(tok):
+        os.makedirs(home + "/.claude", 0o700, exist_ok=True)
+        os.chmod(home + "/.claude", 0o700)
+        cred = {"claudeAiOauth": {"accessToken": tok, "refreshToken": None, "expiresAt": None, "scopes": ["user:inference"]}}
+        write_private(path, json.dumps(cred, separators=(",", ":")))
+    state["claude"] = digest(tok)
+
+
+def claude_cli(claude, home, *args):
+    # The add call carries the token on argv; never let the CLI echo it into the journal.
+    try:
+        return subprocess.run([claude, *args], env=dict(os.environ, HOME=home), stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60).returncode
+    except (OSError, subprocess.SubprocessError):
+        return -1
+
+
+def sync_linear(home, state):
+    claude = shutil.which("claude", path=home + "/.local/bin" + os.pathsep + os.environ.get("PATH", os.defpath))
+    if not claude:
+        return
+    code, tok = fetch("linear")
+    if code == UNAVAILABLE:
+        return
+    recorded = state.get("linear_mcp")
+    if code == NOT_CONNECTED:
+        if recorded:
+            claude_cli(claude, home, "mcp", "remove", "--scope", "user", "linear")
+            state.pop("linear_mcp")
+        return
+    if recorded == digest(tok):
+        return
+    if recorded:
+        claude_cli(claude, home, "mcp", "remove", "--scope", "user", "linear")
+        state.pop("linear_mcp")
+    elif claude_cli(claude, home, "mcp", "get", "linear") == 0:
+        return
+    if claude_cli(claude, home, "mcp", "add", "--transport", "http", "--scope", "user", "linear", LINEAR_MCP,
+                  "--header", "Authorization: Bearer " + tok) == 0:
+        state["linear_mcp"] = digest(tok)
+    else:
+        log("claude mcp add failed")
+
+
+def sync_user(home):
+    path = STATE_DIR + "/integrations.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    old = dict(state)
+    for name, part in (("claude credentials", sync_claude), ("linear mcp", sync_linear)):
+        try:
+            part(home, state)
+        except OSError:
+            log("%s: write failed" % name)
+    if state != old:
+        try:
+            write_private(path, json.dumps(state))
+        except OSError:
+            log("state: write failed")
+    return 0
+
+
 def sync():
-    sync_git()
+    try:
+        sync_git()
+    except OSError:
+        log("gitconfig: write failed")
+    try:
+        pw = pwd.getpwnam(USER)
+    except KeyError:
+        return 0
+    try:
+        os.makedirs(STATE_DIR, 0o700, exist_ok=True)
+        # Through an fd opened without following links: root must never chown what a link points to.
+        fd = os.open(STATE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchown(fd, pw.pw_uid, pw.pw_gid)
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+    except OSError:
+        log("state dir: write failed")
+        return 0
+    if ROOT:
+        return sync_user(ROOT + "/home/" + USER)
+    # Files in the user's home are touched only as the user, so a planted link never gets root access.
+    try:
+        subprocess.run(["runuser", "-u", USER, "--", "env", "HOME=" + pw.pw_dir, "python3", os.path.abspath(__file__), "sync-user"],
+                       stdin=subprocess.DEVNULL, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        log("user sync failed")
     return 0
 
 
@@ -123,7 +271,9 @@ def main(argv):
         return credential(argv[1])
     if argv == ["sync"]:
         return sync()
-    sys.stderr.write("usage: vmm-integrations.py token <kind> | credential <action> | sync\n")
+    if argv == ["sync-user"]:
+        return sync_user(os.environ.get("HOME", ""))
+    sys.stderr.write("usage: vmm-integrations.py token <kind> | credential <action> | sync | sync-user\n")
     return 2
 
 
