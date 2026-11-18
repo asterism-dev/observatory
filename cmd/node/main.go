@@ -24,6 +24,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "egress" {
+		if err := runEgress(os.Args[2:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	configPath := flag.String("config", filepath.Join(home, ".observatory-node", "node.json"), "path to node config")
 	flag.Parse()
 
