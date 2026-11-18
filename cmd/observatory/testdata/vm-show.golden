@@ -1,0 +1,12 @@
+name:         web
+state:        hibernated
+owner:        team backend
+node:         pve1
+size:         4 vCPU · 8 GB · 30 GB
+dns:          web.internal
+ip:           –
+networks:     lan 10.1.0.4
+disks:        data → /data (50 GB)
+auto-suspend: 30 min
+image:        v3
+created:      2026-11-10 09:30

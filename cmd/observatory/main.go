@@ -72,7 +72,7 @@ type command struct {
 }
 
 func commands() []command {
-	return []command{
+	return slices.Concat([]command{
 		{"login", "", "log in with your browser (device flow)", cmdLogin},
 		{"logout", "", "revoke this CLI session", cmdLogout},
 		{"whoami", "", "show the user, orgs and session", cmdWhoami},
@@ -84,7 +84,7 @@ func commands() []command {
 		{"org create", "<name>", "create an org", cmdOrgCreate},
 		{"org rename", "<name>", "rename the current org", cmdOrgRename},
 		{"org audit", "[flags]", "show the org's audit log", cmdOrgAudit},
-	}
+	}, vmCommands())
 }
 
 func main() {
