@@ -11,44 +11,105 @@ import (
 	"net/textproto"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 )
+
+// scrubIdle is how long a possible start of a value is held back before it is flushed.
+var scrubIdle = 50 * time.Millisecond
+
+// idleRawMax is the longest held-back prefix flushed unmasked; longer ones are flushed as '*'.
+const idleRawMax = 3
+
+type chunk struct {
+	b   []byte
+	err error
+}
 
 // scrubReader overwrites every pattern match with '*' in place, so the stream keeps its length.
 type scrubReader struct {
 	r        io.Reader
 	patterns [][]byte
 	maxLen   int
-	buf      []byte // source bytes not yet emitted, original content
+	idle     time.Duration
+	buf      []byte // held source bytes, original content; the first `emitted` of them were already flushed
 	hit      []bool // parallel to buf: byte belongs to a match
+	emitted  int
 	out      []byte
 	err      error
 	atEOF    func()
+
+	// A pump goroutine reads ahead so Read can flush held bytes when the source goes idle.
+	ch       chan chunk
+	started  sync.Once
+	stopOnce sync.Once
+	done     chan struct{}
+	exited   chan struct{}
 }
 
 func newScrubReader(r io.Reader, patterns [][]byte) *scrubReader {
-	s := &scrubReader{r: r, patterns: patterns}
+	s := &scrubReader{r: r, patterns: patterns, idle: scrubIdle, ch: make(chan chunk), done: make(chan struct{}), exited: make(chan struct{})}
 	for _, p := range patterns {
 		s.maxLen = max(s.maxLen, len(p))
 	}
 	return s
 }
 
+func (s *scrubReader) pump() {
+	defer close(s.exited)
+	b := make([]byte, 32<<10)
+	for {
+		n, err := s.r.Read(b)
+		select {
+		case s.ch <- chunk{bytes.Clone(b[:n]), err}:
+		case <-s.done:
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// Close stops the pump; close the source first so a blocked source Read returns.
+func (s *scrubReader) Close() error {
+	s.stopOnce.Do(func() { close(s.done) })
+	s.started.Do(func() { close(s.exited) })
+	<-s.exited
+	return nil
+}
+
 func (s *scrubReader) Read(p []byte) (int, error) {
+	s.started.Do(func() { go s.pump() })
 	for len(s.out) == 0 {
 		if s.err != nil {
 			return 0, s.err
 		}
-		s.buf = slices.Grow(s.buf, 32<<10)
-		n, err := s.r.Read(s.buf[len(s.buf):cap(s.buf)])
-		s.buf = s.buf[:len(s.buf)+n]
-		s.hit = append(s.hit, make([]bool, n)...)
-		if err != nil {
-			s.err = err
-			if err == io.EOF && s.atEOF != nil {
-				s.atEOF()
-			}
+		var idle <-chan time.Time
+		var t *time.Timer
+		if len(s.buf) > s.emitted {
+			t = time.NewTimer(s.idle)
+			idle = t.C
 		}
-		s.scan()
+		select {
+		case c := <-s.ch:
+			s.buf = append(s.buf, c.b...)
+			s.hit = append(s.hit, make([]bool, len(c.b))...)
+			if c.err != nil {
+				s.err = c.err
+				if c.err == io.EOF && s.atEOF != nil {
+					s.atEOF()
+				}
+			}
+			s.scan()
+		case <-idle:
+			s.flushIdle()
+		case <-s.done:
+			return 0, io.ErrClosedPipe
+		}
+		if t != nil {
+			t.Stop()
+		}
 	}
 	n := copy(p, s.out)
 	s.out = s.out[n:]
@@ -69,16 +130,32 @@ func (s *scrubReader) scan() {
 		}
 		keep = 0
 	}
-	emit := len(s.buf) - keep
-	s.out = make([]byte, emit)
+	cut := len(s.buf) - keep
+	s.emitTo(max(cut, s.emitted))
+	s.buf = append(s.buf[:0], s.buf[cut:]...)
+	s.hit = append(s.hit[:0], s.hit[cut:]...)
+	s.emitted -= cut
+}
+
+// flushIdle releases the held tail but keeps it for matching, so a value completed later is still masked after its first bytes.
+func (s *scrubReader) flushIdle() {
+	if len(s.buf) > idleRawMax {
+		for i := s.emitted; i < len(s.buf); i++ {
+			s.hit[i] = true
+		}
+	}
+	s.emitTo(len(s.buf))
+}
+
+func (s *scrubReader) emitTo(end int) {
+	s.out = make([]byte, end-s.emitted)
 	for i := range s.out {
-		s.out[i] = s.buf[i]
-		if s.hit[i] {
+		s.out[i] = s.buf[s.emitted+i]
+		if s.hit[s.emitted+i] {
 			s.out[i] = '*'
 		}
 	}
-	s.buf = append(s.buf[:0], s.buf[emit:]...)
-	s.hit = append(s.hit[:0], s.hit[emit:]...)
+	s.emitted = end
 }
 
 func (s *scrubReader) pendingSuffix() int {
@@ -165,8 +242,16 @@ func encodingName(enc string) string {
 }
 
 type upgradeConn struct {
-	io.Reader
-	io.WriteCloser
+	*scrubReader
+	rwc io.ReadWriteCloser
+}
+
+func (c upgradeConn) Write(b []byte) (int, error) { return c.rwc.Write(b) }
+
+func (c upgradeConn) Close() error {
+	err := c.rwc.Close()
+	c.scrubReader.Close()
+	return err
 }
 
 // scrub1xx masks informational responses, which ReverseProxy forwards without ModifyResponse.
@@ -185,7 +270,7 @@ func (s scrub1xx) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 type scrubBody struct {
-	io.Reader
+	*scrubReader
 	raw     io.Closer
 	trailer func()
 }
@@ -193,6 +278,7 @@ type scrubBody struct {
 // Close scrubs trailers again: ReverseProxy reads them after Close, which may have drained the raw body.
 func (b scrubBody) Close() error {
 	err := b.raw.Close()
+	b.scrubReader.Close()
 	b.trailer()
 	return err
 }

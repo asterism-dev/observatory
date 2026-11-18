@@ -9,7 +9,15 @@ import (
 	"time"
 )
 
+// noIdle keeps scheduling delays from triggering idle flushes in tests that check exact output.
+func noIdle(t *testing.T) {
+	old := scrubIdle
+	scrubIdle = time.Hour
+	t.Cleanup(func() { scrubIdle = old })
+}
+
 func TestScrubAcrossChunks(t *testing.T) {
+	noIdle(t)
 	pats := [][]byte{[]byte("SECRETVALUE123")}
 	body := "head SECRETVALUE123 mid SECRETSECRETVALUE123 tail"
 	want := "head ************** mid SECRET************** tail"
@@ -27,6 +35,7 @@ func TestScrubAcrossChunks(t *testing.T) {
 }
 
 func TestScrubOverlapAndPrefixes(t *testing.T) {
+	noIdle(t)
 	pats := [][]byte{[]byte("abcab"), []byte("ab"), []byte("XYZW"), []byte("ZWQRST")}
 	for _, tc := range [][2]string{
 		{"abcabcab", "********"},
@@ -70,5 +79,86 @@ func TestScrubPatterns(t *testing.T) {
 	got := scrubPatterns([][]byte{[]byte("a-value-12345"), nil}, []string{"", "a-value-12345", "Bearer a-value-12345"})
 	if len(got) != 2 {
 		t.Fatalf("patterns %q", got)
+	}
+}
+
+// readWithin reads exactly n bytes or fails after d.
+func readWithin(t *testing.T, r io.Reader, n int, d time.Duration) string {
+	t.Helper()
+	got := make(chan []byte, 1)
+	go func() {
+		b := make([]byte, n)
+		k, _ := io.ReadFull(r, b)
+		got <- b[:k]
+	}()
+	select {
+	case b := <-got:
+		return string(b)
+	case <-time.After(d):
+		t.Fatalf("%d bytes not delivered within %s", n, d)
+		return ""
+	}
+}
+
+func TestScrubIdleShortPrefixRawThenMasked(t *testing.T) {
+	pr, pw := io.Pipe()
+	sr := newScrubReader(pr, [][]byte{[]byte("t13-secretvalue")})
+	defer sr.Close()
+	defer pw.Close()
+	go io.WriteString(pw, "plainhello t")
+	if got := readWithin(t, sr, 12, 300*time.Millisecond); got != "plainhello t" {
+		t.Fatalf("got %q", got)
+	}
+	go io.WriteString(pw, "13-secretvalue tail")
+	if got := readWithin(t, sr, 19, 300*time.Millisecond); got != "************** tail" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestScrubIdleLongPrefixMasked(t *testing.T) {
+	pr, pw := io.Pipe()
+	sr := newScrubReader(pr, [][]byte{[]byte("t13-secretvalue")})
+	defer sr.Close()
+	defer pw.Close()
+	go io.WriteString(pw, "x t13-se")
+	if got := readWithin(t, sr, 8, 300*time.Millisecond); got != "x ******" {
+		t.Fatalf("got %q", got)
+	}
+	go io.WriteString(pw, "cretvalue!")
+	if got := readWithin(t, sr, 10, 300*time.Millisecond); got != "*********!" {
+		t.Fatalf("continuation got %q", got)
+	}
+}
+
+func TestScrubIdleSSEPrefix(t *testing.T) {
+	pr, pw := io.Pipe()
+	sr := newScrubReader(pr, [][]byte{[]byte("sk-abcdefghijkl")})
+	defer sr.Close()
+	defer pw.Close()
+	go io.WriteString(pw, "data: ask")
+	start := time.Now()
+	if got := readWithin(t, sr, 9, 300*time.Millisecond); got != "data: ask" {
+		t.Fatalf("got %q", got)
+	}
+	if d := time.Since(start); d > 150*time.Millisecond {
+		t.Fatalf("took %s", d)
+	}
+}
+
+func TestScrubCloseStopsReader(t *testing.T) {
+	pr, pw := io.Pipe()
+	sr := newScrubReader(pr, [][]byte{[]byte("SECRETVALUE123")})
+	go io.WriteString(pw, "x")
+	readWithin(t, sr, 1, 300*time.Millisecond)
+	pr.Close()
+	done := make(chan struct{})
+	go func() { sr.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not stop the reader")
+	}
+	if _, err := sr.Read(make([]byte, 1)); err == nil {
+		t.Fatal("read after close succeeded")
 	}
 }

@@ -784,3 +784,31 @@ func TestScrubHeaderNames(t *testing.T) {
 		}
 	}
 }
+
+func TestWebSocketPrefixTailNotStalled(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c, err := websocket.Accept(w, req, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		c.Write(req.Context(), websocket.MessageText, []byte("plainhello "+ghValue[:1]))
+		c.Read(req.Context())
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	hc := *r.client(false)
+	hc.Timeout = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "wss://a.test/ws", &websocket.DialOptions{HTTPClient: &hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	rctx, rcancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer rcancel()
+	_, msg, err := c.Read(rctx)
+	if err != nil || string(msg) != "plainhello "+ghValue[:1] {
+		t.Fatalf("msg %q err %v", msg, err)
+	}
+}
