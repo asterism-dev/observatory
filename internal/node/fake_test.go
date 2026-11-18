@@ -84,6 +84,11 @@ func (i *fakeInstance) GuestResume(context.Context) error {
 	return nil
 }
 
+func (i *fakeInstance) GuestTrust(context.Context, map[string]string) error {
+	i.p.record("guest-trust")
+	return nil
+}
+
 func (i *fakeInstance) SaveState(dir string) error {
 	i.p.record("savestate:" + dir)
 	i.p.mu.Lock()

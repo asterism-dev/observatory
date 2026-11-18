@@ -1,6 +1,7 @@
 package node
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -75,6 +76,30 @@ func TestSeedBootRoundTrip(t *testing.T) {
 	}
 	if got, err := SeedBoot(dir); err != nil || len(got.SSHPublicKeys) != 0 || len(got.Env) != 0 {
 		t.Fatalf("SeedBoot of an empty seed = %+v, %v", got, err)
+	}
+}
+
+const testCA = "-----BEGIN CERTIFICATE-----\nMIIBdGVzdA==\n-----END CERTIFICATE-----\n"
+
+func TestSeedHasEgressCAs(t *testing.T) {
+	cas := map[string]string{"0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01": testCA}
+	var got map[string]string
+	if err := json.Unmarshal(GuestSeedFiles(VMFile{Boot: &proto.Boot{EgressCAs: cas}}, PrimaryNet{})["vmm-egress-cas"], &got); err != nil || !reflect.DeepEqual(got, cas) {
+		t.Fatalf("vmm-egress-cas = %v, %v; want %v", got, err, cas)
+	}
+	if got := string(GuestSeedFiles(VMFile{}, PrimaryNet{})["vmm-egress-cas"]); got != "{}" {
+		t.Fatalf("vmm-egress-cas without a boot = %q", got)
+	}
+}
+
+func TestSeedBootRecoversEgressCAs(t *testing.T) {
+	dir := t.TempDir()
+	want := &proto.Boot{EgressCAs: map[string]string{"0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01": testCA}}
+	if err := WriteSeedISO(dir, GuestSeedFiles(VMFile{Boot: want}, PrimaryNet{})); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := SeedBoot(dir); err != nil || !reflect.DeepEqual(got.EgressCAs, want.EgressCAs) {
+		t.Fatalf("SeedBoot = %+v, %v; want %+v", got, err, want)
 	}
 }
 
@@ -157,6 +182,11 @@ func sourcedEnv(t *testing.T, root string) string {
 	return string(out)
 }
 
+var trustBlock = []string{
+	`CURL_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"`, `NODE_EXTRA_CA_CERTS="/etc/ssl/certs/ca-certificates.crt"`,
+	`REQUESTS_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"`, `SSL_CERT_FILE="/etc/ssl/certs/ca-certificates.crt"`,
+}
+
 func vmmBlock(t *testing.T, environment string) []string {
 	t.Helper()
 	i, j := strings.Index(environment, "# BEGIN vmm\n"), strings.Index(environment, "# END vmm\n")
@@ -207,7 +237,7 @@ func TestBootFilesRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(environment, "PATH=\"/usr/bin\"\n") {
 		t.Fatalf("/etc/environment lost its own lines:\n%s", environment)
 	}
-	if got, want := vmmBlock(t, environment), []string{`B="` + env["B"] + `"`, `C=""`}; !slices.Equal(got, want) {
+	if got, want := vmmBlock(t, environment), append([]string{`B="` + env["B"] + `"`, `C=""`}, trustBlock...); !slices.Equal(got, want) {
 		t.Fatalf("managed block = %q, want %q", got, want)
 	}
 	for _, p := range []string{"etc/vmm/authorized_keys", "etc/vmm/env.sh", "etc/environment"} {
@@ -224,7 +254,46 @@ func TestBootFilesRoundTrip(t *testing.T) {
 		t.Fatalf("env.sh after second boot sets %q", got)
 	}
 	environment = readFile(t, filepath.Join(root, "etc/environment"))
-	if environment != "PATH=\"/usr/bin\"\n" {
+	if environment != "PATH=\"/usr/bin\"\n# BEGIN vmm\n"+strings.Join(trustBlock, "\n")+"\n# END vmm\n" {
 		t.Fatalf("/etc/environment after second boot:\n%s", environment)
+	}
+}
+
+func TestBootScriptTrust(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	id := "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01"
+	runBoot(t, root, GuestSeedFiles(VMFile{Boot: &proto.Boot{EgressCAs: map[string]string{id: testCA}}}, PrimaryNet{}))
+	if got := readFile(t, filepath.Join(root, "usr/local/share/ca-certificates/observatory-egress-"+id+".crt")); got != testCA {
+		t.Fatalf("ca file = %q", got)
+	}
+	bundle := "/etc/ssl/certs/ca-certificates.crt"
+	names := []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"}
+	if got := readFile(t, filepath.Join(root, "etc/vmm/env.sh")); !strings.Contains(got, "export SSL_CERT_FILE='"+bundle+"'\n") {
+		t.Fatalf("env.sh = %q", got)
+	}
+	if got := vmmBlock(t, readFile(t, filepath.Join(root, "etc/environment"))); !slices.Contains(got, `NODE_EXTRA_CA_CERTS="`+bundle+`"`) {
+		t.Fatalf("managed block = %q", got)
+	}
+	for _, d := range []string{"system", "user"} {
+		got := readFile(t, filepath.Join(root, "etc/systemd", d+".conf.d", "50-vmm-trust.conf"))
+		if !strings.HasPrefix(got, "[Manager]\n") || !strings.Contains(got, "DefaultEnvironment=") {
+			t.Fatalf("%s.conf.d = %q", d, got)
+		}
+		for _, n := range names {
+			if !strings.Contains(got, n+"="+bundle) {
+				t.Fatalf("%s.conf.d misses %s: %q", d, n, got)
+			}
+		}
+	}
+
+	runBoot(t, root, GuestSeedFiles(VMFile{Boot: &proto.Boot{Env: map[string]string{"SSL_CERT_FILE": "/x"}}}, PrimaryNet{}))
+	if got := readFile(t, filepath.Join(root, "etc/vmm/env.sh")); strings.Count(got, "SSL_CERT_FILE=") != 1 || !strings.Contains(got, "export SSL_CERT_FILE='/x'\n") {
+		t.Fatalf("env.sh with a user SSL_CERT_FILE = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "usr/local/share/ca-certificates/observatory-egress-"+id+".crt")); !os.IsNotExist(err) {
+		t.Fatalf("ca file kept without cas in the seed: %v", err)
 	}
 }

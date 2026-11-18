@@ -192,3 +192,42 @@ func TestAgentRejectsBadRequests(t *testing.T) {
 		t.Fatalf("oversized: reply = %+v", r)
 	}
 }
+
+func TestAgentTrustInstallsCerts(t *testing.T) {
+	root := t.TempDir()
+	sock := startAgent(t, root)
+	pem := "-----BEGIN CERTIFICATE-----\nMIIBdGVzdA==\n-----END CERTIFICATE-----\n"
+	id1, id2 := "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01", "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e02"
+	dir := filepath.Join(root, "usr/local/share/ca-certificates")
+	req := func(id, pem string) string {
+		b, _ := json.Marshal(map[string]any{"op": "trust", "certs": map[string]string{id: pem}})
+		return string(b)
+	}
+	if r := callAgent(t, sock, req(id1, pem)); !r.OK {
+		t.Fatalf("trust: %+v", r)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "observatory-egress-"+id1+".crt")); err != nil || string(b) != pem {
+		t.Fatalf("cert 1 = %q, %v", b, err)
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "observatory-egress-"+id1+".crt")); st.Mode().Perm() != 0o644 {
+		t.Fatalf("cert mode = %v", st.Mode())
+	}
+	if r := callAgent(t, sock, req(id2, pem)); !r.OK {
+		t.Fatalf("trust: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "observatory-egress-"+id1+".crt")); !os.IsNotExist(err) {
+		t.Fatalf("cert 1 not removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "observatory-egress-"+id2+".crt")); err != nil {
+		t.Fatal(err)
+	}
+	key := "-----BEGIN EC PRIVATE KEY-----\nMHcC\n-----END EC PRIVATE KEY-----\n"
+	for _, bad := range []string{req("../x", pem), req(id1, pem+key), req(id1, key), req(id1, "x"), req(id1, strings.Repeat(pem, 400))} {
+		if r := callAgent(t, sock, bad); r.OK {
+			t.Fatalf("%.80s: accepted", bad)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "observatory-egress-"+id2+".crt")); err != nil {
+		t.Fatalf("rejected request changed the certs: %v", err)
+	}
+}

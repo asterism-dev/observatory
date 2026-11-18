@@ -29,6 +29,11 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 		boot = *f.Boot
 	}
 	env, _ := json.Marshal(boot.Env) // a map[string]string always marshals
+	cas := boot.EgressCAs
+	if cas == nil {
+		cas = map[string]string{}
+	}
+	casJSON, _ := json.Marshal(cas)
 	var keys strings.Builder
 	for _, k := range boot.SSHPublicKeys {
 		// One key per line: a line break inside a key would smuggle in another one.
@@ -41,7 +46,7 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 		"user-data": []byte(userData), "meta-data": []byte(metaData),
 		"network-config": []byte(networkConfig), "vmm-disks.sh": []byte(DiskScript(f)),
 		"vmm-boot.sh": []byte(guest.BootScript), "vmm-agent.py": []byte(guest.AgentScript),
-		"vmm-env": env, "vmm-authorized-keys": []byte(keys.String()),
+		"vmm-env": env, "vmm-authorized-keys": []byte(keys.String()), "vmm-egress-cas": casJSON,
 	}
 }
 
@@ -71,7 +76,7 @@ func ReadSeedFile(dir, name string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// SeedBoot recovers the keys and variables last written into dir's seed.iso, so a reseed without a pushed Boot keeps them.
+// SeedBoot recovers the keys, variables and egress CAs last written into dir's seed.iso, so a reseed without a pushed Boot keeps them.
 func SeedBoot(dir string) (*proto.Boot, error) {
 	var b proto.Boot
 	env, err := ReadSeedFile(dir, "vmm-env")
@@ -90,6 +95,20 @@ func SeedBoot(dir string) (*proto.Boot, error) {
 	}
 	for k := range strings.Lines(string(keys)) {
 		b.SSHPublicKeys = append(b.SSHPublicKeys, strings.TrimSuffix(k, "\n"))
+	}
+	cas, err := ReadSeedFile(dir, "vmm-egress-cas")
+	switch {
+	case errors.Is(err, iofs.ErrNotExist):
+	case err != nil:
+		return nil, err
+	default:
+		var m map[string]string
+		if err := json.Unmarshal(cas, &m); err != nil {
+			return nil, err
+		}
+		if len(m) > 0 {
+			b.EgressCAs = m
+		}
 	}
 	return &b, nil
 }

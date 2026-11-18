@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # Vsock agent for the node; requests never carry keys or variables (the seed does), so never log request values.
+# Also run as "vmm-agent.py install-cas <file>" by vmm-boot.sh.
 import base64
 import concurrent.futures
 import fcntl
@@ -10,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -23,6 +25,10 @@ NETPLAN_GENERATE = "/usr/libexec/netplan/generate"
 RNDRESEEDCRNG = 0x5207
 MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,62})")
+CA_DIR = "/usr/local/share/ca-certificates"
+CA_ID = re.compile(r"[0-9a-f-]{36}")
+CA_PEM = re.compile(r"(-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?)+")
+MAX_CA = 16 << 10
 
 lock = threading.Lock()
 slots = threading.BoundedSemaphore(4)
@@ -149,6 +155,7 @@ def takeoff(req):
             adopt_instance(m.group(1))
         # Keys before the network, so the template's host key never answers on the VM's address.
         new_host_keys()
+        install_cas(seed_cas(seed + "/vmm-egress-cas"))
         if ROOT:
             boot(seed)
             return
@@ -210,13 +217,54 @@ def new_host_keys():
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def install_cas(certs):
+    # Only public CA certs may land in the trust store: a key or any other PEM block is refused.
+    if not isinstance(certs, dict) or not all(
+            isinstance(i, str) and CA_ID.fullmatch(i) and isinstance(p, str) and len(p) <= MAX_CA and CA_PEM.fullmatch(p)
+            for i, p in certs.items()):
+        raise ValueError("bad certs")
+    d = ROOT + CA_DIR
+    os.makedirs(d, exist_ok=True)
+    changed = removed = False
+    for i, pem in certs.items():
+        path = "%s/observatory-egress-%s.crt" % (d, i)
+        try:
+            with open(path) as f:
+                if f.read() == pem:
+                    continue
+        except FileNotFoundError:
+            pass
+        write(path, pem)
+        changed = True
+    for path in glob.glob(d + "/observatory-egress-*.crt"):
+        if os.path.basename(path)[len("observatory-egress-"):-len(".crt")] not in certs:
+            os.remove(path)
+            changed = removed = True
+    if changed and not ROOT:
+        # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
+        run("update-ca-certificates", *(["--fresh"] if removed else []))
+    return changed
+
+
+def seed_cas(path):
+    try:
+        with open(path) as f:
+            return json.load(f) or {}
+    except FileNotFoundError:
+        return {}
+
+
+def trust(req):
+    install_cas(req["certs"])
+
+
 def ping(req):
     if not ROOT:
         # Exits non-zero when cloud-init finished with errors; the guest is up either way.
         subprocess.run(["cloud-init", "status", "--wait"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-OPS = {"ping": ping, "resume": resume, "takeoff": takeoff}
+OPS = {"ping": ping, "resume": resume, "takeoff": takeoff, "trust": trust}
 
 
 def parse(line):
@@ -230,7 +278,7 @@ def parse(line):
         raise ValueError("bad macs")
     if not isinstance(entropy, str) or len(entropy) > 1024:
         raise ValueError("bad entropy")
-    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True)}
+    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True), "certs": raw.get("certs") or {}}
 
 
 def handle(conn):
@@ -289,4 +337,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["install-cas"]:
+        install_cas(seed_cas(sys.argv[2]))
+    else:
+        main()
