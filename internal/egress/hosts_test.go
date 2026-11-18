@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeHosts(t *testing.T) {
@@ -46,5 +47,21 @@ func TestNewPlaceholder(t *testing.T) {
 	b, _ := NewPlaceholder()
 	if !regexp.MustCompile(`^obsph_[a-z2-7]{32}$`).MatchString(a) || a == b {
 		t.Fatalf("%q %q", a, b)
+	}
+}
+
+func TestNormalizeHostSet(t *testing.T) {
+	hosts := make([]string, MaxCAHosts+1)
+	for i := range hosts {
+		hosts[i] = fmt.Sprintf("h%d.test", i)
+	}
+	if got, err := NormalizeHostSet(hosts[:MaxCAHosts]); err != nil || len(got) != MaxCAHosts {
+		t.Fatalf("%d hosts: %d, %v", MaxCAHosts, len(got), err)
+	}
+	if _, err := NormalizeHostSet(hosts); !errors.Is(err, ErrInvalidHost) {
+		t.Fatalf("%d hosts: err = %v", len(hosts), err)
+	}
+	if _, err := NewCA(hosts, time.Now()); !errors.Is(err, ErrInvalidHost) {
+		t.Fatalf("NewCA with %d hosts: err = %v", len(hosts), err)
 	}
 }

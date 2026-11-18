@@ -48,6 +48,9 @@ func NewCA(hosts []string, now time.Time) (MintedCA, error) {
 	if len(hosts) == 0 {
 		return MintedCA{}, fmt.Errorf("%w: a CA needs at least one host", ErrInvalidHost)
 	}
+	if len(hosts) > MaxCAHosts {
+		return MintedCA{}, fmt.Errorf("%w: at most %d hosts per CA", ErrInvalidHost, MaxCAHosts)
+	}
 	for _, h := range hosts {
 		if err := validHost(h); err != nil {
 			return MintedCA{}, err

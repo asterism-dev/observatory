@@ -31,7 +31,7 @@ func egressCAAAD(vm, id uuid.UUID) []byte {
 
 // EnsureEgressCAs keeps the VM's CAs current for hosts and returns the unexpired ones, oldest first, with keys.
 func (s *Store) EnsureEgressCAs(ctx context.Context, org, vm uuid.UUID, hosts []string, now time.Time) (out []EgressCA, err error) {
-	hosts, err = egress.NormalizeHosts(hosts)
+	hosts, err = egress.NormalizeHostSet(hosts)
 	if err != nil {
 		return nil, err
 	}

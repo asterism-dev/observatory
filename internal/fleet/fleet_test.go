@@ -1343,3 +1343,69 @@ func TestUnbindDropsEgressCAs(t *testing.T) {
 		t.Fatalf("ca rows = %d, %v", rows, err)
 	}
 }
+
+func hostRange(from, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("h%d.test", from+i)
+	}
+	return out
+}
+
+func TestDesiredEgressCAOverManySecrets(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "A_TOKEN", ghValue, hostRange(0, 6)...)
+	e.privateVar(e.org.ID, e.owner, "B_TOKEN", ghValue, hostRange(6, 6)...)
+
+	d := e.connect(cred).desired().Desired[0]
+	if d.Egress == nil || len(d.Egress.CAs) != 1 {
+		t.Fatalf("egress = %+v", d.Egress)
+	}
+	block, _ := pem.Decode([]byte(d.Egress.CAs[0].CertPEM))
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hostRange(0, 12)
+	slices.Sort(want)
+	if got := slices.Sorted(slices.Values(c.PermittedDNSDomains)); !slices.Equal(got, want) {
+		t.Fatalf("permitted = %v", got)
+	}
+}
+
+func TestDesiredEgressTooManyHostsKeepsVM(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	for i := range 11 {
+		e.privateVar(e.org.ID, e.owner, fmt.Sprintf("T%d", i), ghValue, hostRange(i*10, 10)...)
+	}
+	d := desiredVM(t, e.connect(cred).desired(), v.ID)
+	if d == nil || d.Egress != nil || len(d.Boot.EgressCAs) != 0 {
+		t.Fatalf("desired = %+v", d)
+	}
+}
+
+func TestDesiredEgressFailureKeepsOtherVMs(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	broken := e.vm(e.org.ID, n.ID, "broken", &e.owner, nil)
+	ok := e.vm(e.org.ID, n.ID, "ok", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	node := e.connect(cred)
+	node.desired()
+	if _, err := e.pool.Exec(context.Background(), "UPDATE vm_egress_cas SET key_ciphertext = 'garbage' WHERE vm_id = $1", broken.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	m := node.desired()
+	if d := desiredVM(t, m, broken.ID); d == nil || d.Egress != nil {
+		t.Fatalf("broken VM = %+v", d)
+	}
+	if d := desiredVM(t, m, ok.ID); d == nil || d.Egress == nil {
+		t.Fatalf("ok VM = %+v", d)
+	}
+}

@@ -15,13 +15,19 @@ const (
 	PlaceholderPrefix = "obsph_"
 	MinValueLen       = 12
 	MaxHosts          = 10
+	// MaxCAHosts bounds a VM's CA (union over its secrets) and so the certificate size.
+	MaxCAHosts = 100
 )
 
 var ErrInvalidHost = errors.New("invalid host")
 
 var labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-func NormalizeHosts(in []string) ([]string, error) {
+func NormalizeHosts(in []string) ([]string, error) { return normalizeHosts(in, MaxHosts) }
+
+func NormalizeHostSet(in []string) ([]string, error) { return normalizeHosts(in, MaxCAHosts) }
+
+func normalizeHosts(in []string, limit int) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, h := range in {
@@ -34,8 +40,8 @@ func NormalizeHosts(in []string) ([]string, error) {
 			out = append(out, h)
 		}
 	}
-	if len(out) > MaxHosts {
-		return nil, fmt.Errorf("%w: at most %d hosts", ErrInvalidHost, MaxHosts)
+	if len(out) > limit {
+		return nil, fmt.Errorf("%w: at most %d hosts", ErrInvalidHost, limit)
 	}
 	sort.Strings(out)
 	return out, nil

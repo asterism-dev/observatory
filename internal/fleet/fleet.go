@@ -3,6 +3,7 @@ package fleet
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"sync"
@@ -207,8 +208,12 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 			return nil, nil, err
 		}
 		eg, cas, err := f.egress(ctx, org, v, bound)
-		if err != nil {
-			return nil, nil, err
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			continue // deleted since VMsOnNode
+		case err != nil:
+			// One VM's CA trouble must not stall the node's list; its placeholders just reach providers unsubstituted.
+			slog.Error("egress for vm", "vm", v.ID, "err", err)
 		}
 		boot.EgressCAs = cas
 		nics, err := f.nics(ctx, v, rank)
@@ -283,8 +288,7 @@ func (f *Fleet) egress(ctx context.Context, org uuid.UUID, v store.VM, bound []p
 	for _, b := range bound {
 		hosts = append(hosts, b.Hosts...)
 	}
-	slices.Sort(hosts)
-	cas, err := f.store.EnsureEgressCAs(ctx, org, v.ID, slices.Compact(hosts), time.Now())
+	cas, err := f.store.EnsureEgressCAs(ctx, org, v.ID, hosts, time.Now())
 	if err != nil || len(bound) == 0 {
 		return nil, nil, err
 	}
