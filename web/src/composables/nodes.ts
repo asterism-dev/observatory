@@ -55,6 +55,9 @@ export const vmTones = {
   unknown: 'muted',
 } as const
 
+// A restart while the VM's memory is saved boots it fresh and discards that memory.
+export const keepsMemory = (vm: VmInfo) => vm.power === 'paused' || vm.power === 'hibernated' || vm.state === 'suspended'
+
 export const powerActions = (state: VmInfo['state']) => {
   if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
   if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'stop']

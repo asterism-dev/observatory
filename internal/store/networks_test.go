@@ -73,6 +73,13 @@ func TestSetVMNetworksRestart(t *testing.T) {
 	if _, err := e.s.SetVMNetworks(ctx, e.org.ID, vm.ID, []uuid.UUID{n.ID}, false); !errors.Is(err, store.ErrRestartRequired) {
 		t.Fatalf("running without flag: %v", err)
 	}
+	for _, p := range []string{"paused", "hibernated"} {
+		execSQL(t, e.pool, "UPDATE vms SET power = $2 WHERE id = $1", vm.ID, p)
+		if _, err := e.s.SetVMNetworks(ctx, e.org.ID, vm.ID, []uuid.UUID{n.ID}, false); !errors.Is(err, store.ErrRestartRequired) {
+			t.Fatalf("%s without flag: %v", p, err)
+		}
+	}
+	execSQL(t, e.pool, "UPDATE vms SET power = 'running' WHERE id = $1", vm.ID)
 	if nics, err := e.s.VMNetworks(ctx, vm.ID); err != nil || len(nics) != 0 {
 		t.Fatalf("nics after refusal %+v %v", nics, err)
 	}

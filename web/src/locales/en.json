@@ -350,6 +350,7 @@
     "save": "Save",
     "restartTitle": "Restart VM",
     "restartBody": "{name} is running and restarts to apply the network change.",
+    "restartBodySaved": "{name} is paused or hibernated. Applying the network change discards the saved memory state and boots it fresh.",
     "restart": "Save and restart"
   },
   "vmDisks": {
@@ -369,6 +370,7 @@
     "save": "Save",
     "restartTitle": "Restart VM",
     "restartBody": "{name} is running and restarts to apply the disk change.",
+    "restartBodySaved": "{name} is paused or hibernated. Applying the disk change discards the saved memory state and boots it fresh.",
     "restart": "Save and restart"
   },
   "disks": {
@@ -406,7 +408,7 @@
     "grow": "Grow",
     "growTitle": "Grow {name}",
     "growHint": "Disks can only grow. Enter a size larger than {size} GB.",
-    "growRestart": "Restart the attached VM if it is running to apply the new size",
+    "growRestart": "Restart the attached VM if it is running, paused or hibernated to apply the new size (discards the saved memory state)",
     "release": "Force release",
     "releaseTitle": "Force release disk",
     "releaseBody": "Force release {name} from its VM? Writes the VM has not flushed may be lost.",

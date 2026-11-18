@@ -129,7 +129,7 @@ func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDis
 		if found != len(distinct) {
 			return ErrNotFound
 		}
-		if v.Power == proto.PowerRunning && !restartAllowed {
+		if v.Power != proto.PowerStopped && !restartAllowed {
 			return ErrRestartRequired
 		}
 		if _, err := tx.q.Exec(ctx, `

@@ -123,7 +123,7 @@ func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, res
 			if err := tx.q.QueryRow(ctx, "SELECT power FROM vms WHERE id = $1", d.Attachment.VMID).Scan(&power); err != nil {
 				return err
 			}
-			if power == proto.PowerRunning {
+			if power != proto.PowerStopped {
 				return ErrRestartRequired
 			}
 		}

@@ -160,6 +160,13 @@ func TestGrowDiskRestart(t *testing.T) {
 	if _, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 6, false); !errors.Is(err, store.ErrRestartRequired) {
 		t.Fatalf("running: %v", err)
 	}
+	for _, p := range []string{"paused", "hibernated"} {
+		execSQL(t, e.pool, "UPDATE vms SET power = $2 WHERE id = $1", vm.ID, p)
+		if _, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 6, false); !errors.Is(err, store.ErrRestartRequired) {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	execSQL(t, e.pool, "UPDATE vms SET power = 'running' WHERE id = $1", vm.ID)
 	if got, _ := e.s.Disk(ctx, e.org.ID, d.ID); got.SizeGB != 5 {
 		t.Fatalf("size changed: %d", got.SizeGB)
 	}

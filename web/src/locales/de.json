@@ -350,6 +350,7 @@
     "save": "Speichern",
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
+    "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Netzwerkänderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
     "restart": "Speichern und neu starten"
   },
   "vmDisks": {
@@ -369,6 +370,7 @@
     "save": "Speichern",
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Disk-Änderung zu übernehmen.",
+    "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Disk-Änderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
     "restart": "Speichern und neu starten"
   },
   "disks": {
@@ -406,7 +408,7 @@
     "grow": "Vergrößern",
     "growTitle": "{name} vergrößern",
     "growHint": "Disks können nur wachsen. Gib eine Größe über {size} GB ein.",
-    "growRestart": "Angehängte VM neu starten, falls sie läuft, um die neue Größe zu übernehmen",
+    "growRestart": "Angehängte VM neu starten, falls sie läuft, pausiert oder im Ruhezustand ist, um die neue Größe zu übernehmen (verwirft den gespeicherten Arbeitsspeicher)",
     "release": "Freigabe erzwingen",
     "releaseTitle": "Freigabe der Disk erzwingen",
     "releaseBody": "Freigabe von {name} von der VM erzwingen? Nicht geschriebene Daten der VM können verloren gehen.",
