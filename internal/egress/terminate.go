@@ -161,6 +161,7 @@ func redactPath(path string, t *table) string {
 }
 
 func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) *httputil.ReverseProxy {
+	pats := scrubPatterns(t.scrub, sent)
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = "https"
@@ -168,7 +169,7 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			pr.Out.Host = sni
 			pr.Out.Header.Del("Forwarded")
 		},
-		Transport:     p.upstream(),
+		Transport:     scrub1xx{p.upstream(), pats},
 		FlushInterval: -1,
 		ErrorLog:      discard,
 		ModifyResponse: func(res *http.Response) error {
@@ -177,7 +178,7 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			if res.StatusCode != http.StatusSwitchingProtocols {
 				res.Body = countingBody{res.Body, &st.bytes}
 			}
-			return scrubResponse(res, t.scrub, sent)
+			return scrubResponse(res, pats)
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			var encErr unsupportedEncodingError

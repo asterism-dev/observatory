@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
+	"net/textproto"
 	"slices"
 	"strings"
 )
@@ -57,8 +59,15 @@ func (s *scrubReader) Read(p []byte) (int, error) {
 func (s *scrubReader) scan() {
 	markMatches(s.buf, s.patterns, s.hit)
 	keep := 0
-	if s.err == nil {
+	if s.err != io.EOF {
 		keep = s.pendingSuffix()
+	}
+	// An aborted stream must not reveal the start of a value it never finished.
+	if s.err != nil && s.err != io.EOF {
+		for i := len(s.hit) - keep; i < len(s.hit); i++ {
+			s.hit[i] = true
+		}
+		keep = 0
 	}
 	emit := len(s.buf) - keep
 	s.out = make([]byte, emit)
@@ -95,6 +104,20 @@ func markMatches(b []byte, patterns [][]byte, hit []bool) {
 				hit[k] = true
 			}
 			i += j + 1
+		}
+	}
+}
+
+// scrubHeader masks values, drops names containing a pattern and Alt-Svc.
+func scrubHeader(h map[string][]string, patterns [][]byte) {
+	for k, vs := range h {
+		lk := strings.ToLower(k)
+		if strings.EqualFold(k, "Alt-Svc") || slices.ContainsFunc(patterns, func(p []byte) bool { return strings.Contains(lk, strings.ToLower(string(p))) }) {
+			delete(h, k)
+			continue
+		}
+		for i := range vs {
+			vs[i] = scrubString(vs[i], patterns)
 		}
 	}
 }
@@ -146,14 +169,37 @@ type upgradeConn struct {
 	io.WriteCloser
 }
 
-func scrubResponse(res *http.Response, values [][]byte, sent []string) error {
-	pats := scrubPatterns(values, sent)
-	for _, vs := range res.Header {
-		for i := range vs {
-			vs[i] = scrubString(vs[i], pats)
-		}
-	}
-	res.Header.Del("Alt-Svc")
+// scrub1xx masks informational responses, which ReverseProxy forwards without ModifyResponse.
+type scrub1xx struct {
+	base     http.RoundTripper
+	patterns [][]byte
+}
+
+func (s scrub1xx) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The newest trace runs first, so this hook edits the shared map before ReverseProxy's copies it.
+	trace := &httptrace.ClientTrace{Got1xxResponse: func(_ int, h textproto.MIMEHeader) error {
+		scrubHeader(h, s.patterns)
+		return nil
+	}}
+	return s.base.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
+}
+
+type scrubBody struct {
+	io.Reader
+	raw     io.Closer
+	trailer func()
+}
+
+// Close scrubs trailers again: ReverseProxy reads them after Close, which may have drained the raw body.
+func (b scrubBody) Close() error {
+	err := b.raw.Close()
+	b.trailer()
+	return err
+}
+
+func scrubResponse(res *http.Response, pats [][]byte) error {
+	scrubHeader(res.Header, pats)
+	scrubHeader(res.Trailer, pats)
 	if res.StatusCode == http.StatusSwitchingProtocols {
 		rwc, ok := res.Body.(io.ReadWriteCloser)
 		if !ok {
@@ -164,6 +210,7 @@ func scrubResponse(res *http.Response, values [][]byte, sent []string) error {
 		return nil
 	}
 	var body io.Reader = res.Body
+	decoded := false
 	enc := strings.ToLower(strings.TrimSpace(strings.Join(res.Header.Values("Content-Encoding"), ",")))
 	switch enc {
 	case "", "identity":
@@ -180,23 +227,23 @@ func scrubResponse(res *http.Response, values [][]byte, sent []string) error {
 		if err != nil {
 			return err
 		}
+		decoded = true
 		res.Header.Del("Content-Encoding")
 		res.Header.Del("Content-Length")
 		res.ContentLength = -1
 	default:
 		return unsupportedEncodingError(encodingName(enc))
 	}
+	raw := res.Body
+	trailer := func() { scrubHeader(res.Trailer, pats) }
 	sr := newScrubReader(body, pats)
 	sr.atEOF = func() {
-		for _, vs := range res.Trailer {
-			for i := range vs {
-				vs[i] = scrubString(vs[i], pats)
-			}
+		// A decoder can stop at its own end marker; trailers only arrive once the raw body is read to EOF.
+		if decoded {
+			io.Copy(io.Discard, raw)
 		}
+		trailer()
 	}
-	res.Body = struct {
-		io.Reader
-		io.Closer
-	}{sr, res.Body}
+	res.Body = scrubBody{sr, raw, trailer}
 	return nil
 }

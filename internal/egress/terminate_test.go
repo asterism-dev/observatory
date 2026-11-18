@@ -14,7 +14,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/netip"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"sync"
@@ -678,5 +680,107 @@ func TestWebSocketScrub(t *testing.T) {
 	}
 	if string(msg) != "echo "+ghMasked {
 		t.Fatalf("client got %q", msg)
+	}
+}
+
+func TestScrub1xxHeaders(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", "</"+ghValue+">; rel=preload")
+		w.Header().Set("X-"+ghValue, "1")
+		w.Header().Set("Alt-Svc", `h3=":443"`)
+		w.WriteHeader(http.StatusEarlyHints)
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	for _, h2 := range []bool{false, true} {
+		var mu sync.Mutex
+		var got []http.Header
+		req := get(t, "https://a.test/")
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+			Got1xxResponse: func(_ int, h textproto.MIMEHeader) error {
+				mu.Lock()
+				got = append(got, http.Header(h).Clone())
+				mu.Unlock()
+				return nil
+			},
+		}))
+		r.do(r.client(h2), req)
+		mu.Lock()
+		if len(got) != 1 || got[0].Get("Link") != "</"+ghMasked+">; rel=preload" || len(got[0].Values("X-"+ghValue)) != 0 || got[0].Get("Alt-Svc") != "" {
+			t.Fatalf("h2=%v 1xx headers %v", h2, got)
+		}
+		mu.Unlock()
+	}
+}
+
+func TestScrubAbortAfterPrefix(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		io.WriteString(w, "xx"+ghValue[:12])
+		w.(http.Flusher).Flush()
+		time.Sleep(50 * time.Millisecond)
+		panic(http.ErrAbortHandler)
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	res, err := r.client(false).Do(get(t, "https://a.test/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if strings.Contains(string(body), ghValue[:12]) {
+		t.Fatalf("prefix leaked: %q", body)
+	}
+}
+
+func TestScrubDeflateTrailer(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", "X-Trail")
+		w.Header().Set("Content-Encoding", "deflate")
+		zw := zlib.NewWriter(w)
+		io.WriteString(zw, "pre "+ghValue)
+		zw.Close()
+		w.(http.Flusher).Flush()
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("X-Trail", ghValue)
+	})
+	for _, upH2 := range []bool{false, true} {
+		r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h, func(r *rig) {
+			if !upH2 {
+				tr := r.p.upstream()
+				tr.ForceAttemptHTTP2 = false
+				tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
+			}
+		})
+		res, body := r.do(r.client(true), get(t, "https://a.test/"))
+		if body != "pre "+ghMasked || res.Trailer.Get("X-Trail") != ghMasked {
+			t.Fatalf("upstream h2=%v body %q trailer %v", upH2, body, res.Trailer)
+		}
+	}
+}
+
+func TestScrubHeaderNames(t *testing.T) {
+	name := "X-" + strings.ToUpper(ghValue)
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", "X-T-"+ghValue+", X-Ok")
+		w.Header().Set(name, "1")
+		w.Header().Set("X-Keep", "1")
+		w.Write([]byte("b"))
+		w.(http.Flusher).Flush()
+		w.Header().Set("X-T-"+ghValue, "1")
+		w.Header().Set("X-Ok", "1")
+	})
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("a.test")}, h)
+	for _, h2 := range []bool{false, true} {
+		res, _ := r.do(r.client(h2), get(t, "https://a.test/"))
+		for _, m := range []http.Header{res.Header, res.Trailer} {
+			for k, vs := range m {
+				if strings.Contains(strings.ToLower(k+strings.Join(vs, ",")), ghValue) {
+					t.Fatalf("h2=%v leaked name %q: %v / %v", h2, k, res.Header, res.Trailer)
+				}
+			}
+		}
+		if res.Header.Get("X-Keep") != "1" || res.Trailer.Get("X-Ok") != "1" {
+			t.Fatalf("h2=%v dropped too much: %v / %v", h2, res.Header, res.Trailer)
+		}
 	}
 }
