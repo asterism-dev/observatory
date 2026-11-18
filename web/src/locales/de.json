@@ -428,6 +428,7 @@
     "cpu": "CPU",
     "ram": "RAM",
     "none": "Noch keine Daten. Messwerte erscheinen, solange die VM läuft.",
+    "stale": "Läuft nicht, keine aktuellen Werte.",
     "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart."
   },
   "snapshots": {

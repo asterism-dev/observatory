@@ -428,6 +428,7 @@
     "cpu": "CPU",
     "ram": "RAM",
     "none": "No data yet. Metrics appear while the VM is running.",
+    "stale": "Not running, no current values.",
     "noRam": "RAM statistics are available after the next cold boot."
   },
   "snapshots": {

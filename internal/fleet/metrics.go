@@ -31,8 +31,8 @@ func (f *Fleet) DropMetrics(vm uuid.UUID) {
 	delete(f.metrics, vm)
 }
 
-// noteMetrics keeps samples only for VMs placed on node and clamps them to the VM's size, as nodes are untrusted.
-func (f *Fleet) noteMetrics(ctx context.Context, node uuid.UUID, ms []proto.VMMetrics) {
+// NoteMetrics keeps samples only for VMs placed on node and clamps them to the VM's size, as nodes are untrusted.
+func (f *Fleet) NoteMetrics(ctx context.Context, node uuid.UUID, ms []proto.VMMetrics) {
 	if len(ms) == 0 {
 		return
 	}

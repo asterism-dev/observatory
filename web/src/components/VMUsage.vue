@@ -19,7 +19,9 @@ const error = ref('')
 
 const W = 240
 const H = 40
+const now = ref(Date.now())
 const last = computed(() => samples.value.at(-1))
+const live = computed(() => !!last.value && now.value - Date.parse(last.value.at) < 30000)
 const hasRam = computed(() => !!last.value?.memTotalMB)
 
 function line(values: number[], max: number) {
@@ -35,14 +37,20 @@ async function load() {
     const res = await api<{ samples: Sample[] }>(`/api/orgs/${props.orgId}/vms/${id}/metrics`)
     if (id !== props.vm.id) return
     samples.value = res.samples
+    now.value = Date.now()
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
-const timer = window.setInterval(() => document.visibilityState === 'visible' && load(), 10000)
-onBeforeUnmount(() => window.clearInterval(timer))
+const refresh = () => document.visibilityState === 'visible' && load()
+const timer = window.setInterval(refresh, 10000)
+document.addEventListener('visibilitychange', refresh)
+onBeforeUnmount(() => {
+  window.clearInterval(timer)
+  document.removeEventListener('visibilitychange', refresh)
+})
 
 watch(
   () => props.vm.id,
@@ -58,6 +66,7 @@ watch(
   <h2>{{ t('usage.section') }}</h2>
   <p v-if="error" role="alert">{{ error }}</p>
   <p v-else-if="!last">{{ t('usage.none') }}</p>
+  <p v-else-if="!live">{{ t('usage.stale') }}</p>
   <div v-else class="usage">
     <div>
       <strong>{{ t('usage.cpu') }} {{ Math.round(last.cpuPercent) }} %</strong>

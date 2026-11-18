@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -15,7 +14,7 @@ func TestNoteMetricsIgnoresForeignVM(t *testing.T) {
 	a, _ := e.node(e.org.ID, "a")
 	b, _ := e.node(e.org.ID, "b")
 	v := e.vm(e.org.ID, b.ID, "dev", &e.owner, nil)
-	fleet.NoteMetrics(e.f, context.Background(), a.ID, []proto.VMMetrics{{ID: v.ID.String(), CPUPercent: 10}})
+	e.f.NoteMetrics(context.Background(), a.ID, []proto.VMMetrics{{ID: v.ID.String(), CPUPercent: 10}})
 	if got := e.f.Metrics(v.ID); len(got) != 0 {
 		t.Fatalf("samples = %+v", got)
 	}
@@ -29,7 +28,7 @@ func TestNoteMetricsClamps(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := v.ID.String()
-	fleet.NoteMetrics(e.f, context.Background(), n.ID, []proto.VMMetrics{
+	e.f.NoteMetrics(context.Background(), n.ID, []proto.VMMetrics{
 		{ID: id, CPUPercent: 250, MemTotalMB: 9000, MemUsedMB: 9000},
 		{ID: id, CPUPercent: -5, MemTotalMB: 4096, MemUsedMB: -3},
 		{ID: "not-a-uuid"},
@@ -48,7 +47,7 @@ func TestMetricsRingKeeps60(t *testing.T) {
 	n, _ := e.node(e.org.ID, "a")
 	v := e.vm(e.org.ID, n.ID, "dev", &e.owner, nil)
 	for i := 1; i <= 70; i++ {
-		fleet.NoteMetrics(e.f, context.Background(), n.ID, []proto.VMMetrics{{ID: v.ID.String(), CPUPercent: float64(i) / 2}})
+		e.f.NoteMetrics(context.Background(), n.ID, []proto.VMMetrics{{ID: v.ID.String(), CPUPercent: float64(i) / 2}})
 	}
 	got := e.f.Metrics(v.ID)
 	if len(got) != 60 || got[0].CPUPercent != 5.5 || got[59].CPUPercent != 35 {

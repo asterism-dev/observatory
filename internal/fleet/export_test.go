@@ -5,5 +5,3 @@ var (
 	UnderlayCheck       = &underlayCheck
 	UnderlayRenewBefore = &underlayRenewBefore
 )
-
-var NoteMetrics = (*Fleet).noteMetrics
