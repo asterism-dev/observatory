@@ -211,7 +211,11 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 	refresh func(ctx context.Context, refreshToken string) (integrations.OAuthTokens, error)) (bool, error) {
 	var refreshed bool
 	var refreshErr error
-	err := s.InTx(ctx, func(tx *Store) error {
+	// Once the provider has rotated the refresh token, cancelling ctx must not roll back the write; it gets its own 10 s instead.
+	dbctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancel()
+	var deadline *time.Timer
+	err := s.InTx(dbctx, func(tx *Store) error {
 		var rnonce, rct []byte
 		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM integrations
 			WHERE org_id = $1 AND id = $2 AND source = 'oauth' AND status = 'ok' AND access_expires_at < $3
@@ -231,27 +235,30 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 			return fmt.Errorf("decrypt integration %s: %w", ref.ID, err)
 		}
 		t, err := refresh(ctx, string(old))
+		deadline = time.AfterFunc(10*time.Second, cancel)
 		var sec IntegrationSecret
 		if err == nil {
 			sec, err = checkIntegrationSecret(integrations.SourceOAuth, IntegrationSecret{Token: t.Access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt})
 		}
 		if refreshErr = err; err != nil {
-			status, reason := IntegrationOK, "refresh failed"
-			if errors.Is(err, integrations.ErrInvalidGrant) {
-				status, reason = IntegrationExpired, "sign in again"
-			}
-			_, err := tx.q.Exec(ctx, "UPDATE integrations SET status = $3, last_error = $4 WHERE org_id = $1 AND id = $2", ref.OrgID, ref.ID, status, reason)
+			_, err := tx.q.Exec(dbctx, `UPDATE integrations SET
+				status = CASE WHEN $3 OR access_expires_at <= now() THEN 'expired' ELSE 'ok' END,
+				last_error = CASE WHEN $3 OR access_expires_at <= now() THEN 'sign in again' ELSE 'refresh failed' END
+				WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, errors.Is(err, integrations.ErrInvalidGrant))
 			return err
 		}
 		nonce, ct, rnonce, rct, err := sealIntegration(key, ref.OrgID, ref.ID, sec)
 		if err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(ctx, `UPDATE integrations SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
+		_, err = tx.q.Exec(dbctx, `UPDATE integrations SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
 			access_expires_at = $7, last_error = '' WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, nonce, ct, rnonce, rct, sec.AccessExpiresAt)
 		refreshed = err == nil
 		return err
 	})
+	if deadline != nil {
+		deadline.Stop()
+	}
 	if err != nil {
 		return false, err
 	}

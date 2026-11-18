@@ -419,14 +419,18 @@ type fakeRefresh struct {
 	err     error
 	block   chan struct{}
 	entered chan struct{}
+	after   func()
 }
 
 func (f *fakeRefresh) refresh(_ context.Context, rt string) (integrations.OAuthTokens, error) {
 	f.mu.Lock()
 	f.got = append(f.got, rt)
 	f.n++
-	n, err, block, entered := f.n, f.err, f.block, f.entered
+	n, err, block, entered, after := f.n, f.err, f.block, f.entered, f.after
 	f.mu.Unlock()
+	if after != nil {
+		defer after()
+	}
 	if entered != nil {
 		entered <- struct{}{}
 	}
@@ -538,6 +542,32 @@ func TestRefreshIntegrationFailureRecorded(t *testing.T) {
 	}
 	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationOK || got.LastError != "refresh failed" {
 		t.Fatalf("after failure %+v", got)
+	}
+}
+
+func TestRefreshIntegrationExpiresAfterFailures(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, -time.Minute)
+	f := &fakeRefresh{err: integrations.ErrUnreachable}
+	if ok, err := s.RefreshIntegration(ctx, ref, time.Now().Add(time.Hour), f.refresh); ok || !errors.Is(err, integrations.ErrUnreachable) {
+		t.Fatalf("unreachable: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationExpired || got.LastError != "sign in again" {
+		t.Fatalf("after failure past expiry %+v", got)
+	}
+}
+
+func TestRefreshIntegrationSurvivesCancel(t *testing.T) {
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, 10*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &fakeRefresh{after: cancel}
+	if ok, err := s.RefreshIntegration(ctx, ref, time.Now().Add(time.Hour), f.refresh); !ok || err != nil {
+		t.Fatalf("refresh %v %v", ok, err)
+	}
+	if res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid)); res[integrations.Claude].Token != "at-new-1" {
+		t.Fatal("rotation rolled back after cancel")
 	}
 }
 

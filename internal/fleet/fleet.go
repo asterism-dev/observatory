@@ -380,6 +380,7 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 		maps.DeleteFunc(backoffs, func(r store.IntegrationRef, _ backoff) bool { return !slices.Contains(refs, r) })
 		for _, ref := range refs {
 			b := backoffs[ref]
+			now := clock()
 			if now.Before(b.until) {
 				continue
 			}

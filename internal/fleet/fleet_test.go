@@ -1541,7 +1541,7 @@ func TestIntegrationChangePushes(t *testing.T) {
 	}
 	e.f.NotifyOrg(e.org.ID)
 	after := desiredVM(t, node.desired(), v.ID)
-	if after.Integrations[0].Token != intToken || after.Generation != before.Generation {
+	if after.Integrations[0].Token != intToken || after.Integrations[0].ExpiresAt != nil || after.Generation != before.Generation {
 		t.Fatalf("after mode change: %#v gen %d vs %d", after.Integrations, after.Generation, before.Generation)
 	}
 	cur, err := e.s.Integration(ctx, e.org.ID, in.ID)
