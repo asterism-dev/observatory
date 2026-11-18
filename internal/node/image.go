@@ -15,7 +15,8 @@ import (
 )
 
 // EnsureBaseImage downloads url once into imagesDir and converts it (qcow2 or raw) to a raw disk.
-func EnsureBaseImage(imagesDir, url string) (string, error) {
+// A non-empty sha256Hex must match the downloaded file; an existing converted image is trusted as is.
+func EnsureBaseImage(imagesDir, url, sha256Hex string) (string, error) {
 	sum := sha256.Sum256([]byte(url))
 	raw := filepath.Join(imagesDir, hex.EncodeToString(sum[:8])+".raw")
 	if _, err := os.Stat(raw); err == nil {
@@ -26,8 +27,12 @@ func EnsureBaseImage(imagesDir, url string) (string, error) {
 	}
 	download := raw + ".download"
 	defer os.Remove(download)
-	if err := fetch(url, download); err != nil {
+	got, err := fetch(url, download)
+	if err != nil {
 		return "", err
+	}
+	if sha256Hex != "" && !strings.EqualFold(got, sha256Hex) {
+		return "", fmt.Errorf("base image %s: checksum mismatch", url)
 	}
 	part := raw + ".part"
 	if err := toRaw(download, part); err != nil {
@@ -37,24 +42,25 @@ func EnsureBaseImage(imagesDir, url string) (string, error) {
 	return raw, os.Rename(part, raw)
 }
 
-func fetch(url, dst string) error {
+func fetch(url, dst string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: %s", url, resp.Status)
+		return "", fmt.Errorf("download %s: %s", url, resp.Status)
 	}
 	f, err := os.Create(dst)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
 		f.Close()
-		return err
+		return "", err
 	}
-	return f.Close()
+	return hex.EncodeToString(h.Sum(nil)), f.Close()
 }
 
 func toRaw(src, dst string) error {
@@ -108,7 +114,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if err := copyContents(out, in); err != nil {
 		out.Close()
 		return err
 	}

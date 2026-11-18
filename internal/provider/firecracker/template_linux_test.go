@@ -41,7 +41,7 @@ func testKey(t *testing.T) (key, pub string) {
 
 func keyFor(t *testing.T, p *Provider, f node.VMFile) string {
 	t.Helper()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
+	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestFastBootCancelledTakeoffReclonesBase(t *testing.T) {
 		inst.Kill()
 		t.Fatal("start with a cancelled context succeeded")
 	}
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
+	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}

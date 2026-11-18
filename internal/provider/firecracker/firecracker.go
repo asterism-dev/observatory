@@ -71,7 +71,7 @@ func (p *Provider) Name() string { return "firecracker" }
 func (p *Provider) baseImage() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
+	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
 	if err != nil {
 		return "", fmt.Errorf("base image: %w", err)
 	}

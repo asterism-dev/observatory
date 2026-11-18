@@ -2,6 +2,8 @@ package node
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,11 +94,11 @@ func TestEnsureBaseImageDownloadsOnce(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	p1, err := EnsureBaseImage(dir, srv.URL+"/img")
+	p1, err := EnsureBaseImage(dir, srv.URL+"/img", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := EnsureBaseImage(dir, srv.URL+"/img")
+	p2, err := EnsureBaseImage(dir, srv.URL+"/img", "")
 	if err != nil || p1 != p2 {
 		t.Fatalf("second call: %q %v", p2, err)
 	}
@@ -110,7 +112,7 @@ func TestEnsureBaseImageHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	dir := t.TempDir()
-	if _, err := EnsureBaseImage(dir, srv.URL+"/img"); err == nil {
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", ""); err == nil {
 		t.Fatal("expected error")
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
@@ -276,5 +278,30 @@ func TestCloudInitStaticPrimary(t *testing.T) {
 	_, _, dhcp := CloudInit(f, PrimaryNet{})
 	if !strings.Contains(dhcp, "dhcp4: true") || !strings.Contains(dhcp, "dhcp-identifier: mac") {
 		t.Errorf("zero PrimaryNet must keep DHCP:\n%s", dhcp)
+	}
+}
+
+func TestEnsureBaseImageChecksum(t *testing.T) {
+	data := bytes.Repeat([]byte{1, 2, 3, 4}, 1<<18)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write(data) }))
+	defer srv.Close()
+	sum := sha256.Sum256(data)
+
+	dir := t.TempDir()
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("right hash: %v", err)
+	}
+
+	bad := t.TempDir()
+	_, err := EnsureBaseImage(bad, srv.URL+"/img", strings.Repeat("0", 64))
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("wrong hash: %v", err)
+	}
+	if entries, _ := os.ReadDir(bad); len(entries) != 0 {
+		t.Fatalf("leftover files: %v", entries)
+	}
+
+	if _, err := EnsureBaseImage(t.TempDir(), srv.URL+"/img", ""); err != nil {
+		t.Fatalf("empty hash: %v", err)
 	}
 }
