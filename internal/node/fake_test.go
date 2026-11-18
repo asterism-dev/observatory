@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -230,6 +231,9 @@ func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
 	p.events = append(p.events, "reseed:"+f.Spec.Name)
 	if f.Boot != nil {
 		p.events = append(p.events, "reseed-keys:"+strings.Join(f.Boot.SSHPublicKeys, ","))
+		if len(f.Boot.EgressCAs) > 0 {
+			p.events = append(p.events, "reseed-cas:"+strings.Join(slices.Sorted(maps.Keys(f.Boot.EgressCAs)), ","))
+		}
 	}
 	if p.failReseed {
 		return errors.New("reseed boom")

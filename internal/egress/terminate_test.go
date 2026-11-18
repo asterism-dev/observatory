@@ -452,8 +452,9 @@ func TestLogLineNoSecrets(t *testing.T) {
 	r.do(c, get(t, "https://a.test/repos/x/"+ghPH+"?token=querysecret42",
 		"Authorization", "Bearer "+ghPH, "X-Extra", "headervalue42"))
 	r.do(c, get(t, "https://a.test/repos/x/%6F"+ghPH[1:]))
-	line := waitLog(t, &buf, 2)
-	for _, want := range []string{"vm=vm1", "host=a.test", "method=GET", "path=/repos/x/", "status=200", "vars=GH_TOKEN"} {
+	r.do(c, get(t, "https://a.test/repos/v/"+ghValue))
+	line := waitLog(t, &buf, 3)
+	for _, want := range []string{"vm=vm1", "host=a.test", "method=GET", "path=/repos/x/", "path=/repos/v/%2A%2A%2A", "status=200", "vars=GH_TOKEN"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("log %q lacks %q", line, want)
 		}
