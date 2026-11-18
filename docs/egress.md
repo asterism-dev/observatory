@@ -10,6 +10,10 @@ gh api user                                         # works: the proxy sends the
 curl -u x:$GH_TOKEN https://example.com             # example.com gets the placeholder
 ```
 
+Integrations ([integrations.md](integrations.md)) in proxy mode are a second source of host-bound secrets: each one
+becomes a secret bound to its kind's hosts with the header `Authorization`, next to the VM's bound variables. They
+count toward the 100-host cap and the VM's CA, and the proxy log names them by kind (`vars=github integration`).
+
 ## Binding a secret
 
 On the Environment page, check "secret" and fill in "Bind to hosts", or send `hosts` with `POST`/`PATCH
@@ -85,7 +89,8 @@ vm <id> egress: egress vm=<id> host=httpbin.org method=GET path=/headers status=
 
 `path` is without the query, with the VM's placeholders masked as `***` (URL-escaped: `%2A%2A%2A`). Values the client
 itself puts into a path are masked only while they are this VM's current values; guests normally hold only
-placeholders. `vars` lists the names of the substituted variables. Header values, queries and bodies are never logged. Unbound connections are not logged. Audit rows of `env.set` contain the host names, never
+placeholders. `vars` lists the names of the substituted variables, or `<kind> integration` for an integration
+(`vars=github integration`). Header values, queries and bodies are never logged. Unbound connections are not logged. Audit rows of `env.set` contain the host names, never
 values or placeholders.
 
 ## Trust in the guest

@@ -110,6 +110,21 @@ The root-only Linux tests (`go test -run TestEgress ./internal/provider/linuxvm/
 addresses to `vmm0`: on a live node they wipe the running VMs' redirects until the node restarts. Run them in a
 separate network namespace or on a host without VMs.
 
+## Integrations
+
+The node runs a token service for every VM it runs ([integrations.md](integrations.md)). The guest connects over
+vsock to the host (CID 2, port 1051); Firecracker turns that into a connection to the Unix socket `v.sock_1051` in the
+VM's jail root (`<vm dir>/jail/firecracker/vm/root/`). The node creates the socket before the VM boots or resumes,
+owned by the VM's jail UID with mode 0600 in the jail's 0700 root, so another VM's Firecracker cannot open it, and
+removes it when the VM stops. The guest agent's port 1050 never carries secrets.
+
+- One JSON line per connection (`{"op":"token","kind":"github"}`), 4 KiB request limit, 2 s timeout, 16 concurrent
+  connections per VM; answers `{"ok":true,"token":…,"expiresAt":…}` or `{"ok":false,"error":"not-connected"|"unavailable"}`.
+- Tokens arrive in the desired list of the VM's node only and live in node memory: never in `vm.json`, the seed or
+  status messages. After a node restart the service answers `unavailable` until the hub's first push.
+- The node journal gets one line per request: VM id, kind, result (`token vm=<id> kind=github result=ok`), never the
+  token.
+
 ## Re-enroll
 
 Running the installer again is safe: it updates packages, Firecracker and the binary, and keeps `node.json` settings,

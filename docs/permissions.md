@@ -41,6 +41,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `limit:read`, `limit:set` | `org/limits` |
 | `audit:read` | `org/audit` |
 | `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
+| `integration:list`, `integration:set`, `integration:delete`, `integration:use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
@@ -64,6 +65,8 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `member:set-role` | | | yes |
 | `env:list`, `env:use` on `org/env` | yes | yes | yes |
 | `env:*` on `org/env` and `org/team-env/*` | | yes | yes |
+| `integration:list`, `integration:use` on `org/integrations` | yes | yes | yes |
+| `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
@@ -139,6 +142,23 @@ each member's private scope (`org/user-env/<user>`).
 - A private scope is reachable only by its own user, who holds all four actions on it; no built-in role,
   not even owner, covers another member's private scope. Deny rules still win, e.g.
   `deny env:set@org/user-env/*`.
+
+## Integrations
+
+GitHub, Claude and Linear logins ([integrations.md](integrations.md)) use the same three scopes and the same defaults
+as variables: the org (`org/integrations`), a team (`org/team-integrations/<team>`) and each member's private scope
+(`org/user-integrations/<user>`).
+
+- `integration:list` shows kind, source, scope, delivery mode, account, status and expiry; `integration:set` connects,
+  replaces, signs in again and changes the mode; `integration:delete` disconnects; `integration:use` means "VMs I own
+  receive this integration" and is checked when a VM's integrations are resolved. No action returns a token or
+  placeholder.
+- Generated rules: team admins get `integration:*` on their team's object; the team subject gets `integration:list`
+  and `integration:use` on its own object and `integration:use` on `org/integrations`; every member gets
+  `integration:*` on their own `org/user-integrations/<user>`. No built-in role, not even owner, covers another
+  member's private scope.
+- Deny rules win as usual, e.g. `deny integration:set@org/user-integrations/*` ("no private integrations") or
+  `deny integration:use@org/integrations` (org integrations reach no VM). All actions go through the escalation rule.
 
 ## Nodes and VMs
 
