@@ -234,7 +234,10 @@ func TestPowerPauseHibernateResume(t *testing.T) {
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
-	for _, c := range []struct{ action, power string }{{"pause", "paused"}, {"hibernate", "hibernated"}, {"resume", "running"}} {
+	for _, c := range []struct{ action, power string }{
+		{"pause", "paused"}, {"hibernate", "hibernated"}, {"pause", "paused"}, {"resume", "running"},
+		{"hibernate", "hibernated"}, {"resume", "running"},
+	} {
 		rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/"+c.action, tok)
 		if rec.Code != 200 {
 			t.Fatalf("%s: %d %s", c.action, rec.Code, rec.Body.String())
