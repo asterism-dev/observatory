@@ -49,4 +49,15 @@ snapshot:
   snapshot delete <vm> <snap>                                   delete a snapshot
   snapshot fork <vm> <snap> <new-vm> [--memory] [--wait]        create a new VM from a snapshot
 
+disk:
+  disk list                                           list disks
+  disk show <disk>                                    show a disk
+  disk create <name> --size GB [--team T] [--wait]    create a disk
+  disk copy <disk> <new> [--team T] [--wait]          copy a disk
+  disk grow <disk> --size GB [--restart]              grow a disk
+  disk release <disk>                                 force-release a disk from its VM
+  disk delete <disk>                                  delete a disk
+  disk attach <disk> <vm> [--mount PATH] [--restart]  attach a disk to a VM
+  disk detach <disk> <vm> [--restart]                 detach a disk from a VM
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help
