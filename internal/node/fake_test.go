@@ -68,6 +68,13 @@ func (i *fakeInstance) Kill() error {
 func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
 func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
 
+func (i *fakeInstance) GuestResume(context.Context) error {
+	i.p.mu.Lock()
+	i.p.guestResumes = append(i.p.guestResumes, time.Now())
+	i.p.mu.Unlock()
+	return nil
+}
+
 func (i *fakeInstance) SaveState(dir string) error {
 	i.p.record("savestate:" + dir)
 	i.p.mu.Lock()
@@ -117,6 +124,7 @@ type fakeProvider struct {
 	restoreBlock  chan struct{}
 	failSaveState error
 	failKill      error
+	guestResumes  []time.Time
 	restores      map[string]int
 }
 

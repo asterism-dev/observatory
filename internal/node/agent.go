@@ -40,6 +40,8 @@ var (
 	killWait       = 30 * time.Second
 	// stopBudget leaves systemd's TimeoutStopSec=300 room to kill what is still saving.
 	stopBudget = 240 * time.Second
+
+	guestResumeTimeout = 30 * time.Second
 )
 
 type Agent struct {
@@ -616,7 +618,7 @@ func (a *Agent) applyPending(ctx context.Context, e *vmEntry) {
 // syncPause pauses or resumes inst to match e's desired power and reports e's status; the caller holds e.op.
 func (a *Agent) syncPause(e *vmEntry, inst Instance) {
 	a.mu.Lock()
-	want, st := e.file.Power == proto.PowerPaused, e.status
+	want, st, id := e.file.Power == proto.PowerPaused, e.status, e.file.Spec.ID
 	change := want != e.paused
 	a.mu.Unlock()
 	if change {
@@ -631,6 +633,9 @@ func (a *Agent) syncPause(e *vmEntry, inst Instance) {
 			e.paused = want
 			a.mu.Unlock()
 			st.Error = ""
+			if !want {
+				go a.guestResume(id, inst)
+			}
 			switch {
 			case want:
 				st.State = proto.StatePaused
@@ -642,6 +647,15 @@ func (a *Agent) syncPause(e *vmEntry, inst Instance) {
 		}
 	}
 	a.reportEntry(e, st)
+}
+
+// guestResume lets the guest catch up on its clock and seed after a pause; it keeps running without that.
+func (a *Agent) guestResume(id string, inst Instance) {
+	ctx, cancel := context.WithTimeout(context.Background(), guestResumeTimeout)
+	defer cancel()
+	if err := inst.GuestResume(ctx); err != nil {
+		log.Printf("vm %s: guest agent resume: %v", id, err)
+	}
 }
 
 // watch reports inst's progress until it exits, reporting stopped (or hibernated) last.

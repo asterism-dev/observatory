@@ -31,6 +31,8 @@ type Instance interface {
 	Resume() error
 	// SaveState pauses the VM, flushes its disks and writes StateFile and MemFile into dir; the VM stays paused.
 	SaveState(dir string) error
+	// GuestResume tells the guest agent it was resumed, so it sets its clock and re-reads its seed.
+	GuestResume(ctx context.Context) error
 }
 
 type RestoreFrom struct {

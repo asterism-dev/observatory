@@ -1476,3 +1476,39 @@ func TestRestoreRetriesWhenClearingHibernatedFails(t *testing.T) {
 	}
 	eventually(t, "restored", func() bool { return p.hasEvent("restore:" + state) })
 }
+
+func guestResumedSince(p *fakeProvider, since time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.guestResumes) > 0 && !p.guestResumes[len(p.guestResumes)-1].Before(since)
+}
+
+func TestUnpauseCallsGuestResume(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	if guestResumedSince(p, time.Time{}) {
+		t.Fatal("guest resume called on pause")
+	}
+	since := time.Now()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 3)})
+	waitState(t, a, "a", proto.StateRunning, 3)
+	eventually(t, "guest resume", func() bool { return guestResumedSince(p, since) })
+}
+
+func TestPausedRestoreCallsGuestResumeOnUnpause(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	f.Power = proto.PowerPaused
+	saveHibernated(t, a, f)
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StatePaused, 1)
+	since := time.Now()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 2)})
+	waitState(t, a, "a", proto.StateRunning, 2)
+	eventually(t, "guest resume", func() bool { return guestResumedSince(p, since) })
+}

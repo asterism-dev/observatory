@@ -380,6 +380,10 @@ func (i *instance) Resume() error {
 	return nil
 }
 
+func (i *instance) GuestResume(ctx context.Context) error {
+	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
+}
+
 func (i *instance) SaveState(dir string) error {
 	if err := i.Pause(); err != nil {
 		return err
