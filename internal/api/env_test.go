@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -18,6 +20,7 @@ type envListJSON struct {
 		TeamID                *uuid.UUID
 		TeamName              string
 		Value                 *string
+		Hosts                 []string
 		UpdatedBy             struct{ ID, Name string }
 		CanEdit, CanDelete    bool
 	}
@@ -337,5 +340,208 @@ func TestEnvWritableScopes(t *testing.T) {
 	got := e.listEnv(ownerTok, org).WritableScopes
 	if len(got) != 4 || got[0].Scope != "org" || *got[1].TeamID != a || got[1].TeamName != "a" || *got[2].TeamID != b || got[3].Scope != "user" {
 		t.Fatalf("owner: %+v", got)
+	}
+}
+
+const boundValue = "0123456789abcdef"
+
+func secretBody(name string, hosts string) string {
+	return `{"name":"` + name + `","value":"` + boundValue + `","kind":"secret","scope":"org","hosts":` + hosts + `}`
+}
+
+func TestEnvHostsAPI(t *testing.T) {
+	e := newEnv(t)
+	owner, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+
+	rec := e.send("POST", envPath(org), ownerTok, secretBody("GH_TOKEN", `["API.GitHub.com","github.com"]`))
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	list := e.do("GET", envPath(org), ownerTok)
+	for _, b := range []string{rec.Body.String(), list.Body.String()} {
+		if strings.Contains(b, "obsph_") || strings.Contains(b, boundValue) {
+			t.Fatalf("placeholder or value in response: %s", b)
+		}
+	}
+	var got envListJSON
+	decode(t, list, &got)
+	if len(got.Vars) != 1 || strings.Join(got.Vars[0].Hosts, ",") != "api.github.com,github.com" {
+		t.Fatalf("list: %s", list.Body.String())
+	}
+	es := e.audit(store.ActionEnvSet)
+	if len(es) != 1 || es[0].ActorID != owner.ID.String() || strings.Join(toStrings(es[0].Details["hosts"]), ",") != "api.github.com,github.com" {
+		t.Fatalf("audit: %+v", es)
+	}
+	e.createEnv(ownerTok, org, `{"name":"PLAIN","value":"x","kind":"env","scope":"org"}`)
+	var all envListJSON
+	decode(t, e.do("GET", envPath(org), ownerTok), &all)
+	for _, v := range all.Vars {
+		if v.Name == "PLAIN" && (v.Hosts == nil || len(v.Hosts) != 0) {
+			t.Fatalf("unbound hosts must be an empty array: %+v", v.Hosts)
+		}
+	}
+}
+
+func toStrings(v any) []string {
+	var out []string
+	for _, x := range v.([]any) {
+		out = append(out, x.(string))
+	}
+	return out
+}
+
+func TestEnvHostsValidation(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	var many []string
+	for i := 0; i < 11; i++ {
+		many = append(many, `"h`+strings.Repeat("a", i)+`.test"`)
+	}
+	for name, body := range map[string]string{
+		"wildcard": secretBody("A", `["*.github.com"]`),
+		"ip":       secretBody("A", `["1.2.3.4"]`),
+		"port":     secretBody("A", `["github.com:443"]`),
+		"eleven":   secretBody("A", "["+strings.Join(many, ",")+"]"),
+		"kind env": `{"name":"A","value":"` + boundValue + `","kind":"env","scope":"org","hosts":["github.com"]}`,
+		"short":    `{"name":"A","value":"01234567890","kind":"secret","scope":"org","hosts":["github.com"]}`,
+	} {
+		if rec := e.send("POST", envPath(org), ownerTok, body); rec.Code != 400 {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	rec := e.send("POST", envPath(org), ownerTok, secretBody("A", `["github.com:443"]`))
+	if !strings.Contains(rec.Body.String(), `invalid host: \"github.com:443\"`) {
+		t.Fatalf("message: %s", rec.Body.String())
+	}
+	id := e.createEnv(ownerTok, org, `{"name":"B","value":"`+boundValue+`","kind":"secret","scope":"org"}`)
+	if rec := e.send("PATCH", envVarPath(org, id), ownerTok, `{"hosts":["1.2.3.4"]}`); rec.Code != 400 {
+		t.Fatalf("patch: %d", rec.Code)
+	}
+}
+
+func TestEnvUnbind(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	id := e.createEnv(ownerTok, org, secretBody("GH_TOKEN", `["github.com"]`))
+
+	if rec := e.send("PATCH", envVarPath(org, id), ownerTok, `{"name":"GH_TOKEN2"}`); rec.Code != 204 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.listEnv(ownerTok, org); len(got.Vars[0].Hosts) != 1 {
+		t.Fatalf("omitted hosts changed: %+v", got.Vars[0].Hosts)
+	}
+	if rec := e.send("PATCH", envVarPath(org, id), ownerTok, `{"hosts":[]}`); rec.Code != 204 {
+		t.Fatalf("unbind: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := e.listEnv(ownerTok, org); got.Vars[0].Hosts == nil || len(got.Vars[0].Hosts) != 0 {
+		t.Fatalf("after unbind: %+v", got.Vars[0].Hosts)
+	}
+	es := e.audit(store.ActionEnvSet)
+	if h, ok := es[0].Details["hosts"].([]any); !ok || len(h) != 0 {
+		t.Fatalf("unbind audit: %+v", es[0].Details)
+	}
+}
+
+func TestEnvStaleUpdateKeepsHosts(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	id := e.createEnv(ownerTok, org, `{"name":"GH_TOKEN","value":"`+boundValue+`","kind":"secret","scope":"org"}`)
+	ctx := context.Background()
+	vars, err := e.store.EnvVars(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := vars[0]
+
+	if rec := e.send("PATCH", envVarPath(org, id), ownerTok, `{"hosts":["github.com"]}`); rec.Code != 204 {
+		t.Fatalf("bind: %d", rec.Code)
+	}
+	renamed := stale
+	renamed.Name = "OTHER"
+	if err := e.store.UpdateEnvVar(ctx, stale, renamed, nil); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("stale update: %v", err)
+	}
+	if got := e.listEnv(ownerTok, org); got.Vars[0].Name != "GH_TOKEN" || len(got.Vars[0].Hosts) != 1 {
+		t.Fatalf("stale update changed the row: %+v", got.Vars[0])
+	}
+}
+
+func TestEnvHostsPermission(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.addMember(org, carol, store.RoleMember)
+	team := e.createTeam(ownerTok, org, "core")
+	teamVar := e.createEnv(ownerTok, org, `{"name":"T","value":"`+boundValue+`","kind":"secret","scope":"team","teamId":"`+team.String()+`"}`)
+
+	mine := e.createEnv(bobTok, org, `{"name":"M","value":"`+boundValue+`","kind":"secret","scope":"user"}`)
+	if rec := e.send("PATCH", envVarPath(org, mine), bobTok, `{"hosts":["github.com"]}`); rec.Code != 204 {
+		t.Fatalf("bind own: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.send("PATCH", envVarPath(org, teamVar), carolTok, `{"hosts":["github.com"]}`); rec.Code != 403 {
+		t.Fatalf("bind team var without env:set: %d", rec.Code)
+	}
+
+	role := e.createRole(ownerTok, org, `{"name":"nohosts","rules":[{"effect":"deny","object":"org/user-env/*","action":"env:set"}]}`)
+	e.bind(ownerTok, org, authz.UserSubject(bob.ID), role)
+	for _, body := range []string{`{"hosts":["example.com"]}`, `{"hosts":[]}`} {
+		if rec := e.send("PATCH", envVarPath(org, mine), bobTok, body); rec.Code != 403 {
+			t.Fatalf("%s with deny: %d", body, rec.Code)
+		}
+	}
+}
+
+func TestVMEgressInfo(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	node := e.enrolledNode(ownerTok, org, "n1")
+	vm := e.createVM(ownerTok, org, vmBody("v", userOwner(), node))
+	id := e.createEnv(ownerTok, org, `{"name":"GH_TOKEN","value":"`+boundValue+`","kind":"secret","scope":"user","hosts":["api.github.com"]}`)
+	_ = id
+	vmID := uuid.MustParse(vm.ID)
+	ctx := context.Background()
+	if _, err := e.store.EnsureEgressCAs(ctx, org, vmID, []string{"api.github.com"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	path := vmsPath(org) + "/" + vm.ID + "/egress"
+	type info struct {
+		Secrets      int
+		Hosts        []string
+		CANotAfter   *time.Time
+		TrustChanged bool
+	}
+	get := func() info {
+		rec := e.do("GET", path, ownerTok)
+		if rec.Code != 200 || strings.Contains(rec.Body.String(), "obsph_") {
+			t.Fatalf("egress: %d %s", rec.Code, rec.Body.String())
+		}
+		var got info
+		decode(t, rec, &got)
+		return got
+	}
+	if got := get(); got.Secrets != 1 || strings.Join(got.Hosts, ",") != "api.github.com" || got.CANotAfter == nil || got.TrustChanged {
+		t.Fatalf("initial: %+v", got)
+	}
+	if rec := e.send("PATCH", envVarPath(org, id), ownerTok, `{"hosts":["api.github.com","github.com"]}`); rec.Code != 204 {
+		t.Fatalf("bind second: %d", rec.Code)
+	}
+	if _, err := e.store.EnsureEgressCAs(ctx, org, vmID, []string{"api.github.com", "github.com"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); !got.TrustChanged || len(got.Hosts) != 2 {
+		t.Fatalf("after bind: %+v", got)
+	}
+	if rec := e.do("GET", path, bobTok); rec.Code != 403 {
+		t.Fatalf("no vm:read: %d", rec.Code)
 	}
 }

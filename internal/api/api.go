@@ -107,6 +107,7 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/networks", h.setVMNetworks)
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/disks", h.setVMDisks)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/metrics", h.vmMetrics)
+	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/egress", h.vmEgress)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/snapshots", h.listSnapshots)
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/snapshots", h.createSnapshot)
 	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}/snapshots/{sid}", h.deleteSnapshot)

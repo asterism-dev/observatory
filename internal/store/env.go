@@ -245,7 +245,7 @@ func envGuardArgs(old EnvVar, rest ...any) []any {
 	return append([]any{old.OrgID, old.ID, old.Scope, teamID, userID, old.Kind}, rest...)
 }
 
-// UpdateEnvVar sets name, kind and updated_by from v if the row still matches old; a nil value keeps the stored value.
+// UpdateEnvVar sets name, kind, hosts and updated_by from v if the row still matches old, hosts included so a stale write cannot unbind or rebind; a nil value keeps the stored value.
 func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) error {
 	if len(v.Hosts) > 0 && v.Kind != EnvSecret {
 		return ErrHostsNeedSecret
@@ -293,7 +293,7 @@ func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) 
 			UPDATE env_vars SET name = $7, kind = $8, updated_by = $9, updated_at = now(),
 			  nonce = coalesce($10, nonce), ciphertext = coalesce($11, ciphertext),
 			  hosts = $12, placeholder = CASE WHEN $12::text[] IS NULL THEN placeholder ELSE coalesce(placeholder, $13) END
-			WHERE `+envGuard, envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct, hosts, placeholder)...)
+			WHERE `+envGuard+" AND hosts IS NOT DISTINCT FROM $14", envGuardArgs(old, v.Name, v.Kind, v.UpdatedBy, nonce, ct, hosts, placeholder, old.Hosts)...)
 		return tx.envWriteResult(ctx, old, tag.RowsAffected(), err)
 	})
 }
