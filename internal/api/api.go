@@ -15,6 +15,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -27,17 +28,20 @@ type api struct {
 	fleet     *fleet.Fleet
 	network   *network.Hub
 	disks     *disks.Hub
+	ig        Integrations
+	signIns   *integrations.SignIns[signIn]
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub) (*api, http.Handler) {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors}
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations) (*api, http.Handler) {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -84,6 +88,13 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PATCH /api/orgs/{org}/env/{id}", h.updateEnv)
 	mux.HandleFunc("POST /api/orgs/{org}/env/{id}/move", h.moveEnv)
 	mux.HandleFunc("DELETE /api/orgs/{org}/env/{id}", h.deleteEnv)
+	mux.HandleFunc("GET /api/orgs/{org}/integrations", h.listIntegrations)
+	mux.HandleFunc("POST /api/orgs/{org}/integrations", h.connectIntegration)
+	mux.HandleFunc("PUT /api/orgs/{org}/integrations/{id}/token", h.replaceIntegrationToken)
+	mux.HandleFunc("PATCH /api/orgs/{org}/integrations/{id}", h.setIntegrationMode)
+	mux.HandleFunc("DELETE /api/orgs/{org}/integrations/{id}", h.deleteIntegration)
+	mux.HandleFunc("POST /api/orgs/{org}/integrations/claude/sign-in", h.startClaudeSignIn)
+	mux.HandleFunc("POST /api/orgs/{org}/integrations/claude/sign-in/finish", h.finishClaudeSignIn)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes", h.listNodes)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes", h.createNode)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes/{id}", h.getNode)
@@ -108,6 +119,7 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/disks", h.setVMDisks)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/metrics", h.vmMetrics)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/egress", h.vmEgress)
+	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/integrations", h.vmIntegrations)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}/snapshots", h.listSnapshots)
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/snapshots", h.createSnapshot)
 	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}/snapshots/{sid}", h.deleteSnapshot)

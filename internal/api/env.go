@@ -12,6 +12,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/egress"
+	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -357,18 +358,19 @@ func (h *api) vmEgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	owner := ""
-	switch {
-	case v.UserID != nil:
-		owner = authz.UserSubject(*v.UserID)
-	case v.TeamID != nil:
-		owner = authz.TeamSubject(*v.TeamID)
-	}
+	owner := vmOwnerSubject(v)
 	_, bound, err := h.store.ResolveVMEnv(ctx, h.z.Enforcer(), v.OrgID, owner)
 	if err != nil {
 		serverError(w, "vm egress env", err)
 		return
 	}
+	res, err := h.store.ResolveVMIntegrations(ctx, h.z.Enforcer(), v.OrgID, owner)
+	if err != nil {
+		serverError(w, "vm egress integrations", err)
+		return
+	}
+	ib, _ := fleet.IntegrationEntries(res)
+	bound = append(bound, ib...)
 	cas, err := h.store.EgressCAInfos(ctx, v.ID, time.Now())
 	if err != nil {
 		serverError(w, "vm egress cas", err)

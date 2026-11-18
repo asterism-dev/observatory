@@ -20,6 +20,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
@@ -93,7 +94,15 @@ func run() error {
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
 	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary)
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh))
+	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}}
+	if cfg.DevSkipVerify {
+		ig.Verifier = integrations.SkipVerifier{}
+		slog.Warn("dev mode: integration verification skipped")
+	}
+	if cfg.DevClaudeTokenURL != "" {
+		slog.Warn("dev mode: claude token endpoint overridden", "url", cfg.DevClaudeTokenURL)
+	}
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

@@ -91,3 +91,30 @@ func TestConfigStorageToken(t *testing.T) {
 		t.Fatalf("%+v, %v", cfg, err)
 	}
 }
+
+func TestDevIntegrationFlagsNeedDev(t *testing.T) {
+	env := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
+	if cfg, err := load(); err != nil || cfg.Dev || cfg.DevSkipVerify || cfg.DevClaudeTokenURL != "" {
+		t.Fatalf("defaults: %+v, %v", cfg, err)
+	}
+	for _, k := range []string{"OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY", "OBSERVATORY_DEV_CLAUDE_TOKEN_URL"} {
+		env[k] = "1"
+		if _, err := load(); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_DEV=1") {
+			t.Fatalf("%s without dev: %v", k, err)
+		}
+		delete(env, k)
+	}
+	env["OBSERVATORY_DEV"] = "1"
+	env["OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY"] = "1"
+	env["OBSERVATORY_DEV_CLAUDE_TOKEN_URL"] = "http://127.0.0.1:9999/token"
+	if cfg, err := load(); err != nil || !cfg.Dev || !cfg.DevSkipVerify || cfg.DevClaudeTokenURL != "http://127.0.0.1:9999/token" {
+		t.Fatalf("dev: %+v, %v", cfg, err)
+	}
+}
