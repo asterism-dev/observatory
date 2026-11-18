@@ -49,9 +49,7 @@ func (c *cli) warnNoDevice() {
 	if err != nil {
 		return
 	}
-	var devices []struct {
-		Owner ref `json:"owner"`
-	}
+	var devices []deviceJSON
 	if err := c.call(http.MethodGet, path, nil, &devices); err != nil {
 		return
 	}

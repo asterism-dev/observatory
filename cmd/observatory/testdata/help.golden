@@ -37,4 +37,9 @@ ssh-key:
   ssh-key add [FILE] [--name N]  add a public key (default ~/.ssh/id_ed25519.pub)
   ssh-key delete <key>           delete an SSH key
 
+device:
+  device list                          list WireGuard devices
+  device create <name> [--out FILE|-]  create a device and write its WireGuard config
+  device delete <device>               delete a device
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help
