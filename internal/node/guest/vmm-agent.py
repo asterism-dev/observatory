@@ -29,6 +29,7 @@ CA_DIR = "/usr/local/share/ca-certificates"
 CA_ID = re.compile(r"[0-9a-f-]{36}")
 CA_PEM = re.compile(r"(-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?)+")
 MAX_CA = 16 << 10
+UPDATE_CA = os.environ.get("VMM_UPDATE_CA", "" if ROOT else "update-ca-certificates")
 
 lock = threading.Lock()
 slots = threading.BoundedSemaphore(4)
@@ -155,7 +156,6 @@ def takeoff(req):
             adopt_instance(m.group(1))
         # Keys before the network, so the template's host key never answers on the VM's address.
         new_host_keys()
-        install_cas(seed_cas(seed + "/vmm-egress-cas"))
         if ROOT:
             boot(seed)
             return
@@ -166,6 +166,11 @@ def takeoff(req):
             grown = pool.submit(grow_root)
             run("sh", seed + "/vmm-disks.sh", env=dict(os.environ, VMM_AGENT="1"))
             grown.result()
+        # Like vmm-boot.sh: a guest without the CAs still runs, only bound hosts fail TLS.
+        try:
+            install_cas(seed_cas(seed + "/vmm-egress-cas"))
+        except Exception as e:
+            print("install egress cas: %s" % e, file=sys.stderr)
     finally:
         umount_seed()
 
@@ -217,7 +222,7 @@ def new_host_keys():
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def install_cas(certs):
+def install_cas(certs, force=False):
     # Only public CA certs may land in the trust store: a key or any other PEM block is refused.
     if not isinstance(certs, dict) or not all(
             isinstance(i, str) and CA_ID.fullmatch(i) and isinstance(p, str) and len(p) <= MAX_CA and CA_PEM.fullmatch(p)
@@ -226,6 +231,7 @@ def install_cas(certs):
     d = ROOT + CA_DIR
     os.makedirs(d, exist_ok=True)
     changed = removed = False
+    written = []
     for i, pem in certs.items():
         path = "%s/observatory-egress-%s.crt" % (d, i)
         try:
@@ -235,14 +241,21 @@ def install_cas(certs):
         except FileNotFoundError:
             pass
         write(path, pem)
+        written.append(path)
         changed = True
     for path in glob.glob(d + "/observatory-egress-*.crt"):
         if os.path.basename(path)[len("observatory-egress-"):-len(".crt")] not in certs:
             os.remove(path)
             changed = removed = True
-    if changed and not ROOT:
-        # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
-        run("update-ca-certificates", *(["--fresh"] if removed else []))
+    if (changed or force) and UPDATE_CA:
+        try:
+            # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
+            run(UPDATE_CA, *(["--fresh"] if removed or force else []))
+        except Exception:
+            # So the next call sees them as new and updates again.
+            for path in written:
+                os.remove(path)
+            raise
     return changed
 
 
@@ -255,7 +268,7 @@ def seed_cas(path):
 
 
 def trust(req):
-    install_cas(req["certs"])
+    install_cas(req["certs"], force=True)
 
 
 def ping(req):
@@ -278,7 +291,7 @@ def parse(line):
         raise ValueError("bad macs")
     if not isinstance(entropy, str) or len(entropy) > 1024:
         raise ValueError("bad entropy")
-    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True), "certs": raw.get("certs") or {}}
+    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True), "certs": raw.get("certs", {})}
 
 
 def handle(conn):

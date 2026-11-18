@@ -84,8 +84,11 @@ func (i *fakeInstance) GuestResume(context.Context) error {
 	return nil
 }
 
-func (i *fakeInstance) GuestTrust(context.Context, map[string]string) error {
+func (i *fakeInstance) GuestTrust(_ context.Context, cas map[string]string) error {
 	i.p.record("guest-trust")
+	i.p.mu.Lock()
+	i.p.trusts = append(i.p.trusts, cas)
+	i.p.mu.Unlock()
 	return nil
 }
 
@@ -142,6 +145,7 @@ type fakeProvider struct {
 	restores      map[string]int
 	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil
 	wakeTeardown  chan struct{} // when set, a cancelled WaitWake removes its taps only once it is closed
+	trusts        []map[string]string
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -235,6 +239,7 @@ func (p *fakeProvider) Start(_ context.Context, f VMFile, dir string) (Instance,
 		return nil, errors.New("start boom")
 	}
 	p.starts[f.Spec.Name]++
+	p.events = append(p.events, "start:"+f.Spec.Name)
 	if p.boots == nil {
 		p.boots = map[string]*proto.Boot{}
 	}
@@ -339,3 +344,59 @@ func cachedVM(id, name string) VMFile {
 	return VMFile{Spec: proto.VMSpec{ID: id, Name: name, CPUs: 1, MemoryMB: 1024, DiskGB: 10},
 		MAC: "02:00:00:00:00:01", Power: proto.PowerRunning, Generation: 1}
 }
+
+// fakeEgress records its calls in the provider's event log, so they order against the VM's.
+type fakeEgress struct {
+	p        *fakeProvider
+	mu       sync.Mutex
+	procs    []*fakeProc
+	sent     []proto.Egress
+	failSend error
+	noReady  bool
+}
+
+type fakeProc struct {
+	h           *fakeEgress
+	ready, done chan struct{}
+	once        sync.Once
+}
+
+func (h *fakeEgress) Spawn(VMFile) (EgressProc, error) {
+	h.p.record("spawn")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pr := &fakeProc{h: h, ready: make(chan struct{}), done: make(chan struct{})}
+	if !h.noReady {
+		close(pr.ready)
+	}
+	h.procs = append(h.procs, pr)
+	return pr, nil
+}
+
+func (h *fakeEgress) Redirect(VMFile) error   { h.p.record("redirect"); return nil }
+func (h *fakeEgress) Unredirect(VMFile) error { h.p.record("unredirect"); return nil }
+
+func (h *fakeEgress) last() *fakeProc {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.procs[len(h.procs)-1]
+}
+
+func (h *fakeEgress) gotSent() []proto.Egress {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]proto.Egress(nil), h.sent...)
+}
+
+func (pr *fakeProc) Send(t proto.Egress) error {
+	pr.h.p.record("send")
+	pr.h.mu.Lock()
+	defer pr.h.mu.Unlock()
+	pr.h.sent = append(pr.h.sent, t)
+	return pr.h.failSend
+}
+
+func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
+func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
+func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
+func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }

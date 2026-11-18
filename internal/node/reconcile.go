@@ -56,15 +56,21 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 		e, ok := a.vms[d.Spec.ID]
 		var gen uint64
 		var due bool
+		var old VMFile
 		if ok {
-			gen, due = e.file.Generation, restoreDue(e.file, d)
+			gen, due, old = e.file.Generation, restoreDue(e.file, d), e.file
 			// Key and variable changes keep the generation; the new Boot applies at the next (re)start.
 			if !e.placeholder && d.Generation <= gen {
 				e.file.Boot = d.Boot
 			}
+			// The proxy table applies at once, whatever the generation.
+			if !e.placeholder {
+				e.file.Egress = d.Egress
+			}
 		}
 		a.mu.Unlock()
 		if ok && !e.placeholder {
+			a.egressSync(e, old)
 			a.syncSuspend(e, d)
 		}
 		switch {
@@ -104,7 +110,7 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 	for _, f := range deferred {
 		d, ok := byID[f.Spec.ID]
 		gen := d.Generation
-		f.Boot = d.Boot
+		f.Boot, f.Egress = d.Boot, d.Egress
 		switch {
 		case !ok && f.Hibernated:
 			booted := make(chan struct{})
@@ -212,6 +218,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 	}
 	if d.Fork != nil {
 		f, err := a.forkLocal(d)
+		f.Egress = d.Egress
 		if err != nil {
 			a.placeholder(d, err.Error())
 			return
@@ -220,7 +227,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		return
 	}
 	f := VMFile{Spec: d.Spec, MAC: RandomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot,
-		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
+		Egress: d.Egress, AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())
 		return
@@ -323,6 +330,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		return
 	}
 	a.mu.Lock()
+	old := e.file
 	e.file = f
 	inst, st := e.inst, e.status
 	a.mu.Unlock()
@@ -389,6 +397,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		}
 		a.report(st)
 	default:
+		a.egressSync(e, old)
 		a.syncPause(e, inst)
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // startAgent runs vmm-agent.py on a unix socket against root and a seed dir holding the boot files.
-func startAgent(t *testing.T, root string) string {
+func startAgent(t *testing.T, root string, env ...string) string {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not installed")
@@ -40,7 +40,7 @@ func startAgent(t *testing.T, root string) string {
 	}
 	sock := filepath.Join(dir, "s")
 	cmd := exec.Command("python3", filepath.Join(seed, "vmm-agent.py"))
-	cmd.Env = append(os.Environ(), "VMM_AGENT_UNIX="+sock, "VMM_ROOT="+root, "VMM_SEED_DIR="+seed)
+	cmd.Env = append(append(os.Environ(), "VMM_AGENT_UNIX="+sock, "VMM_ROOT="+root, "VMM_SEED_DIR="+seed), env...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -229,5 +229,65 @@ func TestAgentTrustInstallsCerts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "observatory-egress-"+id2+".crt")); err != nil {
 		t.Fatalf("rejected request changed the certs: %v", err)
+	}
+}
+
+func TestAgentTrustRetriesFailedUpdate(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	runs, fail := filepath.Join(bin, "runs"), filepath.Join(bin, "fail")
+	update := filepath.Join(bin, "update-ca")
+	if err := os.WriteFile(update, []byte("#!/bin/sh\necho \"$*\" >>"+runs+"\n[ ! -e "+fail+" ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(fail, nil, 0o644)
+	sock := startAgent(t, root, "VMM_UPDATE_CA="+update)
+	id := "0b6a2d1e-7c1f-4c55-9a43-2f0f3c5c1e01"
+	pem := "-----BEGIN CERTIFICATE-----\nMIIBdGVzdA==\n-----END CERTIFICATE-----\n"
+	b, _ := json.Marshal(map[string]any{"op": "trust", "certs": map[string]string{id: pem}})
+	crt := filepath.Join(root, "usr/local/share/ca-certificates/observatory-egress-"+id+".crt")
+	if r := callAgent(t, sock, string(b)); r.OK {
+		t.Fatal("trust succeeded with a failing update")
+	}
+	// Left in place, the cert would look installed to the next call, which would then skip the update.
+	if _, err := os.Stat(crt); !os.IsNotExist(err) {
+		t.Fatalf("cert kept after failed update: %v", err)
+	}
+	os.Remove(fail)
+	for i := 0; i < 2; i++ {
+		if r := callAgent(t, sock, string(b)); !r.OK {
+			t.Fatalf("trust: %+v", r)
+		}
+	}
+	if _, err := os.Stat(crt); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(runs); string(got) != "--fresh\n--fresh\n--fresh\n" {
+		t.Fatalf("update runs = %q", got)
+	}
+}
+
+func TestAgentTakeoffToleratesBadCAs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sock := startAgent(t, root)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(sock), "seed", "vmm-egress-cas"), []byte(`{"x":"y"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := callAgent(t, sock, `{"op":"takeoff","time":5,"entropy":"AAEC"}`); !r.OK {
+		t.Fatalf("takeoff: %+v", r)
+	}
+	if h, _ := os.ReadFile(filepath.Join(root, "etc/hostname")); string(h) != "web-1\n" {
+		t.Fatalf("hostname = %q", h)
+	}
+}
+
+func TestAgentTrustRejectsNonObjectCerts(t *testing.T) {
+	sock := startAgent(t, t.TempDir())
+	for _, certs := range []string{`[]`, `""`, `0`, `false`, `null`} {
+		if r := callAgent(t, sock, `{"op":"trust","certs":`+certs+`}`); r.OK || r.Error != "bad certs" {
+			t.Fatalf("certs %s: reply = %+v", certs, r)
+		}
 	}
 }
