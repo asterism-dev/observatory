@@ -42,6 +42,8 @@ type cli struct {
 	cfg            config
 	org            *orgJSON
 	warnedExpiry   bool
+	progressWhat   string
+	lastProgress   string
 }
 
 func newCLI(ctx context.Context) *cli {
