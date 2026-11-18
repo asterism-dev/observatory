@@ -68,7 +68,8 @@ Do not run the gateway on a host that is also a node: both would share the kerne
 
 ## Devices
 
-A device belongs to one person in one org. Devices → Add device returns the WireGuard config once (download or QR code).
+A device belongs to one person in one org. Devices → Add device, or `observatory device create <name>`
+([cli.md](cli.md#connecting)), returns the WireGuard config once (download or QR code).
 The hub keeps only the public key, so a lost config means deleting the device and adding a new one.
 
 ```ini
