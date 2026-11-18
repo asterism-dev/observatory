@@ -1731,3 +1731,19 @@ func TestDesiredIntegrationsUnresolvedKeepsOtherVMs(t *testing.T) {
 	}
 	t.Fatal("still unresolved after the integration was deleted")
 }
+
+func TestFleetStoresImage(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	node := e.register(cred, proto.Register{Image: &proto.ImageStatus{Version: "v1", State: proto.ImageReady}})
+	image := func() *proto.ImageStatus {
+		got, err := e.s.Node(context.Background(), e.org.ID, n.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Image
+	}
+	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageReady })
+	node.send(proto.Message{Type: "image", Image: &proto.ImageStatus{Version: "v1", State: proto.ImageFailed, Error: "boom"}})
+	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageFailed && i.Error == "boom" })
+}

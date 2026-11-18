@@ -47,6 +47,7 @@ type vmJSON struct {
 	CPUs       int            `json:"cpus"`
 	MemoryMB   int            `json:"memoryMB"`
 	DiskGB     int            `json:"diskGB"`
+	Image      string         `json:"image"`
 	CreatedAt  time.Time      `json:"createdAt"`
 	CanPower   bool           `json:"canPower"`
 	CanDelete  bool           `json:"canDelete"`
@@ -139,7 +140,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
@@ -282,7 +283,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 	case !vmNamePattern.MatchString(body.Name):
 		writeError(w, http.StatusBadRequest, "invalid name")
 		return
-	case body.CPUs < 1 || body.CPUs > 32 || body.MemoryMB < 512 || body.MemoryMB > 131072 || body.DiskGB < 5 || body.DiskGB > 2048:
+	case body.CPUs < 1 || body.CPUs > 32 || body.MemoryMB < 512 || body.MemoryMB > 131072 || body.DiskGB < 10 || body.DiskGB > 2048:
 		writeError(w, http.StatusBadRequest, "invalid size")
 		return
 	case body.Owner.Kind == "user":

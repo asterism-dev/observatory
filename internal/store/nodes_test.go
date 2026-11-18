@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -115,5 +116,29 @@ func TestDeleteNodeWithVM(t *testing.T) {
 	}
 	if err := s.DeleteNode(ctx, org.ID, n.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("again: %v", err)
+	}
+}
+
+func TestSetNodeImage(t *testing.T) {
+	ctx := context.Background()
+	s := store.New(dbtest.New(t))
+	a, b := login(t, s, "a"), login(t, s, "b")
+	orgA, _ := s.CreateOrg(ctx, "A", a.User.ID)
+	orgB, _ := s.CreateOrg(ctx, "B", b.User.ID)
+	n, _, _ := s.CreateNode(ctx, store.Node{OrgID: orgA.ID, Name: "n1", CreatedBy: a.User.ID})
+	other, _, _ := s.CreateNode(ctx, store.Node{OrgID: orgB.ID, Name: "n1", CreatedBy: b.User.ID})
+	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.Image != nil {
+		t.Fatalf("image before report: %+v", got.Image)
+	}
+	for _, st := range []string{proto.ImageBuilding, proto.ImageReady} {
+		if err := s.SetNodeImage(ctx, n.ID, proto.ImageStatus{Version: "v1", State: st}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.Image == nil || got.Image.State != proto.ImageReady || got.Image.Version != "v1" {
+		t.Fatalf("image: %+v", got.Image)
+	}
+	if got, _ := s.Node(ctx, orgB.ID, other.ID); got.Image != nil {
+		t.Fatalf("other node touched: %+v", got.Image)
 	}
 }

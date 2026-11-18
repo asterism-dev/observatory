@@ -41,7 +41,7 @@ const problems = computed(() => ({
   name: namePattern.test(name.value) ? '' : t('vms.invalidName'),
   cpus: inRange(cpus.value, 1, 32) ? '' : t('vms.invalidRange', { min: 1, max: 32 }),
   memory: inRange(memoryMB.value, 512, 131072) ? '' : t('vms.invalidRange', { min: '0.5', max: 128 }),
-  disk: inRange(diskGB.value, 5, 2048) ? '' : t('vms.invalidRange', { min: 5, max: 2048 }),
+  disk: inRange(diskGB.value, 10, 2048) ? '' : t('vms.invalidRange', { min: 10, max: 2048 }),
 }))
 const valid = computed(() => !Object.values(problems.value).some(Boolean) && !!selected.value && !!nodeId.value)
 

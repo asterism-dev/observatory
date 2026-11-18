@@ -225,3 +225,26 @@ func TestNodeJSONShowsQuarantine(t *testing.T) {
 		t.Fatal("quarantine not shown")
 	}
 }
+
+func TestNodeJSONImage(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	id := e.enrolledNode(tok, org, "n1")
+	read := func() (n struct{ Image *proto.ImageStatus }) {
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, bobTok), &n)
+		return
+	}
+	if read().Image != nil {
+		t.Fatal("image before report")
+	}
+	node, _ := uuid.Parse(id)
+	if err := e.store.SetNodeImage(context.Background(), node, proto.ImageStatus{Version: "v1", State: proto.ImageBuilding}); err != nil {
+		t.Fatal(err)
+	}
+	if i := read().Image; i == nil || i.State != proto.ImageBuilding || i.Version != "v1" {
+		t.Fatalf("%+v", i)
+	}
+}

@@ -281,3 +281,21 @@ func TestPolicySnapshotLoadsVMs(t *testing.T) {
 		t.Errorf("team vm: %+v", r)
 	}
 }
+
+func TestSetVMStatusImage(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	vm, err := e.s.CreateVM(ctx, e.vm("a", nil, 1, 512, 10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, image := range []string{"v1", ""} {
+		st := proto.VMStatus{ID: vm.ID.String(), State: proto.StateRunning, Image: image}
+		if err := e.s.SetVMStatus(ctx, e.node.ID, st); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := e.s.VM(ctx, e.org.ID, vm.ID); got.Image != "v1" {
+			t.Fatalf("after status %q: image %q", image, got.Image)
+		}
+	}
+}

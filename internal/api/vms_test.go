@@ -26,7 +26,7 @@ type vmJSONTest struct {
 }
 
 func vmBody(name, owner, node string) string {
-	return `{"name":"` + name + `","owner":` + owner + `,"nodeId":"` + node + `","cpus":1,"memoryMB":512,"diskGB":5}`
+	return `{"name":"` + name + `","owner":` + owner + `,"nodeId":"` + node + `","cpus":1,"memoryMB":512,"diskGB":10}`
 }
 
 func userOwner() string { return `{"kind":"user"}` }
@@ -78,10 +78,11 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 	for _, body := range []string{
 		vmBody("Bad", userOwner(), node),
 		vmBody("-x", userOwner(), node),
-		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":0,"memoryMB":512,"diskGB":5}`,
-		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":33,"memoryMB":512,"diskGB":5}`,
-		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":511,"diskGB":5}`,
+		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":0,"memoryMB":512,"diskGB":10}`,
+		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":33,"memoryMB":512,"diskGB":10}`,
+		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":511,"diskGB":10}`,
 		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":512,"diskGB":2049}`,
+		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":512,"diskGB":9}`,
 		vmBody("a", `{"kind":"robot"}`, node),
 		vmBody("a", `{"kind":"team"}`, node),
 	} {
@@ -582,5 +583,39 @@ func TestMetricsAPIRequiresRead(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"cpuPercent"`) || !strings.Contains(rec.Body.String(), `"memTotalMB"`) {
 		t.Fatalf("json names: %s", rec.Body.String())
+	}
+}
+
+func TestVMJSONImage(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	vm := e.createVM(tok, org, vmBody("a", userOwner(), node))
+	nodeID, _ := uuid.Parse(node)
+	id, _ := uuid.Parse(vm.ID)
+	if err := e.store.SetVMStatus(context.Background(), nodeID, proto.VMStatus{ID: vm.ID, State: proto.StateRunning, Image: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Image string }
+	decode(t, e.do("GET", vmsPath(org)+"/"+id.String(), tok), &got)
+	if got.Image != "v1" {
+		t.Fatalf("image %q", got.Image)
+	}
+}
+
+func TestCreateVMDiskMinimum(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	body := func(gb string) string {
+		return `{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":512,"diskGB":` + gb + `}`
+	}
+	if rec := e.send("POST", vmsPath(org), tok, body("9")); rec.Code != 400 {
+		t.Fatalf("9 GB: %d", rec.Code)
+	}
+	if rec := e.send("POST", vmsPath(org), tok, body("10")); rec.Code != 201 {
+		t.Fatalf("10 GB: %d %s", rec.Code, rec.Body.String())
 	}
 }

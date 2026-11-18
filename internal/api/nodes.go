@@ -11,25 +11,27 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
 type nodeJSON struct {
-	ID           uuid.UUID     `json:"id"`
-	Name         string        `json:"name"`
-	State        string        `json:"state"`
-	Version      string        `json:"version"`
-	CPUs         int           `json:"cpus"`
-	MemoryMB     int           `json:"memoryMB"`
-	Machine      any           `json:"machine"`
-	LastSeen     *time.Time    `json:"lastSeen"`
-	VMCount      int           `json:"vmCount"`
-	UsedCPUs     int           `json:"usedCPUs"`
-	UsedMemoryMB int           `json:"usedMemoryMB"`
-	CanUpdate    bool          `json:"canUpdate"`
-	CanDelete    bool          `json:"canDelete"`
-	Underlay     *underlayJSON `json:"underlay"`
-	Quarantined  bool          `json:"quarantined"`
+	ID           uuid.UUID          `json:"id"`
+	Name         string             `json:"name"`
+	State        string             `json:"state"`
+	Version      string             `json:"version"`
+	CPUs         int                `json:"cpus"`
+	MemoryMB     int                `json:"memoryMB"`
+	Machine      any                `json:"machine"`
+	LastSeen     *time.Time         `json:"lastSeen"`
+	VMCount      int                `json:"vmCount"`
+	UsedCPUs     int                `json:"usedCPUs"`
+	UsedMemoryMB int                `json:"usedMemoryMB"`
+	CanUpdate    bool               `json:"canUpdate"`
+	CanDelete    bool               `json:"canDelete"`
+	Underlay     *underlayJSON      `json:"underlay"`
+	Quarantined  bool               `json:"quarantined"`
+	Image        *proto.ImageStatus `json:"image"`
 }
 
 type underlayJSON struct {
@@ -49,7 +51,7 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		return nodeJSON{}, err
 	}
 	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, CPUs: n.CPUs, MemoryMB: n.MemoryMB,
-		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined}
+		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image}
 	if len(n.Machine) > 0 {
 		j.Machine = n.Machine
 	}
