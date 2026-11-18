@@ -22,6 +22,8 @@ type Proxy struct {
 	OrigDst  func(net.Conn) (netip.AddrPort, error)
 	Log      *log.Logger
 	MaxConns int
+	// Peer, if valid, is the only client address served: the VM's own, in case the node's nftables rules are gone.
+	Peer netip.Addr
 	// UpstreamAddr and UpstreamRoots are for tests; nil means host:443 and the system roots.
 	UpstreamAddr  func(host string) string
 	UpstreamRoots *x509.CertPool
@@ -90,6 +92,11 @@ func (p *Proxy) Serve(l net.Listener) error {
 
 func (p *Proxy) handle(c net.Conn) {
 	defer c.Close()
+	if p.Peer.IsValid() {
+		if ra, ok := c.RemoteAddr().(*net.TCPAddr); !ok || ra.AddrPort().Addr().Unmap() != p.Peer {
+			return
+		}
+	}
 	dst, err := p.OrigDst(c)
 	if err != nil {
 		p.Log.Printf("egress vm %s: original destination: %v", p.VMID, err)

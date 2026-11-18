@@ -130,6 +130,9 @@ func TestEgressNetnsIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { NewEgress(vms, "") })
+	if err := nftApply(egressRules([]netip.Addr{netip.MustParseAddr("127.0.0.53")})); err != nil {
+		t.Fatal(err)
+	}
 	a, b := egressVM(t, vms, "egta", "192.168.64.2"), egressVM(t, vms, "egtb", "192.168.64.3")
 	nsA := fakeVM(t, "egta", "192.168.64.2")
 	fakeVM(t, "egtb", "192.168.64.3")
@@ -188,16 +191,54 @@ func TestEgressNetnsIsolation(t *testing.T) {
 	if own == "" {
 		t.Fatal("node has no address outside the forbidden prefixes")
 	}
-	for _, addr := range []string{"10.198.0.1:443", "169.254.169.254:80", "127.0.0.1:22", own} {
-		host, port, _ := net.SplitHostPort(addr)
-		var stderr bytes.Buffer
-		cmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("exec 3<>/dev/tcp/%s/%s", host, port))
-		cmd.Stderr = &stderr
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 71002, Gid: 71002}}
-		if err := cmd.Run(); err == nil || !strings.Contains(stderr.String(), "Connection refused") {
-			t.Errorf("uid 71002 -> %s: %v: %s", addr, err, stderr.String())
+	// A local resolver stays reachable on port 53 only.
+	for _, port := range []string{"53", "54"} {
+		ln, err := net.Listen("tcp4", "127.0.0.53:"+port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+	}
+	if out, err := proxyUIDConnect("127.0.0.53:53"); err != nil {
+		t.Errorf("uid 71002 -> local resolver: %v: %s", err, out)
+	}
+	for _, addr := range []string{"10.198.0.1:443", "169.254.169.254:80", "127.0.0.1:22", "127.0.0.53:54", own} {
+		if out, err := proxyUIDConnect(addr); err == nil || !strings.Contains(out, "Connection refused") {
+			t.Errorf("uid 71002 -> %s: %v: %s", addr, err, out)
 		}
 	}
+}
+
+// onExitingThread runs fn on a thread that is destroyed afterwards; Go never destroys the main thread, so that one is held aside.
+func onExitingThread(fn func()) {
+	release := make(chan struct{})
+	defer close(release)
+	for {
+		ran := make(chan bool)
+		go func() {
+			runtime.LockOSThread()
+			if unix.Gettid() == os.Getpid() {
+				ran <- false
+				<-release
+				return
+			}
+			fn()
+			ran <- true
+		}()
+		if <-ran {
+			return
+		}
+	}
+}
+
+func proxyUIDConnect(addr string) (string, error) {
+	host, port, _ := net.SplitHostPort(addr)
+	var stderr bytes.Buffer
+	cmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("exec 3<>/dev/tcp/%s/%s", host, port))
+	cmd.Stderr = &stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 71002, Gid: 71002}}
+	err := cmd.Run()
+	return stderr.String(), err
 }
 
 // Recreating the tables at node start drops a previous run's elements and leaves other tables alone.
@@ -246,7 +287,9 @@ func TestEgressSpawn(t *testing.T) {
 	}
 	e := &Egress{VMsDir: dir, Binary: bin}
 	f := egressVM(t, dir, "egtspawn", "192.168.64.2")
-	p, err := e.Spawn(f)
+	// Spawned from a thread that then exits, as a VM's locked thread does; Pdeathsig must not fire.
+	var p node.EgressProc
+	onExitingThread(func() { p, err = e.Spawn(f) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +304,19 @@ func TestEgressSpawn(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("not ready")
 	}
+	time.Sleep(500 * time.Millisecond)
+	select {
+	case <-p.Done():
+		t.Fatal("proxy died with the thread that spawned it")
+	default:
+	}
 	pid := p.(*egressProc).cmd.Process.Pid
+	if env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid)); err != nil || len(env) != 0 {
+		t.Errorf("environ = %q, %v", env, err)
+	}
+	if cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); !strings.Contains(string(cmdline), "-peer\x00192.168.64.2") {
+		t.Errorf("cmdline = %q", cmdline)
+	}
 	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
 		t.Fatal(err)

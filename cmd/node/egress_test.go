@@ -82,3 +82,10 @@ func TestRunEgressLineTooLong(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRunEgressBadPeer(t *testing.T) {
+	err := runEgress([]string{"-listen", "127.0.0.1:0", "-peer", "nope"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "-peer") {
+		t.Fatalf("err = %v", err)
+	}
+}

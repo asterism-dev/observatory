@@ -25,6 +25,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "egress" {
+		log.SetFlags(0)
 		if err := runEgress(os.Args[2:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 			log.Fatal(err)
 		}

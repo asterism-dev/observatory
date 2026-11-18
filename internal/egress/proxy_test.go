@@ -497,3 +497,29 @@ func TestMaxConns(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	echo(open())
 }
+
+func TestForeignPeerClosed(t *testing.T) {
+	for _, peer := range []string{"192.0.2.1", "127.0.0.1"} {
+		var calls atomic.Int32
+		addr := startProxy(t, nil, func(p *Proxy, _ net.Addr) {
+			p.Peer = netip.MustParseAddr(peer)
+			p.OrigDst = func(net.Conn) (netip.AddrPort, error) {
+				calls.Add(1)
+				return netip.AddrPort{}, errors.New("stop")
+			}
+		})
+		c, err := net.Dial("tcp", addr.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectClosed(t, c, 2*time.Second)
+		c.Close()
+		want := int32(0)
+		if peer == "127.0.0.1" {
+			want = 1
+		}
+		if calls.Load() != want {
+			t.Fatalf("peer %s: %d connections handled, want %d", peer, calls.Load(), want)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package linuxvm
 import (
 	"fmt"
 	"net/netip"
+	"os"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/egress"
@@ -28,8 +29,25 @@ func egressSlot(natIP string) (uid, port int, mark uint32, err error) {
 	return egressUIDBase + o, egressPortBase + o, egressMarkBase | uint32(o), nil
 }
 
+// nameservers reads resolv.conf; a missing or unreadable file yields none.
+func nameservers(resolvConf string) []netip.Addr {
+	b, _ := os.ReadFile(resolvConf)
+	var out []netip.Addr
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "nameserver" {
+			continue
+		}
+		if ip, err := netip.ParseAddr(f[1]); err == nil {
+			out = append(out, ip.Unmap().WithZone(""))
+		}
+	}
+	return out
+}
+
 // egressRules recreates the node's egress tables; deleting them in the same transaction drops a previous run's elements atomically.
-func egressRules() string {
+// DNS to the node's nameservers is let through before the rejects, as a local resolver (127.0.0.53) would otherwise be one.
+func egressRules(dns []netip.Addr) string {
 	var deny4, deny6 strings.Builder
 	for _, p := range egress.Forbidden {
 		b := &deny4
@@ -39,6 +57,18 @@ func egressRules() string {
 		fmt.Fprintf(b, "\t\t\t%s,\n", p)
 	}
 	uids := fmt.Sprintf("meta skuid %d-%d", egressUIDBase+2, egressUIDBase+253)
+	var dnsRules strings.Builder
+	for _, fam := range []string{"ip", "ip6"} {
+		var ips []string
+		for _, ip := range dns {
+			if ip.Is4() == (fam == "ip") {
+				ips = append(ips, ip.String())
+			}
+		}
+		if len(ips) > 0 {
+			fmt.Fprintf(&dnsRules, "\t\t%s %s daddr { %s } meta l4proto { tcp, udp } th dport 53 accept\n", uids, fam, strings.Join(ips, ", "))
+		}
+	}
 	return fmt.Sprintf(`table bridge obs_egress {}
 delete table bridge obs_egress
 table bridge obs_egress {
@@ -65,22 +95,22 @@ table inet obs_egress {
 	}
 	chain prerouting {
 		type nat hook prerouting priority dstnat;
-		meta nfproto ipv4 meta mark & 0xffff0000 == %#x tcp dport 443 fib daddr type != local redirect to :meta mark map @ports
+		iifname "vmm0" meta mark & 0xffff0000 == %#x ip daddr != 192.168.64.0/24 tcp dport 443 fib daddr type != local redirect to :meta mark map @ports
 	}
 	chain input {
 		type filter hook input priority filter;
-		meta mark . tcp dport @allowed accept
+		iifname "vmm0" meta mark . tcp dport @allowed accept
 		tcp dport %d-%d drop
 	}
 	chain output {
 		type filter hook output priority filter;
-		%[6]s ct direction reply accept
-		%[6]s ip daddr @deny4 reject
+		%[6]s ct direction reply oifname "vmm0" accept
+%[7]s		%[6]s ip daddr @deny4 reject
 		%[6]s ip6 daddr @deny6 reject
 		%[6]s fib daddr type local reject
 	}
 }
-`, deny4.String(), deny6.String(), egressMarkBase, egressPortBase+2, egressPortBase+253, uids)
+`, deny4.String(), deny6.String(), egressMarkBase, egressPortBase+2, egressPortBase+253, uids, dnsRules.String())
 }
 
 // egressElements adds a VM's redirect elements, or deletes them by key.

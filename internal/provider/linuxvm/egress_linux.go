@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ type Egress struct {
 
 // NewEgress recreates the node's egress tables, dropping redirects a previous run left behind.
 func NewEgress(vmsDir, binary string) (*Egress, error) {
-	if err := nftApply(egressRules()); err != nil {
+	if err := nftApply(egressRules(nameservers("/etc/resolv.conf"))); err != nil {
 		return nil, err
 	}
 	return &Egress{VMsDir: vmsDir, Binary: binary}, nil
@@ -45,17 +46,19 @@ func nftApply(script string) error {
 }
 
 // slot reads the VM's NAT address without allocating one: the provider owns allocation.
-func (e *Egress) slot(id string) (uid, port int, mark uint32, err error) {
+func (e *Egress) slot(id string) (natIP string, uid, port int, mark uint32, err error) {
 	b, err := os.ReadFile(filepath.Join(e.VMsDir, id, natFile))
 	if err != nil {
-		return 0, 0, 0, err
+		return "", 0, 0, 0, err
 	}
-	return egressSlot(strings.TrimSpace(string(b)))
+	natIP = strings.TrimSpace(string(b))
+	uid, port, mark, err = egressSlot(natIP)
+	return natIP, uid, port, mark, err
 }
 
 // Redirect replaces any elements of the VM in one transaction; adding first makes the delete succeed when none exist.
 func (e *Egress) Redirect(f node.VMFile) error {
-	_, port, mark, err := e.slot(f.Spec.ID)
+	_, _, port, mark, err := e.slot(f.Spec.ID)
 	if err != nil {
 		return err
 	}
@@ -64,7 +67,7 @@ func (e *Egress) Redirect(f node.VMFile) error {
 }
 
 func (e *Egress) Unredirect(f node.VMFile) error {
-	_, port, mark, err := e.slot(f.Spec.ID)
+	_, _, port, mark, err := e.slot(f.Spec.ID)
 	if err != nil {
 		return err
 	}
@@ -74,11 +77,12 @@ func (e *Egress) Unredirect(f node.VMFile) error {
 
 func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	id := f.Spec.ID
-	uid, port, _, err := e.slot(id)
+	natIP, uid, port, _, err := e.slot(id)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(e.Binary, "egress", "-listen", NATGateway+":"+strconv.Itoa(port), "-vm", id)
+	cmd := exec.Command(e.Binary, "egress", "-listen", NATGateway+":"+strconv.Itoa(port), "-vm", id, "-peer", natIP)
+	cmd.Env = []string{}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
 		Pdeathsig:  syscall.SIGKILL,
@@ -95,12 +99,26 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
 	p := &egressProc{cmd: cmd, stdin: stdin, ready: make(chan struct{}), exited: make(chan struct{}), done: make(chan struct{})}
 	var readers sync.WaitGroup
 	readers.Add(2)
+	started := make(chan error, 1)
+	go func() {
+		// Pdeathsig fires when the starting thread exits, so this goroutine keeps its thread until the proxy is reaped.
+		runtime.LockOSThread()
+		if err := cmd.Start(); err != nil {
+			started <- err
+			return
+		}
+		started <- nil
+		readers.Wait()
+		cmd.Wait()
+		close(p.exited)
+		p.doneOnce.Do(func() { close(p.done) })
+	}()
+	if err := <-started; err != nil {
+		return nil, err
+	}
 	go func() {
 		defer readers.Done()
 		sc := bufio.NewScanner(stdout)
@@ -119,12 +137,6 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 		}
 		// An over-long line ends the scanner; draining keeps the proxy from blocking on a full pipe.
 		io.Copy(io.Discard, stderr)
-	}()
-	go func() {
-		readers.Wait()
-		cmd.Wait()
-		close(p.exited)
-		p.doneOnce.Do(func() { close(p.done) })
 	}()
 	return p, nil
 }

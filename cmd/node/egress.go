@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -22,11 +23,19 @@ func runEgress(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	listen := fs.String("listen", "", "listen address, host:port")
 	vm := fs.String("vm", "", "VM id")
+	peer := fs.String("peer", "", "the only client address served (the VM's)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *listen == "" {
 		return errors.New("egress: -listen is required")
+	}
+	var peerAddr netip.Addr
+	if *peer != "" {
+		var err error
+		if peerAddr, err = netip.ParseAddr(*peer); err != nil {
+			return fmt.Errorf("egress: -peer: %w", err)
+		}
 	}
 	if err := harden(); err != nil {
 		return fmt.Errorf("egress: harden: %w", err)
@@ -36,7 +45,9 @@ func runEgress(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer ln.Close()
-	p := egress.New(*vm, log.New(stderr, "egress: ", log.LstdFlags))
+	// The node prefixes and timestamps each stderr line.
+	p := egress.New(*vm, log.New(stderr, "", 0))
+	p.Peer = peerAddr
 
 	serveErr := make(chan error, 1)
 	stdinErr := make(chan error, 1)
