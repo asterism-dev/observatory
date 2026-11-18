@@ -32,7 +32,7 @@ func nodeCommands() []command {
 		{"node list", "", "list nodes", cmdNodeList},
 		{"node show", "<node>", "show a node", cmdNodeShow},
 		{"node add", "<name>", "register a node and print its install command", cmdNodeAdd},
-		{"node token", "<node>", "issue a new install command for a node", cmdNodeToken},
+		{"node token", "<node>", "issue a new install command (revokes the current credential)", cmdNodeToken},
 		{"node rename", "<node> <name>", "rename a node", cmdNodeRename},
 		{"node delete", "<node>", "delete a node", cmdNodeDelete},
 	}
@@ -150,6 +150,11 @@ func cmdNodeToken(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
+	if n.State != "pending" {
+		if err := c.confirm(fmt.Sprintf("Issue a new credential for node %s? The node disconnects until reinstalled.", n.Name)); err != nil {
+			return err
+		}
+	}
 	path, err := c.orgPath("/nodes/" + n.ID + "/credential")
 	if err != nil {
 		return err
@@ -164,7 +169,6 @@ func cmdNodeToken(c *cli, args []string) error {
 	if err := json.Unmarshal(raw, &res); err != nil {
 		return err
 	}
-	fmt.Fprintln(c.stderr, "The old credential stops working.")
 	return c.done(raw, "%s", res.InstallCommand)
 }
 
@@ -181,10 +185,11 @@ func cmdNodeRename(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.call(http.MethodPatch, path, map[string]string{"name": pos[1]}, nil); err != nil {
+	var raw json.RawMessage
+	if err := c.call(http.MethodPatch, path, map[string]string{"name": pos[1]}, &raw); err != nil {
 		return err
 	}
-	return c.done(nil, "Node %s renamed to %s.", n.Name, pos[1])
+	return c.done(raw, "Node %s renamed to %s.", n.Name, pos[1])
 }
 
 func cmdNodeDelete(c *cli, args []string) error {

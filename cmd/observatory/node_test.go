@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const (
 	nodeN1 = `{"id":"n1","name":"orga","state":"online","version":"1.2.0","cpus":16,"memoryMB":65536,"lastSeen":"2026-11-19T14:02:00Z","vmCount":3,"usedCPUs":6,"usedMemoryMB":12288,"canUpdate":true,"canDelete":true,"quarantined":false,"image":{"version":"v7","state":"building"}}`
@@ -48,14 +51,29 @@ func TestNodeAddPrintsInstallCommand(t *testing.T) {
 	}
 }
 
-func TestNodeTokenWarnsAndPrints(t *testing.T) {
+func TestNodeTokenConfirmsForEnrolledNode(t *testing.T) {
 	h, c, out, errb := nodeHub(t)
-	h.on("POST /api/orgs/o1/nodes/n1/credential", 200, `{"installCommand":"install-cmd"}`)
-	if code := run(c, []string{"node", "token", "orga"}); code != 0 {
+	const post = "POST /api/orgs/o1/nodes/n1/credential"
+	h.on(post, 200, `{"installCommand":"install-cmd"}`)
+	if code := run(c, []string{"node", "token", "orga"}); code != 2 || !strings.Contains(errb(), "disconnects until reinstalled") {
 		t.Fatal(code, errb())
 	}
-	if out() != "install-cmd\n" || errb() != "The old credential stops working.\n" {
-		t.Errorf("stdout %q stderr %q", out(), errb())
+	if len(h.calls(post)) != 0 {
+		t.Fatal("POST without confirmation")
+	}
+	if code := run(c, []string{"node", "token", "orga", "--yes"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	if out() != "install-cmd\n" {
+		t.Errorf("stdout %q", out())
+	}
+}
+
+func TestNodeTokenPendingNodeNeedsNoConfirm(t *testing.T) {
+	h, c, out, errb := nodeHub(t)
+	h.on("POST /api/orgs/o1/nodes/n3/credential", 200, `{"installCommand":"install-cmd"}`)
+	if code := run(c, []string{"node", "token", "fresh"}); code != 0 || out() != "install-cmd\n" {
+		t.Fatal(code, out(), errb())
 	}
 }
 

@@ -85,7 +85,7 @@ node:
   node list                  list nodes
   node show <node>           show a node
   node add <name>            register a node and print its install command
-  node token <node>          issue a new install command for a node
+  node token <node>          issue a new install command (revokes the current credential)
   node rename <node> <name>  rename a node
   node delete <node>         delete a node
 
