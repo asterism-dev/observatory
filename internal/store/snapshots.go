@@ -315,6 +315,22 @@ func (s *Store) FailStaleSnapshots(ctx context.Context, before time.Time) ([]uui
 		SELECT DISTINCT org_id FROM failed ORDER BY 1`, before))
 }
 
+// MemoryRestorable reports whether sn has memory and v still has the vCPUs, RAM, networks and attachments it was taken with.
+func (s *Store) MemoryRestorable(ctx context.Context, v VM, sn Snapshot) (bool, error) {
+	if !sn.Memory || v.CPUs != sn.CPUs || v.MemoryMB != sn.MemoryMB {
+		return false, nil
+	}
+	nets, err := s.rankedNetworks(ctx, v.ID)
+	if err != nil {
+		return false, err
+	}
+	atts, err := s.snapshotAttachments(ctx, v.ID)
+	if err != nil {
+		return false, err
+	}
+	return slices.Equal(nets, sn.Networks) && slices.Equal(atts, sn.Attachments), nil
+}
+
 // RequestRestore asks the node to roll the VM back to snap; a memory restore needs the VM's shape unchanged.
 func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, memory, restartAllowed bool) (VM, error) {
 	var out VM
@@ -347,19 +363,15 @@ func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, mem
 		if v.Power != proto.PowerStopped && !restartAllowed {
 			return ErrRestartRequired
 		}
-		memory = memory && sn.Memory
 		if memory {
-			nets, err := tx.rankedNetworks(ctx, vm)
+			ok, err := tx.MemoryRestorable(ctx, v, sn)
 			if err != nil {
 				return err
 			}
-			atts, err := tx.snapshotAttachments(ctx, vm)
-			if err != nil {
-				return err
-			}
-			if v.CPUs != sn.CPUs || v.MemoryMB != sn.MemoryMB || !slices.Equal(nets, sn.Networks) || !slices.Equal(atts, sn.Attachments) {
+			if sn.Memory && !ok {
 				return ErrShapeChanged
 			}
+			memory = ok
 		}
 		out, err = scanVM(tx.q.QueryRow(ctx, `
 			UPDATE vms SET restore_snapshot_id = $2, restore_memory = $3, restore_seq = restore_seq + 1, restore_state = 'node',

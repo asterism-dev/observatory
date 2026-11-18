@@ -36,9 +36,9 @@ func TestBuiltinRoles(t *testing.T) {
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
 		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
 		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}, {"disk:create", ObjDisks}}
-	// No built-in role reaches other members' private env scopes, connects to VMs or creates others' devices.
+	// No built-in role reaches other members' private env scopes, connects to or forks VMs, or creates others' devices.
 	notBuiltin := func(p Permission) bool {
-		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "device:create" || p.Action == "disk:use"
+		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
 	}
 	want := map[uuid.UUID]func(p Permission) bool{
 		owner:  func(p Permission) bool { return !notBuiltin(p) },
@@ -225,7 +225,7 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("audit:read"); !reflect.DeepEqual(got, []string{"audit:read"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks"}) {
+	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork"}) {
 		t.Errorf("vm:*: got %v", got)
 	}
 	if got := ExpandActions("vm:ssh"); len(got) != 0 {
@@ -860,6 +860,46 @@ func TestNoDiskWildcardInBuiltins(t *testing.T) {
 	for _, p := range policy {
 		if strings.HasPrefix(p[2], "org/disks") && p[4] == string(Allow) && (p[3] == "*" || p[3] == "disk:*") {
 			t.Errorf("generated wildcard rule %v", p)
+		}
+	}
+}
+
+func TestEnforcerVMLifecycleGrants(t *testing.T) {
+	f := newVMFixture()
+	teamAdmin := uuid.New()
+	p := f.policy()
+	p.Memberships = append(p.Memberships, MemberRole{OrgID: f.org, UserID: teamAdmin, Role: "member"})
+	p.TeamMembers = append(p.TeamMembers, TeamMember{OrgID: f.org, TeamID: f.team, UserID: teamAdmin, Admin: true})
+	e := mustNew(t, p)
+	for _, c := range []struct {
+		name string
+		sub  uuid.UUID
+		vm   uuid.UUID
+		want []string
+	}{
+		{"vm owner", f.a, f.userVM, []string{"vm:snapshot", "vm:restore", "vm:fork"}},
+		{"team admin", teamAdmin, f.teamVM, []string{"vm:snapshot", "vm:restore", "vm:fork"}},
+		{"team member", f.tm, f.teamVM, []string{"vm:snapshot"}},
+		{"admin", f.admin, f.userVM, []string{"vm:snapshot", "vm:restore"}},
+		{"org owner", f.owner, f.teamVM, []string{"vm:snapshot", "vm:restore"}},
+		{"other member", f.b, f.userVM, nil},
+	} {
+		for _, act := range []string{"vm:snapshot", "vm:restore", "vm:fork"} {
+			if got := e.Allowed(UserSubject(c.sub), f.org, VMObject(c.vm), act); got != slices.Contains(c.want, act) {
+				t.Errorf("%s %s: got %v", c.name, act, got)
+			}
+		}
+	}
+	for _, key := range []string{"member", "admin", "owner"} {
+		for _, r := range BuiltinRules(key) {
+			if r.Action == "vm:*" || r.Action == "vm:fork" {
+				t.Errorf("%s has %s", key, r.Action)
+			}
+		}
+	}
+	for _, act := range []string{"vm:snapshot", "vm:restore", "vm:fork"} {
+		if !slices.Contains(ExpandActions("vm:*"), act) {
+			t.Errorf("catalog lacks %s", act)
 		}
 	}
 }

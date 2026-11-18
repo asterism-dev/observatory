@@ -84,6 +84,8 @@ var storeErrorStatus = []struct {
 	{store.ErrInviteInvalid, http.StatusBadRequest},
 	{store.ErrAlreadyMember, http.StatusConflict},
 	{errForbidden, http.StatusForbidden},
+	{errSnapshotBusy, http.StatusConflict},
+	{errForkPending, http.StatusConflict},
 	{store.ErrInvalidParent, http.StatusBadRequest},
 	{errLiftsOwnDeny, http.StatusForbidden},
 	{authz.ErrDenyNotAllowed, http.StatusForbidden},

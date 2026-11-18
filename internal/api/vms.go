@@ -354,7 +354,9 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID); err != nil {
+		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID); errors.Is(err, store.ErrConflict) {
+			return errForkPending
+		} else if err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), vmAudit(r, store.ActionVMDelete, v))
@@ -434,6 +436,7 @@ var (
 	reservedMountTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/lib/cloud", "/home/ubuntu/.ssh"}
 	reservedMountPaths = []string{"/home", "/home/ubuntu", "/root", "/var", "/var/lib"}
 	errDiskMissing     = fmt.Errorf("disk is missing from storage: %w", store.ErrConflict)
+	errForkPending     = errors.New("a fork from this VM's snapshot is still being created or failed; delete the fork first")
 )
 
 func validateVMDisks(disks []store.VMDisk) error {
