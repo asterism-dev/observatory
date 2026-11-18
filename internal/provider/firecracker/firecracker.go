@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
@@ -230,7 +229,7 @@ func driveFiles(f node.VMFile, drives []string) []jailFile {
 
 // launch starts the jailed Firecracker; with boot it boots from fc.json, else it waits for a snapshot load.
 func (p *Provider) launch(f node.VMFile, dir string, files []jailFile, drives, nbds []string, boot bool) (*instance, error) {
-	proc, sock, err := p.spawnJailed(f, dir, files, nbds, boot)
+	proc, sock, uid, err := p.spawnJailed(f, dir, files, nbds, boot)
 	if err != nil {
 		linuxvm.DetachAll(f.Spec.ID, dir, nbds)
 		return nil, err
@@ -246,7 +245,7 @@ func (p *Provider) launch(f node.VMFile, dir string, files []jailFile, drives, n
 	for _, id := range nbds {
 		go p.nbd.Watch(f.Spec.ID, dir, id, proc.Done())
 	}
-	inst := &instance{Process: proc, sock: sock, api: fcAPI{dial: js.dial}, dir: dir}
+	inst := &instance{Process: proc, sock: sock, api: fcAPI{dial: js.dial}, dir: dir, uid: uid}
 	for i, d := range node.AttachOrder(f) {
 		if d.NBD {
 			inst.nbdDevs = append(inst.nbdDevs, drives[i])
@@ -288,37 +287,37 @@ func (s *jailSock) close() {
 }
 
 // spawnJailed starts Firecracker under the jailer; to boot, files holds the kernel, the initrd and then the drives.
-func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string, boot bool) (*linuxvm.Process, string, error) {
+func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string, boot bool) (*linuxvm.Process, string, int, error) {
 	p.mu.Lock()
 	ip, err := linuxvm.AllocNATIP(p.VMsDir, f.Spec.ID)
 	p.mu.Unlock()
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	uid, err := jailUID(ip)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	fcPath, err := exec.LookPath("firecracker")
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	// The jail holds device nodes owned by the VM's UID; they must not outlive the VM.
 	removeJail := func() { os.RemoveAll(jailBase(dir)) }
 	inJail, err := buildJail(dir, uid, files)
 	if err != nil {
 		removeJail()
-		return nil, "", fmt.Errorf("jail: %w", err)
+		return nil, "", 0, fmt.Errorf("jail: %w", err)
 	}
 	if boot {
 		cfg, err := vmConfig(f, inJail[0], inJail[1], inJail[2:])
 		if err != nil {
 			removeJail()
-			return nil, "", err
+			return nil, "", 0, err
 		}
 		if err := os.WriteFile(filepath.Join(jailRoot(dir), "fc.json"), cfg, 0o644); err != nil {
 			removeJail()
-			return nil, "", err
+			return nil, "", 0, err
 		}
 	}
 	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, removeJail)
@@ -326,7 +325,7 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	if err == nil && proc.IP == "" {
 		proc.IP = ip
 	}
-	return proc, filepath.Join(jailRoot(dir), "fc.sock"), err
+	return proc, filepath.Join(jailRoot(dir), "fc.sock"), uid, err
 }
 
 // StartChassis gives up when the node stops: systemd queues an ovn-controller restart behind the node's own stop job.
@@ -345,6 +344,7 @@ type instance struct {
 	sock     string
 	api      fcAPI
 	dir      string
+	uid      int
 	nbdDevs  []string
 	restored bool
 
@@ -389,14 +389,9 @@ func (i *instance) Resume() error {
 // ReloadSeed links the VM dir's seed into the jail again, as Reseed renames a new file over it, and has Firecracker reopen it.
 func (i *instance) ReloadSeed() error {
 	dst := filepath.Join(jailRoot(i.dir), node.SeedISO)
-	var st syscall.Stat_t
-	if err := syscall.Stat(dst, &st); err != nil {
-		return err
-	}
 	tmp := dst + ".new"
 	os.Remove(tmp)
-	// The jailed seed is root's with the VM's UID as group, so that group is the jail UID.
-	if err := jailOne(jailFile{path: filepath.Join(i.dir, node.SeedISO), readOnly: true}, tmp, int(st.Gid)); err != nil {
+	if err := jailOne(jailFile{path: filepath.Join(i.dir, node.SeedISO), readOnly: true}, tmp, i.uid); err != nil {
 		os.Remove(tmp)
 		return err
 	}

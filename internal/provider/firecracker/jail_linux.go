@@ -60,7 +60,7 @@ func jailOne(f jailFile, dst string, uid int) error {
 		if err := syscall.Mknod(dst, st.Mode, int(st.Rdev)); err != nil {
 			return err
 		}
-		return os.Chown(dst, uid, uid)
+		return os.Lchown(dst, uid, uid)
 	case syscall.S_IFREG:
 	default:
 		return fmt.Errorf("%s is neither a regular file nor a device", f.path)
@@ -72,18 +72,18 @@ func jailOne(f jailFile, dst string, uid int) error {
 		}
 		return os.Link(f.path, dst)
 	}
-	if err := os.Link(f.path, dst); err != nil {
-		return err
-	}
-	// The link shares its inode with the VM dir's file, so read-only files stay root's.
+	// The link shares the inode, so read-only files stay root's; set through f.path, as a live VMM can replace dst with a symlink.
 	owner, mode := uid, os.FileMode(0o600)
 	if f.readOnly {
 		owner, mode = 0, 0o640
 	}
-	if err := os.Chown(dst, owner, uid); err != nil {
+	if err := os.Chown(f.path, owner, uid); err != nil {
 		return err
 	}
-	return os.Chmod(dst, mode)
+	if err := os.Chmod(f.path, mode); err != nil {
+		return err
+	}
+	return os.Link(f.path, dst)
 }
 
 // jailerCmd's shell is the init of a new PID namespace: when it dies, the kernel kills the jailed Firecracker, whose own Pdeathsig the jailer's UID change clears.

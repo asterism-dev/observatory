@@ -66,6 +66,23 @@ func TestBuildJail(t *testing.T) {
 	}
 }
 
+// The jailed VMM can swap the link for a symlink once it exists, so owner and mode are set through the VM dir's path first.
+func TestJailOneSetsModeBeforeLinking(t *testing.T) {
+	dir := jailTestDir(t)
+	ro := writeFile(t, filepath.Join(dir, "seed.iso"))
+	rw := writeFile(t, filepath.Join(dir, "root.img"))
+	missing := filepath.Join(dir, "no-such-dir", "x")
+	if jailOne(jailFile{path: ro, readOnly: true}, missing, 70005) == nil || jailOne(jailFile{path: rw}, missing, 70005) == nil {
+		t.Fatal("link into a missing dir succeeded")
+	}
+	if st := statT(t, ro); st.Uid != 0 || st.Gid != 70005 || st.Mode&0o777 != 0o640 {
+		t.Errorf("seed.iso: uid %d gid %d mode %o", st.Uid, st.Gid, st.Mode&0o777)
+	}
+	if st := statT(t, rw); st.Uid != 70005 || st.Gid != 70005 || st.Mode&0o777 != 0o600 {
+		t.Errorf("root.img: uid %d gid %d mode %o", st.Uid, st.Gid, st.Mode&0o777)
+	}
+}
+
 func TestBuildJailRejectsSymlink(t *testing.T) {
 	dir := jailTestDir(t)
 	link := filepath.Join(dir, "root.img")
