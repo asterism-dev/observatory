@@ -186,10 +186,35 @@ func cmdSnapshotRestore(c *cli, args []string) error {
 	if !*wait {
 		return c.done(raw, "Restore of VM %s to snapshot %s requested.", vm.Name, sn.Name)
 	}
-	if raw, err = c.waitVMState(vm.ID, vm.State); err != nil {
+	if raw, err = c.waitRestored(vm); err != nil {
 		return err
 	}
 	return c.done(raw, "VM %s restored to snapshot %s.", vm.Name, sn.Name)
+}
+
+func (c *cli) waitRestored(vm vmJSON) (json.RawMessage, error) {
+	path, err := c.vmPath(vm.ID, "")
+	if err != nil {
+		return nil, err
+	}
+	return c.waitFor("vm "+vm.ID, path, func(raw json.RawMessage, _ int) (bool, error) {
+		var v struct {
+			vmJSON
+			Restoring bool `json:"restoring"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return false, err
+		}
+		if v.State == "error" {
+			return false, &exitError{1, fmt.Sprintf("vm %s failed: %s", v.Name, v.Error)}
+		}
+		if v.Restoring {
+			c.progress("restoring")
+			return false, nil
+		}
+		c.progress(v.State)
+		return v.State == vm.State, nil
+	})
 }
 
 func cmdSnapshotDelete(c *cli, args []string) error {

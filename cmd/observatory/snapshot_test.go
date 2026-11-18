@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -80,16 +81,35 @@ func TestSnapshotRestoreConfirmsAndBody(t *testing.T) {
 
 func TestSnapshotRestoreWait(t *testing.T) {
 	h, c, _, errb := snapHub(t)
-	h.on("POST /api/orgs/o1/vms/v1/snapshots/s1/restore", 200, strings.Replace(vmDev, `"state":"running"`, `"state":"restoring"`, 1))
+	vm := func(restoring bool, state string) string {
+		s := strings.Replace(vmDev, `"state":"running"`, `"state":"`+state+`"`, 1)
+		return strings.Replace(s, `"disks":[]`, `"disks":[],"restoring":`+strconv.FormatBool(restoring), 1)
+	}
+	h.on("POST /api/orgs/o1/vms/v1/snapshots/s1/restore", 200, vm(true, "running"))
 	var n atomic.Int32
 	h.onFunc("GET /api/orgs/o1/vms/v1", func(w http.ResponseWriter, r *http.Request) {
-		if n.Add(1) == 1 {
-			w.Write([]byte(strings.Replace(vmDev, `"state":"running"`, `"state":"restoring"`, 1)))
-			return
+		switch n.Add(1) {
+		case 1, 2:
+			w.Write([]byte(vm(true, "running")))
+		case 3:
+			w.Write([]byte(vm(false, "starting")))
+		default:
+			w.Write([]byte(vm(false, "running")))
 		}
-		w.Write([]byte(vmDev))
 	})
 	if code := run(c, []string{"snapshot", "restore", "dev", "clean", "-y", "--wait"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	if n.Load() != 4 {
+		t.Errorf("polls %d, want 4", n.Load())
+	}
+}
+
+func TestSnapshotRestoreWaitError(t *testing.T) {
+	h, c, _, errb := snapHub(t)
+	h.on("POST /api/orgs/o1/vms/v1/snapshots/s1/restore", 200, vmDev)
+	h.on("GET /api/orgs/o1/vms/v1", 200, strings.Replace(vmDev, `"state":"running"`, `"state":"error","error":"restore failed"`, 1))
+	if code := run(c, []string{"snapshot", "restore", "dev", "clean", "-y", "--wait"}); code != 1 || !strings.Contains(errb(), "restore failed") {
 		t.Fatal(code, errb())
 	}
 }
