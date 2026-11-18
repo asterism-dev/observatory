@@ -277,3 +277,56 @@ func TestDeleteCancelsRunningCopy(t *testing.T) {
 		}
 	}
 }
+
+func writeDisk(t *testing.T, path, content string, size int64) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, size); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestoreReplacesContent(t *testing.T) {
+	d := Dir{t.TempDir()}
+	writeDisk(t, d.File("a"), "AAAA", 8<<20)
+	writeDisk(t, filepath.Join(d.Path, "snap.img"), "BBBB", 4<<20)
+	if err := d.Restore(proto.StorageDisk{ID: "a", SizeBytes: 8 << 20, RestoreFrom: "snap.img", RestoreToken: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(d.File("a"))
+	if len(b) != 8<<20 || string(b[:4]) != "BBBB" {
+		t.Fatalf("len %d head %q", len(b), b[:4])
+	}
+}
+
+func TestRestoreMissingSource(t *testing.T) {
+	d := Dir{t.TempDir()}
+	writeDisk(t, d.File("a"), "AAAA", 1<<20)
+	err := d.Restore(proto.StorageDisk{ID: "a", SizeBytes: 1 << 20, RestoreFrom: "snap.img"})
+	if err == nil || err.Error() != "file missing" {
+		t.Fatalf("err %v", err)
+	}
+	if b, _ := os.ReadFile(d.File("a")); string(b[:4]) != "AAAA" {
+		t.Fatalf("target changed: %q", b[:4])
+	}
+}
+
+func TestRestoreRejectsEscapingSource(t *testing.T) {
+	outside := t.TempDir()
+	writeDisk(t, filepath.Join(outside, "x.img"), "XXXX", 1<<20)
+	d := Dir{t.TempDir()}
+	writeDisk(t, d.File("a"), "AAAA", 1<<20)
+	if err := os.Symlink(outside, filepath.Join(d.Path, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, from := range []string{"../x.img", filepath.Join(outside, "x.img"), "link/x.img", "sub/../../x.img", ""} {
+		if err := d.Restore(proto.StorageDisk{ID: "a", SizeBytes: 1 << 20, RestoreFrom: from}); err == nil || err.Error() == "file missing" {
+			t.Errorf("%q: err %v", from, err)
+		}
+	}
+	if b, _ := os.ReadFile(d.File("a")); string(b[:4]) != "AAAA" {
+		t.Fatalf("target changed: %q", b[:4])
+	}
+}

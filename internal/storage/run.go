@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -62,8 +63,9 @@ func (h Hub) Report(ctx context.Context, st proto.StorageStatus) error {
 func Run(ctx context.Context, hub Hub, dir Dir, ex *Exports, every time.Duration) error {
 	t := time.NewTicker(every)
 	defer t.Stop()
+	done := map[string]bool{}
 	for {
-		tick(ctx, hub, dir, ex)
+		tick(ctx, hub, dir, ex, done)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -72,7 +74,7 @@ func Run(ctx context.Context, hub Hub, dir Dir, ex *Exports, every time.Duration
 	}
 }
 
-func tick(ctx context.Context, hub Hub, dir Dir, ex *Exports) {
+func tick(ctx context.Context, hub Hub, dir Dir, ex *Exports, done map[string]bool) {
 	state, err := hub.State(ctx)
 	if err != nil {
 		log.Printf("hub state: %v", err)
@@ -81,7 +83,22 @@ func tick(ctx context.Context, hub Hub, dir Dir, ex *Exports) {
 	if err := dir.Apply(state.Disks, state.Deleted); err != nil {
 		log.Printf("disks: %v", err)
 	}
+	for _, disk := range state.Disks {
+		if disk.RestoreToken == "" || done[disk.RestoreToken] {
+			continue
+		}
+		if err := dir.Restore(disk); err != nil {
+			log.Printf("disks: restore %s: %v", disk.ID, err)
+			continue
+		}
+		ex.Restart(disk.ID)
+		done[disk.RestoreToken] = true
+	}
 	status := proto.StorageStatus{Exports: ex.Apply(state.Exports), Version: version.Version}
+	for token := range done {
+		status.Restored = append(status.Restored, token)
+	}
+	sort.Strings(status.Restored)
 	if status.Files, err = dir.Scan(); err != nil {
 		log.Printf("scan: %v", err)
 		return

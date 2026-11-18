@@ -200,7 +200,9 @@ type StorageDisk struct {
 	SizeBytes int64  `json:"sizeBytes"`
 	CopyFrom  string `json:"copyFrom,omitempty"`
 	// Create is false once the hub has seen the file, so a vanished file is never replaced by a blank one.
-	Create bool `json:"create,omitempty"`
+	Create       bool   `json:"create,omitempty"`
+	RestoreFrom  string `json:"restoreFrom,omitempty"`
+	RestoreToken string `json:"restoreToken,omitempty"`
 }
 
 type StorageExport struct {
@@ -224,9 +226,10 @@ type StorageExportStatus struct {
 
 // StorageStatus is what the storage server reports to the hub.
 type StorageStatus struct {
-	Files   []StorageFile         `json:"files"`
-	Exports []StorageExportStatus `json:"exports"`
-	Version string                `json:"version"`
+	Files    []StorageFile         `json:"files"`
+	Exports  []StorageExportStatus `json:"exports"`
+	Version  string                `json:"version"`
+	Restored []string              `json:"restored,omitempty"`
 }
 
 // ValidEndpoint reports whether s is host:port with a non-empty host and a port in 1-65535.

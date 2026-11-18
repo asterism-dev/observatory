@@ -64,6 +64,56 @@ func (d Dir) Apply(disks []proto.StorageDisk, deleted []string) error {
 	return errors.Join(errs...)
 }
 
+// Restore replaces the disk file with the content of d.RestoreFrom; the target is untouched on failure.
+func (d Dir) Restore(disk proto.StorageDisk) error {
+	if !plainName(disk.ID) {
+		return fmt.Errorf("disk %q: not a plain file name", disk.ID)
+	}
+	target := d.File(disk.ID)
+	if _, err := os.Stat(target); err != nil {
+		return d.restoreErr(err)
+	}
+	srcPath, err := d.resolveInside(disk.RestoreFrom)
+	if err != nil {
+		return d.restoreErr(err)
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return d.restoreErr(err)
+	}
+	defer src.Close()
+	if err := os.MkdirAll(filepath.Join(d.Path, partialDir), 0o755); err != nil {
+		return err
+	}
+	return d.build(context.Background(), target, src, disk.SizeBytes)
+}
+
+func (d Dir) restoreErr(err error) error {
+	if os.IsNotExist(err) {
+		return errors.New("file missing")
+	}
+	return err
+}
+
+// resolveInside returns the real path of a clean relative name, rejecting anything that leaves Path.
+func (d Dir) resolveInside(name string) (string, error) {
+	if !filepath.IsLocal(name) {
+		return "", fmt.Errorf("restore source %q: not a path inside the storage root", name)
+	}
+	root, err := filepath.EvalSymlinks(d.Path)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(filepath.Join(root, name))
+	if err != nil {
+		return "", err
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("restore source %q: resolves outside the storage root", name)
+	}
+	return real, nil
+}
+
 // plainName rejects IDs that would resolve outside Path.
 func plainName(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)

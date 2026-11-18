@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -118,5 +120,45 @@ func TestRunReports(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), psk1) || strings.Contains(logs.String(), psk2) {
 		t.Fatalf("psk in log: %s", logs.String())
+	}
+}
+
+func TestRestoreOncePerToken(t *testing.T) {
+	var clones int
+	orig := clone
+	clone = func(dst, src *os.File) error { clones++; return orig(dst, src) }
+	defer func() { clone = orig }()
+
+	ex, _ := newExports(t, "d1")
+	writeDisk(t, ex.Dir.File("d1"), "AAAA", 1<<20)
+	writeDisk(t, filepath.Join(ex.Dir.Path, "snap.img"), "BBBB", 1<<20)
+	h := &fakeHub{state: proto.StorageState{
+		Disks: []proto.StorageDisk{{ID: "d1", SizeBytes: 1 << 20, RestoreFrom: "snap.img", RestoreToken: "tok"}},
+	}}
+	runTicks(t, h, ex, 2)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if clones != 1 || len(h.statuses) < 2 {
+		t.Fatalf("clones %d statuses %d", clones, len(h.statuses))
+	}
+	for _, st := range h.statuses {
+		if !reflect.DeepEqual(st.Restored, []string{"tok"}) {
+			t.Fatalf("restored %v", st.Restored)
+		}
+	}
+}
+
+func TestRestoreFailureNotReported(t *testing.T) {
+	ex, _ := newExports(t, "d1")
+	h := &fakeHub{state: proto.StorageState{
+		Disks: []proto.StorageDisk{{ID: "d1", SizeBytes: 1 << 20, RestoreFrom: "snap.img", RestoreToken: "tok"}},
+	}}
+	runTicks(t, h, ex, 2)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, st := range h.statuses {
+		if len(st.Restored) != 0 {
+			t.Fatalf("restored %v", st.Restored)
+		}
 	}
 }
