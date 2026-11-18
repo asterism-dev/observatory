@@ -179,8 +179,9 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
 - **Linear token on argv and in `~/.claude.json`:** `claude mcp add --header` puts the header (the placeholder in proxy
   mode, the key in `vm` mode) into the guest user's `~/.claude.json` and, for the second the call runs, on its argv. A
   `headersHelper` that calls `vmm-token` would avoid both; not done yet.
-- **Finding `claude`:** the sync looks in the service's `PATH` and `~/.local/bin`. Claude Code installed through nvm or
-  an npm global prefix elsewhere is not found, so the Linear MCP entry is not added (until project 7 installs it).
+- **Finding `claude`:** the sync looks in the service's `PATH` and `~/.local/bin`. The guest image's
+  `/usr/local/bin/claude` is found; a Claude Code installed through nvm or an npm global prefix elsewhere is not, so
+  the Linear MCP entry is not added for it.
 - **Hub crash during a Claude refresh** can require signing in again: the provider rotates the refresh token when it
   answers, and if the hub dies before storing the new one the stored token is no longer valid.
 - **Transient resolve error in proxy mode:** while the hub cannot read a VM's integrations, the guest keeps its tokens
@@ -200,8 +201,8 @@ Agents test with dummy tokens only. These checks need real tokens and are run by
    shows your GitHub login and Linear email.
 3. Create a fresh user VM and, from a device, run
    `scripts/integrations-check.sh ubuntu@<vm>.internal <you>/<private-repo>`. Every line must be `PASS`, including the
-   leak check (with Claude Code and `gh` installed; until project 7, install them by hand and expect the `claude` and
-   `gh` lines to fail without them).
+   leak check (Claude Code and `gh` come with the guest image ([guest.md](guest.md)); a VM on a node with a custom
+   `imageURL` needs them installed by hand).
 4. After 9 hours (the first access token has expired and been refreshed by the hub), run `claude -p "say ok"` in the
    VM again.
 5. Switch each integration to "Inside the VM", wait 5 minutes, rerun the script (the `vmm-token` lines report `vm`,
