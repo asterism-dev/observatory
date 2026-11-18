@@ -1,0 +1,17 @@
+usage: observatory <command> [args] [flags]
+
+  login        log in with your browser (device flow)
+  logout       revoke this CLI session
+  whoami       show the user, orgs and session
+  version      print the CLI version
+  help [noun]  show this help
+
+org:
+  org list           list your orgs
+  org use <org>      set the default org
+  org show           show the current org and your permissions
+  org create <name>  create an org
+  org rename <name>  rename the current org
+  org audit [flags]  show the org's audit log
+
+global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help

@@ -1,227 +1,245 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
+	"os/exec"
+	"slices"
 	"strings"
+	"syscall"
+	"text/tabwriter"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-	"golang.org/x/oauth2"
+	"golang.org/x/term"
 )
 
-const defaultHub = "http://localhost:8090"
-
-type credentials struct {
-	Hub   string `json:"hub"`
-	Token string `json:"token"`
+type globals struct {
+	hub, org  string
+	json, yes bool
+	timeout   time.Duration
 }
 
-func credentialsPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "observatory", "credentials.json"), nil
+type cli struct {
+	ctx            context.Context
+	stdin          io.Reader
+	stdout, stderr io.Writer
+	getenv         func(string) string
+	terminal       bool
+	poll           time.Duration
+	http           *http.Client
+	exec           func(path string, argv, env []string) error
+	runProg        func(path string, argv []string) error
+	lookPath       func(string) (string, error)
+	readPassword   func() ([]byte, error)
+	now            func() time.Time
+	g              globals
+	cfgDir         string
+	cfg            config
+	org            *orgJSON
+	warnedExpiry   bool
 }
 
-func saveCredentials(path string, c credentials) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+func newCLI(ctx context.Context) *cli {
+	return &cli{
+		ctx: ctx, stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+		getenv:   os.Getenv,
+		terminal: term.IsTerminal(int(os.Stdin.Fd())),
+		poll:     2 * time.Second,
+		http:     &http.Client{Timeout: 30 * time.Second},
+		exec:     syscall.Exec,
+		runProg: func(path string, argv []string) error {
+			cmd := exec.Command(path)
+			cmd.Args = argv
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+			return cmd.Run()
+		},
+		lookPath:     exec.LookPath,
+		readPassword: func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) },
+		now:          time.Now,
 	}
-	b, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	// WriteFile keeps the mode of an existing file, so chmod explicitly.
-	if err := os.WriteFile(path, b, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
 }
 
-func loadCredentials(path string) (credentials, error) {
-	var c credentials
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return c, err
+type command struct {
+	path, args, summary string
+	fn                  func(c *cli, args []string) error
+}
+
+func commands() []command {
+	return []command{
+		{"login", "", "log in with your browser (device flow)", cmdLogin},
+		{"logout", "", "revoke this CLI session", cmdLogout},
+		{"whoami", "", "show the user, orgs and session", cmdWhoami},
+		{"version", "", "print the CLI version", cmdVersion},
+		{"help", "[noun]", "show this help", cmdHelp},
+		{"org list", "", "list your orgs", cmdOrgList},
+		{"org use", "<org>", "set the default org", cmdOrgUse},
+		{"org show", "", "show the current org and your permissions", cmdOrgShow},
+		{"org create", "<name>", "create an org", cmdOrgCreate},
+		{"org rename", "<name>", "rename the current org", cmdOrgRename},
+		{"org audit", "[flags]", "show the org's audit log", cmdOrgAudit},
 	}
-	err = json.Unmarshal(b, &c)
-	return c, err
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: observatory login [--hub URL] | whoami")
-		os.Exit(2)
-	}
-	if err := run(context.Background(), os.Args[1], os.Args[2:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	os.Exit(run(newCLI(context.Background()), os.Args[1:]))
 }
 
-func run(ctx context.Context, cmd string, args []string) error {
-	path, err := credentialsPath()
-	if err != nil {
-		return err
+func isHelpFlag(s string) bool { return s == "-h" || s == "-help" || s == "--help" }
+
+func run(c *cli, args []string) int {
+	if len(args) == 0 {
+		c.help(c.stderr, "")
+		return 2
 	}
-	saved, loadErr := loadCredentials(path)
-	switch cmd {
-	case "login":
-		// A corrupt credentials file must not block logging in again, which overwrites it.
-		flags := flag.NewFlagSet("login", flag.ContinueOnError)
-		hub := flags.String("hub", firstNonEmpty(saved.Hub, defaultHub), "hub URL")
-		if err := flags.Parse(args); err != nil {
-			return err
-		}
-		return login(ctx, strings.TrimRight(*hub, "/"), path, os.Stdout)
-	case "whoami":
-		if loadErr != nil && !errors.Is(loadErr, fs.ErrNotExist) {
-			return loadErr
-		}
-		if saved.Token == "" {
-			return errors.New("not logged in, run observatory login")
-		}
-		return whoami(ctx, saved, os.Stdout)
+	if isHelpFlag(args[0]) {
+		c.help(c.stdout, "")
+		return 0
 	}
-	return fmt.Errorf("unknown command %q", cmd)
+	cmd, rest, ok := findCommand(args)
+	if !ok {
+		if !isNoun(args[0]) {
+			fmt.Fprintf(c.stderr, "observatory: unknown command %q\n", args[0])
+			c.help(c.stderr, "")
+			return 2
+		}
+		if slices.ContainsFunc(args[1:], isHelpFlag) {
+			c.help(c.stdout, args[0])
+			return 0
+		}
+		if len(args) > 1 {
+			fmt.Fprintf(c.stderr, "observatory: unknown command %q\n", args[0]+" "+args[1])
+		}
+		c.help(c.stderr, args[0])
+		return 2
+	}
+	dir, err := configDir(c.getenv)
+	if err == nil {
+		c.cfgDir = dir
+		c.cfg, err = loadConfig(dir)
+	}
+	// A corrupt config must not block logging in again, which overwrites it.
+	if err != nil && cmd.path != "login" && cmd.path != "help" && cmd.path != "version" {
+		fmt.Fprintf(c.stderr, "observatory: %v\n", err)
+		return 1
+	}
+	err = cmd.fn(c, rest)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil && err.Error() != "" {
+		fmt.Fprintf(c.stderr, "observatory: %v\n", err)
+	}
+	return exitCode(err)
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+func findCommand(args []string) (command, []string, bool) {
+	var best command
+	n := 0
+	for _, cmd := range commands() {
+		words := strings.Fields(cmd.path)
+		if len(words) > n && len(words) <= len(args) && slices.Equal(words, args[:len(words)]) {
+			best, n = cmd, len(words)
+		}
 	}
-	return b
+	return best, args[min(n, len(args)):], n > 0
 }
 
-func login(ctx context.Context, hub, credsPath string, out io.Writer) error {
-	var cfg struct {
-		Issuer      string `json:"issuer"`
-		CLIClientID string `json:"cliClientId"`
-	}
-	if err := hubJSON(ctx, http.MethodGet, hub+"/api/auth/config", "", nil, &cfg); err != nil {
-		return fmt.Errorf("fetch hub config: %w", err)
-	}
+func isNoun(s string) bool {
+	return slices.ContainsFunc(commands(), func(cmd command) bool { return strings.HasPrefix(cmd.path, s+" ") })
+}
 
-	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
-	if err != nil {
-		return fmt.Errorf("discover issuer: %w", err)
-	}
-	endpoint := provider.Endpoint()
-	if endpoint.DeviceAuthURL == "" {
-		var claims struct {
-			DeviceAuthURL string `json:"device_authorization_endpoint"`
+func (c *cli) help(w io.Writer, noun string) {
+	fmt.Fprintln(w, "usage: observatory <command> [args] [flags]")
+	tw := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
+	group := "\n"
+	for _, cmd := range commands() {
+		g, _, nested := strings.Cut(cmd.path, " ")
+		if (noun != "" && g != noun) || (noun == "" && nested) {
+			continue
 		}
-		if err := provider.Claims(&claims); err != nil {
-			return err
+		fmt.Fprintf(tw, "%s  %s\t%s\n", group, strings.TrimSpace(cmd.path+" "+cmd.args), cmd.summary)
+		group = ""
+	}
+	if noun == "" {
+		var nouns []string
+		for _, cmd := range commands() {
+			if g, _, nested := strings.Cut(cmd.path, " "); nested && !slices.Contains(nouns, g) {
+				nouns = append(nouns, g)
+			}
 		}
-		endpoint.DeviceAuthURL = claims.DeviceAuthURL
+		for _, n := range nouns {
+			fmt.Fprintf(tw, "\n%s:\n", n)
+			for _, cmd := range commands() {
+				if strings.HasPrefix(cmd.path, n+" ") {
+					fmt.Fprintf(tw, "  %s\t%s\n", strings.TrimSpace(cmd.path+" "+cmd.args), cmd.summary)
+				}
+			}
+		}
 	}
-	if endpoint.DeviceAuthURL == "" {
-		return errors.New("issuer does not support the device flow")
-	}
-	oc := oauth2.Config{
-		ClientID: cfg.CLIClientID,
-		Endpoint: endpoint,
-		Scopes:   []string{oidc.ScopeOpenID, "profile", "email"},
-	}
+	tw.Flush()
+	fmt.Fprintln(w, "\nglobal flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help")
+}
 
-	da, err := oc.DeviceAuth(ctx)
-	if err != nil {
-		return fmt.Errorf("start device flow: %w", err)
+func cmdHelp(c *cli, args []string) error {
+	if len(args) > 0 && !isNoun(args[0]) {
+		return usagef("unknown command %q", args[0])
 	}
-	fmt.Fprintf(out, "Open %s\nCode: %s\n", firstNonEmpty(da.VerificationURIComplete, da.VerificationURI), da.UserCode)
-
-	token, err := oc.DeviceAccessToken(ctx, da)
-	if err != nil {
-		return fmt.Errorf("device authorization: %w", err)
-	}
-	idToken, _ := token.Extra("id_token").(string)
-	if idToken == "" {
-		return errors.New("issuer returned no id_token")
-	}
-
-	var res struct {
-		Token string `json:"token"`
-	}
-	body := map[string]string{"idToken": idToken, "accessToken": token.AccessToken}
-	if err := hubJSON(ctx, http.MethodPost, hub+"/api/auth/cli-token", "", body, &res); err != nil {
-		return fmt.Errorf("exchange token: %w", err)
-	}
-	if err := saveCredentials(credsPath, credentials{Hub: hub, Token: res.Token}); err != nil {
-		return err
-	}
-	fmt.Fprintln(out, "Logged in. Run observatory whoami to verify.")
+	c.help(c.stdout, strings.Join(args[:min(1, len(args))], ""))
 	return nil
 }
 
-var errUnauthorized = errors.New("unauthorized")
-
-func hubJSON(ctx context.Context, method, url, bearer string, body, into any) error {
-	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		rd = bytes.NewReader(b)
+func (c *cli) flags(path string) *flag.FlagSet {
+	fs := flag.NewFlagSet(path, flag.ContinueOnError)
+	fs.SetOutput(c.stderr)
+	fs.StringVar(&c.g.hub, "hub", c.hub(), "hub `URL`")
+	fs.StringVar(&c.g.org, "org", c.g.org, "org `NAME|ID`")
+	fs.BoolVar(&c.g.json, "json", false, "print the API's JSON")
+	fs.BoolVar(&c.g.yes, "yes", false, "confirm without asking")
+	fs.BoolVar(&c.g.yes, "y", false, "short for --yes")
+	fs.DurationVar(&c.g.timeout, "timeout", 5*time.Minute, "how long --wait waits")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), usageLine(path))
+		fs.PrintDefaults()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, rd)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	cl := http.Client{Timeout: 30 * time.Second}
-	resp, err := cl.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized {
-		return errUnauthorized
-	}
-	if resp.StatusCode/100 != 2 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(msg)))
-	}
-	return json.NewDecoder(resp.Body).Decode(into)
+	return fs
 }
 
-func whoami(ctx context.Context, c credentials, out io.Writer) error {
-	var me struct {
-		User struct {
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		} `json:"user"`
-		Orgs []struct {
-			Name string `json:"name"`
-			Role string `json:"role"`
-		} `json:"orgs"`
-	}
-	if err := hubJSON(ctx, http.MethodGet, strings.TrimRight(c.Hub, "/")+"/api/me", c.Token, nil, &me); err != nil {
-		if errors.Is(err, errUnauthorized) {
-			return errors.New("not logged in, run observatory login")
+func usageLine(path string) string {
+	for _, cmd := range commands() {
+		if cmd.path == path {
+			return strings.TrimSpace("usage: observatory " + path + " " + cmd.args)
 		}
-		return err
 	}
-	fmt.Fprintf(out, "%s %s\n", me.User.Name, me.User.Email)
-	for _, o := range me.Orgs {
-		fmt.Fprintf(out, "%s (%s)\n", o.Name, o.Role)
+	return "usage: observatory " + path
+}
+
+func (c *cli) parse(fs *flag.FlagSet, args []string, min, max int) ([]string, error) {
+	var pos, tail []string
+	if i := slices.Index(args, "--"); i >= 0 {
+		args, tail = args[:i], args[i+1:]
 	}
-	return nil
+	for {
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, err
+			}
+			// flag has already printed the error and the usage.
+			return nil, &exitError{2, ""}
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			break
+		}
+		pos, args = append(pos, args[0]), args[1:]
+	}
+	pos = append(pos, tail...)
+	if len(pos) < min || (max >= 0 && len(pos) > max) {
+		return nil, usagef("%s", usageLine(fs.Name()))
+	}
+	return pos, nil
 }

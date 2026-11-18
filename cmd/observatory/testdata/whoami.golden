@@ -1,0 +1,7 @@
+user:            Ada Lovelace
+email:           ada@example.com
+session expires: 2026-12-19 14:03
+
+   ORG   ID  ROLE
+   orga  o1  owner
+*  orgc  o2  member
