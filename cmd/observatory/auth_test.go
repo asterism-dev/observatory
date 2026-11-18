@@ -95,6 +95,39 @@ func TestLogoutRevokesAndClears(t *testing.T) {
 	}
 }
 
+func TestLogoutWithEnvTokenKeepsStoredSession(t *testing.T) {
+	h := newFakeHub(t)
+	h.on("POST /auth/logout", 204, "")
+	c, _, stderr := newTestCLI(t, h)
+	t.Setenv("OBSERVATORY_TOKEN", "env-tok")
+	if code := run(c, []string{"logout"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := h.calls("POST /auth/logout"); len(got) != 1 || got[0].Auth != "Bearer env-tok" {
+		t.Fatalf("logout calls %+v", got)
+	}
+	if readConfigFile(t, c)["token"] != "tok-test" || !strings.Contains(stderr.String(), "unset it") {
+		t.Fatalf("stored token dropped without being revoked; stderr %q", stderr.String())
+	}
+}
+
+func TestLoginKeepsHubRefusal(t *testing.T) {
+	h := newFakeHub(t)
+	h.on("GET /api/auth/config", 200, `{"issuer":"`+h.URL+`","cliClientId":"cli"}`)
+	h.on("GET /.well-known/openid-configuration", 200, `{"issuer":"`+h.URL+`","authorization_endpoint":"`+h.URL+`/auth",`+
+		`"token_endpoint":"`+h.URL+`/token","device_authorization_endpoint":"`+h.URL+`/device","jwks_uri":"`+h.URL+`/keys"}`)
+	h.on("POST /device", 200, `{"device_code":"dc","user_code":"UC","verification_uri":"`+h.URL+`/verify","interval":1}`)
+	h.on("POST /token", 200, `{"access_token":"at","token_type":"Bearer","id_token":"idt"}`)
+	h.on("POST /api/auth/cli-token", 401, `{"error":"email not verified"}`)
+	c, _, stderr := newTestCLI(t, nil)
+	if code := run(c, []string{"login", "--hub", h.URL}); code != 1 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "hub refused the login: email not verified") || strings.Contains(got, "run observatory login") {
+		t.Fatalf("stderr %q", got)
+	}
+}
+
 func TestLoginIgnoresCorruptConfig(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	if err := os.WriteFile(filepath.Join(c.cfgDir, "config.json"), []byte("{corrupt"), 0o600); err != nil {

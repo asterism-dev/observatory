@@ -191,3 +191,27 @@ func TestFormatHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestStoredTokenOnlyForItsHub(t *testing.T) {
+	a, b := newFakeHub(t), newFakeHub(t)
+	c, _, stderr := newTestCLI(t, a)
+	if code := run(c, []string{"whoami", "--hub", b.URL}); code != 3 || !strings.Contains(stderr.String(), "not logged in to "+b.URL) {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	c, _, _ = newTestCLI(t, a)
+	t.Setenv("OBSERVATORY_HUB", b.URL+"/")
+	if code := run(c, []string{"whoami"}); code != 3 {
+		t.Fatalf("OBSERVATORY_HUB: exit %d", code)
+	}
+	if len(b.reqs) != 0 {
+		t.Fatalf("stored token sent to another hub: %+v", b.reqs)
+	}
+
+	b.on("GET /api/me", 200, meOneOrgBody)
+	c, _, _ = newTestCLI(t, a)
+	t.Setenv("OBSERVATORY_HUB", b.URL)
+	t.Setenv("OBSERVATORY_TOKEN", "env-tok")
+	if code := run(c, []string{"whoami"}); code != 0 || b.calls("GET /api/me")[0].Auth != "Bearer env-tok" {
+		t.Fatalf("OBSERVATORY_TOKEN is not bound to the stored hub: exit %d", code)
+	}
+}

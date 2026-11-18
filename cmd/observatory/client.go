@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,6 +82,9 @@ func (c *cli) token() (string, error) {
 	}
 	if c.cfg.Token == "" {
 		return "", errNotLoggedIn
+	}
+	if h := c.hub(); h != strings.TrimRight(cmp.Or(c.cfg.Hub, defaultHub), "/") {
+		return "", &exitError{3, "not logged in to " + h + ", run observatory login --hub " + h}
 	}
 	if left := c.cfg.ExpiresAt.Sub(c.now()); !c.cfg.ExpiresAt.IsZero() && left > 0 && left < 72*time.Hour && !c.warnedExpiry {
 		c.warnedExpiry = true

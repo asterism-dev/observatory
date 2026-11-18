@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +76,9 @@ func cmdLogin(c *cli, args []string) error {
 	}
 	body := map[string]string{"idToken": idToken, "accessToken": token.AccessToken}
 	if err := c.do(http.MethodPost, "/api/auth/cli-token", "", body, &res); err != nil {
+		if ae := (*apiError)(nil); errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
+			return errors.New("hub refused the login: " + cmp.Or(ae.Msg, "unauthorized"))
+		}
 		return fmt.Errorf("exchange token: %w", err)
 	}
 	cfg := c.cfg
@@ -94,6 +98,10 @@ func cmdLogout(c *cli, args []string) error {
 	// A 401 means the session is already gone, which is what logout wants.
 	if err := c.call(http.MethodPost, "/auth/logout", nil, nil); err != nil && !(errors.As(err, &ae) && ae.Status == http.StatusUnauthorized) {
 		return err
+	}
+	if c.getenv("OBSERVATORY_TOKEN") != "" {
+		fmt.Fprintln(c.stderr, "observatory: logged out the OBSERVATORY_TOKEN session; unset it to log out the stored session")
+		return c.done(nil, "Logged out.")
 	}
 	c.cfg.Token, c.cfg.ExpiresAt = "", time.Time{}
 	if err := saveConfig(c.cfgDir, c.cfg); err != nil {
@@ -249,7 +257,7 @@ func cmdOrgRename(c *cli, args []string) error {
 func cmdOrgAudit(c *cli, args []string) error {
 	fs := c.flags("org audit")
 	limit := fs.Int("limit", 0, "at most `N` entries (hub default 50, max 200)")
-	action := fs.String("action", "", "only this action, e.g. vm.delete")
+	action := fs.String("action", "", "only this action, e.g. vm:delete")
 	actor := fs.String("actor", "", "only this actor `ID`")
 	since := fs.Duration("since", 0, "only entries newer than this, e.g. 24h")
 	if _, err := c.parse(fs, args, 0, 0); err != nil {
