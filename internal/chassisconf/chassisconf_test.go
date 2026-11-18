@@ -1,11 +1,13 @@
 package chassisconf
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testConfig() Config {
@@ -132,5 +134,17 @@ func TestApplyRequiresSSLMaterial(t *testing.T) {
 	c.KeyFile = ""
 	if _, err := Apply(c, t.TempDir(), func(string, ...string) error { return nil }); err == nil {
 		t.Fatal("expected error without key file")
+	}
+}
+
+func TestRunContextStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := RunContext(ctx)("sleep", "10"); err == nil {
+		t.Fatal("expected error")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("returned after %v", d)
 	}
 }

@@ -3,6 +3,7 @@ package chassisconf
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,9 +101,14 @@ func writeIfChanged(path string, content []byte, mode os.FileMode) (bool, error)
 	return true, os.Chmod(path, mode)
 }
 
-func Run(name string, args ...string) error {
-	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("%s %v: %w: %s", name, args, err, out)
+func Run(name string, args ...string) error { return RunContext(context.Background())(name, args...) }
+
+// RunContext returns a Run that kills the command once ctx ends.
+func RunContext(ctx context.Context) func(name string, args ...string) error {
+	return func(name string, args ...string) error {
+		if out, err := exec.CommandContext(ctx, name, args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s %v: %w: %s", name, args, err, out)
+		}
+		return nil
 	}
-	return nil
 }

@@ -24,6 +24,8 @@ import (
 
 const DefaultImageURL = linuxvm.DefaultImageURL
 
+const chassisTimeout = 60 * time.Second
+
 type Provider struct {
 	VMsDir, ImagesDir, ImageURL string
 
@@ -326,8 +328,11 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	return proc, filepath.Join(jailRoot(dir), "fc.sock"), err
 }
 
-func (p *Provider) StartChassis(_ context.Context, c chassisconf.Config) error {
-	_, err := chassisconf.Apply(c, "/", chassisconf.Run)
+// StartChassis gives up when the node stops: systemd queues an ovn-controller restart behind the node's own stop job.
+func (p *Provider) StartChassis(ctx context.Context, c chassisconf.Config) error {
+	ctx, cancel := context.WithTimeout(ctx, chassisTimeout)
+	defer cancel()
+	_, err := chassisconf.Apply(c, "/", chassisconf.RunContext(ctx))
 	return err
 }
 
