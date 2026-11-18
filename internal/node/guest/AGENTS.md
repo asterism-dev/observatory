@@ -81,4 +81,5 @@ Attached disks are mounted at the paths shown on the VM page (for example /data)
 
 ## Limits
 
-There is no nested virtualization: /dev/kvm does not exist, so VMs and emulators that need KVM do not run here.
+Nested virtualization is not supported. Depending on the node's CPU, /dev/kvm may exist (root and group `kvm`
+only), but VMs and emulators that need KVM are untested here and may fail.
