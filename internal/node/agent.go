@@ -38,6 +38,8 @@ var (
 	restartBackoff = []time.Duration{1 * time.Second, 2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second}
 	quickRun       = 60 * time.Second
 	killWait       = 30 * time.Second
+	// stopBudget leaves systemd's TimeoutStopSec=300 room to kill what is still saving.
+	stopBudget = 240 * time.Second
 )
 
 type Agent struct {
@@ -251,7 +253,7 @@ func (a *Agent) disksInUse() []string {
 	return slices.Compact(ids)
 }
 
-// storageError is a boot refused because storage is not reachable yet; boot retries it without giving up.
+// storageError is a boot refused because storage is not reachable yet, or a hibernated VM's vm.json cannot be saved; boot retries it without giving up.
 type storageError struct{ error }
 
 // checkStorage dials each NBD server f attaches, so a VM whose disks are unreachable fails instead of booting.
@@ -324,23 +326,27 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	var note string
 	// A new export listens only after the storage server's next poll, so an unreachable storage is retried like an exit.
 	reason := checkStorage(f)
-	if reason != nil {
-		close(e.booted)
-		report(proto.VMStatus{ID: id, State: proto.StateError, Error: reason.Error()})
-	} else {
+	if reason == nil {
 		// A same-generation push (new keys or variables) may have arrived while preparing.
 		a.mu.Lock()
 		f.Boot = e.file.Boot
 		a.mu.Unlock()
 		var err error
-		if inst, note, err = a.start(e, f, dir); err != nil {
-			fail("start", err)
-			return
+		if inst, note, err = a.start(ctx, e, f, dir); err != nil {
+			if !errors.As(err, new(storageError)) {
+				fail("start", err)
+				return
+			}
+			reason = err
+		} else {
+			a.mu.Lock()
+			e.inst = inst
+			a.mu.Unlock()
 		}
-		a.mu.Lock()
-		e.inst = inst
-		a.mu.Unlock()
-		close(e.booted)
+	}
+	close(e.booted)
+	if reason != nil {
+		report(proto.VMStatus{ID: id, State: proto.StateError, Error: reason.Error()})
 	}
 
 	failures := 0
@@ -402,15 +408,19 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
 }
 
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
-func (a *Agent) start(e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
+func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
 	if f.Hibernated {
 		// Cleared first: once resumed, the guest writes to its disks, and a crash must then cold-boot.
-		err = a.clearHibernated(e)
-		if err == nil {
-			inst, err = a.Provider.Restore(f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)})
+		if err := a.clearHibernated(e); err != nil {
+			return nil, "", storageError{fmt.Errorf("save: %w", err)}
 		}
+		inst, err = a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: filepath.Join(dir, StateDir)})
 		if err == nil {
 			return inst, "", nil
+		}
+		if ctx.Err() != nil {
+			// Stopping or deleted: no cold boot to replace it.
+			return nil, "", err
 		}
 		log.Printf("vm %s: restore: %v", f.Spec.ID, err)
 		note = "hibernation discarded: " + err.Error()
@@ -497,7 +507,7 @@ func (a *Agent) hibernate(e *vmEntry) error {
 }
 
 // endHibernation drops e's memory state, gracefully resuming and shutting down a VM with disks first; it fails, keeping the state, while that resume is impossible.
-func (a *Agent) endHibernation(e *vmEntry, graceful bool) error {
+func (a *Agent) endHibernation(ctx context.Context, e *vmEntry, graceful bool) error {
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
@@ -515,7 +525,7 @@ func (a *Agent) endHibernation(e *vmEntry, graceful bool) error {
 	if err := a.clearHibernated(e); err != nil {
 		return fmt.Errorf("save: %w", err)
 	}
-	if inst, err := a.Provider.Restore(f, dir, RestoreFrom{StateDir: state}); err != nil {
+	if inst, err := a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: state}); err != nil {
 		log.Printf("vm %s: resume to shut down: %v", f.Spec.ID, err)
 	} else {
 		if err := inst.Stop(); err != nil {
@@ -535,7 +545,7 @@ var errNewerDesired = errors.New("superseded by a newer desired state")
 // endHibernationWait retries endHibernation on the restart backoff (unbounded only while storage is unreachable) until ctx ends or a generation above gen is queued.
 func (a *Agent) endHibernationWait(ctx context.Context, e *vmEntry, graceful bool, gen uint64) error {
 	for i, failures := 0, 0; ; i++ {
-		err := a.endHibernation(e, graceful)
+		err := a.endHibernation(ctx, e, graceful)
 		if err == nil {
 			return nil
 		}
@@ -666,6 +676,18 @@ func (a *Agent) watch(ctx context.Context, e *vmEntry, id string, inst Instance,
 	report(proto.VMStatus{ID: id, State: restingState(f)})
 }
 
+func alive(inst Instance) bool {
+	if inst == nil {
+		return false
+	}
+	select {
+	case <-inst.Done():
+		return false
+	default:
+		return true
+	}
+}
+
 func (a *Agent) instance(e *vmEntry) Instance {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -696,7 +718,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 	if err := checkStorage(f); err != nil {
 		return nil, "", err
 	}
-	inst, note, err := a.start(e, f, VMDir(a.VMsDir, f.Spec.ID))
+	inst, note, err := a.start(ctx, e, f, VMDir(a.VMsDir, f.Spec.ID))
 	if err != nil {
 		return nil, "", fmt.Errorf("start: %w", err)
 	}
@@ -721,7 +743,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 	return inst, note, nil
 }
 
-// stopAll shuts guests down cleanly; vz VMs live in this process and would otherwise be killed hard.
+// stopAll hibernates live guests in parallel, so a node restart keeps their memory, and kills those not done within stopBudget.
 func (a *Agent) stopAll() {
 	a.mu.Lock()
 	a.stopping = true
@@ -730,23 +752,53 @@ func (a *Agent) stopAll() {
 		entries[id] = e
 	}
 	a.mu.Unlock()
+	var expired atomic.Bool
+	kill := func(id string, e *vmEntry, inst Instance) {
+		e.stopRequested.Store(true)
+		if err := inst.Kill(); err != nil {
+			log.Printf("vm %s: kill: %v", id, err)
+		}
+	}
 	var wg sync.WaitGroup
 	for id, e := range entries {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-e.booted
-			// Waits for a restart or other operation in flight, so its instance is the one stopped.
+			// Waits for a restart or other operation in flight, so its instance is the one hibernated.
 			e.op.Lock()
 			defer e.op.Unlock()
-			if inst := a.instance(e); inst != nil {
-				if err := inst.Stop(); err != nil {
-					log.Printf("vm %s: stop: %v", id, err)
+			inst := a.instance(e)
+			if !alive(inst) {
+				return
+			}
+			if expired.Load() {
+				kill(id, e, inst)
+				return
+			}
+			if err := a.hibernate(e); err != nil {
+				log.Printf("vm %s: hibernate: %v", id, err)
+				if !expired.Load() {
+					if err := inst.Stop(); err != nil {
+						log.Printf("vm %s: stop: %v", id, err)
+					}
 				}
 			}
 		}()
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(stopBudget):
+		expired.Store(true)
+		for id, e := range entries {
+			if inst := a.instance(e); alive(inst) {
+				kill(id, e, inst)
+			}
+		}
+		<-done
+	}
 	a.chassisMu.Lock()
 	a.chassisStopping = true
 	a.chassisMu.Unlock()

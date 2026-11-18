@@ -266,7 +266,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		return
 	}
 	if halted {
-		e = a.halt(e, graceful)
+		e = a.halt(ctx, e, graceful)
 		f.Hibernated = e.file.Hibernated
 		oldNICs, oldAtts := f.Spec.NICs, f.Spec.Attachments
 		f.Spec.NICs, f.Spec.Attachments = d.Spec.NICs, d.Spec.Attachments
@@ -332,7 +332,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
 	case f.Power == proto.PowerStopped && f.Hibernated:
 		e.cancel()
-		if err := a.endHibernation(e, graceful); err != nil {
+		if err := a.endHibernation(ctx, e, graceful); err != nil {
 			log.Printf("vm %s: end hibernation: %v", f.Spec.ID, err)
 		}
 		f.Hibernated = false
@@ -369,7 +369,7 @@ func (a *Agent) acquire(ctx context.Context, e *vmEntry, d proto.DesiredVM) bool
 }
 
 // halt stops e's instance and swaps in an idle stopped entry, so e's boot goroutine neither restarts it nor reports over later updates.
-func (a *Agent) halt(e *vmEntry, graceful bool) *vmEntry {
+func (a *Agent) halt(ctx context.Context, e *vmEntry, graceful bool) *vmEntry {
 	e.stopRequested.Store(true)
 	if inst := a.instance(e); inst != nil {
 		select {
@@ -389,7 +389,7 @@ func (a *Agent) halt(e *vmEntry, graceful bool) *vmEntry {
 	a.mu.Unlock()
 	// Attached disks change, so the memory state cannot be resumed against them; a VM with disks was resumed and shut down before.
 	if hibernated {
-		if err := a.endHibernation(e, graceful); err != nil {
+		if err := a.endHibernation(ctx, e, graceful); err != nil {
 			log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
 		}
 	}

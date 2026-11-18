@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -225,17 +226,77 @@ func TestAgentStoppedNotOverwrittenByLateIP(t *testing.T) {
 	}
 }
 
-func TestAgentStopsVMsOnShutdown(t *testing.T) {
+func TestStopAllHibernatesRunningVMs(t *testing.T) {
+	freeSpace(t, 1<<40)
 	env := startEnv(t, nil)
-	vm := env.hub.create("dev")
-	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	vms := []hubVM{env.hub.create("one"), env.hub.create("two")}
+	for _, vm := range vms {
+		eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	}
 	env.stop()
 	<-env.runDone
-	if !env.provider.instance("dev").stopped.Load() {
-		t.Fatal("VM not stopped on agent shutdown")
+	for _, vm := range vms {
+		dir := VMDir(env.agent.VMsDir, vm.ID)
+		if !env.provider.hasEvent("savestate:" + filepath.Join(dir, "state.tmp")) {
+			t.Fatalf("%s not saved: %v", vm.Spec.Name, env.provider.gotEvents())
+		}
+		if !loadVM(t, env.agent, vm.ID).Hibernated {
+			t.Fatalf("%s: vm.json not hibernated", vm.Spec.Name)
+		}
+		if _, err := os.Stat(filepath.Join(dir, StateDir, MemFile)); err != nil {
+			t.Fatalf("%s: %v", vm.Spec.Name, err)
+		}
 	}
-	if _, err := os.Stat(VMDir(env.agent.VMsDir, vm.ID)); err != nil {
-		t.Fatalf("vm dir must survive shutdown: %v", err)
+	if env.provider.hasEvent("stop-guest") {
+		t.Fatalf("guest stopped: %v", env.provider.gotEvents())
+	}
+}
+
+func TestStopAllBudgetKillsRest(t *testing.T) {
+	freeSpace(t, 1<<40)
+	old := stopBudget
+	stopBudget = 50 * time.Millisecond
+	t.Cleanup(func() { stopBudget = old })
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	block := make(chan struct{})
+	defer close(block)
+	p.mu.Lock()
+	p.saveBlock = block
+	p.mu.Unlock()
+	a.stopAll()
+	if !p.instance("a").killed.Load() {
+		t.Fatalf("not killed: %v", p.gotEvents())
+	}
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json hibernated")
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), "state.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("state.tmp left: %v", err)
+	}
+}
+
+func TestRestartResumesHibernated(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
+	ln.Close()
+	p := newFakeProvider()
+	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	state := saveHibernated(t, a, cachedVM("g1", "good"))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	eventually(t, "restored", func() bool { return p.hasEvent("restore:" + state) })
+	p.mu.Lock()
+	starts := p.starts["good"]
+	p.mu.Unlock()
+	if starts != 0 {
+		t.Fatalf("cold started %d times", starts)
 	}
 }
 
@@ -272,7 +333,7 @@ func TestAgentStopsChassisAfterGuests(t *testing.T) {
 	<-env.runDone
 	env.provider.mu.Lock()
 	defer env.provider.mu.Unlock()
-	if got := strings.Join(env.provider.events, ","); got != "prepare:dev,stop-guest,stop-chassis" {
+	if got := strings.Join(env.provider.events, ","); !strings.HasSuffix(got, ",kill-guest,stop-chassis") {
 		t.Fatalf("events = %s", got)
 	}
 }

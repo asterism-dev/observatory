@@ -520,7 +520,7 @@ func testHibernateResume(t *testing.T, f node.VMFile, logFile string) {
 	state := hibernate(t, inst, dir)
 	hibernatedAt := time.Now()
 	time.Sleep(30 * time.Second)
-	inst, err = p.Restore(f, dir, node.RestoreFrom{StateDir: state})
+	inst, err = p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: state})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestRestoreCorruptStateFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(state, node.StateFile), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if inst, err := p.Restore(f, dir, node.RestoreFrom{StateDir: state}); err == nil {
+	if inst, err := p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: state}); err == nil {
 		inst.Kill()
 		t.Fatal("restore of a corrupt state succeeded")
 	} else {
@@ -664,7 +664,7 @@ func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 		c.Close()
 		t.Fatal("storage still reachable while blocked")
 	}
-	if inst, err := p.Restore(f, dir, node.RestoreFrom{StateDir: state}); err == nil {
+	if inst, err := p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: state}); err == nil {
 		inst.Kill()
 		t.Fatal("restored while storage is unreachable")
 	} else {
@@ -675,7 +675,7 @@ func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 	}
 	unblock()
 
-	inst, err = p.Restore(f, dir, node.RestoreFrom{StateDir: state})
+	inst, err = p.Restore(context.Background(), f, dir, node.RestoreFrom{StateDir: state})
 	if err != nil {
 		t.Fatal(err)
 	}

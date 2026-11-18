@@ -104,10 +104,10 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 }
 
 // Restore boots f from a memory state written by SaveState, with the drives at the jail paths the state names.
-func (p *Provider) Restore(f node.VMFile, dir string, from node.RestoreFrom) (node.Instance, error) {
+func (p *Provider) Restore(ctx context.Context, f node.VMFile, dir string, from node.RestoreFrom) (node.Instance, error) {
 	seed := filepath.Join(dir, node.SeedISO)
 	before := fileSize(seed)
-	if err := p.Reseed(context.Background(), f, dir); err != nil {
+	if err := p.Reseed(ctx, f, dir); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
 	seedGrew := fileSize(seed) > before
@@ -128,7 +128,7 @@ func (p *Provider) Restore(f node.VMFile, dir string, from node.RestoreFrom) (no
 		inst.Kill()
 		return nil, err
 	}
-	if err := inst.load(f, dir, from, seedGrew); err != nil {
+	if err := inst.load(ctx, f, dir, from, seedGrew); err != nil {
 		inst.Kill()
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (i *instance) waitSock(timeout time.Duration) error {
 	}
 }
 
-func (i *instance) load(f node.VMFile, dir string, from node.RestoreFrom, seedGrew bool) error {
+func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from node.RestoreFrom, seedGrew bool) error {
 	nets := []netOverride{{IfaceID: "eth0", HostDevName: linuxvm.TapName(f.Spec.ID, 0)}}
 	for n := range f.Spec.NICs {
 		nets = append(nets, netOverride{IfaceID: "net" + strconv.Itoa(n), HostDevName: linuxvm.TapName(f.Spec.ID, n+1)})
@@ -190,7 +190,7 @@ func (i *instance) load(f node.VMFile, dir string, from node.RestoreFrom, seedGr
 		}
 		rand.Read(req.Entropy)
 	}
-	err := node.CallGuest(context.Background(), filepath.Join(jailRoot(dir), vsockPath), req)
+	err := node.CallGuest(ctx, filepath.Join(jailRoot(dir), vsockPath), req)
 	if err != nil && !from.Takeoff {
 		// The guest runs where it was, only with a stale clock and seed; that beats discarding its memory.
 		log.Printf("vm %s: guest agent: %v", f.Spec.ID, err)

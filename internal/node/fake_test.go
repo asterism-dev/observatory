@@ -66,11 +66,16 @@ func (i *fakeInstance) SaveState(dir string) error {
 	i.p.mu.Lock()
 	block, fail := i.p.saveBlock, i.p.failSaveState
 	i.p.mu.Unlock()
-	if block != nil {
-		<-block
-	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	if block != nil {
+		// Killing Firecracker breaks its snapshot call.
+		select {
+		case <-block:
+		case <-i.done:
+			return errors.New("killed while saving")
+		}
 	}
 	for _, n := range []string{StateFile, MemFile} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o600); err != nil {
@@ -204,7 +209,7 @@ func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
 	return inst, nil
 }
 
-func (p *fakeProvider) Restore(f VMFile, dir string, from RestoreFrom) (Instance, error) {
+func (p *fakeProvider) Restore(_ context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error) {
 	p.record("restore:" + from.StateDir)
 	p.mu.Lock()
 	block := p.restoreBlock

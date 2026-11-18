@@ -341,8 +341,8 @@ func TestStopAllDoesNotRestart(t *testing.T) {
 	cancel()
 	<-done
 	time.Sleep(50 * time.Millisecond)
-	if p.instance("a") != first || !first.stopped.Load() {
-		t.Fatalf("restarted=%v stopped=%v", p.instance("a") != first, first.stopped.Load())
+	if p.instance("a") != first || !first.killed.Load() {
+		t.Fatalf("restarted=%v hibernated=%v", p.instance("a") != first, first.killed.Load())
 	}
 	if f := loadVM(t, a, "a"); f.Power != proto.PowerRunning {
 		t.Fatalf("vm.json = %+v", f)
@@ -1427,6 +1427,9 @@ func TestGracefulStopDuringResumeWaitDoesNotBoot(t *testing.T) {
 }
 
 func TestClearHibernatedKeepsFlagWhenSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only dirs")
+	}
 	a, _ := newReconcileAgent(t)
 	f := cachedVM("a", "a")
 	saveHibernated(t, a, f)
@@ -1443,4 +1446,33 @@ func TestClearHibernatedKeepsFlagWhenSaveFails(t *testing.T) {
 	if !e.file.Hibernated {
 		t.Fatal("Hibernated cleared in memory although vm.json still says hibernated")
 	}
+}
+
+func TestRestoreRetriesWhenClearingHibernatedFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only dirs")
+	}
+	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	state := saveHibernated(t, a, cachedVM("a", "a"))
+	dir := VMDir(a.VMsDir, "a")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateError, 1)
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 0 || p.hasEvent("restore:"+state) {
+		t.Fatalf("started without clearing hibernated: starts=%d events=%v", starts, p.gotEvents())
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "restored", func() bool { return p.hasEvent("restore:" + state) })
 }
