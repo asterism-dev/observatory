@@ -4,6 +4,7 @@ package guestimage
 import (
 	"bytes"
 	"crypto/sha256"
+	"embed"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,18 @@ import (
 )
 
 const ImageFile = "/etc/observatory/image"
+
+//go:embed manifest.json vmm-image-build.sh docker-daemon.json agent-browser/package.json agent-browser/package-lock.json
+var buildFS embed.FS
+
+// seedFiles maps the flat seed name the build script reads to its embedded path.
+var seedFiles = map[string]string{
+	"manifest.json":                   "manifest.json",
+	"vmm-image-build.sh":              "vmm-image-build.sh",
+	"docker-daemon.json":              "docker-daemon.json",
+	"agent-browser-package.json":      "agent-browser/package.json",
+	"agent-browser-package-lock.json": "agent-browser/package-lock.json",
+}
 
 type Artifact struct {
 	Name    string `json:"name"`
@@ -53,7 +66,7 @@ var (
 	sha256Re      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	fingerprintRe = regexp.MustCompile(`^[0-9A-F]{40}$`)
 
-	fileNames = []string{"node", "claude", "codex", "uv", "chrome"}
+	fileNames = []string{"node", "claude", "codex", "uv", "chrome", "check-config"}
 	repoNames = []string{"docker", "gh", "xpra"}
 )
 
@@ -79,6 +92,11 @@ func (m Manifest) Validate() error {
 	}
 	if err := m.Base.validate("base"); err != nil {
 		return err
+	}
+	for i, p := range m.Apt {
+		if strings.TrimSpace(p) == "" {
+			return fmt.Errorf("manifest: apt[%d] is empty", i)
+		}
 	}
 	for i, f := range m.Files {
 		if err := f.validate(fmt.Sprintf("files[%d]", i)); err != nil {
@@ -140,6 +158,9 @@ func (r Repo) validate(field string) error {
 	if err := httpsURL(field+".keyURL", r.KeyURL); err != nil {
 		return err
 	}
+	if r.Suite == "" || r.Component == "" {
+		return fmt.Errorf("manifest: %s.suite and %s.component must be set", field, field)
+	}
 	if !fingerprintRe.MatchString(r.Fingerprint) {
 		return fmt.Errorf("manifest: %s.fingerprint must be 40 uppercase hex characters", field)
 	}
@@ -187,4 +208,17 @@ func NewImage(files map[string][]byte) (Image, error) {
 	}
 	h.Write([]byte(m.Base.SHA256))
 	return Image{Manifest: m, Version: m.Release + "-" + hex.EncodeToString(h.Sum(nil))[:8], Files: files}, nil
+}
+
+// Current is the image the node builds: NewImage over the embedded build files.
+func Current() (Image, error) {
+	files := make(map[string][]byte, len(seedFiles))
+	for name, path := range seedFiles {
+		b, err := buildFS.ReadFile(path)
+		if err != nil {
+			return Image{}, fmt.Errorf("guestimage: %w", err)
+		}
+		files[name] = b
+	}
+	return NewImage(files)
 }

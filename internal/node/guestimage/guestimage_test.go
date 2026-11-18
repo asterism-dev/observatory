@@ -4,7 +4,9 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/netip"
+	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,7 +36,7 @@ func validManifest() Manifest {
 		Base:        art("base"),
 		Apt:         []string{"git"},
 		Repos:       []Repo{repo("docker"), repo("gh"), repo("xpra")},
-		Files:       []Artifact{art("node"), art("claude"), art("codex"), art("uv"), art("chrome")},
+		Files:       []Artifact{art("node"), art("claude"), art("codex"), art("uv"), art("chrome"), art("check-config")},
 	}
 }
 
@@ -64,6 +66,9 @@ func TestManifestValidate(t *testing.T) {
 		{"missing repo", "xpra", func(m *Manifest) { m.Repos = m.Repos[:2] }},
 		{"bad snapshot", "aptSnapshot", func(m *Manifest) { m.AptSnapshot = "2026-11-18" }},
 		{"bad release", "release", func(m *Manifest) { m.Release = "latest" }},
+		{"empty suite", "repos[0].suite", func(m *Manifest) { m.Repos[0].Suite = "" }},
+		{"empty component", "repos[1].component", func(m *Manifest) { m.Repos[1].Component = "" }},
+		{"empty apt entry", "apt[1]", func(m *Manifest) { m.Apt = []string{"git", ""} }},
 	}
 	for _, c := range cases {
 		m := validManifest()
@@ -166,10 +171,13 @@ func TestDockerPoolsDisjoint(t *testing.T) {
 		}
 		return p
 	}
-	check("bip", cfg.Bip)
+	bip := check("bip", cfg.Bip)
 	var covered int
 	for _, p := range cfg.Pools {
 		pfx := check("pool", p.Base)
+		if pfx.Overlaps(bip) {
+			t.Errorf("pool %s overlaps bip %s", p.Base, cfg.Bip)
+		}
 		if p.Size != 24 {
 			t.Errorf("pool %s size %d", p.Base, p.Size)
 		}
@@ -181,5 +189,69 @@ func TestDockerPoolsDisjoint(t *testing.T) {
 	}
 	if covered != 14*256 {
 		t.Errorf("pools cover %d /24s, want 172.18-172.31 exactly (%d)", covered, 14*256)
+	}
+}
+
+func TestCurrentImage(t *testing.T) {
+	img, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"manifest.json", "vmm-image-build.sh", "docker-daemon.json", "agent-browser-package.json", "agent-browser-package-lock.json"} {
+		if len(img.Files[n]) == 0 {
+			t.Errorf("Files[%q] missing", n)
+		}
+	}
+	if len(img.Files) != 5 {
+		t.Errorf("Files has %d entries, want 5", len(img.Files))
+	}
+}
+
+func TestBuildScriptCoversManifest(t *testing.T) {
+	img, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(img.Files["vmm-image-build.sh"])
+	var names []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*([a-z0-9| -]+)\)`).FindAllStringSubmatch(script, -1) {
+		for _, l := range strings.Split(m[1], "|") {
+			names = append(names, strings.TrimSpace(l))
+		}
+	}
+	for _, m := range regexp.MustCompile(`(?m)^([a-z_][a-z0-9_]*)\(\)`).FindAllStringSubmatch(script, -1) {
+		names = append(names, m[1])
+	}
+	for _, f := range img.Manifest.Files {
+		if !slices.Contains(names, f.Name) {
+			t.Errorf("file %q has no case label or function in the build script", f.Name)
+		}
+	}
+	for _, r := range img.Manifest.Repos {
+		if !slices.Contains(names, r.Name) {
+			t.Errorf("repo %q has no case label or function in the build script", r.Name)
+		}
+	}
+	for _, bad := range []*regexp.Regexp{
+		regexp.MustCompile(`latest`),
+		regexp.MustCompile(`curl[^\n]*\|\s*(ba|da)?sh`),
+		regexp.MustCompile(`apt-get[^\n]*upgrade`),
+	} {
+		if bad.MatchString(script) {
+			t.Errorf("build script matches %s", bad)
+		}
+	}
+}
+
+func TestBuildScriptSyntax(t *testing.T) {
+	if out, err := exec.Command("sh", "-n", "vmm-image-build.sh").CombinedOutput(); err != nil {
+		t.Fatalf("sh -n: %v\n%s", err, out)
+	}
+	sc, err := exec.LookPath("shellcheck")
+	if err != nil {
+		t.Skip("shellcheck not installed")
+	}
+	if out, err := exec.Command(sc, "-s", "sh", "vmm-image-build.sh").CombinedOutput(); err != nil {
+		t.Fatalf("shellcheck: %v\n%s", err, out)
 	}
 }
