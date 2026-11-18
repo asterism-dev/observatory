@@ -66,9 +66,32 @@ func TestWaitForPassesNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.on("GET /bad", 500, `{"error":"x"}`)
+	h.on("GET /bad", 403, `{"error":"x"}`)
 	_, err = c.waitFor("vm dev", "/bad", func(json.RawMessage, int) (bool, error) { t.Error("check called"); return true, nil })
-	if exitCode(err) != 1 {
-		t.Fatalf("500: %v", err)
+	if exitCode(err) != 4 || len(h.calls("GET /bad")) != 1 {
+		t.Fatalf("403: %v", err)
+	}
+}
+
+func TestWaitForRetriesTransientErrors(t *testing.T) {
+	h := newFakeHub(t)
+	c, _, _ := newTestCLI(t, h)
+	c.g.timeout = time.Second
+	n := 0
+	h.onFunc("GET /flaky", func(w http.ResponseWriter, r *http.Request) {
+		if n++; n == 1 {
+			http.Error(w, `{"error":"bad gateway"}`, http.StatusBadGateway)
+			return
+		}
+		w.Write([]byte(`{"state":"running"}`))
+	})
+	if _, err := c.waitFor("vm dev", "/flaky", stateCheck(c, "running")); err != nil || n != 2 {
+		t.Fatalf("502 then 200: %v, %d polls", err, n)
+	}
+
+	h.Close()
+	c.g.timeout = 20 * time.Millisecond
+	if _, err := c.waitFor("vm dev", "/flaky", stateCheck(c, "running")); exitCode(err) != 6 {
+		t.Fatalf("hub down: %v", err)
 	}
 }

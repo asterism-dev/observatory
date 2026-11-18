@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -25,16 +26,24 @@ func (c *cli) waitFor(what, path string, check func(raw json.RawMessage, status 
 	for {
 		var raw json.RawMessage
 		status := http.StatusOK
+		transient := false
 		if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
 			var ae *apiError
-			if !errors.As(err, &ae) || ae.Status != http.StatusNotFound {
+			var ne net.Error
+			switch {
+			case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+				raw, status = nil, ae.Status
+			case errors.As(err, &ae) && ae.Status >= 500, errors.As(err, &ne):
+				transient = true
+			default:
 				return nil, err
 			}
-			raw, status = nil, ae.Status
 		}
-		done, err := check(raw, status)
-		if err != nil || done {
-			return raw, err
+		if !transient {
+			done, err := check(raw, status)
+			if err != nil || done {
+				return raw, err
+			}
 		}
 		if !time.Now().Add(c.poll).Before(deadline) {
 			return nil, &exitError{6, what + ": timed out after " + timeout.String()}
