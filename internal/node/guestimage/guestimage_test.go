@@ -35,8 +35,8 @@ func validManifest() Manifest {
 		AptSnapshot: "20261118T000000Z",
 		Base:        art("base"),
 		Apt:         []string{"git"},
-		Repos:       []Repo{repo("docker"), repo("gh"), repo("xpra")},
-		Files:       []Artifact{art("node"), art("claude"), art("codex"), art("uv"), art("chrome"), art("check-config")},
+		Repos:       []Repo{repo("docker"), repo("xpra")},
+		Files:       []Artifact{art("node"), art("claude"), art("codex"), art("uv"), art("chrome"), art("gh"), art("check-config")},
 	}
 }
 
@@ -60,10 +60,11 @@ func TestManifestValidate(t *testing.T) {
 		{"fingerprint spaces", "repos[0].fingerprint", func(m *Manifest) { m.Repos[0].Fingerprint = strings.Repeat("AB12 ", 8) }},
 		{"http key url", "repos[1].keyURL", func(m *Manifest) { m.Repos[1].KeyURL = "http://example.com/k.gpg" }},
 		{"http repo url", "repos[1].url", func(m *Manifest) { m.Repos[1].URL = "http://example.com/r" }},
-		{"no packages", "repos[2].packages", func(m *Manifest) { m.Repos[2].Packages = nil }},
-		{"wildcard version", "repos[2].packages", func(m *Manifest) { m.Repos[2].Packages = map[string]string{"xpra": "*"} }},
-		{"latest package", "repos[2].packages", func(m *Manifest) { m.Repos[2].Packages = map[string]string{"xpra": "latest"} }},
-		{"missing repo", "xpra", func(m *Manifest) { m.Repos = m.Repos[:2] }},
+		{"no packages", "repos[1].packages", func(m *Manifest) { m.Repos[1].Packages = nil }},
+		{"wildcard version", "repos[1].packages", func(m *Manifest) { m.Repos[1].Packages = map[string]string{"xpra": "*"} }},
+		{"latest package", "repos[1].packages", func(m *Manifest) { m.Repos[1].Packages = map[string]string{"xpra": "latest"} }},
+		{"missing repo", "xpra", func(m *Manifest) { m.Repos = m.Repos[:1] }},
+		{"gh as repo", "unexpected \"gh\"", func(m *Manifest) { m.Repos = append(m.Repos, m.Repos[0]); m.Repos[2].Name = "gh" }},
 		{"bad snapshot", "aptSnapshot", func(m *Manifest) { m.AptSnapshot = "2026-11-18" }},
 		{"bad release", "release", func(m *Manifest) { m.Release = "latest" }},
 		{"empty suite", "repos[0].suite", func(m *Manifest) { m.Repos[0].Suite = "" }},

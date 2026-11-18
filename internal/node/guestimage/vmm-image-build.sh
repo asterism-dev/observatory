@@ -81,6 +81,12 @@ install_file() {
 		rm -rf /opt/vmm/chrome
 		mkdir -p /opt/vmm
 		mv "$tmp/chrome-linux64" /opt/vmm/chrome
+		chmod -R go-w /opt/vmm/chrome
+		;;
+	gh)
+		tar -xzf "$f" -C "$tmp"
+		install -m 0755 "$tmp/gh_$(mf files gh version)_linux_amd64/bin/gh" /usr/bin/gh
+		rm -rf "$tmp/gh_$(mf files gh version)_linux_amd64"
 		;;
 	check-config)
 		return 0
@@ -99,7 +105,7 @@ check_docker() {
 expect() {
 	case $1 in
 	docker) v=$(mf repos docker packages docker-ce) ;;
-	gh | xpra) v=$(mf repos "$1" packages "$1") ;;
+	xpra) v=$(mf repos xpra packages xpra) ;;
 	agent-browser) v=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["dependencies"]["agent-browser"])' "$seed/agent-browser-package.json") ;;
 	*) v=$(mf files "$1" version) ;;
 	esac
@@ -115,15 +121,15 @@ verify() {
 	uv) out=$(uv --version 2>&1) ;;
 	chrome) out=$(/opt/vmm/chrome/chrome --no-sandbox --version 2>&1) ;;
 	docker) out=$(docker --version 2>&1) ;;
-	gh) out=$(gh --version 2>&1) ;;
+	gh) out=$(/usr/bin/gh --version 2>&1) ;;
 	xpra) out=$(xpra --version 2>&1) ;;
-	agent-browser) out=$(/opt/vmm/agent-browser/bin/agent-browser --version 2>&1) ;;
+	agent-browser) out=$(setpriv --reuid=nobody --regid=nogroup --clear-groups env HOME=/nonexistent /opt/vmm/agent-browser/bin/agent-browser --version 2>&1) ;;
 	check-config) return 0 ;;
 	*) fail "no version check for $1" ;;
 	esac
 	want=$(expect "$1")
-	case $out in
-	*"$want"*) log "$1 $want" ;;
+	case " $out " in
+	*[!0-9.]"$want"[!0-9.]*) log "$1 $want" ;;
 	*) fail "$1 version: want $want, got $(echo "$out" | head -n 1)" ;;
 	esac
 }
@@ -134,21 +140,24 @@ snapshot=$(mf aptSnapshot)
 
 begin tmpfs
 mkdir -p "$tmp"
-mount -t tmpfs -o size=1G tmpfs "$tmp"
+mount -t tmpfs -o size=1G,mode=0700 tmpfs "$tmp"
 mkdir -p "$tmp/apt/partial" "$tmp/home"
 # Caches and dotfiles of gpg, npm and the tools' --version runs land in tmpfs, not in the image.
 export HOME="$tmp/home"
 
 begin apt
 apt_get update
-apt_get install --no-install-recommends $(mf apt)
+apt_pkgs=$(mf apt)
+apt_get install --no-install-recommends $apt_pkgs
 apt_get clean
 
 begin repos
 install -d -m 0755 /etc/apt/keyrings
 pkgs=
 holds=
-for name in $(mf repos); do
+hosts=
+repos=$(mf repos)
+for name in $repos; do
 	fpr=$(mf repos "$name" fingerprint)
 	curl -fsSL --proto =https --proto-redir =https --retry 3 -o "$tmp/$name.key" "$(mf repos "$name" keyURL)" || fail "$name key download"
 	primary=$(gpg --show-keys --with-colons "$tmp/$name.key" | awk -F: '/^pub:/ { p = 1; next } p && /^fpr:/ { print $10; p = 0 }')
@@ -156,10 +165,18 @@ for name in $(mf repos); do
 	gpg --batch --quiet --import "$tmp/$name.key"
 	gpg --batch --export "$fpr" >"/etc/apt/keyrings/$name.gpg"
 	chmod 0644 "/etc/apt/keyrings/$name.gpg"
-	echo "deb [signed-by=/etc/apt/keyrings/$name.gpg] $(mf repos "$name" url) $(mf repos "$name" suite) $(mf repos "$name" component)" >"/etc/apt/sources.list.d/$name.list"
-	pkgs="$pkgs $(mf repos "$name" packages)"
-	for p in $(mf repos "$name" packages); do
+	url=$(mf repos "$name" url)
+	host=${url#https://}
+	host=${host%%/*}
+	hosts="$hosts $host"
+	echo "deb [signed-by=/etc/apt/keyrings/$name.gpg] $url $(mf repos "$name" suite) $(mf repos "$name" component)" >"/etc/apt/sources.list.d/$name.list"
+	repo_pkgs=$(mf repos "$name" packages)
+	pkgs="$pkgs $repo_pkgs"
+	# Only the listed versions may come from this repo; nothing else from it can replace a snapshot package.
+	printf 'Package: *\nPin: origin %s\nPin-Priority: -1\n' "$host" >"/etc/apt/preferences.d/vmm-$name"
+	for p in $repo_pkgs; do
 		holds="$holds ${p%%=*}"
+		printf '\nPackage: %s\nPin: version %s\nPin-Priority: 1001\n' "${p%%=*}" "${p#*=}" >>"/etc/apt/preferences.d/vmm-$name"
 	done
 done
 gpgconf --kill all
@@ -167,9 +184,17 @@ apt_get update
 apt_get install --no-install-recommends $pkgs
 apt-mark hold $holds
 apt_get clean
+for host in $hosts; do
+	awk '/^Package: /{ p = $2 } /^Version: /{ print p "=" $2 }' /var/lib/apt/lists/"${host}"_*_Packages
+done | sort -u >"$tmp/offered"
+dpkg-query -W -f='${db:Status-Status} ${Package}=${Version}\n' | awk '$1 == "installed" { print $2 }' | sort -u >"$tmp/installed"
+printf '%s\n' $pkgs >"$tmp/pinned"
+unpinned=$(comm -12 "$tmp/offered" "$tmp/installed" | grep -vxF -f "$tmp/pinned" || true)
+[ -z "$unpinned" ] || fail "installed from a third-party repo but not in the manifest: $(echo "$unpinned" | tr '\n' ' ')"
 
 begin files
-for name in $(mf files); do
+files=$(mf files)
+for name in $files; do
 	fetch "$name"
 	install_file "$name"
 done
@@ -180,7 +205,7 @@ mkdir -p "$ab/bin"
 cp "$seed/agent-browser-package.json" "$ab/package.json"
 cp "$seed/agent-browser-package-lock.json" "$ab/package-lock.json"
 (cd "$ab" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
-ln -sfn ../node_modules/.bin/agent-browser "$ab/bin/agent-browser"
+ln -sfn ../node_modules/@agent-browser/cli-linux-x64-gnu/bin/agent-browser "$ab/bin/agent-browser"
 
 begin docker
 install -D -m 0644 "$seed/docker-daemon.json" /etc/docker/daemon.json
@@ -209,7 +234,7 @@ profile vmm-chrome /opt/vmm/chrome/chrome flags=(unconfined) {
 EOF
 
 begin verify
-for name in $(mf files) $(mf repos) agent-browser; do
+for name in $files $repos agent-browser; do
 	verify "$name"
 done
 

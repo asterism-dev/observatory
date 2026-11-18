@@ -66,8 +66,8 @@ var (
 	sha256Re      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	fingerprintRe = regexp.MustCompile(`^[0-9A-F]{40}$`)
 
-	fileNames = []string{"node", "claude", "codex", "uv", "chrome", "check-config"}
-	repoNames = []string{"docker", "gh", "xpra"}
+	fileNames = []string{"node", "claude", "codex", "uv", "chrome", "gh", "check-config"}
+	repoNames = []string{"docker", "xpra"}
 )
 
 func ParseManifest(b []byte) (Manifest, error) {
