@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -220,6 +222,33 @@ func TestGuestImageBuildRefusedWithoutSpace(t *testing.T) {
 		t.Fatalf("cloned anyway: %v", entries)
 	}
 	noGuestImage(t, p)
+}
+
+func TestStalledBaseDownloadLeavesNATLockFree(t *testing.T) {
+	requested, release := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requested)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	p := &Provider{ImagesDir: t.TempDir(), VMsDir: t.TempDir(), image: guestimage.Image{Manifest: guestimage.Manifest{Base: guestimage.Artifact{URL: srv.URL + "/base.img"}}}}
+	go p.stockBase()
+	<-requested
+	locked := make(chan struct{})
+	go func() {
+		p.mu.Lock()
+		p.mu.Unlock()
+		close(locked)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("p.mu held during the base download")
+	}
 }
 
 func TestGuestImageFailedBuildReportsFallback(t *testing.T) {

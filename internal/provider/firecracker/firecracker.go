@@ -34,8 +34,9 @@ type Provider struct {
 	custom bool // imageURL set in node.json: VMs boot that image as is
 	image  guestimage.Image
 
-	mu  sync.Mutex // serializes base image downloads and NAT address allocation
-	nbd linuxvm.NBDWatch
+	mu     sync.Mutex // serializes NAT address allocation
+	baseMu sync.Mutex // serializes base image downloads, which must not hold up mu
+	nbd    linuxvm.NBDWatch
 
 	fastBoot  bool
 	fcVersion string
@@ -73,8 +74,8 @@ func (p *Provider) Name() string { return "firecracker" }
 
 // stockBase is the custom image, or else the pinned cloud image guest images are built from.
 func (p *Provider) stockBase() (string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.baseMu.Lock()
+	defer p.baseMu.Unlock()
 	url, sha := p.image.Manifest.Base.URL, p.image.Manifest.Base.SHA256
 	if p.custom {
 		url, sha = p.ImageURL, ""

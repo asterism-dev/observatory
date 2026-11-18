@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -114,6 +115,30 @@ func TestEnsureBaseImageHTTPError(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := EnsureBaseImage(dir, srv.URL+"/img", ""); err == nil {
 		t.Fatal("expected error")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("leftover files: %v", entries)
+	}
+}
+
+func TestEnsureBaseImageStalledServer(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	old := downloadClient
+	t.Cleanup(func() { downloadClient = old })
+	c := *downloadClient
+	c.Timeout = 200 * time.Millisecond
+	downloadClient = &c
+	dir := t.TempDir()
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", ""); err == nil {
+		t.Fatal("expected a timeout")
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("leftover files: %v", entries)

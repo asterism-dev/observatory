@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lima-vm/go-qcow2reader"
 	"github.com/lima-vm/go-qcow2reader/convert"
@@ -42,8 +43,15 @@ func EnsureBaseImage(imagesDir, url, sha256Hex string) (string, error) {
 	return raw, os.Rename(part, raw)
 }
 
+// downloadClient fails a stalled base download so the node reports it and retries instead of hanging.
+var downloadClient = func() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone() // 30 s connect, 10 s TLS handshake
+	t.ResponseHeaderTimeout = time.Minute
+	return &http.Client{Transport: t, Timeout: 30 * time.Minute}
+}()
+
 func fetch(url, dst string) (string, error) {
-	resp, err := http.Get(url)
+	resp, err := downloadClient.Get(url)
 	if err != nil {
 		return "", err
 	}
