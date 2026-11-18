@@ -136,6 +136,9 @@ RestartSec=5
 # Only the node gets SIGTERM; it hibernates the VMs (Firecracker children in this cgroup) before exiting.
 KillMode=mixed
 TimeoutStopSec=300
+# Host-bound secrets live only in the memory of the node and its egress proxies: never swapped, never in a core dump.
+MemorySwapMax=0
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target
