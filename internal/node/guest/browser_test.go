@@ -125,6 +125,9 @@ func TestBrowserRefusesRemoteCDP(t *testing.T) {
 		{nil, []string{"--cdp", `ws://127.0.0.1\@evil.example:9222`, "snapshot"}},
 		{nil, []string{"--cdp", "evil.example:9222", "snapshot"}},
 		{nil, []string{"connect", "wss://evil.example/devtools"}},
+		{nil, []string{"--session", "work", "--headed", "false", "connect", "evil.example:9222"}},
+		{nil, []string{"--args", "-remote-debugging-address=0.0.0.0,--remote-debugging-port=9222", "open", "x"}},
+		{[]string{"AGENT_BROWSER_ARGS=--no-sandbox\n-remote-debugging-address=0.0.0.0"}, []string{"open", "x"}},
 	} {
 		code, out, stderr := b.run(t, c.env, c.args...)
 		if code != 2 || out != "" || stderr == "" {
@@ -141,6 +144,8 @@ func TestBrowserRefusesRemoteCDP(t *testing.T) {
 		{nil, []string{"--cdp", "ws://[::1]:9222", "snapshot"}},
 		{nil, []string{"--args", "--remote-debugging-address=127.0.0.1", "open", "x"}},
 		{nil, []string{"connect", "9222"}},
+		{nil, []string{"--session", "work", "connect", "ws://localhost:9222"}},
+		{nil, []string{"fill", "@e1", "connect", "https://example.com"}},
 		{[]string{"AGENT_BROWSER_CDP=ws://localhost:9222"}, []string{"snapshot"}},
 	} {
 		if code, out, stderr := b.run(t, c.env, c.args...); code != 0 || !strings.Contains(out, "ARG=") {
@@ -156,6 +161,14 @@ func TestBrowserDesktopFailure(t *testing.T) {
 	}
 	code, out, stderr := b.run(t, nil, "open", "x")
 	if code != 1 || out != "" || !strings.Contains(stderr, "desktop broke") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+}
+
+func TestBrowserDesktopMissing(t *testing.T) {
+	b := newFakeBrowser(t)
+	code, out, stderr := b.run(t, []string{"VMM_DESKTOP_BIN=" + filepath.Join(b.dir, "missing")}, "open", "x")
+	if code != 1 || out != "" || !strings.HasPrefix(stderr, "agent-browser: cannot start the desktop") || strings.Contains(stderr, "Traceback") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
 	}
 }

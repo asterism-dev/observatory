@@ -16,13 +16,31 @@ DEFAULTS = {
 }
 # Strict on purpose: userinfo or a backslash would let a URL parser pick another host than the one we checked.
 LOOPBACK_CDP = re.compile(r"\d+|(?i:wss?|https?)://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?([/?#].*)?", re.S)
-DEBUG_ADDRESS = re.compile(r"--remote-debugging-address=([^,\s]*)")
+# Chromium on Linux also takes single-dash switches; a value is only ever attached with "=".
+DEBUG_ADDRESS = re.compile(r"(?<![\w-])--?remote-debugging-address=([^,\s]*)")
+# agent-browser 0.43.0's options that take a value (flags.rs FLAGS_WITH_VALUE), so the subcommand is found after them.
+VALUE_FLAGS = frozenset("""--session --restore-save --restore-check-url --restore-check-text --restore-check-fn --namespace --headers
+--executable-path --cdp --cdp-headers --extension --init-script --enable --profile --state --proxy --proxy-bypass --args --user-agent
+-p --provider --device --session-name --color-scheme --download-path --max-output --allowed-domains --capture --action-policy
+--confirm-actions --engine --input-mode --screenshot-dir --screenshot-quality --screenshot-format --idle-timeout --ca-cert --model
+--config""".split())
 SINGLETONS = ("SingletonLock", "SingletonSocket", "SingletonCookie")
 
 
 def refuse(msg):
     print("agent-browser: " + msg, file=sys.stderr)
     sys.exit(2)
+
+
+def positionals(argv):
+    skip = False
+    for i, a in enumerate(argv):
+        if skip:
+            skip = False
+        elif a.startswith("-"):
+            skip = a in VALUE_FLAGS or (i + 1 < len(argv) and argv[i + 1] in ("true", "false"))
+        else:
+            yield a
 
 
 def check_devtools(argv, env):
@@ -33,15 +51,16 @@ def check_devtools(argv, env):
             cdps.append(nxt)
         elif a.startswith("--cdp="):
             cdps.append(a[len("--cdp="):])
-        elif a == "connect" and nxt is not None and re.match(r"(?i)(wss?|https?)://", nxt):
-            cdps.append(nxt)
+    words = list(positionals(argv))
+    if words[:1] == ["connect"] and len(words) > 1:
+        cdps.append(words[1])
     for c in cdps:
         if not LOOPBACK_CDP.fullmatch(c):
             refuse("CDP endpoint %r is not a port or a loopback URL (127.0.0.1, localhost, [::1])" % c)
     for a in argv + [env.get("AGENT_BROWSER_ARGS", "")]:
         for addr in DEBUG_ADDRESS.findall(a):
             if addr != "127.0.0.1":
-                refuse("--remote-debugging-address=%s is not 127.0.0.1" % addr)
+                refuse("remote-debugging-address=%s is not 127.0.0.1" % addr)
 
 
 def chrome_running(proc, uid):
@@ -84,7 +103,11 @@ def main():
     argv = sys.argv[1:]
     env = os.environ
     check_devtools(argv, env)
-    desktop = subprocess.run([env.get("VMM_DESKTOP_BIN", "/usr/local/bin/vmm-desktop"), "start"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        desktop = subprocess.run([env.get("VMM_DESKTOP_BIN", "/usr/local/bin/vmm-desktop"), "start"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except OSError as e:
+        print("agent-browser: cannot start the desktop: %s" % e, file=sys.stderr)
+        sys.exit(1)
     if desktop.returncode != 0:
         sys.stderr.write(desktop.stdout)
         sys.exit(1)
