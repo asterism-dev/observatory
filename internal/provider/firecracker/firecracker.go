@@ -4,12 +4,15 @@ package firecracker
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -96,7 +99,116 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := []jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}}
+	files := append([]jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}}, driveFiles(f, drives)...)
+	return p.launch(f, dir, files, drives, nbds, true)
+}
+
+// Restore boots f from a memory state written by SaveState, with the drives at the jail paths the state names.
+func (p *Provider) Restore(f node.VMFile, dir string, from node.RestoreFrom) (node.Instance, error) {
+	seed := filepath.Join(dir, node.SeedISO)
+	before := fileSize(seed)
+	if err := p.Reseed(context.Background(), f, dir); err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+	seedGrew := fileSize(seed) > before
+	drives, nbds, err := linuxvm.AttachDisks(f, dir)
+	if err != nil {
+		return nil, err
+	}
+	files := driveFiles(f, drives)
+	for _, n := range []string{node.StateFile, node.MemFile} {
+		files = append(files, jailFile{path: filepath.Join(from.StateDir, n), shared: from.Shared})
+	}
+	inst, err := p.launch(f, dir, files, drives, nbds, false)
+	if err != nil {
+		return nil, err
+	}
+	inst.restored = true
+	if err := inst.waitSock(5 * time.Second); err != nil {
+		inst.Kill()
+		return nil, err
+	}
+	if err := inst.load(f, dir, from, seedGrew); err != nil {
+		inst.Kill()
+		return nil, err
+	}
+	return inst, nil
+}
+
+// waitSock waits for Firecracker to listen on its API socket, which it does only after the jailer has set it up.
+func (i *instance) waitSock(timeout time.Duration) error {
+	for deadline := time.Now().Add(timeout); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(i.sock); err == nil {
+			return nil
+		} else if time.Now().After(deadline) {
+			return fmt.Errorf("firecracker api socket: %w", err)
+		}
+		select {
+		case <-i.Done():
+			return errors.New("firecracker exited before listening on its api socket")
+		default:
+		}
+	}
+}
+
+func (i *instance) load(f node.VMFile, dir string, from node.RestoreFrom, seedGrew bool) error {
+	nets := []netOverride{{IfaceID: "eth0", HostDevName: linuxvm.TapName(f.Spec.ID, 0)}}
+	for n := range f.Spec.NICs {
+		nets = append(nets, netOverride{IfaceID: "net" + strconv.Itoa(n), HostDevName: linuxvm.TapName(f.Spec.ID, n+1)})
+	}
+	if err := i.api.LoadSnapshot("/"+node.StateFile, "/"+node.MemFile, nets); err != nil {
+		return err
+	}
+	// The guest keeps the drive sizes from the state until Firecracker re-reads the file and notifies it.
+	if seedGrew {
+		if err := i.api.PatchDrive("seed", "/"+node.SeedISO); err != nil {
+			return err
+		}
+	}
+	if from.Takeoff {
+		if err := i.api.PatchDrive("root", "/root.img"); err != nil {
+			return err
+		}
+	}
+	if err := i.api.Resume(); err != nil {
+		return err
+	}
+	if !from.Shared {
+		// Firecracker maps the memory file, which keeps its data until the VM exits.
+		for _, n := range []string{node.StateFile, node.MemFile} {
+			os.Remove(filepath.Join(jailRoot(dir), n))
+		}
+		if err := os.RemoveAll(from.StateDir); err != nil {
+			log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
+		}
+	}
+	req := node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()}
+	if from.Takeoff {
+		req.Op, req.MACs, req.Entropy = "takeoff", []string{f.MAC}, make([]byte, 32)
+		for _, n := range f.Spec.NICs {
+			req.MACs = append(req.MACs, n.MAC)
+		}
+		rand.Read(req.Entropy)
+	}
+	err := node.CallGuest(context.Background(), filepath.Join(jailRoot(dir), vsockPath), req)
+	if err != nil && !from.Takeoff {
+		// The guest runs where it was, only with a stale clock and seed; that beats discarding its memory.
+		log.Printf("vm %s: guest agent: %v", f.Spec.ID, err)
+		return nil
+	}
+	return err
+}
+
+func fileSize(path string) int64 {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
+func driveFiles(f node.VMFile, drives []string) []jailFile {
+	var files []jailFile
 	for i, d := range node.AttachOrder(f) {
 		jf := jailFile{path: drives[i], readOnly: d.ReadOnly}
 		// /dev/nbdN differs between attaches; a memory snapshot needs the drive at the same jail path when restored.
@@ -105,7 +217,12 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 		}
 		files = append(files, jf)
 	}
-	proc, sock, err := p.spawnJailed(f, dir, files, nbds)
+	return files
+}
+
+// launch starts the jailed Firecracker; with boot it boots from fc.json, else it waits for a snapshot load.
+func (p *Provider) launch(f node.VMFile, dir string, files []jailFile, drives, nbds []string, boot bool) (*instance, error) {
+	proc, sock, err := p.spawnJailed(f, dir, files, nbds, boot)
 	if err != nil {
 		linuxvm.DetachAll(f.Spec.ID, dir, nbds)
 		return nil, err
@@ -121,7 +238,13 @@ func (p *Provider) Start(f node.VMFile, dir string) (node.Instance, error) {
 	for _, id := range nbds {
 		go p.nbd.Watch(f.Spec.ID, dir, id, proc.Done())
 	}
-	return &instance{Process: proc, sock: sock, api: fcAPI{dial: js.dial}}, nil
+	inst := &instance{Process: proc, sock: sock, api: fcAPI{dial: js.dial}, dir: dir}
+	for i, d := range node.AttachOrder(f) {
+		if d.NBD {
+			inst.nbdDevs = append(inst.nbdDevs, drives[i])
+		}
+	}
+	return inst, nil
 }
 
 // jailSock reaches the API socket through its directory's fd, as the jail path can exceed the 107-byte unix socket limit.
@@ -156,8 +279,8 @@ func (s *jailSock) close() {
 	s.dir = nil
 }
 
-// spawnJailed starts Firecracker under the jailer; files holds the kernel, the initrd and then the drives.
-func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string) (*linuxvm.Process, string, error) {
+// spawnJailed starts Firecracker under the jailer; to boot, files holds the kernel, the initrd and then the drives.
+func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string, boot bool) (*linuxvm.Process, string, error) {
 	p.mu.Lock()
 	ip, err := linuxvm.AllocNATIP(p.VMsDir, f.Spec.ID)
 	p.mu.Unlock()
@@ -179,16 +302,18 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		removeJail()
 		return nil, "", fmt.Errorf("jail: %w", err)
 	}
-	cfg, err := vmConfig(f, inJail[0], inJail[1], inJail[2:])
-	if err != nil {
-		removeJail()
-		return nil, "", err
+	if boot {
+		cfg, err := vmConfig(f, inJail[0], inJail[1], inJail[2:])
+		if err != nil {
+			removeJail()
+			return nil, "", err
+		}
+		if err := os.WriteFile(filepath.Join(jailRoot(dir), "fc.json"), cfg, 0o644); err != nil {
+			removeJail()
+			return nil, "", err
+		}
 	}
-	if err := os.WriteFile(filepath.Join(jailRoot(dir), "fc.json"), cfg, 0o644); err != nil {
-		removeJail()
-		return nil, "", err
-	}
-	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, true), nbds, uid, removeJail)
+	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, removeJail)
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {
 		proc.IP = ip
@@ -206,12 +331,99 @@ func (p *Provider) StopChassis() error { return nil }
 
 type instance struct {
 	*linuxvm.Process
-	sock string
-	api  fcAPI
+	sock     string
+	api      fcAPI
+	dir      string
+	nbdDevs  []string
+	restored bool
+
+	mu     sync.Mutex
+	paused bool
+}
+
+// WaitIP of a restored VM returns at once: its guest booted long ago and prints no readiness marker again.
+func (i *instance) WaitIP(ctx context.Context) (string, error) {
+	if i.restored {
+		return i.IP, nil
+	}
+	return i.Process.WaitIP(ctx)
+}
+
+func (i *instance) Pause() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.paused {
+		return nil
+	}
+	if err := i.api.Pause(); err != nil {
+		return err
+	}
+	i.paused = true
+	return nil
+}
+
+func (i *instance) Resume() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if !i.paused {
+		return nil
+	}
+	if err := i.api.Resume(); err != nil {
+		return err
+	}
+	i.paused = false
+	return nil
+}
+
+func (i *instance) SaveState(dir string) error {
+	if err := i.Pause(); err != nil {
+		return err
+	}
+	for _, dev := range i.nbdDevs {
+		if err := linuxvm.FlushNBD(dev); err != nil {
+			return err
+		}
+	}
+	if err := i.api.CreateSnapshot("/"+node.StateFile, "/"+node.MemFile); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, n := range []string{node.StateFile, node.MemFile} {
+		dst := filepath.Join(dir, n)
+		if err := os.Rename(filepath.Join(jailRoot(i.dir), n), dst); err != nil {
+			return err
+		}
+		// Guest memory holds the VM's keys and variables.
+		if err := os.Chmod(dst, 0o600); err != nil {
+			return err
+		}
+		if err := syncPath(dst); err != nil {
+			return err
+		}
+	}
+	if err := syncPath(dir); err != nil {
+		return err
+	}
+	return syncPath(filepath.Join(i.dir, "root.img"))
+}
+
+func syncPath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // Stop asks the guest to shut down (Ctrl-Alt-Del reboots it, and reboot=k ends Firecracker) and kills it after 10s.
 func (i *instance) Stop() error {
+	// A paused guest cannot react to Ctrl-Alt-Del.
+	if err := i.Resume(); err != nil {
+		return i.Kill()
+	}
 	if err := i.api.CtrlAltDel(); err == nil {
 		select {
 		case <-i.Done():

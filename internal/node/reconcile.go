@@ -93,6 +93,9 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 		f.Boot = d.Boot
 		switch {
 		case !ok:
+			if f.Hibernated {
+				a.endHibernation(f, true)
+			}
 			if err := DeleteVMDir(a.VMsDir, f.Spec.ID); err != nil {
 				log.Printf("vm %s: delete dir: %v", f.Spec.ID, err)
 			}
@@ -101,7 +104,7 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 			booted := make(chan struct{})
 			close(booted)
 			a.mu.Lock()
-			a.vms[f.Spec.ID] = &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped}, cancel: func() {}, booted: booted}
+			a.vms[f.Spec.ID] = &vmEntry{file: f, status: proto.VMStatus{ID: f.Spec.ID, State: restingState(f)}, cancel: func() {}, booted: booted}
 			a.mu.Unlock()
 		default:
 			a.startVM(ctx, f, f.NeedsPrepare)
@@ -113,6 +116,15 @@ func (a *Agent) destroy(e *vmEntry) {
 	id := e.file.Spec.ID
 	e.cancel()
 	<-e.booted
+	e.op.Lock()
+	defer e.op.Unlock()
+	a.mu.Lock()
+	f := e.file
+	a.mu.Unlock()
+	// A hibernated VM has no live instance; with disks it must still shut down cleanly.
+	if f.Hibernated {
+		a.endHibernation(f, true)
+	}
 	gone := func() {
 		a.mu.Lock()
 		delete(a.dying, e)
@@ -187,6 +199,14 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		return
 	}
 	<-e.booted
+	op := &e.op
+	op.Lock()
+	unlock := true
+	defer func() {
+		if unlock {
+			op.Unlock()
+		}
+	}()
 	a.mu.Lock()
 	f := e.file
 	a.mu.Unlock()
@@ -196,6 +216,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 	halted := !slices.Equal(f.Spec.NICs, d.Spec.NICs) || !slices.Equal(f.Spec.Attachments, d.Spec.Attachments)
 	if halted {
 		e = a.halt(e)
+		f.Hibernated = e.file.Hibernated
 		oldNICs, oldAtts := f.Spec.NICs, f.Spec.Attachments
 		f.Spec.NICs, f.Spec.Attachments = d.Spec.NICs, d.Spec.Attachments
 		if !f.NeedsPrepare {
@@ -229,6 +250,22 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		}
 	}
 	switch {
+	case f.Power == proto.PowerHibernated && live:
+		// Writing the memory out takes long; reconcile goes on while the hibernate keeps e.op.
+		unlock = false
+		go func() {
+			defer op.Unlock()
+			if err := a.hibernate(e); err != nil {
+				a.mu.Lock()
+				st := e.status
+				a.mu.Unlock()
+				st.Error = "hibernate: " + err.Error()
+				a.reportEntry(e, st)
+			}
+		}()
+	case f.Power == proto.PowerHibernated:
+		e.cancel()
+		a.report(proto.VMStatus{ID: f.Spec.ID, State: restingState(f)})
 	case f.Power != proto.PowerStopped && !live:
 		e.cancel()
 		a.startVM(ctx, f, f.NeedsPrepare)
@@ -242,11 +279,22 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
 		}
 		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
+	case f.Power == proto.PowerStopped && f.Hibernated:
+		e.cancel()
+		a.endHibernation(f, f.StopMode != proto.StopHard)
+		f.Hibernated = false
+		if err := SaveVM(a.VMsDir, f); err != nil {
+			log.Printf("vm %s: save: %v", f.Spec.ID, err)
+		}
+		a.mu.Lock()
+		e.file = f
+		a.mu.Unlock()
+		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
 	case f.Power == proto.PowerStopped:
 		e.cancel() // ends a pending restart backoff
 		a.report(st)
 	default:
-		a.report(st)
+		a.syncPause(e, inst)
 	}
 }
 
@@ -266,13 +314,21 @@ func (a *Agent) halt(e *vmEntry) *vmEntry {
 			<-inst.Done()
 		}
 	}
+	a.mu.Lock()
+	f := e.file
+	a.mu.Unlock()
+	// Attached disks change, so the memory state cannot be resumed against them.
+	if f.Hibernated {
+		a.endHibernation(f, true)
+		f.Hibernated = false
+	}
 	// Cancelling only after exit keeps a pending WaitIP from reporting the cancellation as an error.
 	e.cancel()
 	booted := make(chan struct{})
 	close(booted)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	idle := &vmEntry{file: e.file, status: proto.VMStatus{ID: e.file.Spec.ID, State: proto.StateStopped}, cancel: func() {}, booted: booted}
+	idle := &vmEntry{file: f, status: proto.VMStatus{ID: e.file.Spec.ID, State: proto.StateStopped}, cancel: func() {}, booted: booted}
 	a.vms[idle.file.Spec.ID] = idle
 	return idle
 }

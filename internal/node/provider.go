@@ -14,6 +14,7 @@ type Provider interface {
 	// Reseed rewrites only the cloud-init seed of a prepared, stopped VM; disks are left alone.
 	Reseed(ctx context.Context, f VMFile, dir string) error
 	Start(f VMFile, dir string) (Instance, error)
+	Restore(f VMFile, dir string, from RestoreFrom) (Instance, error)
 	// Disks lists the block devices Start attaches, in attach order.
 	Disks(f VMFile, dir string) ([]proto.Disk, error)
 	StartChassis(ctx context.Context, c chassisconf.Config) error
@@ -26,4 +27,15 @@ type Instance interface {
 	// Kill powers the VM off without asking the guest.
 	Kill() error
 	Done() <-chan struct{}
+	Pause() error
+	Resume() error
+	// SaveState pauses the VM, flushes its disks and writes StateFile and MemFile into dir; the VM stays paused.
+	SaveState(dir string) error
+}
+
+type RestoreFrom struct {
+	StateDir string
+	Takeoff  bool
+	// Shared state files are linked read-only into the jail and never deleted.
+	Shared bool
 }

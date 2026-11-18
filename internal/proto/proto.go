@@ -17,6 +17,9 @@ const (
 	StateStopped  VMState = "stopped"
 	StateError    VMState = "error"
 	StateUnknown  VMState = "unknown"
+	// StatePaused keeps the VM's process and RAM with its vCPUs stopped; StateHibernated keeps its memory on the node's disk.
+	StatePaused     VMState = "paused"
+	StateHibernated VMState = "hibernated"
 )
 
 type VMSpec struct {
@@ -75,8 +78,10 @@ type VMStatus struct {
 type Power string
 
 const (
-	PowerRunning Power = "running"
-	PowerStopped Power = "stopped"
+	PowerRunning    Power = "running"
+	PowerStopped    Power = "stopped"
+	PowerPaused     Power = "paused"
+	PowerHibernated Power = "hibernated"
 )
 
 type StopMode string

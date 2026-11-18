@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -448,5 +449,163 @@ func TestStoppedInstanceAPIDoesNotReachOtherVM(t *testing.T) {
 	case <-b.Done():
 		t.Fatal("the other VM stopped")
 	case <-time.After(10 * time.Second):
+	}
+}
+
+// hibernate saves inst's state into <dir>/state as the node agent does and kills it.
+func hibernate(t *testing.T, inst node.Instance, dir string) string {
+	t.Helper()
+	tmp, state := filepath.Join(dir, "state.tmp"), filepath.Join(dir, node.StateDir)
+	if err := inst.SaveState(tmp); err != nil {
+		inst.Kill()
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, state); err != nil {
+		t.Fatal(err)
+	}
+	inst.Kill()
+	<-inst.Done()
+	for _, n := range []string{node.StateFile, node.MemFile} {
+		st, err := os.Stat(filepath.Join(state, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", n, st.Mode().Perm())
+		}
+	}
+	return state
+}
+
+func sshVM(t *testing.T, key, ip, cmd string) string {
+	t.Helper()
+	var out []byte
+	var err error
+	// sshd may answer before cloud-init has installed the key.
+	for range 10 {
+		if out, err = exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "ubuntu@"+ip, cmd).CombinedOutput(); err == nil || !bytes.Contains(out, []byte("Permission denied")) {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if err != nil {
+		t.Fatalf("ssh %q: %v: %s", cmd, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func testHibernateResume(t *testing.T, f node.VMFile, logFile string) {
+	p := testProvider(t)
+	key := filepath.Join(t.TempDir(), "id")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	pub, _ := os.ReadFile(key + ".pub")
+	f.Spec.MemoryMB = 512
+	f.Boot = &proto.Boot{SSHPublicKeys: []string{string(pub)}}
+	inst := startVM(t, p, f)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	ip, err := inst.WaitIP(ctx)
+	if err != nil {
+		inst.Kill()
+		t.Fatal(err)
+	}
+	// The agent unit is enabled by cloud-init; wait for it so the resume call finds it.
+	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; systemctl is-active vmm-agent")
+	pid := sshVM(t, key, ip, "sudo sh -c 'nohup sh -c \"while :; do date +%s >> "+logFile+"; sleep 1; done\" >/dev/null 2>&1 & echo $!'")
+	time.Sleep(3 * time.Second)
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	state := hibernate(t, inst, dir)
+	hibernatedAt := time.Now()
+	time.Sleep(30 * time.Second)
+	inst, err = p.Restore(f, dir, node.RestoreFrom{StateDir: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { inst.Kill(); <-inst.Done() }()
+	t.Logf("restored %s after hibernating for %s", f.Spec.ID, time.Since(hibernatedAt).Round(time.Second))
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Errorf("state/ left after restore: %v", err)
+	}
+	if got, err := inst.WaitIP(ctx); err != nil || got != ip {
+		t.Fatalf("WaitIP = %q, %v", got, err)
+	}
+	if out := sshVM(t, key, ip, "sudo kill -0 "+pid+" && echo alive"); out != "alive" {
+		t.Fatalf("loop %s: %q", pid, out)
+	}
+	guest, err := strconv.ParseInt(sshVM(t, key, ip, "date +%s"), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Now().Unix() - guest; d > 2 || d < -2 {
+		t.Fatalf("guest clock off by %ds", d)
+	}
+	if len(f.Spec.Attachments) > 0 {
+		if src := sshVM(t, key, ip, "findmnt -no SOURCE /data"); src != "/dev/vdb" {
+			t.Fatalf("/data is on %q, want the NBD disk /dev/vdb", src)
+		}
+	}
+	time.Sleep(2 * time.Second)
+	tail := sshVM(t, key, ip, "tail -n 4 "+logFile)
+	t.Logf("loop output after resume: %s", strings.ReplaceAll(tail, "\n", " "))
+	if lines := strings.Fields(tail); len(lines) < 2 || lines[len(lines)-1] <= lines[0] {
+		t.Fatalf("loop not running after resume: %q", tail)
+	}
+}
+
+func TestHibernateResume(t *testing.T) {
+	testHibernateResume(t, testVM("fchib"), "/tmp/t")
+}
+
+// The loop writes to the attached disk, so its NBD device is busy across the hibernation.
+func TestHibernateResumeWithNBDDisk(t *testing.T) {
+	url, psk := os.Getenv("VMM_TEST_NBD"), os.Getenv("VMM_TEST_NBD_PSK")
+	if url == "" {
+		t.Skip("needs VMM_TEST_NBD and VMM_TEST_NBD_PSK")
+	}
+	f := testVM("fchibnbd")
+	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: path.Base(url), MountPath: "/data", URL: url, PSK: psk}}
+	testHibernateResume(t, f, "/data/t")
+}
+
+func TestRestoreCorruptStateFails(t *testing.T) {
+	p := testProvider(t)
+	f := testVM("fccorrupt")
+	f.Spec.MemoryMB = 512
+	inst := startVM(t, p, f)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if _, err := inst.WaitIP(ctx); err != nil {
+		inst.Kill()
+		t.Fatal(err)
+	}
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	state := hibernate(t, inst, dir)
+	if err := os.WriteFile(filepath.Join(state, node.StateFile), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if inst, err := p.Restore(f, dir, node.RestoreFrom{StateDir: state}); err == nil {
+		inst.Kill()
+		t.Fatal("restore of a corrupt state succeeded")
+	} else {
+		t.Logf("restore error: %v", err)
+	}
+	if _, err := net.InterfaceByName(linuxvm.TapName(f.Spec.ID, 0)); err == nil {
+		t.Error("tap left after a failed restore")
+	}
+	if _, err := os.Stat(jailBase(dir)); !os.IsNotExist(err) {
+		t.Errorf("jail left after a failed restore: %v", err)
+	}
+	inst, err := p.Start(f, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { inst.Kill(); <-inst.Done() }()
+	ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	if _, err := inst.WaitIP(ctx); err != nil {
+		b, _ := os.ReadFile(filepath.Join(dir, node.ConsoleLog))
+		t.Fatalf("cold boot after a failed restore: %v\n%s", err, b[max(0, len(b)-3000):])
 	}
 }

@@ -20,9 +20,17 @@ type VMFile struct {
 	Generation uint64         `json:"generation,omitempty"`
 	// NeedsPrepare is cleared once Prepare succeeds; inverted so vm.json files predating it count as prepared.
 	NeedsPrepare bool `json:"needsPrepare,omitempty"`
+	// Hibernated is set only once StateDir holds a complete, fsynced memory state.
+	Hibernated bool `json:"hibernated,omitempty"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
 }
+
+const (
+	StateDir  = "state"
+	StateFile = "vmstate"
+	MemFile   = "mem"
+)
 
 func VMDir(vmsDir, id string) string { return filepath.Join(vmsDir, id) }
 
@@ -74,6 +82,15 @@ func LoadVMs(vmsDir string) ([]VMFile, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Spec.ID < out[j].Spec.ID })
 	return out, nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func DeleteVMDir(vmsDir, id string) error { return os.RemoveAll(VMDir(vmsDir, id)) }

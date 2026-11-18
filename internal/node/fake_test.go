@@ -3,6 +3,8 @@ package node
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -56,6 +58,22 @@ func (i *fakeInstance) Kill() error {
 	return nil
 }
 
+func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
+func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
+
+func (i *fakeInstance) SaveState(dir string) error {
+	i.p.record("savestate:" + dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, n := range []string{StateFile, MemFile} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type fakeProvider struct {
 	mu           sync.Mutex
 	prepared     []string
@@ -74,6 +92,9 @@ type fakeProvider struct {
 	boots        map[string]*proto.Boot // Boot of the latest Start per VM
 	bigRoot      bool                   // makes Disks report a different allocation, as if the guest wrote data
 	afterPrepare func(dir string)
+	beforeStart  func(dir string)
+	failRestore  error
+	restores     map[string]int
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -154,9 +175,12 @@ func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
 	return nil
 }
 
-func (p *fakeProvider) Start(f VMFile, _ string) (Instance, error) {
+func (p *fakeProvider) Start(f VMFile, dir string) (Instance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.beforeStart != nil {
+		p.beforeStart(dir)
+	}
 	if p.failStart[f.Spec.Name] {
 		return nil, errors.New("start boom")
 	}
@@ -166,6 +190,25 @@ func (p *fakeProvider) Start(f VMFile, _ string) (Instance, error) {
 	}
 	p.boots[f.Spec.Name] = f.Boot
 	inst := &fakeInstance{p: p, done: make(chan struct{}), staleIP: p.staleIP[f.Spec.Name]}
+	p.started[f.Spec.Name] = inst
+	return inst, nil
+}
+
+func (p *fakeProvider) Restore(f VMFile, _ string, from RestoreFrom) (Instance, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, "restore:"+from.StateDir)
+	if p.failRestore != nil {
+		return nil, p.failRestore
+	}
+	if p.restores == nil {
+		p.restores = map[string]int{}
+	}
+	p.restores[f.Spec.Name]++
+	if !from.Shared {
+		os.RemoveAll(from.StateDir)
+	}
+	inst := &fakeInstance{p: p, done: make(chan struct{})}
 	p.started[f.Spec.Name] = inst
 	return inst, nil
 }
