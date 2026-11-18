@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
@@ -37,6 +38,8 @@ type Provider struct {
 	fastBoot  bool
 	fcVersion string
 	building  sync.Mutex // held while a template builds; builds never queue
+
+	tokens atomic.Pointer[node.TokenLookup]
 }
 
 func New(c node.Config) (*Provider, error) {
@@ -416,7 +419,16 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 			return nil, "", 0, err
 		}
 	}
-	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, removeJail)
+	tokens, err := listenTokens(dir, uid)
+	if err != nil {
+		removeJail()
+		return nil, "", 0, fmt.Errorf("token socket: %w", err)
+	}
+	go node.ServeTokens(tokens, f.Spec.ID, p.token)
+	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, func() { tokens.Close(); removeJail() })
+	if err != nil {
+		tokens.Close()
+	}
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {
 		proc.IP = ip

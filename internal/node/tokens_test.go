@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -120,6 +121,54 @@ func TestServeTokensProtocol(t *testing.T) {
 	line, _ := bufio.NewReader(held[0]).ReadString('\n')
 	if !strings.Contains(line, "obsph_x") {
 		t.Fatalf("held connection got %q", line)
+	}
+	for _, c := range held {
+		c.Close()
+	}
+	// The server notices the closed connections only after reading EOF.
+	time.Sleep(100 * time.Millisecond)
+	for range 20 {
+		if got := askToken(t, uds, `{"op":"token","kind":"github"}`+"\n"); !strings.Contains(got, "obsph_x") {
+			t.Fatalf("after closing the held connections: %q", got)
+		}
+	}
+}
+
+// flakyListener fails the first errs Accept calls, as a full fd table (EMFILE) does.
+type flakyListener struct {
+	net.Listener
+	errs int
+}
+
+func (f *flakyListener) Accept() (net.Conn, error) {
+	if f.errs > 0 {
+		f.errs--
+		return nil, &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept4", syscall.EMFILE)}
+	}
+	return f.Listener.Accept()
+}
+
+func TestServeTokensRetriesAccept(t *testing.T) {
+	uds := filepath.Join(t.TempDir(), "v.sock_1051")
+	l, err := net.Listen("unix", uds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		ServeTokens(&flakyListener{Listener: l, errs: 3}, "x", func(vmID, kind string) (proto.IntegrationToken, string) {
+			return proto.IntegrationToken{Kind: kind, Token: "obsph_x"}, ""
+		})
+		close(done)
+	}()
+	if got := askToken(t, uds, `{"op":"token","kind":"github"}`+"\n"); !strings.Contains(got, "obsph_x") {
+		t.Fatalf("after accept errors: %q", got)
+	}
+	l.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeTokens still running after the listener closed")
 	}
 }
 

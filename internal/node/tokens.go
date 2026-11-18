@@ -3,6 +3,7 @@ package node
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -37,11 +38,20 @@ type TokenServer interface{ SetTokenLookup(TokenLookup) }
 // ServeTokens answers token requests on l, the listener of vmID only, until l is closed.
 func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {
 	slots := make(chan struct{}, maxTokenRequests)
+	var delay time.Duration
 	for {
 		c, err := l.Accept()
-		if err != nil {
+		if errors.Is(err, net.ErrClosed) {
 			return
 		}
+		// EMFILE and the like pass; returning would leave the VM without a token service until it restarts.
+		if err != nil {
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			log.Printf("token vm=%s: accept: %v", vmID, err)
+			time.Sleep(delay)
+			continue
+		}
+		delay = 0
 		select {
 		case slots <- struct{}{}:
 			go func() {
