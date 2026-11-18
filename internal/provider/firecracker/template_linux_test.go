@@ -315,3 +315,45 @@ func TestFastBootCancelledTakeoffReclonesBase(t *testing.T) {
 		t.Errorf("template deleted after a cancelled takeoff: %v", err)
 	}
 }
+
+func TestFailedRecloneRetriedOnNextStart(t *testing.T) {
+	p := testProvider(t)
+	f := testVM("fcreclone")
+	dir := prepare(t, p, f)
+	root, marker := filepath.Join(dir, "root.img"), filepath.Join(dir, templateMarker)
+	// A non-empty directory in place of root.img makes the clone fail.
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if inst, err := p.Start(context.Background(), f, dir); err == nil {
+		inst.Kill()
+		t.Fatal("start with a failing clone succeeded")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker gone after a failed clone: %v", err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte("template disk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := p.Start(context.Background(), f, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.Kill()
+	<-inst.Done()
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker left: %v", err)
+	}
+	if st, err := os.Stat(root); err != nil || st.Size() < 1<<20 {
+		t.Fatalf("root.img not re-cloned: %v %v", st, err)
+	}
+}

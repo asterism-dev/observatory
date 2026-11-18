@@ -83,6 +83,17 @@ func (p *Provider) cloneBase(f node.VMFile, dir string) error {
 	return node.CloneResize(base, filepath.Join(dir, "root.img"), f.Spec.DiskGB)
 }
 
+// recloneBase replaces a template-cloned root.img with the base image, leaving an empty marker on failure so the next start retries.
+func (p *Provider) recloneBase(f node.VMFile, dir, marker string) error {
+	err := p.cloneBase(f, dir)
+	if err != nil {
+		if werr := os.WriteFile(marker, nil, 0o600); werr != nil {
+			return errors.Join(err, werr)
+		}
+	}
+	return err
+}
+
 func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error {
 	base, err := p.baseImage()
 	if err != nil {
@@ -149,7 +160,8 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 	marker := filepath.Join(dir, templateMarker)
 	if key, err := os.ReadFile(marker); err == nil {
 		os.Remove(marker)
-		if len(f.Spec.Attachments) == 0 {
+		// An empty marker means an earlier re-clone failed: root.img is still the template's disk.
+		if len(key) > 0 && len(f.Spec.Attachments) == 0 {
 			tpl := p.templateDir(string(key))
 			began := time.Now()
 			inst, err := p.Restore(ctx, f, dir, node.RestoreFrom{StateDir: tpl, Takeoff: true, Shared: true})
@@ -159,8 +171,8 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 			}
 			if ctx.Err() != nil {
 				// The marker is gone and the guest may have written to the disk: the next start must not boot it.
-				if cerr := p.cloneBase(f, dir); cerr != nil {
-					log.Printf("vm %s: %v", f.Spec.ID, cerr)
+				if cerr := p.recloneBase(f, dir, marker); cerr != nil {
+					return nil, cerr
 				}
 				return nil, err
 			}
@@ -170,7 +182,7 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 			}
 		}
 		// The template's disk carries its machine id and cloud-init state; a cold boot starts from the base image instead.
-		if err := p.cloneBase(f, dir); err != nil {
+		if err := p.recloneBase(f, dir, marker); err != nil {
 			return nil, err
 		}
 	}
