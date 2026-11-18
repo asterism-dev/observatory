@@ -168,3 +168,45 @@ func TestDesktopRefusesRoot(t *testing.T) {
 		t.Fatalf("systemctl ran as root: %q", got)
 	}
 }
+
+func TestDesktopUnitRemovesStaleSockets(t *testing.T) {
+	unit, err := os.ReadFile(filepath.Join(installGuest(t), "etc/systemd/user/vmm-desktop.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pre string
+	for _, l := range strings.Split(string(unit), "\n") {
+		if s, ok := strings.CutPrefix(l, "ExecStartPre=-/bin/sh -c "); ok {
+			pre = strings.Trim(s, "'")
+		}
+	}
+	if pre == "" {
+		t.Fatalf("no ExecStartPre in:\n%s", unit)
+	}
+	run, home := t.TempDir(), t.TempDir()
+	stale := []string{run + "/xpra/dev-100", run + "/xpra/100/socket", home + "/.xpra/dev-100", home + "/.xpra/src-100"}
+	kept := []string{run + "/xpra/dev-101", run + "/xpra/100/xauthority", home + "/.xpra/dev-101"}
+	for _, f := range append(stale, kept...) {
+		if err := os.MkdirAll(filepath.Dir(f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// %t and %h are systemd's runtime dir and home specifiers.
+	cmd := strings.NewReplacer("%t", run, "%h", home).Replace(pre)
+	if out, err := exec.Command("sh", "-c", cmd).CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v: %s", cmd, err, out)
+	}
+	for _, f := range stale {
+		if _, err := os.Stat(f); err == nil {
+			t.Errorf("stale socket %s left; xpra waits for it to time out on start", f)
+		}
+	}
+	for _, f := range kept {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("%s removed: %v", f, err)
+		}
+	}
+}
