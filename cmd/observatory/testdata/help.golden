@@ -81,4 +81,53 @@ integration:
   integration mode <kind> proxy|vm [--scope S] [--team T]                                            change how the token reaches VMs
   integration disconnect <kind> [--scope S] [--team T]                                               disconnect an integration
 
+node:
+  node list                  list nodes
+  node show <node>           show a node
+  node add <name>            register a node and print its install command
+  node token <node>          issue a new install command for a node
+  node rename <node> <name>  rename a node
+  node delete <node>         delete a node
+
+team:
+  team list                           list teams
+  team show <team>                    show a team and its members
+  team create <name>                  create a team
+  team rename <team> <name>           rename a team
+  team delete <team>                  delete a team
+  team add <team> <member> [--admin]  add a member to a team
+  team remove <team> <member>         remove a member from a team
+
+member:
+  member list                              list org members
+  member role <member> owner|admin|member  change a member's org role
+  member remove <member>                   remove a member from the org
+
+invite:
+  invite list                    list open invites
+  invite create [--role member]  create an invite link
+  invite revoke <id>             revoke an invite
+  invite accept [TOKEN|URL]      join an org with an invite
+
+role:
+  role list                    list roles
+  role show <role>             show a role's rules
+  role catalog                 list the permissions a rule can name
+  role create --file F         create a custom role from a JSON file
+  role update <role> --file F  replace a custom role from a JSON file
+  role delete <role>           delete a custom role
+
+binding:
+  binding list                  list role bindings
+  binding add <subject> <role>  bind a custom role to user:<x> or team:<x>
+  binding delete <id>           delete a role binding
+
+limit:
+  limit show                             show resource limits
+  limit set <org|team:T|user:M> [flags]  set resource limits
+
+session:
+  session list         list your sessions
+  session revoke <id>  revoke a session
+
 global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help
