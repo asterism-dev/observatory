@@ -212,6 +212,11 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 	if err := p.Reseed(ctx, f, dir); err != nil {
 		return nil, fmt.Errorf("seed: %w", err)
 	}
+	return p.coldBoot(ctx, f, dir)
+}
+
+// coldBoot boots dir's root.img with the seed already in dir.
+func (p *Provider) coldBoot(_ context.Context, f node.VMFile, dir string) (*instance, error) {
 	kernel, initrd, err := bootFiles(filepath.Join(dir, "root.img"), dir)
 	if err != nil {
 		return nil, fmt.Errorf("boot files: %w", err)

@@ -235,7 +235,8 @@ func TestKillAfterNodeCrash(t *testing.T) {
 	}
 	testProvider(t)
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestKillAfterNodeCrash$", "-test.v")
-	cmd.Env = append(os.Environ(), "VMM_FC_HELPER=1")
+	// The killed helper never removes its own temp dirs, which hold a disk clone.
+	cmd.Env = append(os.Environ(), "VMM_FC_HELPER=1", "TMPDIR="+t.TempDir())
 	out, _ := cmd.StdoutPipe()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

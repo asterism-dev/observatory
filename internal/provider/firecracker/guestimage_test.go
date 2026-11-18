@@ -4,8 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/asterism-dev/observatory/internal/node/guestimage"
 )
 
 func TestPruneGuestImages(t *testing.T) {
@@ -55,5 +58,32 @@ func TestPreviousGuestImage(t *testing.T) {
 	os.Remove(guestImagePath(dir, "2"))
 	if got := previousGuestImage(dir, "3"); got != "" {
 		t.Fatalf("only current: %q", got)
+	}
+}
+
+func TestBuildSeedFiles(t *testing.T) {
+	img := guestimage.Image{Version: "2026.11.1-3f9a0c1e", Files: map[string][]byte{"vmm-image-build.sh": []byte("#!/bin/sh\n"), "manifest.json": []byte("{}")}}
+	seed := buildSeedFiles(img, img.Version)
+	ud := string(seed["user-data"])
+	for _, want := range []string{"#cloud-config\n", "hostname: vmm-image-build\n", "users: []\n", "mount -o ro LABEL=cidata /run/vmm-seed", "sh /run/vmm-seed/vmm-image-build.sh /run/vmm-seed 2026.11.1-3f9a0c1e; poweroff"} {
+		if !strings.Contains(ud, want) {
+			t.Errorf("user-data lacks %q:\n%s", want, ud)
+		}
+	}
+	if strings.Contains(ud, "ssh") {
+		t.Errorf("user-data mentions ssh:\n%s", ud)
+	}
+	for _, n := range []string{"vmm-image-build.sh", "manifest.json", "meta-data", "network-config"} {
+		if len(seed[n]) == 0 {
+			t.Errorf("seed lacks %s", n)
+		}
+	}
+	for _, n := range []string{"vmm-boot.sh", "vmm-env", "vmm-authorized-keys", "vmm-agent.py"} {
+		if _, ok := seed[n]; ok {
+			t.Errorf("seed has %s", n)
+		}
+	}
+	if !strings.Contains(string(seed["network-config"]), templateNet.Address) {
+		t.Errorf("network-config:\n%s", seed["network-config"])
 	}
 }

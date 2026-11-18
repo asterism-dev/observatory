@@ -1,9 +1,15 @@
 package firecracker
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/asterism-dev/observatory/internal/node/guestimage"
 )
 
 func guestImagePath(imagesDir, version string) string {
@@ -14,12 +20,11 @@ func guestImagePath(imagesDir, version string) string {
 func pruneGuestImages(imagesDir, current, previous string) error {
 	raws, _ := filepath.Glob(filepath.Join(imagesDir, "guest-*.raw"))
 	parts, _ := filepath.Glob(filepath.Join(imagesDir, "guest-*.raw.part"))
-	keep := []string{guestImagePath(imagesDir, current), guestImagePath(imagesDir, previous)}
 	for _, p := range append(raws, parts...) {
-		if p == keep[0] || p == keep[1] {
+		if p == guestImagePath(imagesDir, current) || previous != "" && p == guestImagePath(imagesDir, previous) {
 			continue
 		}
-		if err := os.Remove(p); err != nil {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -42,4 +47,28 @@ func previousGuestImage(imagesDir, current string) string {
 		}
 	}
 	return prev
+}
+
+// buildSeedFiles is the build VM's seed: the build files and a user-data that runs the build script and powers off either way.
+func buildSeedFiles(img guestimage.Image, version string) map[string][]byte {
+	seed := maps.Clone(img.Files)
+	// users: [] keeps cloud-init's default user out of the image.
+	seed["user-data"] = []byte(fmt.Sprintf(`#cloud-config
+hostname: vmm-image-build
+users: []
+runcmd:
+  - [sh, -c, 'mkdir -p /run/vmm-seed && mount -o ro LABEL=cidata /run/vmm-seed && sh /run/vmm-seed/vmm-image-build.sh /run/vmm-seed %s; poweroff']
+`, version))
+	seed["meta-data"] = []byte("instance-id: vmm-image-build\nlocal-hostname: vmm-image-build\n")
+	// The build VM's MAC is random, and it has a single NIC.
+	seed["network-config"] = []byte(fmt.Sprintf(`version: 2
+ethernets:
+  primary:
+    match:
+      name: "e*"
+    addresses: [%q]
+    routes: [{to: default, via: %s}]
+    nameservers: {addresses: [1.1.1.1, 9.9.9.9]}
+`, templateNet.Address, templateNet.Gateway))
+	return seed
 }
