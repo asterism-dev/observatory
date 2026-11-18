@@ -59,6 +59,8 @@ then connects with `wss://`.
 - **Node binary** in `/usr/local/bin/observatory-node`, config in `/etc/observatory-node/node.json` (mode 0600, holds
   the credential), data in `/var/lib/observatory-node` (`vms/`, `images/`).
 - **systemd unit** `observatory-node.service`, enabled and started; logs with `journalctl -u observatory-node`.
+  It starts after `nftables.service` and has `MemorySwapMax=0` and `LimitCORE=0`, so host-bound secret values the
+  node and its egress proxies hold in memory never reach swap or a core dump.
 
 ## Underlay
 
@@ -89,6 +91,25 @@ Firecracker as extra drives (`vdb`, `vdc`, … in attach order). `qemu-nbd` conn
 goes away, `qemu-nbd` holds the guest's I/O and reconnects for up to 7 days. The node reports the disks it still uses,
 which lets the hub release a detached disk; while the node is offline its detached disks stay `releasing`.
 
+## Egress proxy
+
+VMs with host-bound secrets get an egress proxy on the node ([egress.md](egress.md)). At start the node recreates two
+nftables tables, `bridge obs_egress` and `inet obs_egress`, which drops redirects left over from a previous run; other
+tables are left alone. If it cannot load them it refuses to start.
+
+- `bridge obs_egress` marks frames from each VM's NAT tap with `0x4f0000 | n` (n = last octet of the VM's NAT
+  address).
+- `inet obs_egress` redirects the VM's TCP to port 443 (IPv4, not to `192.168.64.0/24` or the node itself) to its
+  proxy on `192.168.64.1:15000 + n`, accepts a proxy port only with that VM's mark and drops the range
+  `15002–15253` otherwise.
+- Proxies run as UID/GID `71000 + n`; for UIDs `71002–71253` the output chain rejects loopback, the node's own
+  addresses and the internal ranges listed in [egress.md](egress.md#on-the-node), and allows DNS only to the
+  nameservers in `/etc/resolv.conf` as read at node start.
+
+The root-only Linux tests (`go test -run TestEgress ./internal/provider/linuxvm/`) recreate these tables too and add
+addresses to `vmm0`: on a live node they wipe the running VMs' redirects until the node restarts. Run them in a
+separate network namespace or on a host without VMs.
+
 ## Re-enroll
 
 Running the installer again is safe: it updates packages, Firecracker and the binary, and keeps `node.json` settings,
@@ -109,6 +130,9 @@ needs the export key) and the southbound DB through its node.
 Nodes installed before hibernation existed should be re-installed as well: only the new unit has `KillMode=mixed` and
 `TimeoutStopSec=300`, which let a service restart hibernate the VMs instead of killing them
 ([vm-lifecycle.md](vm-lifecycle.md#node-restart)).
+
+Nodes installed before host-bound secrets existed should be re-installed too: the new unit keeps secret values off swap
+and out of core dumps and starts after `nftables.service`.
 
 ## Remove
 
