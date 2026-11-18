@@ -276,6 +276,9 @@
     "start": "Starten",
     "shutdown": "Herunterfahren",
     "stop": "Stoppen",
+    "pause": "Pausieren",
+    "hibernate": "Ruhezustand",
+    "resume": "Fortsetzen",
     "delete": "Löschen",
     "deleteTitle": "VM löschen",
     "deleteBody": "{name} löschen? Die Festplatte wird entfernt und das kann nicht rückgängig gemacht werden.",
@@ -290,6 +293,9 @@
       "starting": "Startet",
       "running": "Läuft",
       "stopped": "Gestoppt",
+      "paused": "Pausiert",
+      "hibernated": "Ruhezustand",
+      "suspended": "Schläft, wacht bei Verkehr auf",
       "error": "Fehler",
       "unknown": "Unbekannt"
     }

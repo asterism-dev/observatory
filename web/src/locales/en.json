@@ -276,6 +276,9 @@
     "start": "Start",
     "shutdown": "Shut down",
     "stop": "Stop",
+    "pause": "Pause",
+    "hibernate": "Hibernate",
+    "resume": "Resume",
     "delete": "Delete",
     "deleteTitle": "Delete VM",
     "deleteBody": "Delete {name}? Its disk is removed and this cannot be undone.",
@@ -290,6 +293,9 @@
       "starting": "Starting",
       "running": "Running",
       "stopped": "Stopped",
+      "paused": "Paused",
+      "hibernated": "Hibernated",
+      "suspended": "Suspended, wakes on traffic",
       "error": "Error",
       "unknown": "Unknown"
     }

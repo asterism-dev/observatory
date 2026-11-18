@@ -229,6 +229,67 @@ func TestVMPowerAndVisibility(t *testing.T) {
 	}
 }
 
+func TestPowerPauseHibernateResume(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	for _, c := range []struct{ action, power string }{{"pause", "paused"}, {"hibernate", "hibernated"}, {"resume", "running"}} {
+		rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/"+c.action, tok)
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %s", c.action, rec.Code, rec.Body.String())
+		}
+		var got vmJSONTest
+		decode(t, rec, &got)
+		if got.Power != c.power {
+			t.Fatalf("%s: %+v", c.action, got)
+		}
+		if d := e.audit("vm:power")[0].Details; d["action"] != c.action || d["power"] != c.power {
+			t.Fatalf("%s audit: %+v", c.action, d)
+		}
+	}
+}
+
+func TestPauseStoppedVM(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/stop", tok); rec.Code != 200 {
+		t.Fatal(rec.Code)
+	}
+	for _, action := range []string{"pause", "hibernate"} {
+		if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/"+action, tok); rec.Code != 409 {
+			t.Fatalf("%s stopped VM: %d %s", action, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPausePermission(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.addMember(org, carol, store.RoleMember)
+	core, other := e.createTeam(ownerTok, org, "core"), e.createTeam(ownerTok, org, "other")
+	e.makeTeamAdmin(ownerTok, org, core, carol)
+	if rec := e.send("PUT", teamMemberPath(org, other, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+		t.Fatal(rec.Code)
+	}
+	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(core), e.enrolledNode(ownerTok, org, "n1")))
+	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 403 {
+		t.Fatalf("other team pause: %d", rec.Code)
+	}
+	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+		t.Fatal(rec.Code)
+	}
+	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 200 {
+		t.Fatalf("owning team pause: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestValidateVMDisks(t *testing.T) {
 	disk := func(path string) store.VMDisk { return store.VMDisk{DiskID: uuid.New(), MountPath: path} }
 	for path, ok := range map[string]bool{

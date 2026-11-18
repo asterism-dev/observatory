@@ -316,7 +316,7 @@ func (h *api) getVM(w http.ResponseWriter, r *http.Request) {
 	h.writeVM(w, r, http.StatusOK, v)
 }
 
-func (h *api) powerVM(power proto.Power, mode proto.StopMode) http.HandlerFunc {
+func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		v, ok := h.vmFromPath(w, r, store.ActionVMPower)
 		if !ok {
@@ -328,11 +328,15 @@ func (h *api) powerVM(power proto.Power, mode proto.StopMode) http.HandlerFunc {
 				return err
 			}
 			e := vmAudit(r, store.ActionVMPower, v)
-			e.Details["power"], e.Details["stopMode"] = power, mode
+			e.Details["action"], e.Details["power"], e.Details["stopMode"] = action, power, mode
 			return tx.Audit(r.Context(), e)
 		})
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if errors.Is(err, store.ErrNotRunning) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		if err != nil {

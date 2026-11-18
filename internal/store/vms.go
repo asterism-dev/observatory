@@ -17,6 +17,7 @@ var (
 	ErrLimitExceeded = errors.New("limit exceeded")
 	ErrOwnsResources = errors.New("owns VMs or disks")
 	ErrNotEnrolled   = errors.New("node not enrolled")
+	ErrNotRunning    = errors.New("VM is not running")
 )
 
 type VM struct {
@@ -168,10 +169,19 @@ func (s *Store) VMsOnNode(ctx context.Context, node uuid.UUID) ([]VM, error) {
 	return collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE node_id = $1 ORDER BY name", node))
 }
 
+// SetVMPower refuses to pause or hibernate a stopped VM with ErrNotRunning.
 func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power, m proto.StopMode) (VM, error) {
-	return scanVM(s.q.QueryRow(ctx, `
+	v, err := scanVM(s.q.QueryRow(ctx, `
 		UPDATE vms SET power = $3, stop_mode = nullif($4, ''), generation = generation + 1
-		WHERE id = $1 AND org_id = $2 RETURNING `+vmColumns, id, org, p, m))
+		WHERE id = $1 AND org_id = $2 AND NOT ($3 IN ('paused', 'hibernated') AND power = 'stopped')
+		RETURNING `+vmColumns, id, org, p, m))
+	if errors.Is(err, ErrNotFound) && (p == proto.PowerPaused || p == proto.PowerHibernated) {
+		if _, err := s.VM(ctx, org, id); err != nil {
+			return VM{}, err
+		}
+		return VM{}, ErrNotRunning
+	}
+	return v, err
 }
 
 // DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.

@@ -25,8 +25,8 @@ export interface VmInfo {
   name: string
   owner: { kind: 'user' | 'team'; id: string; name: string }
   node: { id: string; name: string }
-  state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
-  power: 'running' | 'stopped'
+  state: 'pending' | 'starting' | 'running' | 'stopped' | 'paused' | 'hibernated' | 'suspended' | 'error' | 'unknown'
+  power: 'running' | 'stopped' | 'paused' | 'hibernated'
   error?: string
   ip?: string
   mgmtIP?: string
@@ -43,6 +43,20 @@ export interface VmInfo {
   canDelete: boolean
 }
 
-export const vmTones = { running: 'success', starting: 'warning', pending: 'warning', stopped: 'muted', error: 'danger', unknown: 'muted' } as const
+export const vmTones = {
+  running: 'success',
+  starting: 'warning',
+  pending: 'warning',
+  stopped: 'muted',
+  paused: 'warning',
+  hibernated: 'muted',
+  suspended: 'muted',
+  error: 'danger',
+  unknown: 'muted',
+} as const
 
-export const powerActions = (state: VmInfo['state']) => (state === 'running' ? ['shutdown', 'stop'] : ['start'])
+export const powerActions = (state: VmInfo['state']) => {
+  if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
+  if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'stop']
+  return ['start']
+}
