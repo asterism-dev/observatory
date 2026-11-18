@@ -33,6 +33,8 @@ type VMFile struct {
 	Boot *proto.Boot `json:"-"`
 	// Egress holds host-bound values and CA keys: memory only, refreshed with Boot.
 	Egress *proto.Egress `json:"-"`
+	// Integrations are the token service's answers: memory only, refreshed with Egress.
+	Integrations []proto.IntegrationToken `json:"-"`
 }
 
 const (

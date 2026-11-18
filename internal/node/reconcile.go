@@ -65,7 +65,7 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 			}
 			// The proxy table applies at once, whatever the generation.
 			if !e.placeholder {
-				e.file.Egress = d.Egress
+				e.file.Egress, e.file.Integrations = d.Egress, d.Integrations
 			}
 		}
 		a.mu.Unlock()
@@ -110,7 +110,7 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 	for _, f := range deferred {
 		d, ok := byID[f.Spec.ID]
 		gen := d.Generation
-		f.Boot, f.Egress = d.Boot, d.Egress
+		f.Boot, f.Egress, f.Integrations = d.Boot, d.Egress, d.Integrations
 		switch {
 		case !ok && f.Hibernated:
 			booted := make(chan struct{})
@@ -218,7 +218,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 	}
 	if d.Fork != nil {
 		f, err := a.forkLocal(d)
-		f.Egress = d.Egress
+		f.Egress, f.Integrations = d.Egress, d.Integrations
 		if err != nil {
 			a.placeholder(d, err.Error())
 			return
@@ -227,7 +227,7 @@ func (a *Agent) createDesired(ctx context.Context, d proto.DesiredVM) {
 		return
 	}
 	f := VMFile{Spec: d.Spec, MAC: RandomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, NeedsPrepare: true, Boot: d.Boot,
-		Egress: d.Egress, AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
+		Egress: d.Egress, Integrations: d.Integrations, AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	if err := SaveVM(a.VMsDir, f); err != nil {
 		a.placeholder(d, err.Error())
 		return
