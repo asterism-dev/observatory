@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -208,5 +209,15 @@ func TestDesktopUnitRemovesStaleSockets(t *testing.T) {
 		if _, err := os.Stat(f); err != nil {
 			t.Errorf("%s removed: %v", f, err)
 		}
+	}
+}
+
+func TestDesktopUnitStopIsSuccess(t *testing.T) {
+	unit, err := os.ReadFile(filepath.Join(installGuest(t), "etc/systemd/user/vmm-desktop.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(strings.Split(string(unit), "\n"), "SuccessExitStatus=1") {
+		t.Fatalf("no SuccessExitStatus=1 in:\n%s", unit)
 	}
 }

@@ -143,7 +143,7 @@ ssh ubuntu@<vm>.internal vmm-desktop start && xpra attach ssh://ubuntu@<vm>.inte
   so a container started with a bind mount of `/run/user/1000`, can reach the socket too (the `docker` group is
   root-equivalent).
 - **Commands** (as `ubuntu`, not with sudo): `vmm-desktop start` (waits up to 5 s until the desktop answers),
-  `vmm-desktop stop`, `vmm-desktop status` (`active`; after a stop it prints `failed` or `inactive`).
+  `vmm-desktop stop`, `vmm-desktop status` (`active`, or `inactive` after a stop).
   `DISPLAY=:100 <app> &` shows any other window, e.g. `xterm`.
 - **Units:** `vmm-desktop.service` and `vmm-desktop-idle.timer` are systemd user units of `ubuntu` in
   `/etc/systemd/user/`, not enabled; the node turns on linger for `ubuntu`, so they run without a login.
