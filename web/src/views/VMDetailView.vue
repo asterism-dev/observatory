@@ -34,10 +34,10 @@ async function load() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const res = await api<VmInfo>(base())
-    if (id === org.value?.id) vm.value = res
-    const eg = await api<NonNullable<typeof egress.value>>(`${base()}/egress`)
-    if (id === org.value?.id) egress.value = eg
+    const [res, eg] = await Promise.all([api<VmInfo>(base()), api<NonNullable<typeof egress.value>>(`${base()}/egress`).catch(() => null)])
+    if (id !== org.value?.id) return
+    vm.value = res
+    egress.value = eg
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return router.replace(`/orgs/${id}/vms`)
     error.value = message(e)
@@ -147,16 +147,15 @@ watch(
           </template>
           <template v-else>–</template>
         </dd>
-        <dt>{{ t('vms.egress') }}</dt>
-        <dd>
-          <template v-if="egress">
+        <template v-if="egress">
+          <dt>{{ t('vms.egress') }}</dt>
+          <dd>
             {{ t('vms.egressSecrets', { n: egress.secrets }) }}
             <Badge v-for="h in egress.hosts" :key="h">{{ h }}</Badge>
             <template v-if="egress.caNotAfter">, {{ t('vms.egressCa', { date: d(new Date(egress.caNotAfter), { dateStyle: 'short' }) }) }}</template>
             <small v-if="egress.trustChanged" role="status"> {{ t('vms.egressRestart') }}</small>
-          </template>
-          <template v-else>–</template>
-        </dd>
+          </dd>
+        </template>
         <dt>{{ t('vms.created') }}</dt>
         <dd>{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</dd>
       </dl>

@@ -24,6 +24,7 @@ const lockedSecret = computed(() => props.editing?.kind === 'secret')
 const hosts = computed(() => parseHosts(hostsText.value))
 const wasBound = computed(() => (props.editing?.hosts.length ?? 0) > 0)
 const hostsChanged = computed(() => !props.editing || hosts.value.join('\n') !== props.editing.hosts.join('\n'))
+const tooMany = computed(() => secret.value && hosts.value.length > 10)
 const badHost = computed(() => (secret.value ? invalidHost(hosts.value) : undefined))
 const unbinding = computed(() => secret.value && wasBound.value && hosts.value.length === 0)
 const firstBinding = computed(() => secret.value && !wasBound.value && hosts.value.length > 0)
@@ -99,13 +100,14 @@ async function save() {
       />
       <small>{{ t('env.hostsHint') }}</small>
       <p v-if="badHost" role="alert">{{ t('env.hostInvalid', { host: badHost }) }}</p>
+      <p v-if="tooMany" role="alert">{{ t('env.hostsTooMany') }}</p>
       <p v-if="firstBinding && editing">{{ t('env.restartNote') }}</p>
       <p v-if="confirmUnbind" role="alert">{{ t('env.unbindBody') }}</p>
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>
       <Button :disabled="busy" @click="emit('update:open', false)">{{ t('profile.cancel') }}</Button>
-      <Button variant="accent" :disabled="busy || !name.trim() || (!editing && !scope) || !!badHost" @click="save">{{ confirmUnbind ? t('env.unbindConfirm') : t('env.save') }}</Button>
+      <Button variant="accent" :disabled="busy || !name.trim() || (!editing && !scope) || !!badHost || tooMany" @click="save">{{ confirmUnbind ? t('env.unbindConfirm') : t('env.save') }}</Button>
     </template>
   </Dialog>
 </template>

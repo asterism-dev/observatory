@@ -218,7 +218,8 @@
     "hostInvalid": "Ungültiger Host: \"{host}\" (bis zu 10 exakte DNS-Namen, kein Wildcard, keine IP, kein Port)",
     "restartNote": "Bereits laufende Programme in VMs vertrauen dem neuen Host erst nach einem Neustart.",
     "unbindBody": "VMs erhalten den echten Wert bei ihrem nächsten Start.",
-    "unbindConfirm": "Lösen und speichern"
+    "unbindConfirm": "Lösen und speichern",
+    "hostsTooMany": "Zu viele Hosts (max. 10)"
   },
   "nodes": {
     "subtitle": "Maschinen, auf denen deine VMs laufen.",

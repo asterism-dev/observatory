@@ -26,11 +26,10 @@ export const scopeLabel = (s: WritableScope, t: Translate) =>
 const hostLabel = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 
 export function parseHosts(text: string): string[] {
-  return [...new Set(text.split(/[\s,]+/).filter(Boolean).map((h) => h.toLowerCase()))]
+  return [...new Set(text.split(/[\s,]+/).filter(Boolean).map((h) => h.toLowerCase()))].sort()
 }
 
 export function invalidHost(hosts: string[]): string | undefined {
-  if (hosts.length > 10) return hosts[10]
   return hosts.find((h) => {
     const labels = h.split('.')
     return h.length > 253 || labels.length < 2 || !labels.every((l) => l.length <= 63 && hostLabel.test(l)) || /^[0-9]+$/.test(labels.at(-1) ?? '')
