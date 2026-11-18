@@ -49,11 +49,12 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 	}
 	v := p.image.Version
 	path := guestImagePath(p.ImagesDir, v)
+	fallback := previousGuestImage(p.ImagesDir, v)
 	for {
 		if st, err := os.Stat(path); err == nil {
 			built := st.ModTime()
 			report(proto.ImageStatus{Version: v, State: proto.ImageReady, BuiltAt: &built})
-			if err := pruneGuestImages(p.ImagesDir, v, previousGuestImage(p.ImagesDir, v)); err != nil {
+			if err := pruneGuestImages(p.ImagesDir, v, fallback); err != nil {
 				log.Printf("guest image: prune: %v", err)
 			}
 			return
@@ -62,7 +63,7 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 			log.Printf("guest image: %v", err)
 		}
 		started := time.Now()
-		report(proto.ImageStatus{Version: v, State: proto.ImageBuilding, StartedAt: &started})
+		report(proto.ImageStatus{Version: v, State: proto.ImageBuilding, Fallback: fallback, StartedAt: &started})
 		err := p.buildGuestImage(ctx, p.image)
 		if err == nil {
 			log.Printf("guest image %s: built in %s", v, time.Since(started).Round(time.Second))
@@ -73,7 +74,7 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 		}
 		log.Printf("guest image %s: %v", v, err)
 		retry := time.Now().Add(imageRetry)
-		report(proto.ImageStatus{Version: v, State: proto.ImageFailed, Error: err.Error(), StartedAt: &started, RetryAt: &retry})
+		report(proto.ImageStatus{Version: v, State: proto.ImageFailed, Fallback: fallback, Error: err.Error(), StartedAt: &started, RetryAt: &retry})
 		select {
 		case <-ctx.Done():
 			return

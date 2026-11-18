@@ -312,6 +312,7 @@
       "buildingFor": "wird seit {time} gebaut",
       "failed": "fehlgeschlagen: {error}",
       "failedRetry": "fehlgeschlagen: {error} (nächster Versuch {time})",
+      "fallback": "neue VMs nutzen solange {version}",
       "custom": "eigenes Image ({key})"
     }
   },

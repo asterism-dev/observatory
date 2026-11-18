@@ -94,9 +94,10 @@ Codex, `gh`, Docker, Node, `uv`, xpra, Chrome for Testing and `agent-browser` ([
 and pinned versions are part of the node binary, so a new binary with a changed manifest builds the next version.
 
 - **When:** at node start, if `images/guest-<version>.raw` is missing. The build runs in the background; the node
-  page shows `building`, `ready` or `failed` with the error and the next try (30 minutes later). VMs created
-  meanwhile wait in `starting` with "preparing guest image" and start once it is ready; they never fall back to the
-  stock image.
+  page shows `building`, `ready` or `failed` with the error and the next try (30 minutes later). Meanwhile new VMs
+  use the previous guest image if the node still has one (a tool bump); only on a node without any guest image (its
+  first build) they wait in `starting` with "preparing guest image" and start once it is ready. They never fall back
+  to the stock image.
 - **How:** in a throwaway Firecracker VM (`vms/tpl-image-build`): 2 vCPUs, half the available RAM (1.5–4 GB), a NAT
   NIC, no management NIC, no keys, variables, integrations or egress proxy. It downloads about 1.5 GB, checks every
   artifact against the pinned SHA-256 or apt key and version, installs and powers off. The node keeps the disk only

@@ -17,6 +17,7 @@ export interface NodeInfo {
   image: {
     state: 'building' | 'ready' | 'failed' | 'custom'
     version: string
+    fallback?: string
     startedAt?: string
     builtAt?: string
     error?: string
@@ -90,6 +91,10 @@ export function elapsed(iso: string, locale: string) {
   return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'short' }).format(n)
 }
 
+function fallback(img: NonNullable<NodeInfo['image']>, t: (k: string, p?: Record<string, unknown>) => string) {
+  return img.fallback ? ` · ${t('nodes.image.fallback', { version: img.fallback })}` : ''
+}
+
 export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<string, unknown>) => string, locale: string) {
   if (!img) return '–'
   const v = img.version
@@ -97,10 +102,10 @@ export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<stri
     case 'ready':
       return `${v} · ${img.builtAt ? t('nodes.image.readyAt', { time: relativeTime(img.builtAt, locale) }) : t('nodes.image.ready')}`
     case 'building':
-      return `${v} · ${img.startedAt ? t('nodes.image.buildingFor', { time: elapsed(img.startedAt, locale) }) : t('nodes.image.building')}`
+      return `${v} · ${img.startedAt ? t('nodes.image.buildingFor', { time: elapsed(img.startedAt, locale) }) : t('nodes.image.building')}${fallback(img, t)}`
     case 'failed': {
       const error = img.error ?? ''
-      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}`
+      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}${fallback(img, t)}`
     }
     default: return ''
   }

@@ -468,7 +468,7 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f *VMFile) error {
 	return SaveVM(a.VMsDir, saved)
 }
 
-// waitImage waits for the guest image and returns its version, or "" for a custom image; it never settles for the stock image.
+// waitImage waits for the guest image (or the previous one while it builds) and returns its version, or "" for a custom image; it never settles for the stock image.
 func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
 	var shown string
 	for {
@@ -480,6 +480,8 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
 			return img.Version, nil
 		case img != nil && img.State == proto.ImageCustom:
 			return "", nil
+		case img != nil && img.Fallback != "":
+			return img.Fallback, nil
 		case newer:
 			return "", errNewerDesired
 		}

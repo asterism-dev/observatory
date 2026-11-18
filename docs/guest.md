@@ -57,15 +57,17 @@ off and that file holds the expected version. Details, disk space and failures: 
 
 - The node page shows `Guest image <version> · building for 3 min`, then `ready` with the build time, or `failed`
   with the error and the next retry (30 minutes later).
-- VMs created while the image builds stay `starting` with "preparing guest image" and start once it is ready. They
-  never fall back to the stock image.
+- VMs created while the image builds use the previous guest image if the node has one. On a node without any (its
+  first build) they stay `starting` with "preparing guest image" and start once it is ready. They never fall back to
+  the stock image.
 - The VM page shows the image a VM was created from ("stock" for VMs created before guest images, and for VMs still
   waiting for theirs).
 
 ## Updates
 
 - A tool bump is a change to the manifest. A node running the new binary builds the new version in the background and
-  gives it to new VMs once it is ready.
+  gives it to new VMs once it is ready; until then, and while a failed build waits for its retry, new VMs get the
+  previous image (the node page says "new VMs use <previous> meanwhile").
 - **Existing VMs are not changed**: a VM's root disk is its own, the image is only its starting point. Update tools in
   a VM with apt or by installing into `~/.local/bin`, or create a new VM.
 - Templates are keyed by the image file, so the first VM of each size after a bump cold-boots and builds a new

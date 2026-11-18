@@ -174,10 +174,11 @@ const (
 	ImageCustom   = "custom"
 )
 
-// ImageStatus is the node's guest image: Version is the one it builds or has ready, RetryAt the next try after a failure.
+// ImageStatus is the node's guest image: Version is the one it builds or has ready, Fallback the previous one new VMs use meanwhile.
 type ImageStatus struct {
 	Version   string     `json:"version"`
 	State     string     `json:"state"`
+	Fallback  string     `json:"fallback,omitempty"`
 	Error     string     `json:"error,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	BuiltAt   *time.Time `json:"builtAt,omitempty"`

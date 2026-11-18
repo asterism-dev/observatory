@@ -222,6 +222,23 @@ func TestGuestImageBuildRefusedWithoutSpace(t *testing.T) {
 	noGuestImage(t, p)
 }
 
+func TestGuestImageFailedBuildReportsFallback(t *testing.T) {
+	p := &Provider{ImagesDir: t.TempDir(), VMsDir: t.TempDir(), image: stubImage(stubBuildOK)}
+	const prev = "2026.10.1-aaaaaaaa"
+	if err := os.WriteFile(guestImagePath(p.ImagesDir, prev), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := checkSpace
+	t.Cleanup(func() { checkSpace = old })
+	checkSpace = func(string, int64) error { return errors.New("not enough space on node") }
+	r := runUntilFailed(t, p)
+	for _, st := range r.got {
+		if st.Fallback != prev {
+			t.Fatalf("%s: fallback = %q", st.State, st.Fallback)
+		}
+	}
+}
+
 func TestGuestImageBuild(t *testing.T) {
 	p := stubImageProvider(t, stubBuildOK)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

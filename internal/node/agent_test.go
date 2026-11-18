@@ -736,3 +736,22 @@ func TestAgentSameGenerationKeepsWaitingForImage(t *testing.T) {
 	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
 	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 }
+
+const previousImage = "2026.10.1-bbbbbbbb"
+
+func TestAgentUsesFallbackImage(t *testing.T) {
+	retry := time.Now().Add(time.Hour)
+	for _, st := range []proto.ImageStatus{
+		{Version: testImage, State: proto.ImageBuilding, Fallback: previousImage},
+		{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry, Fallback: previousImage},
+	} {
+		t.Run(st.State, func(t *testing.T) {
+			env, _ := startImageEnv(t, st)
+			vm := env.hub.create("dev")
+			eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+			if img, _ := env.provider.gotPreparedImage("dev"); img != previousImage {
+				t.Fatalf("Prepare got image %q", img)
+			}
+		})
+	}
+}
