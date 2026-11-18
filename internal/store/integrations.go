@@ -241,10 +241,12 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 			sec, err = checkIntegrationSecret(integrations.SourceOAuth, IntegrationSecret{Token: t.Access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt})
 		}
 		if refreshErr = err; err != nil {
+			// Our own shutdown or timeout must never make the one-way switch to expired.
+			ours := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 			_, err := tx.q.Exec(dbctx, `UPDATE integrations SET
-				status = CASE WHEN $3 OR access_expires_at <= now() THEN 'expired' ELSE 'ok' END,
-				last_error = CASE WHEN $3 OR access_expires_at <= now() THEN 'sign in again' ELSE 'refresh failed' END
-				WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, errors.Is(err, integrations.ErrInvalidGrant))
+				status = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'expired' ELSE 'ok' END,
+				last_error = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'sign in again' ELSE 'refresh failed' END
+				WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, errors.Is(err, integrations.ErrInvalidGrant), !ours)
 			return err
 		}
 		nonce, ct, rnonce, rct, err := sealIntegration(key, ref.OrgID, ref.ID, sec)

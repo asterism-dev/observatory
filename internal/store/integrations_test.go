@@ -558,6 +558,24 @@ func TestRefreshIntegrationExpiresAfterFailures(t *testing.T) {
 	}
 }
 
+func TestRefreshIntegrationCancelNeverExpires(t *testing.T) {
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueClaude(t, s, org, uid, -time.Minute)
+	for _, f := range []*fakeRefresh{{err: context.Canceled}, {err: context.DeadlineExceeded}} {
+		if ok, err := s.RefreshIntegration(context.Background(), ref, time.Now().Add(time.Hour), f.refresh); ok || !errors.Is(err, f.err) {
+			t.Fatalf("%v: %v %v", f.err, ok, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &fakeRefresh{err: integrations.ErrUnreachable, after: cancel}
+	if ok, err := s.RefreshIntegration(ctx, ref, time.Now().Add(time.Hour), f.refresh); ok || !errors.Is(err, integrations.ErrUnreachable) {
+		t.Fatalf("cancelled ctx: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationOK || got.LastError != "refresh failed" {
+		t.Fatalf("after cancel past expiry %+v", got)
+	}
+}
+
 func TestRefreshIntegrationSurvivesCancel(t *testing.T) {
 	s, _, uid, org, _ := newIntegrationStore(t)
 	ref := dueClaude(t, s, org, uid, 10*time.Minute)
