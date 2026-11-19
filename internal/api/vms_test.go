@@ -19,6 +19,7 @@ func vmsPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/vms"
 
 type vmJSONTest struct {
 	ID, Name, State, Power           string
+	ImageRef, ImageSource            string
 	Owner                            struct{ Kind, ID, Name string }
 	Node                             struct{ ID, Name string }
 	CanPower, CanDelete              bool
@@ -660,5 +661,129 @@ func TestCreateVMDiskMinimum(t *testing.T) {
 	}
 	if rec := e.send("POST", vmsPath(org), tok, body("10")); rec.Code != 201 {
 		t.Fatalf("10 GB: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func imageVMBody(name, owner, node, image string) string {
+	return strings.TrimSuffix(vmBody(name, owner, node), "}") + `,"image":"` + image + `"}`
+}
+
+func (e *env) vmImage(org uuid.UUID, id string) store.VM {
+	e.t.Helper()
+	v, err := e.store.VM(context.Background(), org, uuid.MustParse(id))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return v
+}
+
+func TestCreateVMWithImageRef(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	img := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	d := e.addVersion(img, 1, "latest", "v1")
+
+	got := e.createVM(tok, org, imageVMBody("a", userOwner(), node, "base:v1"))
+	v := e.vmImage(org, got.ID)
+	if got.ImageRef != "base:v1" || got.ImageSource != "explicit" || v.ImageRef != "base:v1" || v.ImageDigest != d || v.ImageID == nil || *v.ImageID != img {
+		t.Fatalf("json %+v, stored %+v", got, v)
+	}
+
+	got = e.createVM(tok, org, imageVMBody("b", userOwner(), node, "observatory/standard"))
+	if v = e.vmImage(org, got.ID); v.ImageRef != "observatory/standard" || v.ImageDigest != "" || v.ImageID != nil || got.ImageSource != "platform" {
+		t.Fatalf("platform: %+v %+v", got, v)
+	}
+
+	for _, ref := range []string{"nope", "base:missing", "observatory/standard:v1"} {
+		if rec := e.send("POST", vmsPath(org), tok, imageVMBody("c", userOwner(), node, ref)); rec.Code != 422 {
+			t.Fatalf("%s: %d %s", ref, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestCreateVMUsesUserDefault(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	orgImg := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	e.addVersion(orgImg, 1, "latest")
+	mine := e.createImage(tok, org, `{"name":"mine","scope":"user"}`)
+	d := e.addVersion(mine, 2, "latest")
+	defaults := "/api/orgs/" + org.String() + "/image-defaults/"
+	if rec := e.send("PUT", defaults+"org", tok, `{"ref":"base"}`); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	if rec := e.send("PUT", defaults+"user", tok, `{"ref":"mine"}`); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	got := e.createVM(tok, org, vmBody("a", userOwner(), node))
+	v := e.vmImage(org, got.ID)
+	if got.ImageSource != "user-default" || v.ImageRef != "me/mine@"+d || v.ImageDigest != d || v.ImageID == nil || *v.ImageID != mine {
+		t.Fatalf("json %+v, stored %+v", got, v)
+	}
+}
+
+func TestCreateTeamVMUsesTeamDefault(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	team := e.createTeam(tok, org, "core")
+	userImg := e.createImage(tok, org, `{"name":"mine","scope":"user"}`)
+	e.addVersion(userImg, 1, "latest")
+	teamImg := e.createImage(tok, org, `{"name":"shared","scope":"team","teamId":"`+team.String()+`"}`)
+	d := e.addVersion(teamImg, 2, "latest")
+	defaults := "/api/orgs/" + org.String() + "/image-defaults/"
+	if rec := e.send("PUT", defaults+"user", tok, `{"ref":"mine"}`); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	if rec := e.send("PUT", defaults+"team/"+team.String(), tok, `{"ref":"core/shared"}`); rec.Code != 204 {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	got := e.createVM(tok, org, vmBody("a", teamOwner(team), node))
+	v := e.vmImage(org, got.ID)
+	if got.ImageSource != "team-default" || v.ImageRef != "core/shared@"+d || v.ImageDigest != d || *v.ImageID != teamImg {
+		t.Fatalf("json %+v, stored %+v", got, v)
+	}
+}
+
+func TestCreateVMAmbiguousImage(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	e.addVersion(e.createImage(tok, org, `{"name":"base","scope":"org"}`), 1, "latest")
+	e.addVersion(e.createImage(tok, org, `{"name":"base","scope":"user"}`), 2, "latest")
+	rec := e.send("POST", vmsPath(org), tok, imageVMBody("a", userOwner(), node, "base"))
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "me/base") || !strings.Contains(rec.Body.String(), "org/base") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.send("POST", vmsPath(org), tok, imageVMBody("a", userOwner(), node, "org/base")); rec.Code != 201 {
+		t.Fatalf("qualified: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestForkKeepsImage(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	img := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	d := e.addVersion(img, 1, "latest")
+	src := e.createVM(tok, org, imageVMBody("a", userOwner(), node, "base"))
+	sn := e.takeSnapshot(tok, org, src.ID, `{"name":"base"}`)
+	e.snapshotsReady()
+	rec := e.send("POST", snapshotsPath(org, src.ID)+"/"+sn.ID+"/fork", tok, `{"name":"b"}`)
+	if rec.Code != 201 {
+		t.Fatalf("fork: %d %s", rec.Code, rec.Body.String())
+	}
+	var fork vmJSONTest
+	decode(t, rec, &fork)
+	v := e.vmImage(org, fork.ID)
+	if v.ImageRef != "base" || v.ImageDigest != d || v.ImageID == nil || *v.ImageID != img || fork.ImageSource != "explicit" {
+		t.Fatalf("fork %+v stored %+v", fork, v)
 	}
 }

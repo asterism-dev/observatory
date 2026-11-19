@@ -82,6 +82,30 @@ integration:
   integration mode <kind> proxy|vm [--scope S] [--team T]                                            change how the token reaches VMs
   integration disconnect <kind> [--scope S] [--team T]                                               disconnect an integration
 
+image:
+  image list                                                                                    list images
+  image show <ref>                                                                              show an image
+  image create <name> [--scope S] [--team T] [--description D]                                  create an image
+  image update <ref> [--name N] [--description D]                                               rename an image or change its description
+  image delete <ref>                                                                            delete an image and its versions
+  image visibility <ref> --scope private|team|org [--team T]                                    change who can see an image
+  image recipe pull <ref> <dir>                                                                 download the recipe into a directory
+  image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...  upload a directory as the next recipe revision
+  image build <ref> [--follow]                                                                  build the current recipe
+  image builds <ref>                                                                            list the builds of an image
+  image log <build-id> [--follow]                                                               show a build log
+  image cancel <build-id>                                                                       cancel a queued or running build
+  image push <ref>[:tag] <local-image>                                                          push a local docker image as a version
+  image login                                                                                   let docker authenticate against the hub registry
+  image tag <ref> <tag> <digest>                                                                point a tag at a version
+  image tag delete <ref> <tag>                                                                  remove a tag
+  image versions <ref>                                                                          list the versions of an image
+  image versions delete <ref> <digest>                                                          delete a version and its tags
+  image default set <org|user|team:T> <ref>                                                     set the default image for a level
+  image default show <org|user|team:T>                                                          show the default image for a level
+  image default clear <org|user|team:T>                                                         clear the default image of a level
+  image builders                                                                                list running builder VMs (admins)
+
 node:
   node list                  list nodes
   node show <node>           show a node

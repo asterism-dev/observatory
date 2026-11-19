@@ -33,6 +33,16 @@ type VMSpec struct {
 	NICs        []NIC            `json:"nics"`
 	Attachments []DiskAttachment `json:"attachments,omitempty"`
 	Isolated    bool             `json:"isolated,omitempty"`
+	Image       *ImageRef        `json:"image,omitempty"`      // nil: the platform image
+	NoTemplate  bool             `json:"noTemplate,omitempty"` // always boot cold: the VM's service reads its env once at start
+}
+
+// ImageRef is an image the node pulls by digest; an empty PullToken pulls anonymously.
+type ImageRef struct {
+	Repo      string `json:"repo"` // <registry host>/i/<image id>
+	Digest    string `json:"digest"`
+	PullToken string `json:"pullToken,omitempty"` // node memory only, like Boot
+	Gone      bool   `json:"gone,omitempty"`      // the hub no longer has the image
 }
 
 type Boot struct {

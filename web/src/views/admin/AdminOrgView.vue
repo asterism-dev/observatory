@@ -24,7 +24,7 @@ const { setCrumbs } = useCrumbs()
 watchEffect(() => {
   if (org.value) setCrumbs(route.path, [{ label: org.value.name, to: route.path }])
 })
-const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null })
+const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null, imageStorageGb: null })
 const valid = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -86,7 +86,7 @@ watch(() => route.params.orgId, () => {
     </Section>
     <Section :label="t('limits.org')">
       <Card>
-        <LimitFields v-model="limits" v-model:valid="valid" :disabled="busy" />
+        <LimitFields v-model="limits" v-model:valid="valid" :disabled="busy" image-storage />
         <p><Button variant="accent" :disabled="busy || !valid" @click="save">{{ t('org.save') }}</Button></p>
       </Card>
     </Section>

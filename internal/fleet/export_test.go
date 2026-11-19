@@ -12,6 +12,7 @@ import (
 var (
 	DesiredRetry        = &desiredRetry
 	IntegrationRetry    = &integrationRetry
+	ImageRetryMin       = &imageRetryMin
 	UnderlayCheck       = &underlayCheck
 	UnderlayRenewBefore = &underlayRenewBefore
 	Clock               = &clock

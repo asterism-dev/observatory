@@ -25,13 +25,13 @@ func TestLimitsStack(t *testing.T) {
 	team := e.createTeam(ownerTok, org, "core")
 	base := "/api/orgs/" + org.String() + "/limits"
 
-	if rec := e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", adminTok, `{"vcpu":10,"diskGb":100}`); rec.Code != 204 {
+	if rec := e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", adminTok, `{"vcpu":10,"diskGb":100,"imageStorageGb":20}`); rec.Code != 204 {
 		t.Fatalf("admin set org: %d %s", rec.Code, rec.Body.String())
 	}
 	var got limitsResp
 	rec := e.do("GET", base, ownerTok)
 	decode(t, rec, &got)
-	if rec.Code != 200 || *got.Org["vcpu"] != 10 || *got.Org["diskGb"] != 100 || got.Org["ramMb"] != nil || got.Org["vmCount"] != nil ||
+	if rec.Code != 200 || *got.Org["vcpu"] != 10 || *got.Org["diskGb"] != 100 || *got.Org["imageStorageGb"] != 20 || got.Org["ramMb"] != nil || got.Org["vmCount"] != nil ||
 		got.Teams == nil || got.Members == nil || len(got.Teams) != 0 {
 		t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
 	}

@@ -17,11 +17,13 @@ import (
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
@@ -112,7 +114,31 @@ func run() error {
 		go ck.Run(ctx, 6*time.Hour)
 		newer = ck.Newer
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
+	var manifests api.ManifestDeleter
+	var tags *api.TagSync
+	var sched *builds.Scheduler
+	if cfg.RegistryURL != "" {
+		iss, err := registry.LoadIssuer(cfg.RegistryKeyDir)
+		if err != nil {
+			return err
+		}
+		if cfg.RegistryCertDir != "" {
+			if err := iss.WriteCert(cfg.RegistryCertDir); err != nil {
+				return err
+			}
+		}
+		upstream, _ := url.Parse(cfg.RegistryURL)
+		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
+		tags = api.NewTagSync(s, client)
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
+		manifests = client
+		f.PullImagesFrom(publicURL.Host, iss)
+		sched = newScheduler(ctx, s, f, cfg)
+		f.BootBuildersWith(sched.BootEnv)
+		api.BuildEndpoints(mux, s, sched, client, tags)
+		go sched.Run(ctx, 10*time.Second)
+	}
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
@@ -128,6 +154,19 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.
+func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg config) *builds.Scheduler {
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	builder, err := builds.ResolveBuilder(rctx, cfg.BuilderImage)
+	if err != nil {
+		slog.Error("builder image unavailable, image builds will fail", "err", err)
+	} else {
+		slog.Info("builder image", "ref", builder)
+	}
+	return builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, f.DropMetrics)
 }
 
 // spa serves index.html for extensionless paths that are not files, so GUI routes like /vms survive a reload.

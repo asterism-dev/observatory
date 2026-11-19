@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,12 +40,22 @@ func (h *api) listTeams(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// readTeamName refuses the qualifiers of image refs, which a team name would shadow.
+func readTeamName(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name, ok := readName(w, r)
+	if ok && slices.Contains([]string{"me", "org", "observatory"}, name) {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("%q is reserved for image references", name))
+		return "", false
+	}
+	return name, ok
+}
+
 func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
 	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, store.ActionTeamCreate) {
 		return
 	}
-	name, ok := readName(w, r)
+	name, ok := readTeamName(w, r)
 	if !ok {
 		return
 	}
@@ -110,7 +122,7 @@ func (h *api) renameTeam(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	name, ok := readName(w, r)
+	name, ok := readTeamName(w, r)
 	if !ok {
 		return
 	}
@@ -135,6 +147,7 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	actor := authz.UserSubject(p.User.ID)
 	var denied error
+	var images map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
 		if err != nil {
@@ -145,6 +158,9 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
+		if images, err = ownedImageVersions(r.Context(), tx, m.Org.ID, store.EnvScopeTeam, id); err != nil {
+			return err
+		}
 		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.Org.ID, id) }); denied != nil {
 			return denied
 		}
@@ -152,6 +168,9 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	}) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamDelete, authz.TeamObject(id), denied)
 		return
+	}
+	for image, digests := range images {
+		h.deleteManifests(r.Context(), image, digests)
 	}
 	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)

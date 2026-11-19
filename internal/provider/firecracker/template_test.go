@@ -89,6 +89,27 @@ func TestTemplateKeyChangesWithInitVersion(t *testing.T) {
 	}
 }
 
+func TestUsesTemplate(t *testing.T) {
+	base := proto.VMSpec{DiskGB: templateDiskGB}
+	if !usesTemplate(true, base) {
+		t.Fatal("plain VM gets no template")
+	}
+	noTpl := base
+	noTpl.NoTemplate = true
+	small := base
+	small.DiskGB = templateDiskGB - 1
+	disk := base
+	disk.Attachments = []proto.DiskAttachment{{DiskID: "d"}}
+	for name, c := range map[string]struct {
+		fastBoot bool
+		spec     proto.VMSpec
+	}{"fast boot off": {false, base}, "NoTemplate": {true, noTpl}, "small disk": {true, small}, "attached disk": {true, disk}} {
+		if usesTemplate(c.fastBoot, c.spec) {
+			t.Errorf("%s: uses a template", name)
+		}
+	}
+}
+
 func TestEvictTemplates(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()

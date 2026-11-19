@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -48,6 +49,9 @@ type vmJSON struct {
 	MemoryMB      int            `json:"memoryMB"`
 	DiskGB        int            `json:"diskGB"`
 	Image         string         `json:"image"`
+	ImageRef      string         `json:"imageRef"`
+	ImageDigest   string         `json:"imageDigest,omitempty"`
+	ImageSource   string         `json:"imageSource"`
 	LegacyRuntime bool           `json:"legacyRuntime"`
 	CreatedAt     time.Time      `json:"createdAt"`
 	CanPower      bool           `json:"canPower"`
@@ -144,7 +148,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageDigest: v.ImageDigest, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
@@ -211,7 +215,7 @@ func (h *api) vmFromPath(w http.ResponseWriter, r *http.Request, act string) (st
 		return store.VM{}, false
 	}
 	v, err := h.store.VM(r.Context(), m.Org.ID, id)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) || err == nil && v.Kind == store.VMKindBuilder {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.VM{}, false
 	}
@@ -281,6 +285,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		}
 		NodeID                 uuid.UUID
 		CPUs, MemoryMB, DiskGB int
+		Image                  string
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -306,6 +311,9 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(w, r, m.Org.ID, obj, store.ActionVMCreate) || !h.authorize(w, r, m.Org.ID, authz.NodeObject(v.NodeID), "node:use") {
 		return
 	}
+	if !h.resolveVMImage(w, r, &v, body.Image) {
+		return
+	}
 	// commit reloads the enforcer, so the generated owner rules apply before the node is told.
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
@@ -322,6 +330,37 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 	}
 	h.fleet.NotifyOrg(v.OrgID)
 	h.writeVM(w, r, http.StatusCreated, v)
+}
+
+func (h *api) resolveVMImage(w http.ResponseWriter, r *http.Request, v *store.VM, ref string) bool {
+	if _, err := images.ParseRef(ref); ref != "" && err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return false
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	res, err := h.resolver().Resolve(r.Context(), v.OrgID, p.User.ID, images.Owner{UserID: v.UserID, TeamID: v.TeamID}, ref)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, images.ErrAmbiguous) || errors.Is(err, images.ErrPlatformPinned) {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return false
+	} else if err != nil {
+		serverError(w, "resolve image", err)
+		return false
+	}
+	v.ImageSource, v.ImageDigest = res.Source, res.Digest
+	if res.Image == nil {
+		v.ImageRef = platformRef
+		return true
+	}
+	v.ImageID, v.ImageRef = &res.Image.ID, ref
+	if ref == "" {
+		teams, err := h.teamNames(r.Context(), v.OrgID)
+		if err != nil {
+			serverError(w, "teams", err)
+			return false
+		}
+		v.ImageRef = imageRef(*res.Image, teams, "", res.Digest)
+	}
+	return true
 }
 
 func (h *api) getVM(w http.ResponseWriter, r *http.Request) {

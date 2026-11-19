@@ -23,6 +23,9 @@ const (
 	ObjIntegrations     = "org/integrations"
 	ObjTeamIntegrations = "org/team-integrations"
 	ObjUserIntegrations = "org/user-integrations"
+	ObjImages           = "org/images"
+	ObjTeamImages       = "org/team-images"
+	ObjUserImages       = "org/user-images"
 	ObjNodes            = "org/nodes"
 	ObjVMs              = "org/vms"
 	ObjTeamVMs          = "org/team-vms"
@@ -52,6 +55,11 @@ func TeamIntegrationsObject(id uuid.UUID) string { return ObjTeamIntegrations + 
 
 // UserIntegrationsObject is a member's private integration scope; no built-in role reaches it, only its user.
 func UserIntegrationsObject(id uuid.UUID) string { return ObjUserIntegrations + "/" + id.String() }
+
+func TeamImagesObject(id uuid.UUID) string { return ObjTeamImages + "/" + id.String() }
+
+// UserImagesObject is a member's private image scope; no built-in role reaches it, only its user.
+func UserImagesObject(id uuid.UUID) string { return ObjUserImages + "/" + id.String() }
 
 func NodeObject(id uuid.UUID) string { return ObjNodes + "/" + id.String() }
 
@@ -129,6 +137,21 @@ var Catalog = []Permission{
 	{"integration:set", ObjUserIntegrations + "/*"},
 	{"integration:delete", ObjUserIntegrations + "/*"},
 	{"integration:use", ObjUserIntegrations + "/*"},
+	{"image:list", ObjImages},
+	{"image:use", ObjImages},
+	{"image:edit", ObjImages},
+	{"image:build", ObjImages},
+	{"image:default", ObjImages},
+	{"image:list", ObjTeamImages + "/*"},
+	{"image:use", ObjTeamImages + "/*"},
+	{"image:edit", ObjTeamImages + "/*"},
+	{"image:build", ObjTeamImages + "/*"},
+	{"image:default", ObjTeamImages + "/*"},
+	{"image:list", ObjUserImages + "/*"},
+	{"image:use", ObjUserImages + "/*"},
+	{"image:edit", ObjUserImages + "/*"},
+	{"image:build", ObjUserImages + "/*"},
+	{"image:default", ObjUserImages + "/*"},
 	{"node:read", ObjNodes},
 	{"node:create", ObjNodes},
 	{"node:read", ObjNodes + "/*"},
@@ -173,6 +196,8 @@ func BuiltinRules(key string) []Rule {
 		{Allow, ObjEnv, "env:use"},
 		{Allow, ObjIntegrations, "integration:list"},
 		{Allow, ObjIntegrations, "integration:use"},
+		{Allow, ObjImages, "image:list"},
+		{Allow, ObjImages, "image:use"},
 		{Allow, ObjNodes, "node:read"},
 		{Allow, ObjNodes + "/*", "node:read"},
 		{Allow, ObjNodes + "/*", "node:use"},
@@ -195,6 +220,8 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjTeamEnv + "/*", "env:*"},
 		Rule{Allow, ObjIntegrations, "integration:*"},
 		Rule{Allow, ObjTeamIntegrations + "/*", "integration:*"},
+		Rule{Allow, ObjImages, "image:*"},
+		Rule{Allow, ObjTeamImages + "/*", "image:*"},
 		Rule{Allow, ObjNodes, "node:*"},
 		Rule{Allow, ObjNodes + "/*", "node:*"},
 		// Explicit VM actions, never vm:*: admins must not gain vm:connect or future VM actions.

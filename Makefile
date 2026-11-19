@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down registry-gc idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -17,6 +17,20 @@ gateway-up: gateway-token storage-token
 
 gateway-down:
 	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf storage gateway modules
+
+registry-env:
+	mkdir -p deploy/dev/registry-keys deploy/dev/registry-certs
+	grep -q '^OBSERVATORY_REGISTRY_EVENTS_SECRET=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_REGISTRY_EVENTS_SECRET=$$(openssl rand -hex 32)"; echo "OBSERVATORY_REGISTRY_URL=http://localhost:55000"; echo "OBSERVATORY_REGISTRY_KEY_DIR=$(CURDIR)/deploy/dev/registry-keys"; echo "OBSERVATORY_REGISTRY_CERT_DIR=$(CURDIR)/deploy/dev/registry-certs"; } >> deploy/dev/hub.env
+
+registry-up: registry-env
+	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env up -d registry
+
+registry-down:
+	docker compose -f deploy/dev/compose.yaml rm -sf registry
+
+registry-gc:
+	docker compose -f deploy/dev/compose.yaml stop registry
+	docker compose -f deploy/dev/compose.yaml run --rm registry-gc; docker compose -f deploy/dev/compose.yaml start registry
 
 idp-up:
 	[ -f deploy/idp/.env ] || cp deploy/idp/.env.example deploy/idp/.env

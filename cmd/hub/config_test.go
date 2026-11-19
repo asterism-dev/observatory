@@ -47,6 +47,25 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("listen override: %+v", cfg)
 	}
 
+	env["OBSERVATORY_REGISTRY_URL"] = "http://registry:5000"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_REGISTRY_KEY_DIR") {
+		t.Fatalf("registry without key dir: %v", err)
+	}
+	env["OBSERVATORY_REGISTRY_KEY_DIR"] = "/keys"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_REGISTRY_EVENTS_SECRET") {
+		t.Fatalf("registry without events secret: %v", err)
+	}
+	env["OBSERVATORY_REGISTRY_EVENTS_SECRET"] = strings.Repeat("e", 32)
+	env["OBSERVATORY_REGISTRY_CERT_DIR"] = "/certs"
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.RegistryURL != "http://registry:5000" || cfg.RegistryKeyDir != "/keys" || cfg.RegistryEventsSecret != strings.Repeat("e", 32) || cfg.RegistryCertDir != "/certs" {
+		t.Fatalf("registry: %+v %v", cfg, err)
+	}
+	env["OBSERVATORY_REGISTRY_URL"] = "registry:5000"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil {
+		t.Fatal("relative registry url accepted")
+	}
+	delete(env, "OBSERVATORY_REGISTRY_URL")
+
 	env["OBSERVATORY_SECRETS_KEY"] = base64.StdEncoding.EncodeToString(make([]byte, 16))
 	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_SECRETS_KEY") {
 		t.Fatalf("short key: %v", err)

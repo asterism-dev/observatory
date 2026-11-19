@@ -53,11 +53,12 @@ func (r roleJSON) ref() ref {
 }
 
 type limitsJSON struct {
-	VCPU          *int `json:"vcpu"`
-	RAMMB         *int `json:"ramMb"`
-	DiskGB        *int `json:"diskGb"`
-	VMCount       *int `json:"vmCount"`
-	SnapshotCount *int `json:"snapshotCount"`
+	VCPU           *int `json:"vcpu"`
+	RAMMB          *int `json:"ramMb"`
+	DiskGB         *int `json:"diskGb"`
+	VMCount        *int `json:"vmCount"`
+	SnapshotCount  *int `json:"snapshotCount"`
+	ImageStorageGB *int `json:"imageStorageGb"`
 }
 
 func orgCommands() []command {
@@ -717,7 +718,7 @@ func limitCell(v *int, f func(int) string) string {
 func limitRow(scope string, l limitsJSON) []string {
 	num := func(n int) string { return strconv.Itoa(n) }
 	return []string{scope, limitCell(l.VCPU, num), limitCell(l.RAMMB, gb), limitCell(l.DiskGB, func(n int) string { return gb(n * 1024) }),
-		limitCell(l.VMCount, num), limitCell(l.SnapshotCount, num)}
+		limitCell(l.VMCount, num), limitCell(l.SnapshotCount, num), limitCell(l.ImageStorageGB, func(n int) string { return gb(n * 1024) })}
 }
 
 type orgLimits struct {
@@ -793,7 +794,7 @@ func cmdLimitShow(c *cli, args []string) error {
 			}
 		}
 	}
-	return c.emit(raw, []string{"scope", "vcpu", "ram", "disk", "vms", "snapshots"}, rows)
+	return c.emit(raw, []string{"scope", "vcpu", "ram", "disk", "vms", "snapshots", "images"}, rows)
 }
 
 func parseLimit(name, v string) (*int, error) {

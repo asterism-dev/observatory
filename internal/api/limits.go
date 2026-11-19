@@ -11,19 +11,20 @@ import (
 )
 
 type limitsJSON struct {
-	VCPU          *int `json:"vcpu"`
-	RAMMB         *int `json:"ramMb"`
-	DiskGB        *int `json:"diskGb"`
-	VMCount       *int `json:"vmCount"`
-	SnapshotCount *int `json:"snapshotCount"`
+	VCPU           *int `json:"vcpu"`
+	RAMMB          *int `json:"ramMb"`
+	DiskGB         *int `json:"diskGb"`
+	VMCount        *int `json:"vmCount"`
+	SnapshotCount  *int `json:"snapshotCount"`
+	ImageStorageGB *int `json:"imageStorageGb"`
 }
 
 func (l limitsJSON) store() store.Limits {
-	return store.Limits{VCPU: l.VCPU, RAMMB: l.RAMMB, DiskGB: l.DiskGB, VMCount: l.VMCount, SnapshotCount: l.SnapshotCount}
+	return store.Limits{VCPU: l.VCPU, RAMMB: l.RAMMB, DiskGB: l.DiskGB, VMCount: l.VMCount, SnapshotCount: l.SnapshotCount, ImageStorageGB: l.ImageStorageGB}
 }
 
 func toLimitsJSON(l store.Limits) limitsJSON {
-	return limitsJSON{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount}
+	return limitsJSON{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount, l.ImageStorageGB}
 }
 
 type orgLimitsJSON struct {
@@ -51,7 +52,7 @@ func readLimits(w http.ResponseWriter, r *http.Request) (store.Limits, bool) {
 	if !readJSON(w, r, &body) {
 		return store.Limits{}, false
 	}
-	for _, v := range []*int{body.VCPU, body.RAMMB, body.DiskGB, body.VMCount, body.SnapshotCount} {
+	for _, v := range []*int{body.VCPU, body.RAMMB, body.DiskGB, body.VMCount, body.SnapshotCount, body.ImageStorageGB} {
 		if v != nil && (*v < 0 || *v > math.MaxInt32) {
 			writeError(w, http.StatusBadRequest, "invalid limit")
 			return store.Limits{}, false
@@ -61,7 +62,7 @@ func readLimits(w http.ResponseWriter, r *http.Request) (store.Limits, bool) {
 }
 
 func limitDetails(l store.Limits) map[string]any {
-	return map[string]any{"vcpu": l.VCPU, "ramMb": l.RAMMB, "diskGb": l.DiskGB, "vmCount": l.VMCount, "snapshotCount": l.SnapshotCount}
+	return map[string]any{"vcpu": l.VCPU, "ramMb": l.RAMMB, "diskGb": l.DiskGB, "vmCount": l.VMCount, "snapshotCount": l.SnapshotCount, "imageStorageGb": l.ImageStorageGB}
 }
 
 func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {

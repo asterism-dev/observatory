@@ -9,14 +9,16 @@ export interface Limits {
   diskGb: number | null
   vmCount: number | null
   snapshotCount: number | null
+  imageStorageGb: number | null
 }
 
 const model = defineModel<Limits>({ required: true })
 const valid = defineModel<boolean>('valid', { default: true })
-defineProps<{ disabled?: boolean }>()
+const props = defineProps<{ disabled?: boolean; imageStorage?: boolean }>()
 const { t } = useI18n()
 
-const fields = ['vcpu', 'ramMb', 'diskGb', 'vmCount', 'snapshotCount'] as const
+// Image storage is limited per org only.
+const fields = (['vcpu', 'ramMb', 'diskGb', 'vmCount', 'snapshotCount', 'imageStorageGb'] as const).filter((k) => k !== 'imageStorageGb' || props.imageStorage)
 
 // Unlimited is driven only by the checkbox; an empty input is "no value yet", not unlimited.
 const unlimited = reactive(Object.fromEntries(fields.map((k) => [k, model.value[k] === null])) as Record<keyof Limits, boolean>)

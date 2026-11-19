@@ -254,6 +254,17 @@ func (p *imageProvider) RunGuestImages(ctx context.Context, report func(proto.Im
 	<-ctx.Done()
 }
 
+// PullImage accepts only the token t1.
+func (p *imageProvider) PullImage(_ context.Context, img proto.ImageRef) (string, proto.ImageConfig, error) {
+	p.mu.Lock()
+	p.events = append(p.events, "pull:"+img.PullToken)
+	p.mu.Unlock()
+	if img.PullToken != "t1" {
+		return "", proto.ImageConfig{}, errors.New("UNAUTHORIZED")
+	}
+	return img.Repo + "@" + img.Digest, proto.ImageConfig{Cmd: []string{"app"}}, nil
+}
+
 func (p *imageProvider) report(t *testing.T, st proto.ImageStatus) {
 	t.Helper()
 	var sink func(proto.ImageStatus)

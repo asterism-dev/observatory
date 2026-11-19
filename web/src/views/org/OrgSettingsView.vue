@@ -4,6 +4,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import DefaultImageSection from '@/components/DefaultImageSection.vue'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section, ValueField } from '@/ui'
@@ -53,6 +54,7 @@ async function save() {
       <p v-if="error" role="alert">{{ error }}</p>
     </Card>
   </Section>
+  <DefaultImageSection v-if="org" :org-id="org.id" level="org" :editable="can('image:default')" :description="t('images.orgDefaultHint')" />
 </template>
 
 <style scoped>

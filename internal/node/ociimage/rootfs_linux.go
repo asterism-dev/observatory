@@ -30,6 +30,17 @@ var hostFree = func(dir string) (bytes, inodes, totalInodes int64, err error) {
 	return int64(st.Bavail) * st.Frsize, int64(st.Ffree), int64(st.Files), nil
 }
 
+// fsSpace reports available and total bytes of dir's filesystem; tests replace it.
+var fsSpace = statfsSpace
+
+func statfsSpace(dir string) (free, total int64, err error) {
+	var st unix.Statfs_t
+	if err := unix.Statfs(dir, &st); err != nil {
+		return 0, 0, err
+	}
+	return int64(st.Bavail) * st.Frsize, int64(st.Blocks) * st.Frsize, nil
+}
+
 // checkHost fails when bytes and inodes would eat into the reserves; btrfs-style dynamic inodes report zero total.
 func checkHost(dir string, bytes, inodes int64) error {
 	free, ffree, files, err := hostFree(dir)
@@ -63,7 +74,8 @@ func (s Store) Disk(ctx context.Context, digest string) (string, error) {
 	}
 	defer unlock()
 	if _, err := os.Stat(final); err == nil {
-		return final, nil
+		now := time.Now()
+		return final, os.Chtimes(final, now, now)
 	}
 	tree, part := base+".tmp", final+".part"
 	// Leftovers of a build that crashed; we hold the lock, so nobody else is using them.

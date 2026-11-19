@@ -113,6 +113,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var removeErr, denied error
+	var private map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
 		if err != nil {
@@ -138,6 +139,9 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
+		if private, err = ownedImageVersions(r.Context(), tx, m.Org.ID, store.EnvScopeUser, target); err != nil {
+			return err
+		}
 		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {
 			return err
 		}
@@ -148,6 +152,9 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		}
 		h.auditGuardDenial(r, m.Org.ID, action, "org/members/"+target.String(), denied)
 		return
+	}
+	for id, digests := range private {
+		h.deleteManifests(r.Context(), id, digests)
 	}
 	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)

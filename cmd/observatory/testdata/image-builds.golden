@@ -1,0 +1,3 @@
+BUILD  RECIPE  STATE      QUEUED     DIGEST               ERROR
+b2     r3      failed     3 min ago  –                    step 4 failed
+b1     r2      succeeded  2 h ago    sha256:aaaaaaaaaaaa  

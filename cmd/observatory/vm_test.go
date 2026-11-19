@@ -52,6 +52,17 @@ func TestVMCreateBody(t *testing.T) {
 	}
 }
 
+func TestVMCreateImageFlag(t *testing.T) {
+	h, c, _, _ := vmHub(t, oneNode)
+	h.on("POST /api/orgs/o1/vms", 201, vmDev)
+	if code := run(c, []string{"vm", "create", "dev", "--image", "org/base:v2"}); code != 0 {
+		t.Fatal(code)
+	}
+	if b := h.calls("POST /api/orgs/o1/vms")[0].Body; !strings.Contains(b, `"image":"org/base:v2"`) {
+		t.Errorf("body %s", b)
+	}
+}
+
 func TestVMCreateSeveralNodes(t *testing.T) {
 	h, c, _, errb := vmHub(t, `[{"id":"n1","name":"pve1"},{"id":"n2","name":"pve2"}]`)
 	if code := run(c, []string{"vm", "create", "dev"}); code != 2 {
@@ -255,5 +266,16 @@ func TestVMShowLegacyRuntimeHint(t *testing.T) {
 	}
 	if !strings.Contains(out(), "old guest runtime, recreate this VM") {
 		t.Fatalf("no recreate hint:\n%s", out())
+	}
+}
+
+func TestVMShowVersionDigest(t *testing.T) {
+	h, c, out, _ := vmHub(t, oneNode)
+	h.on("GET /api/orgs/o1/vms/v2", 200, strings.Replace(vmWeb, `"image":"v3"`, `"image":"hub/i/x@sha256:child","imageRef":"org/tools","imageDigest":"sha256:index"`, 1))
+	if code := run(c, []string{"vm", "show", "web"}); code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(out(), "sha256:index") || strings.Contains(out(), "sha256:child") {
+		t.Errorf("stdout %s", out())
 	}
 }

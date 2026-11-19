@@ -166,7 +166,9 @@ func (h *fakeHub) push() {
 	h.send(m)
 }
 
-func (h *fakeHub) create(name string) hubVM {
+func (h *fakeHub) create(name string) hubVM { return h.createWith(name, nil) }
+
+func (h *fakeHub) createWith(name string, edit func(*hubVM)) hubVM {
 	h.mu.Lock()
 	h.nextID++
 	id := "vm" + string(rune('a'+h.nextID))
@@ -175,6 +177,9 @@ func (h *fakeHub) create(name string) hubVM {
 		Spec:   proto.VMSpec{ID: id, Name: name, CPUs: cpus, MemoryMB: 1024, DiskGB: 10},
 		Boot:   &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAA"}},
 		NodeID: "n1", Power: proto.PowerRunning, Generation: 1, VMStatus: proto.VMStatus{ID: id, State: proto.StatePending},
+	}
+	if edit != nil {
+		edit(vm)
 	}
 	h.vmsByID[id] = vm
 	out := *vm

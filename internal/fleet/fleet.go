@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,8 +19,11 @@ import (
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
+
+const platformImageRef = "observatory/standard"
 
 type Fleet struct {
 	store *store.Store
@@ -33,29 +37,45 @@ type Fleet struct {
 	stop    context.CancelFunc
 	updates sync.WaitGroup
 
-	mu       sync.Mutex
-	conns    map[uuid.UUID]*conn
-	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
-	metrics  map[uuid.UUID][]MetricSample
-	retrying map[uuid.UUID]bool // orgs with a pending integrationRetry push
+	mu           sync.Mutex
+	conns        map[uuid.UUID]*conn
+	diskErrs     map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
+	metrics      map[uuid.UUID][]MetricSample
+	retrying     map[uuid.UUID]bool       // orgs with a pending integrationRetry push
+	imageRetries map[uuid.UUID]imageRetry // by node
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
 	updateTimeouts updateTimeouts
 	betweenVMReads func() // test hook in vmsBack
+
+	registryHost string
+	issuer       *registry.Issuer
+	builderBoot  BuilderBoot
 }
+
+// BuilderBoot returns a builder VM's whole env and its integration tokens.
+type BuilderBoot func(ctx context.Context, v store.VM) (map[string]string, []proto.IntegrationToken, error)
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
 	maxSeq, err := s.MaxReleaseSeq(ctx)
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{},
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }
+
+// PullImagesFrom makes nodes pull VM images through the hub's registry proxy at host, with node pull tokens of iss; call it before nodes connect.
+func (f *Fleet) PullImagesFrom(host string, iss registry.Issuer) {
+	f.registryHost, f.issuer = host, &iss
+}
+
+// BootBuildersWith makes builder VMs boot with fn's env instead of their owner's; call it before nodes connect.
+func (f *Fleet) BootBuildersWith(fn BuilderBoot) { f.builderBoot = fn }
 
 // Close stops update runs and waits for them; they also stop when New's ctx ends.
 func (f *Fleet) Close() {
@@ -132,6 +152,41 @@ func (f *Fleet) retryIntegrations(org uuid.UUID) {
 		f.mu.Unlock()
 		f.NotifyOrg(org)
 	})
+}
+
+type imageRetry struct {
+	delay   time.Duration
+	pending bool
+}
+
+// retryImages pushes to node again with backoff while it has VMs whose image is not prepared yet; a list without any resets the backoff.
+func (f *Fleet) retryImages(node uuid.UUID, waiting bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.imageRetries[node]
+	switch {
+	case !waiting && !r.pending:
+		delete(f.imageRetries, node)
+		return
+	case !waiting:
+		r.delay = 0
+	case r.pending:
+		return
+	default:
+		r.delay = min(max(r.delay*2, imageRetryMin), imageRetryMax)
+		r.pending = true
+		time.AfterFunc(r.delay, func() {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			r := f.imageRetries[node]
+			r.pending = false
+			f.imageRetries[node] = r
+			if c := f.conns[node]; c != nil {
+				c.kick()
+			}
+		})
+	}
+	f.imageRetries[node] = r
 }
 
 func (f *Fleet) Disconnect(node uuid.UUID) {
@@ -237,6 +292,8 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		rank[n.ID] = i
 	}
 	out := make([]proto.DesiredVM, 0, len(vms))
+	waiting := false
+	defer func() { f.retryImages(node, waiting) }()
 	for _, v := range vms {
 		plan := plans[v.ID]
 		if plan.Hold {
@@ -262,8 +319,14 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if err != nil {
 			return nil, nil, err
 		}
+		img, err := f.desiredImage(ctx, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		waiting = waiting || img != nil
 		out = append(out, proto.DesiredVM{
-			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
+			Spec: proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID], Image: img,
+				NoTemplate: v.Kind == store.VMKindBuilder},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
 			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg, Integrations: tokens,
@@ -271,6 +334,54 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		})
 	}
 	return out, releasing, nil
+}
+
+// desiredImage is set until the node reports the VM's own image (Provisioned flips before the pull): with a fresh pull token, or Gone if the hub cannot locate it.
+func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, error) {
+	if v.ImageDigest == "" || v.ImageRef == platformImageRef || v.Provisioned && strings.HasSuffix(v.Image, "@"+v.ImageDigest) {
+		return nil, nil
+	}
+	if v.Kind == store.VMKindBuilder {
+		// The builder image is public, so the node pulls it anonymously.
+		repo, _, _ := strings.Cut(v.ImageRef, "@")
+		return &proto.ImageRef{Repo: repo, Digest: v.ImageDigest}, nil
+	}
+	gone := &proto.ImageRef{Digest: v.ImageDigest, Gone: true}
+	if f.issuer == nil {
+		slog.Error("vm image without a registry", "vm", v.ID)
+		return gone, nil
+	}
+	var ver store.ImageVersion
+	var err error
+	if v.ImageID != nil {
+		ver, err = f.store.ImageVersion(ctx, *v.ImageID, v.ImageDigest)
+	} else {
+		ver, err = f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		// A VM prepared from a since-deleted index version reported its child digest, which no row maps back anymore.
+		if v.Provisioned && v.Image != "" {
+			return nil, nil
+		}
+		return gone, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Of an index the node pulls, caches and reports the amd64 child.
+	digest := v.ImageDigest
+	if ver.PlatformDigest != "" {
+		if v.Provisioned && strings.HasSuffix(v.Image, "@"+ver.PlatformDigest) {
+			return nil, nil
+		}
+		digest = ver.PlatformDigest
+	}
+	repo := "i/" + ver.ImageID.String()
+	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: digest}
+	if ref.PullToken, err = f.issuer.NodePullToken(v.OrgID, []string{repo}); err != nil {
+		slog.Error("node pull token", "vm", v.ID, "err", err)
+	}
+	return ref, nil
 }
 
 // nics lists the management NIC, then network NICs by network name (rank); names and MACs match the gateway's ports.
@@ -294,6 +405,9 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
 func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.Boot, _ []proto.HostBoundSecret, _ []proto.IntegrationToken, unresolved bool, _ error) {
+	if v.Kind == store.VMKindBuilder {
+		return f.bootBuilder(ctx, v)
+	}
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -332,6 +446,23 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 		keys = []string{}
 	}
 	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, unresolved, nil
+}
+
+// bootBuilder gives a builder VM no SSH keys and nothing of its owner's env; one whose build ended (ErrNotFound) gets an empty env until it is deleted.
+func (f *Fleet) bootBuilder(ctx context.Context, v store.VM) (*proto.Boot, []proto.HostBoundSecret, []proto.IntegrationToken, bool, error) {
+	boot := &proto.Boot{SSHPublicKeys: []string{}, Env: map[string]string{}}
+	if f.builderBoot == nil {
+		slog.Error("builder vm without a build scheduler", "vm", v.ID)
+		return boot, nil, nil, false, nil
+	}
+	env, tokens, err := f.builderBoot(ctx, v)
+	if errors.Is(err, store.ErrNotFound) {
+		return boot, nil, nil, false, nil
+	} else if err != nil {
+		return nil, nil, nil, false, err
+	}
+	boot.Env = env
+	return boot, nil, tokens, false, nil
 }
 
 // IntegrationEntries turns resolved integrations into proxy secrets (proxy mode) and the tokens a VM receives.

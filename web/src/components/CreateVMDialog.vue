@@ -4,6 +4,8 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import ImagePicker from '@/components/ImagePicker.vue'
+import { defaultSourceLabel, type ImageDefault } from '@/composables/images'
 
 interface Owner {
   kind: 'user' | 'team'
@@ -27,6 +29,8 @@ const nodeId = ref('')
 const cpus = ref<number | null>(2)
 const memoryGB = ref<number | null>(4)
 const diskGB = ref<number | null>(20)
+const image = ref('')
+const cascade = ref<ImageDefault['effective'] | null>(null)
 const busy = ref(false)
 const error = ref('')
 
@@ -34,6 +38,9 @@ const ownerKey = (o: Owner) => `${o.kind}:${o.id}`
 const ownerOptions = computed(() => props.owners.map((o) => ({ value: ownerKey(o), label: o.kind === 'user' ? t('vms.ownerMe') : t('vms.ownerTeam', { name: o.name }) })))
 const nodeOptions = computed(() => props.nodes.map((n) => ({ value: n.id, label: n.online ? n.name : `${n.name} (${t('nodes.states.offline')})` })))
 const selected = computed(() => props.owners.find((o) => ownerKey(o) === owner.value))
+const defaultLabel = computed(() =>
+  cascade.value ? t('images.defaultOption', { ref: cascade.value.ref, source: defaultSourceLabel(cascade.value.source, t) }) : t('images.defaultOptionUnknown'),
+)
 const memoryMB = computed(() => (memoryGB.value === null ? null : Math.round(memoryGB.value * 1024)))
 
 const inRange = (v: number | null, min: number, max: number) => v !== null && Number.isInteger(v) && v >= min && v <= max
@@ -55,9 +62,19 @@ watch(
     cpus.value = 2
     memoryGB.value = 4
     diskGB.value = 20
+    image.value = ''
     error.value = ''
   },
 )
+
+watch(selected, async (o) => {
+  cascade.value = null
+  if (!o) return
+  const level = o.kind === 'team' ? `team/${o.id}` : 'user'
+  // Without image:list on the team level the dialog just says the default applies.
+  const res = await api<ImageDefault>(`/api/orgs/${props.orgId}/image-defaults/${level}`).catch(() => null)
+  if (selected.value === o) cascade.value = res?.effective ?? null
+})
 
 async function create() {
   const o = selected.value
@@ -74,6 +91,7 @@ async function create() {
         cpus: cpus.value,
         memoryMB: memoryMB.value,
         diskGB: diskGB.value,
+        ...(image.value ? { image: image.value } : {}),
       }),
     })
     emit('created')
@@ -99,6 +117,10 @@ async function create() {
         <Select v-model="owner" :options="ownerOptions" :aria-label="t('vms.owner')" />
       </label>
       <small>{{ selected?.kind === 'team' ? t('vms.hintTeam') : t('vms.hintUser') }}</small>
+      <label>
+        {{ t('images.image') }}
+        <ImagePicker v-model="image" :org-id="orgId" :default-label="defaultLabel" />
+      </label>
       <label>
         {{ t('vms.node') }}
         <Select v-model="nodeId" :options="nodeOptions" :aria-label="t('vms.node')" />

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/wgkey"
@@ -1759,4 +1761,223 @@ func TestFleetStoresImage(t *testing.T) {
 	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageReady })
 	node.send(proto.Message{Type: "image", Image: &proto.ImageStatus{Version: "v1", State: proto.ImageFailed, Error: "boom"}})
 	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageFailed && i.Error == "boom" })
+}
+
+func TestDesiredVMImage(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, unknown := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	setImage := func(v store.VM, ref, d string) {
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = $2, image_digest = $3 WHERE id = $1", v.ID, ref, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	user := e.vm(e.org.ID, n.ID, "user", &e.owner, nil)
+	setImage(user, "org/tools", digest)
+	platform := e.vm(e.org.ID, n.ID, "platform", &e.owner, nil)
+	setImage(platform, "observatory/standard", unknown)
+	e.vm(e.org.ID, n.ID, "plain", &e.owner, nil)
+	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
+	setImage(gone, "org/gone", unknown)
+	other, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "other", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: other.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	byID := e.vm(e.org.ID, n.ID, "byid", &e.owner, nil)
+	setImage(byID, "org/other", digest)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_id = $2 WHERE id = $1", byID.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleID := e.vm(e.org.ID, n.ID, "staleid", &e.owner, nil)
+	setImage(staleID, "org/tools", unknown)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_id = $2 WHERE id = $1", staleID.ID, img.ID); err != nil {
+		t.Fatal(err)
+	}
+	prepared := e.vm(e.org.ID, n.ID, "prepared", &e.owner, nil)
+	setImage(prepared, "org/tools", digest)
+	if err := e.s.SetVMStatus(ctx, n.ID, proto.VMStatus{ID: prepared.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + digest}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]*proto.ImageRef{}
+	for _, d := range e.connect(cred).desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["platform"] != nil || got["plain"] != nil || got["prepared"] != nil {
+		t.Fatalf("image sent: platform %+v, plain %+v, prepared %+v", got["platform"], got["plain"], got["prepared"])
+	}
+	if g := got["gone"]; g == nil || !g.Gone || g.Repo != "" || g.PullToken != "" || g.Digest != unknown {
+		t.Fatalf("gone image = %+v", g)
+	}
+	if b := got["byid"]; b == nil || b.Repo != "hub.test/i/"+other.ID.String() {
+		t.Fatalf("image_id not preferred: %+v", b)
+	}
+	if g := got["staleid"]; g == nil || !g.Gone {
+		t.Fatalf("missing version under image_id = %+v", g)
+	}
+	u := got["user"]
+	if u == nil || u.Repo != "hub.test/i/"+img.ID.String() || u.Digest != digest {
+		t.Fatalf("user image = %+v", u)
+	}
+	var c registry.Claims
+	if _, _, err := jwt.NewParser().ParseUnverified(u.PullToken, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Subject != "node-org:"+e.org.ID.String() || len(c.Access) != 1 || c.Access[0].Name != "i/"+img.ID.String() || !slices.Equal(c.Access[0].Actions, []string{"pull"}) {
+		t.Fatalf("claims = %+v", c)
+	}
+}
+
+func TestDesiredVMImageIndex(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, child := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("c", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: index, PlatformDigest: child, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	for _, name := range []string{"fresh", "prepared"} {
+		v := e.vm(e.org.ID, n.ID, name, &e.owner, nil)
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = 'org/tools', image_digest = $2, image_id = $3 WHERE id = $1", v.ID, index, img.ID); err != nil {
+			t.Fatal(err)
+		}
+		if name == "prepared" {
+			if err := e.s.SetVMStatus(ctx, n.ID, proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + child}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	node := e.connect(cred)
+	got := map[string]*proto.ImageRef{}
+	for _, d := range node.desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["prepared"] != nil {
+		t.Fatalf("image sent to a VM prepared from the amd64 child: %+v", got["prepared"])
+	}
+	if f := got["fresh"]; f == nil || f.Digest != child || f.Repo != "hub.test/i/"+img.ID.String() {
+		t.Fatalf("fresh image = %+v, want the amd64 child", f)
+	}
+	if err := e.s.DeleteImageVersion(ctx, img.ID, index); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	got = map[string]*proto.ImageRef{}
+	for _, d := range node.desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["prepared"] != nil || got["fresh"] == nil || !got["fresh"].Gone {
+		t.Fatalf("after deleting the version: prepared %+v, fresh %+v", got["prepared"], got["fresh"])
+	}
+}
+
+func TestImagePullRetried(t *testing.T) {
+	ctx := context.Background()
+	old := *fleet.ImageRetryMin
+	*fleet.ImageRetryMin = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.ImageRetryMin = old })
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	v := e.vm(e.org.ID, n.ID, "user", &e.owner, nil)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = 'org/tools', image_digest = $2 WHERE id = $1", v.ID, digest); err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	token := func(m proto.Message) string {
+		t.Helper()
+		if len(m.Desired) != 1 || m.Desired[0].Spec.Image == nil {
+			t.Fatalf("desired = %+v", m.Desired)
+		}
+		return m.Desired[0].Spec.Image.PullToken
+	}
+	first := token(node.desired())
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "image pull failed: UNAUTHORIZED"}})
+	// Nothing changed on the hub: only the retry pushes again, with a new token.
+	if second := token(node.desired()); second == "" || second == first {
+		t.Fatalf("retry token %q after %q", second, first)
+	}
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + digest}})
+	// Retries go on until a list finds the image prepared; then the pushes stop.
+	for m := node.desired(); m.Desired[0].Spec.Image != nil; m = node.desired() {
+	}
+	select {
+	case m := <-node.msgs:
+		t.Fatalf("push after the image was prepared: %+v", m)
+	case <-time.After(400 * time.Millisecond):
+	}
+}
+
+func TestDesiredBuilderVM(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.envVar("OWNER_SECRET", "owner")
+	e.sshKey(e.owner)
+	digest := "sha256:" + strings.Repeat("c", 64)
+	n, cred := e.node(e.org.ID, "a")
+	builder, err := e.s.CreateVM(ctx, store.VM{OrgID: e.org.ID, NodeID: n.ID, UserID: &e.owner, Name: "build-x", CPUs: 2, MemoryMB: 4096, DiskGB: 40, CreatedBy: e.owner,
+		Kind: store.VMKindBuilder, ImageRef: "ghcr.io/asterism-dev/observatory-builder@" + digest, ImageDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.BootBuildersWith(func(_ context.Context, v store.VM) (map[string]string, []proto.IntegrationToken, error) {
+		if v.ID != builder.ID {
+			t.Errorf("hook called for %s", v.Name)
+		}
+		return map[string]string{"OBSERVATORY_BUILD_ID": "b"}, []proto.IntegrationToken{{Kind: "github", Token: "real"}}, nil
+	})
+	got := e.connect(cred).desired().Desired
+	if len(got) != 1 {
+		t.Fatalf("desired: %+v", got)
+	}
+	d := got[0]
+	if img := d.Spec.Image; img == nil || img.Repo != "ghcr.io/asterism-dev/observatory-builder" || img.Digest != digest || img.PullToken != "" || img.Gone {
+		t.Fatalf("builder image = %+v", d.Spec.Image)
+	}
+	if len(d.Boot.Env) != 1 || d.Boot.Env["OBSERVATORY_BUILD_ID"] != "b" || len(d.Boot.SSHPublicKeys) != 0 || d.Egress != nil {
+		t.Fatalf("builder boot = %+v, egress %+v", d.Boot, d.Egress)
+	}
+	if len(d.Integrations) != 1 || d.Integrations[0].Token != "real" {
+		t.Fatalf("builder integrations = %+v", d.Integrations)
+	}
+	if !d.Spec.NoTemplate {
+		t.Fatal("builder spec allows a fast-boot template")
+	}
 }

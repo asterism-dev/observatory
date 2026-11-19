@@ -40,7 +40,7 @@ func TestCallSendsBearerAndMapsErrors(t *testing.T) {
 
 	err := c.call("POST", "/api/orgs", map[string]string{"name": ""}, nil)
 	var ae *apiError
-	if !errors.As(err, &ae) || *ae != (apiError{400, "invalid name"}) {
+	if !errors.As(err, &ae) || *ae != (apiError{Status: 400, Msg: "invalid name"}) {
 		t.Fatalf("got %#v", err)
 	}
 	if got := h.calls("POST /api/orgs")[0].Body; got != `{"name":""}` {

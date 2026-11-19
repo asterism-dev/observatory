@@ -21,6 +21,7 @@ const (
 	// templateMarker in a VM dir names the template Prepare cloned root.img from; the first Start restores that template.
 	templateMarker = "from-template"
 	templatesDir   = ".templates"
+	templateImage  = "image" // in a template dir: the digest of the image it was built from
 )
 
 // templateKey identifies the template f can start from: same image, kernel and init, Firecracker, vCPUs, RAM, NIC count, seed and boot config.
@@ -90,4 +91,9 @@ func evictTemplates(dir string, keep int) error {
 		tpls = tpls[:len(tpls)-1]
 	}
 	return nil
+}
+
+// usesTemplate says whether a VM is cloned from, and its shape builds, a fast-boot template.
+func usesTemplate(fastBoot bool, s proto.VMSpec) bool {
+	return fastBoot && !s.NoTemplate && len(s.Attachments) == 0 && s.DiskGB >= templateDiskGB
 }

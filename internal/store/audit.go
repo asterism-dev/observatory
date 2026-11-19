@@ -86,6 +86,15 @@ const (
 	ActionNetworkDelete       = "network:delete"
 	ActionSSHKeyAdd           = "sshkey:add"
 	ActionSSHKeyDelete        = "sshkey:delete"
+	ActionImageCreate         = "image:create"
+	ActionImageUpdate         = "image:update"
+	ActionImageDelete         = "image:delete"
+	ActionImageRecipe         = "image:recipe"
+	ActionImageVersionDelete  = "image:version-delete"
+	ActionImageTag            = "image:tag"
+	ActionImageDefault        = "image:default"
+	ActionImageBuild          = "image:build"
+	ActionImageBuildCancel    = "image:build-cancel"
 )
 
 type AuditEntry struct {

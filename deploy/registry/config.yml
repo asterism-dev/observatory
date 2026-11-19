@@ -1,0 +1,21 @@
+# Compose sets the token realm and the hub's notification endpoint (REGISTRY_AUTH_TOKEN_REALM, REGISTRY_NOTIFICATIONS_ENDPOINTS).
+version: 0.1
+log:
+  # At info the registry logs the notification headers, which carry the events secret.
+  level: warn
+  fields:
+    service: registry
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true
+http:
+  addr: :5000
+  # Clients reach the registry through the hub's /v2/ proxy, so upload locations must not name the registry's host.
+  relativeurls: true
+auth:
+  token:
+    service: observatory
+    issuer: observatory-hub
+    rootcertbundle: /keys/token.crt

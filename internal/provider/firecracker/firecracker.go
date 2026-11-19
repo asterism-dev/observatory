@@ -34,8 +34,9 @@ type Provider struct {
 	imageRef string
 	store    ociimage.Store
 	// storeMu is held for writing only while pruning, which must not remove what a pull or disk build is using.
-	storeMu sync.RWMutex
-	boot    guestboot
+	storeMu  sync.RWMutex
+	platform string // digest of the ready guest image; guarded by storeMu
+	boot     guestboot
 
 	mu  sync.Mutex // serializes NAT address allocation
 	nbd linuxvm.NBDWatch
@@ -156,7 +157,7 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 	if err := os.Remove(marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if p.fastBoot && len(f.Spec.Attachments) == 0 && f.Spec.DiskGB >= templateDiskGB {
+	if usesTemplate(p.fastBoot, f.Spec) {
 		key, err := templateKey(f, p.fcVersion, p.boot.id)
 		if err != nil {
 			return err

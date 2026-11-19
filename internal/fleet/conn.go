@@ -27,6 +27,9 @@ var desiredRetry = 5 * time.Second
 // integrationRetry is how long the hub waits before pushing again to an org whose integrations failed to resolve.
 var integrationRetry = time.Minute
 
+// imageRetryMin doubles up to imageRetryMax between pushes to a node with VMs whose image is not prepared yet, each with a fresh pull token.
+var imageRetryMin, imageRetryMax = 30 * time.Second, 5 * time.Minute
+
 // The chassis cert is re-signed from the node's start-up CSR when less than underlayRenewBefore is left, checked every underlayCheck.
 var (
 	underlayCheck       = 24 * time.Hour

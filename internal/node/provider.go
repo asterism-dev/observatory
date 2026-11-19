@@ -56,8 +56,10 @@ type RestoreFrom struct {
 }
 
 // GuestImages is a provider that pulls the guest image; RunGuestImages runs until ctx ends and calls report on every state change.
+// PullImage pulls a VM's own image and returns it pinned (ref@digest) with its config.
 type GuestImages interface {
 	RunGuestImages(ctx context.Context, report func(proto.ImageStatus))
+	PullImage(ctx context.Context, img proto.ImageRef) (string, proto.ImageConfig, error)
 }
 
 const PreparingImage = "preparing guest image"

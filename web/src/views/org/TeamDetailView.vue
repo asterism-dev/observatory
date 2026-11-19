@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import DefaultImageSection from '@/components/DefaultImageSection.vue'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
@@ -183,6 +184,8 @@ watch(
           <template #empty>{{ t('teams.noMembers') }}</template>
         </DataTable>
       </Section>
+
+      <DefaultImageSection :org-id="org.id" :level="`team/${team.id}`" :editable="team.canUpdate" :description="t('images.teamDefaultHint')" />
 
       <Section v-if="team.canDelete" :label="t('teams.delete')">
         <Card tone="danger">

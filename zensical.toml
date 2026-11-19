@@ -25,6 +25,7 @@ nav = [
     { "Network" = "network.md" },
     { "Disks" = "disks.md" },
     { "Guest image" = "guest.md" },
+    { "Images" = "images.md" },
     { "Integrations" = "integrations.md" },
     { "Egress proxy" = "egress.md" },
   ] },

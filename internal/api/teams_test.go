@@ -88,6 +88,14 @@ func TestTeamCRUD(t *testing.T) {
 	if rec := e.send("PATCH", teamPath(org, id), memberTok, `{"name":"x"}`); rec.Code != 403 {
 		t.Fatalf("member rename: %d", rec.Code)
 	}
+	for _, name := range []string{"me", "org", "observatory"} {
+		if rec := e.send("POST", base, ownerTok, `{"name":"`+name+`"}`); rec.Code != 422 {
+			t.Fatalf("create %s: %d", name, rec.Code)
+		}
+		if rec := e.send("PATCH", teamPath(org, id), ownerTok, `{"name":"`+name+`"}`); rec.Code != 422 {
+			t.Fatalf("rename to %s: %d", name, rec.Code)
+		}
+	}
 	if rec := e.send("PATCH", teamPath(org, id), ownerTok, `{"name":"platform"}`); rec.Code != 204 {
 		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
 	}

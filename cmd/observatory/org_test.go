@@ -169,7 +169,7 @@ func TestLimitSetKeepsOtherValues(t *testing.T) {
 	h.on("PUT /api/orgs/o1/limits/team:t1", 204, "")
 	mustRun(t, c, errb, 2, "limit", "set", "org", "--vcpu", "16")
 	mustRun(t, c, errb, 0, "limit", "set", "team:backend", "--vms", "3")
-	if got := h.calls("PUT /api/orgs/o1/limits/team:t1")[0].Body; got != `{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":3,"snapshotCount":null}` {
+	if got := h.calls("PUT /api/orgs/o1/limits/team:t1")[0].Body; got != `{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":3,"snapshotCount":null,"imageStorageGb":null}` {
 		t.Errorf("body %s", got)
 	}
 	if len(h.calls("PUT /api/admin/orgs/o1/limits")) != 0 {

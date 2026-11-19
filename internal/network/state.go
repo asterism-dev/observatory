@@ -70,6 +70,11 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 		if o == nil {
 			continue
 		}
+		if vm.Kind == store.VMKindBuilder {
+			// A builder holds real secrets: its port keeps it connected, but no device may reach it and it gets no name.
+			o.Ports = append(o.Ports, port(MgmtPort(vm.ID), vm, vm.MgmtIP, nil))
+			continue
+		}
 		vms[vm.ID] = vm
 		o.Ports = append(o.Ports, port(MgmtPort(vm.ID), vm, vm.MgmtIP, allowFrom(connect, vm, devices[vm.OrgID])))
 		o.Records[strings.ToLower(vm.Name)+".internal"] = vm.MgmtIP.String()

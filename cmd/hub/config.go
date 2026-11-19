@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
@@ -14,6 +15,9 @@ type config struct {
 	SecretsKey                                                                                                                       seal.Key
 	Dev, DevSkipVerify                                                                                                               bool
 	DevClaudeTokenURL, DocsURL                                                                                                       string
+	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
+	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
+	BuilderImage, BuilderHubURL string
 }
 
 const minTokenLen = 32
@@ -69,6 +73,24 @@ func loadConfig(getenv func(string) string) (config, error) {
 			return config{}, errors.New("OBSERVATORY_PUBLIC_URL must be an absolute URL")
 		}
 		cfg.GatewayHost = u.Hostname()
+	}
+	cfg.RegistryURL, cfg.RegistryKeyDir, cfg.RegistryCertDir = getenv("OBSERVATORY_REGISTRY_URL"), getenv("OBSERVATORY_REGISTRY_KEY_DIR"), getenv("OBSERVATORY_REGISTRY_CERT_DIR")
+	if cfg.RegistryURL != "" {
+		if u, err := url.Parse(cfg.RegistryURL); err != nil || u.Scheme == "" || u.Host == "" {
+			return config{}, errors.New("OBSERVATORY_REGISTRY_URL must be an absolute URL")
+		}
+		if cfg.RegistryKeyDir == "" {
+			return config{}, errors.New("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_KEY_DIR")
+		}
+		if cfg.RegistryEventsSecret = getenv("OBSERVATORY_REGISTRY_EVENTS_SECRET"); len(cfg.RegistryEventsSecret) < minTokenLen {
+			return config{}, fmt.Errorf("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_EVENTS_SECRET of at least %d characters", minTokenLen)
+		}
+	}
+	if cfg.BuilderImage = getenv("OBSERVATORY_BUILDER_IMAGE"); cfg.BuilderImage == "" {
+		cfg.BuilderImage = builds.BuilderRepo
+	}
+	if cfg.BuilderHubURL = getenv("OBSERVATORY_BUILDER_HUB_URL"); cfg.BuilderHubURL == "" {
+		cfg.BuilderHubURL = cfg.PublicURL
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

@@ -1,6 +1,7 @@
 # Deploying the hub with Docker Compose
 
-`deploy/compose.yaml` runs the hub with its Postgres, the WireGuard/OVN gateway and the storage server, configured
+`deploy/compose.yaml` runs the hub with its Postgres, the WireGuard/OVN gateway, the storage server and the image
+registry, configured
 only through `deploy/.env`. A login service is not part of it: use any OIDC provider (see [idp.md](idp.md)) or the
 Zitadel stack in `deploy/idp/`.
 
@@ -83,6 +84,35 @@ cannot read it.
   URL.
 - `OBSERVATORY_SECRETS_KEY` encrypts every stored secret. Back it up; a new key makes them unreadable.
 - `OBSERVATORY_OIDC_ISSUER` must be reachable from the hub container, so not `localhost`.
+- `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub. They arrive at
+  `/internal/registry/events`, which the `tls` profile's Caddy answers with 404 from outside; behind your own proxy,
+  block `/internal/*` as well.
+- `OBSERVATORY_REGISTRY_URL` (the compose file sets `http://registry:5000`), `OBSERVATORY_REGISTRY_KEY_DIR` and
+  `OBSERVATORY_REGISTRY_CERT_DIR` turn the registry on; without a URL the hub has no images. The events secret must be
+  at least 32 characters.
+- `OBSERVATORY_BUILDER_IMAGE` overrides the builder image repository and `OBSERVATORY_BUILDER_HUB_URL` the hub URL
+  builder VMs use (default: the public URL); set the latter when VMs cannot reach the public URL.
+
+## Image registry
+
+The `registry` service stores image versions and publishes no port: Docker clients and nodes reach it through the
+hub's `/v2/` proxy, and the hub issues the registry tokens. The registry reports every push to the hub, which turns it
+into an image version or deletes it (not linux/amd64, over the org's storage limit) and shows the reason on the image.
+The hub's token key lives in the volume `registry-keys`, its certificate (all the registry mounts) in `registry-certs`,
+the images in `registry-data`. Only tagged pushes count: a push by digest alone (`…/i/<id>@sha256:…`) becomes no
+version, and its layers do not count towards the storage limit.
+
+The registry notifies the hub in memory only: a push whose notification the hub has not yet received when the registry
+restarts is lost (the layers stay until garbage collection, push again). Docker clients need the hub over https;
+nodes and builder VMs may use the plain internal URL. See [images.md](images.md) for using it.
+
+Deleting versions or images removes their manifests; the disk space comes back with garbage collection, which the hub
+does not run. Garbage collection must not run next to a push, so stop the registry for it, daily from the host's crontab
+at a quiet hour (pushes and pulls fail for the minute it takes):
+
+```sh
+0 4 * * * cd /path/to/observatory && docker compose -f deploy/compose.yaml stop registry && docker compose -f deploy/compose.yaml --profile maintenance run --rm registry-gc; docker compose -f deploy/compose.yaml start registry
+```
 
 ## Updating
 
@@ -96,5 +126,5 @@ The hub checks GitHub for a newer release every 6 hours and shows platform admin
 an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDATE_CHECK=1` in `deploy/.env` turns the
 check off (air-gapped hosts). Builds that are not a release tag never check.
 
-The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs` and, with
-TLS, `caddy-data`.
+The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
+`registry-data`, `registry-keys`, `registry-certs` and, with TLS, `caddy-data`.
