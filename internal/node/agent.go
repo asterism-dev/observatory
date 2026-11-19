@@ -225,7 +225,7 @@ func (a *Agent) connect(ctx context.Context) error {
 			go a.startChassis(ctx, *m.Underlay)
 		case m.Type == "update":
 			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
-			go a.runUpdate(ctx, func(m proto.Message) error {
+			a.runUpdate(ctx, func(m proto.Message) error {
 				a.mu.Lock()
 				defer a.mu.Unlock()
 				if a.send != nil && a.send(m) == nil {

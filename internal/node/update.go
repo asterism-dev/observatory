@@ -36,16 +36,18 @@ func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
 	if !a.updating.CompareAndSwap(false, true) {
 		return
 	}
-	defer a.updating.Store(false)
-	err := a.Updater.Start(ctx, hubBase(a.HubURL))
-	if err == nil {
-		err = a.Updater.Wait(ctx)
-	}
-	if err != nil && ctx.Err() == nil {
-		// No restart happened, so the next unrelated one must hibernate as usual.
-		a.removeShutdownMarker()
-		fail(err)
-	}
+	go func() {
+		defer a.updating.Store(false)
+		err := a.Updater.Start(ctx, hubBase(a.HubURL))
+		if err == nil {
+			err = a.Updater.Wait(ctx)
+		}
+		if err != nil && ctx.Err() == nil {
+			// No restart happened, so the next unrelated one must hibernate as usual.
+			a.removeShutdownMarker()
+			fail(err)
+		}
+	}()
 }
 
 func (a *Agent) removeShutdownMarker() {

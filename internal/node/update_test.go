@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -105,7 +104,9 @@ func TestUpdateIgnoresSecondRequest(t *testing.T) {
 	env.hub.sendUpdate()
 	eventually(t, "started", func() bool { return len(u.gotStarts()) == 1 })
 	env.hub.sendUpdate()
-	time.Sleep(100 * time.Millisecond)
+	// The agent handles messages in order, so once this VM runs the second request was handled.
+	vm := env.hub.create("after")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 	if n := len(u.gotStarts()); n != 1 {
 		t.Fatalf("Start called %d times", n)
 	}
