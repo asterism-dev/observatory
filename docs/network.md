@@ -90,6 +90,14 @@ Import it with `wg-quick up <file>` or the WireGuard app, then `ssh ubuntu@<vm>.
 their own devices; org admins see and delete every device of the org but never get a config. Removing a member from
 the org deletes their devices in it; deleting a device cuts its traffic within one gateway poll.
 
+On macOS:
+
+- If `<vm>.internal` does not resolve while the tunnel is up, another resolver answers first: a VPN such as Tailscale
+  or an older `/etc/resolver/internal`. Route the domain to the gateway with
+  `echo "nameserver 10.192.0.1" | sudo tee /etc/resolver/internal`.
+- A device on the machine that runs the gateway container gets no handshake through the machine's own address (the
+  WireGuard app sends over the physical interface). Set `Endpoint = 127.0.0.1:51821` in that device's config.
+
 ## Isolation
 
 - A device reaches only the VMs its person may `vm:connect`: the owner of a user VM, the members of the owning team for
