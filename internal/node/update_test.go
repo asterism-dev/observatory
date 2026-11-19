@@ -50,6 +50,7 @@ func TestHubBase(t *testing.T) {
 	for in, want := range map[string]string{
 		"ws://10.0.0.1:8080/api/nodes/connect":    "http://10.0.0.1:8080",
 		"wss://hub.example.com/api/nodes/connect": "https://hub.example.com",
+		"wss://h/obs/api/nodes/connect":           "https://h/obs",
 	} {
 		if got := hubBase(in); got != want {
 			t.Errorf("hubBase(%q) = %q, want %q", in, got, want)

@@ -18,8 +18,8 @@ type Updater interface {
 
 func hubBase(connectURL string) string {
 	scheme, rest, _ := strings.Cut(connectURL, "://")
-	host, _, _ := strings.Cut(rest, "/")
-	return strings.Replace(scheme, "ws", "http", 1) + "://" + host
+	base, _, _ := strings.Cut(rest, "/api/nodes/connect")
+	return strings.Replace(scheme, "ws", "http", 1) + "://" + base
 }
 
 func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
