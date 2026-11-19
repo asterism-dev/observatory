@@ -218,9 +218,9 @@ until the timeout. `vm restart` always waits for `stopped` between stop and star
 ## Confirmation
 
 Destructive commands (`vm delete`, `snapshot restore`, `snapshot delete`, `disk delete`, `disk release`,
-`network delete`, `image delete`, `image visibility` (when it deletes versions), `device delete`, `ssh-key delete`, `var delete`, `integration disconnect`, `node token` (enrolled
-node), `node delete`,
-`team delete`, `team remove`, `member remove`, `invite revoke`, `role delete`, `binding delete`, `session revoke`) ask
+`network delete`, `image delete`, `image visibility` (when it deletes versions), `device delete`, `ssh-key delete`,
+`var delete`, `integration disconnect`, `node token` (enrolled node), `node delete`, `team delete`, `team remove`,
+`member remove`, `invite revoke`, `role delete`, `binding delete`, `session revoke`) ask
 `[y/N]` on a terminal. `--yes` skips the question; without a terminal and without `--yes` they make no request and exit
 2 ("pass --yes to confirm"). `vm stop --force` and attach/detach with `--restart` do not ask.
 

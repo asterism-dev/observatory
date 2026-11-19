@@ -101,8 +101,9 @@ Research each pin from its upstream source, never from a mirror or a guess, and 
 
 ## Own images
 
-To keep, build and share images in observatory, see [images.md](images.md). Any `linux/amd64` OCI image boots as a VM; set it per node with `"firecracker": {"guestImage": "<ref>"}` in `node.json`
-([nodes.md](nodes.md#guest-image)). Build and try it locally with `docker build` and `docker run`. What the platform does:
+To keep, build and share images in observatory, see [images.md](images.md). Any `linux/amd64` OCI image boots as a VM;
+set it per node with `"firecracker": {"guestImage": "<ref>"}` in `node.json` ([nodes.md](nodes.md#guest-image)). Build
+and try it locally with `docker build` and `docker run`. What the platform does:
 
 - **Nothing is required inside:** no SSH server, systemd, shell, Python or cloud-init. The init runs the image in its
   own PID and mount namespace and serves SSH, the agent and the integrations from outside it.

@@ -110,15 +110,18 @@ Clone a private repository with the GitHub integration (reference `integration:p
 
 ```dockerfile
 RUN --mount=type=secret,id=github \
-    git clone https://x-access-token:$(cat /run/secrets/github)@github.com/org/repo /opt/repo
+    git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$(cat /run/secrets/github)" | base64 -w0)" \
+    clone https://github.com/org/repo /opt/repo
 ```
+
+The header form keeps the token out of `.git/config`; a token in the clone URL would be stored there, in the layer.
 
 Install private npm packages with a secret `NPM_TOKEN` (reference `secret:private/NPM_TOKEN`):
 
 ```dockerfile
 RUN --mount=type=secret,id=NPM_TOKEN \
     echo "//registry.npmjs.org/:_authToken=$(cat /run/secrets/NPM_TOKEN)" > /tmp/npmrc \
-    && NPM_CONFIG_USERCONFIG=/tmp/npmrc npm ci; rm -f /tmp/npmrc
+    && NPM_CONFIG_USERCONFIG=/tmp/npmrc npm ci && rm -f /tmp/npmrc
 ```
 
 Install from a private pip index with a secret `PIP_INDEX_URL` (the URL contains the credentials):
