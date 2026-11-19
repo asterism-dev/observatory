@@ -13,7 +13,7 @@ export interface Snapshot {
 </script>
 
 <script setup lang="ts">
-import { Badge, Button, Checkbox, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Checkbox, Dialog } from '@asterism-dev/lumen'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -21,6 +21,7 @@ import { api } from '@/api'
 import ForkVMDialog from '@/components/ForkVMDialog.vue'
 import TakeSnapshotDialog from '@/components/TakeSnapshotDialog.vue'
 import { gb, keepsMemory, type VmInfo } from '@/composables/nodes'
+import { ResourceList, ResourceRow, Section, Tag } from '@/ui'
 
 const props = defineProps<{ orgId: string; vm: VmInfo }>()
 const emit = defineEmits<{ changed: [] }>()
@@ -37,15 +38,6 @@ const deleting = ref<Snapshot | null>(null)
 
 const base = () => `/api/orgs/${props.orgId}/vms/${props.vm.id}/snapshots`
 const tones = { creating: 'warning', ready: 'success', error: 'danger' } as const
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('snapshots.name') },
-  { key: 'createdAt', label: t('vms.created') },
-  { key: 'memory', label: t('snapshots.memory') },
-  { key: 'disks', label: t('snapshots.disks') },
-  { key: 'size', label: t('snapshots.size') },
-  { key: 'state', label: t('vms.state') },
-  { key: 'actions', label: '' },
-])
 const size = (bytes: number) => (bytes ? `${gb(bytes / 1024 / 1024)} GB` : '–')
 const restartNeeded = computed(() => props.vm.power !== 'stopped')
 
@@ -113,25 +105,33 @@ watch(
 </script>
 
 <template>
-  <h2>{{ t('snapshots.section') }}</h2>
-  <p v-if="vm.canSnapshot"><Button :disabled="busy" @click="takeOpen = true">{{ t('snapshots.take') }}</Button></p>
-  <p v-if="error" role="alert">{{ error }}</p>
-  <Table :columns="columns" :rows="snapshots" row-key="id">
-    <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</template>
-    <template #cell-memory="{ row }">{{ row.memory ? t('snapshots.yes') : t('snapshots.no') }}</template>
-    <template #cell-disks="{ row }">{{ row.disks.map((x: Snapshot['disks'][number]) => x.name).join(', ') || '–' }}</template>
-    <template #cell-size="{ row }">{{ size(row.sizeBytes) }}</template>
-    <template #cell-state="{ row }">
-      <Badge :tone="tones[row.state as Snapshot['state']]">{{ t(`snapshots.states.${row.state}`) }}</Badge>
-      <small v-if="row.error" role="alert"> {{ row.error }}</small>
+  <Section :label="t('snapshots.section')">
+    <template #actions>
+      <Button v-if="vm.canSnapshot" size="sm" :disabled="busy" @click="takeOpen = true">{{ t('snapshots.take') }}</Button>
     </template>
-    <template #cell-actions="{ row }">
-      <Button v-if="vm.canRestore && row.state === 'ready'" size="sm" :disabled="busy" @click="startRestore(row)">{{ t('snapshots.restore') }}</Button>
-      <Button v-if="vm.canFork && row.state === 'ready'" size="sm" :disabled="busy" @click="forking = row">{{ t('snapshots.fork') }}</Button>
-      <Button v-if="vm.canSnapshot && row.state !== 'creating'" size="sm" variant="danger" :disabled="busy" @click="deleting = row">{{ t('snapshots.delete') }}</Button>
-    </template>
-    <template #empty>{{ t('snapshots.empty') }}</template>
-  </Table>
+    <p v-if="error" role="alert">{{ error }}</p>
+    <ResourceList :count="snapshots.length" :empty="t('snapshots.empty')">
+      <ResourceRow
+        v-for="s in snapshots"
+        :key="s.id"
+        :title="s.name"
+        :meta="`${d(new Date(s.createdAt), { dateStyle: 'short', timeStyle: 'short' })} · ${size(s.sizeBytes)}`"
+        :tone="tones[s.state]"
+      >
+        <template #tags>
+          <Tag :tone="tones[s.state]">{{ t(`snapshots.states.${s.state}`) }}</Tag>
+          <Tag v-if="s.memory">{{ t('snapshots.memory') }}</Tag>
+        </template>
+        <span v-if="s.disks.length" class="mono">{{ t('snapshots.disks') }}: {{ s.disks.map((x) => x.name).join(', ') }}</span>
+        <small v-if="s.error" role="alert">{{ s.error }}</small>
+        <template #actions>
+          <Button v-if="vm.canRestore && s.state === 'ready'" size="sm" variant="ghost" :disabled="busy" @click="startRestore(s)">{{ t('snapshots.restore') }}</Button>
+          <Button v-if="vm.canFork && s.state === 'ready'" size="sm" variant="ghost" :disabled="busy" @click="forking = s">{{ t('snapshots.fork') }}</Button>
+          <Button v-if="vm.canSnapshot && s.state !== 'creating'" size="sm" variant="ghost" :disabled="busy" @click="deleting = s">{{ t('snapshots.delete') }}</Button>
+        </template>
+      </ResourceRow>
+    </ResourceList>
+  </Section>
   <TakeSnapshotDialog v-model:open="takeOpen" :org-id="orgId" :vm="vm" @taken="load" />
   <ForkVMDialog :open="!!forking" :org-id="orgId" :vm-id="vm.id" :snapshot="forking" @update:open="(o) => !o && (forking = null)" />
   <Dialog

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { Button } from '@asterism-dev/lumen'
-import { CheckCircle2, Circle, Copy } from '@lucide/vue'
+import { CheckCircle2, Circle, LayoutDashboard } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
+import VMList from '@/components/VMList.vue'
 import { guideSteps, sshTarget, tiles, type DashboardInput } from '@/composables/dashboard'
+import type { VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { Card, CommandBox, Eyebrow, Page, Section } from '@/ui'
 
 type ListKey = 'nodes' | 'vms' | 'disks' | 'devices'
 
@@ -17,6 +20,7 @@ const { org, can } = useOrg()
 const { me } = useMe()
 
 const input = ref<DashboardInput | null>(null)
+const vmList = ref<VmInfo[] | null>(null)
 const errors = ref<Partial<Record<ListKey | 'sshKeys', string>>>({})
 const hidden = ref(false)
 const addNodeOpen = ref(false)
@@ -45,7 +49,7 @@ async function load() {
   const id = org.value.id
   const [nodes, vms, disks, devices, keys] = await Promise.allSettled([
     api<DashboardInput['nodes']>(`/api/orgs/${id}/nodes`),
-    api<{ vms: NonNullable<DashboardInput['vms']> }>(`/api/orgs/${id}/vms`).then((r) => r.vms),
+    api<{ vms: VmInfo[] }>(`/api/orgs/${id}/vms`).then((r) => r.vms),
     api<{ disks: NonNullable<DashboardInput['disks']> }>(`/api/orgs/${id}/disks`).then((r) => r.disks),
     api<DashboardInput['devices']>(`/api/orgs/${id}/devices`),
     api<unknown[]>('/api/me/ssh-keys'),
@@ -58,16 +62,18 @@ async function load() {
     if (!(r.reason instanceof ApiError && r.reason.status === 403)) errs[key] = t('dashboard.loadFailed')
     return null
   }
+  const vmRows = value('vms', vms)
   input.value = {
     me: me.value.user.id,
     canCreateNode: can('node:create'),
     nodes: value('nodes', nodes),
-    vms: value('vms', vms),
+    vms: vmRows,
     disks: value('disks', disks),
     devices: value('devices', devices),
     sshKeys: value('sshKeys', keys)?.length ?? 0,
     now: Date.now(),
   }
+  vmList.value = vmRows
   errors.value = errs
 }
 
@@ -75,6 +81,7 @@ watch(
   () => org.value?.id,
   (id) => {
     input.value = null
+    vmList.value = null
     errors.value = {}
     hidden.value = id ? readHidden(id) : false
     load()
@@ -92,16 +99,18 @@ const hasAnything = computed(() => {
   return !!i && [i.nodes, i.vms, i.disks, i.devices].some((l) => l && l.length > 0)
 })
 const base = computed(() => `/orgs/${org.value?.id}`)
-const copy = () => navigator.clipboard.writeText(sshCommand.value)
+const myVms = computed(() => (vmList.value ?? []).filter((v) => v.owner.kind === 'user' && v.owner.id === me.value?.user.id))
 </script>
 
 <template>
-  <template v-if="org">
-    <h1>{{ t('nav.dashboard') }}</h1>
-    <section v-if="showGuide" class="card guide">
+  <Page v-if="org" :icon="LayoutDashboard" :title="t('nav.dashboard')" :subtitle="t('dashboard.subtitle')">
+    <Card v-if="showGuide" class="guide">
       <div class="guide__head">
-        <h2>{{ t('dashboard.guide.title') }}</h2>
-        <Button size="sm" @click="hide">{{ t('dashboard.guide.hide') }}</Button>
+        <div class="guide__title">
+          <Eyebrow accent>{{ t('dashboard.guide.label') }}</Eyebrow>
+          <h2>{{ t('dashboard.guide.title') }}</h2>
+        </div>
+        <Button size="sm" variant="ghost" @click="hide">{{ t('dashboard.guide.hide') }}</Button>
       </div>
       <ol>
         <li v-for="s in steps" :key="s.id" :class="{ done: s.done }">
@@ -112,80 +121,88 @@ const copy = () => navigator.clipboard.writeText(sshCommand.value)
             <template v-if="!s.done">
               <template v-if="s.id === 'node'">
                 <Button v-if="can('node:create')" size="sm" variant="accent" @click="addNodeOpen = true">{{ t('nodes.add') }}</Button>
-                <small v-else>{{ t('dashboard.step.nodeAsk') }}</small>
+                <small v-else class="muted">{{ t('dashboard.step.nodeAsk') }}</small>
               </template>
               <router-link v-else-if="s.id === 'sshKey'" to="/profile">{{ t('nav.profile') }}</router-link>
               <router-link v-else-if="s.id === 'device'" :to="`${base}/devices`">{{ t('devices.add') }}</router-link>
               <router-link v-else-if="s.id === 'vm'" :to="`${base}/vms`">{{ t('nav.vms') }}</router-link>
               <template v-else-if="s.id === 'ssh'">
-                <span v-if="target" class="cmd">
-                  <code>{{ sshCommand }}</code>
-                  <Button size="sm" :aria-label="t('nodes.copy')" @click="copy"><Copy :size="14" /></Button>
-                </span>
-                <small v-else>{{ t('dashboard.step.sshHint') }}</small>
+                <CommandBox v-if="target" class="step__command" :command="sshCommand" />
+                <small v-else class="muted">{{ t('dashboard.step.sshHint') }}</small>
               </template>
             </template>
           </div>
         </li>
       </ol>
-    </section>
-    <div v-if="hasAnything || Object.keys(errors).length" class="tiles">
-      <router-link v-if="summary.vms || errors.vms" :to="`${base}/vms`" class="card tile">
-        <h2>{{ t('nav.vms') }}</h2>
-        <p v-if="errors.vms" role="alert">{{ errors.vms }}</p>
-        <template v-else-if="summary.vms">
-          <p><strong>{{ summary.vms.running }}</strong> {{ t('dashboard.tile.running') }}</p>
-          <p>{{ summary.vms.stopped }} {{ t('dashboard.tile.stopped') }} · {{ summary.vms.other }} {{ t('dashboard.tile.other') }}</p>
-        </template>
-      </router-link>
-      <router-link v-if="summary.nodes || errors.nodes" :to="`${base}/nodes`" class="card tile">
-        <h2>{{ t('nav.nodes') }}</h2>
-        <p v-if="errors.nodes" role="alert">{{ errors.nodes }}</p>
-        <template v-else-if="summary.nodes">
-          <p><strong>{{ summary.nodes.online }}</strong> {{ t('dashboard.tile.online') }}</p>
-          <p>{{ summary.nodes.offline }} {{ t('dashboard.tile.offline') }}</p>
-        </template>
-      </router-link>
-      <router-link v-if="summary.disks || errors.disks" :to="`${base}/disks`" class="card tile">
-        <h2>{{ t('nav.disks') }}</h2>
-        <p v-if="errors.disks" role="alert">{{ errors.disks }}</p>
-        <template v-else-if="summary.disks">
-          <p><strong>{{ summary.disks.count }}</strong> · {{ summary.disks.totalGB }} GB</p>
-          <p>{{ summary.disks.attached }} {{ t('dashboard.tile.attached') }}</p>
-        </template>
-      </router-link>
-      <router-link v-if="summary.devices || errors.devices" :to="`${base}/devices`" class="card tile">
-        <h2>{{ t('nav.devices') }}</h2>
-        <p v-if="errors.devices" role="alert">{{ errors.devices }}</p>
-        <template v-else-if="summary.devices">
-          <p><strong>{{ summary.devices.connected }}</strong> {{ t('dashboard.tile.connected') }}</p>
-          <p>{{ summary.devices.total }} {{ t('dashboard.tile.total') }}</p>
-        </template>
-      </router-link>
-    </div>
+    </Card>
+    <Section v-if="hasAnything || Object.keys(errors).length" :label="t('dashboard.overview')">
+      <div class="tiles">
+        <router-link v-if="summary.vms || errors.vms" :to="`${base}/vms`" class="tile">
+          <Card>
+            <span class="muted">{{ t('nav.vms') }}</span>
+            <p v-if="errors.vms" role="alert">{{ errors.vms }}</p>
+            <template v-else-if="summary.vms">
+              <p><strong>{{ summary.vms.running }}</strong> {{ t('dashboard.tile.running') }}</p>
+              <p class="muted">{{ summary.vms.stopped }} {{ t('dashboard.tile.stopped') }} · {{ summary.vms.other }} {{ t('dashboard.tile.other') }}</p>
+            </template>
+          </Card>
+        </router-link>
+        <router-link v-if="summary.nodes || errors.nodes" :to="`${base}/nodes`" class="tile">
+          <Card>
+            <span class="muted">{{ t('nav.nodes') }}</span>
+            <p v-if="errors.nodes" role="alert">{{ errors.nodes }}</p>
+            <template v-else-if="summary.nodes">
+              <p><strong>{{ summary.nodes.online }}</strong> {{ t('dashboard.tile.online') }}</p>
+              <p class="muted">{{ summary.nodes.offline }} {{ t('dashboard.tile.offline') }}</p>
+            </template>
+          </Card>
+        </router-link>
+        <router-link v-if="summary.disks || errors.disks" :to="`${base}/disks`" class="tile">
+          <Card>
+            <span class="muted">{{ t('nav.disks') }}</span>
+            <p v-if="errors.disks" role="alert">{{ errors.disks }}</p>
+            <template v-else-if="summary.disks">
+              <p><strong>{{ summary.disks.count }}</strong> · {{ summary.disks.totalGB }} GB</p>
+              <p class="muted">{{ summary.disks.attached }} {{ t('dashboard.tile.attached') }}</p>
+            </template>
+          </Card>
+        </router-link>
+        <router-link v-if="summary.devices || errors.devices" :to="`${base}/devices`" class="tile">
+          <Card>
+            <span class="muted">{{ t('nav.devices') }}</span>
+            <p v-if="errors.devices" role="alert">{{ errors.devices }}</p>
+            <template v-else-if="summary.devices">
+              <p><strong>{{ summary.devices.connected }}</strong> {{ t('dashboard.tile.connected') }}</p>
+              <p class="muted">{{ summary.devices.total }} {{ t('dashboard.tile.total') }}</p>
+            </template>
+          </Card>
+        </router-link>
+      </div>
+    </Section>
+    <Section v-if="vmList" :label="t('dashboard.yourVms')">
+      <VMList :org-id="org.id" :vms="myVms" :empty="t('dashboard.noOwnVms')" @changed="load" />
+    </Section>
     <AddNodeDialog v-model:open="addNodeOpen" :org-id="org.id" @created="load" />
-  </template>
+  </Page>
 </template>
 
 <style scoped>
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 12px 16px;
-}
 .guide {
-  margin-bottom: 16px;
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 .guide__head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
+.guide__title {
+  display: grid;
+  gap: 6px;
+}
 h2 {
-  margin: 0 0 8px;
-  font-size: 1rem;
+  margin: 0;
+  font-size: 1.15rem;
 }
 ol {
   list-style: none;
@@ -215,26 +232,26 @@ li.done .step > span {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
+  min-width: 0;
 }
-.cmd {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.step__command {
+  flex: 1 1 320px;
 }
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
 }
 .tile {
   color: var(--text);
   text-decoration: none;
 }
-.tile:hover {
-  border-color: var(--accent);
+.tile > .card {
+  height: 100%;
+  gap: 2px;
 }
-.tile p {
-  margin: 2px 0;
+.tile:hover > .card {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
 }
 .tile strong {
   font-size: 1.4rem;

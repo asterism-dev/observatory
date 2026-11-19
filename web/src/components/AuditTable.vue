@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Badge, Button, Table, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { Button, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
+import { DataTable, FilterBar, Tag } from '@/ui'
 
 interface Entry {
   id: number
@@ -69,30 +70,23 @@ onMounted(() => load(false))
 </script>
 
 <template>
-  <form class="filters" @submit.prevent="load(false)">
-    <TextInput v-model="actor" :placeholder="t('audit.actor')" :aria-label="t('audit.actor')" />
-    <TextInput v-model="action" :placeholder="t('audit.action')" :aria-label="t('audit.action')" />
-    <label>{{ t('audit.from') }} <input v-model="from" type="datetime-local" /></label>
-    <label>{{ t('audit.to') }} <input v-model="to" type="datetime-local" /></label>
-    <Button type="submit" variant="accent">{{ t('audit.filter') }}</Button>
+  <form @submit.prevent="load(false)">
+    <FilterBar>
+      <TextInput v-model="actor" :placeholder="t('audit.actor')" :aria-label="t('audit.actor')" />
+      <TextInput v-model="action" :placeholder="t('audit.action')" :aria-label="t('audit.action')" />
+      <label>{{ t('audit.from') }} <input v-model="from" type="datetime-local" /></label>
+      <label>{{ t('audit.to') }} <input v-model="to" type="datetime-local" /></label>
+      <template #end><Button type="submit" variant="accent">{{ t('audit.filter') }}</Button></template>
+    </FilterBar>
   </form>
   <p v-if="error" role="alert">{{ error }}</p>
-  <Table :columns="columns" :rows="entries" row-key="id">
+  <DataTable :columns="columns" :rows="entries" row-key="id">
     <template #cell-at="{ row }">{{ d(new Date(row.at), { dateStyle: 'short', timeStyle: 'medium' }) }}</template>
-    <template #cell-actorId="{ row }">{{ row.actorKind }}:{{ row.actorId }}</template>
-    <template #cell-orgId="{ row }">{{ row.orgId ?? '' }}</template>
-    <template #cell-result="{ row }"><Badge :tone="tones[row.result]">{{ row.result }}</Badge></template>
+    <template #cell-actorId="{ row }"><span class="mono">{{ row.actorKind }}:{{ row.actorId }}</span></template>
+    <template #cell-orgId="{ row }"><span class="mono">{{ row.orgId ?? '' }}</span></template>
+    <template #cell-action="{ row }"><span class="mono">{{ row.action }}</span></template>
+    <template #cell-result="{ row }"><Tag :tone="tones[row.result as Entry['result']]">{{ row.result }}</Tag></template>
     <template #empty>{{ t('audit.empty') }}</template>
-  </Table>
-  <Button v-if="next !== null" @click="load(true)">{{ t('audit.loadMore') }}</Button>
+  </DataTable>
+  <div v-if="next !== null"><Button @click="load(true)">{{ t('audit.loadMore') }}</Button></div>
 </template>
-
-<style scoped>
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-</style>

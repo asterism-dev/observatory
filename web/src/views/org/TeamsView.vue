@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { Button, Table, TextInput, type TableColumn } from '@asterism-dev/lumen'
-import { computed, ref, watch } from 'vue'
+import { Button, TextInput } from '@asterism-dev/lumen'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
 import { useOrg } from '@/composables/useOrg'
+import { Card, ResourceList, ResourceRow, Section } from '@/ui'
 
 interface Team {
   id: string
@@ -14,7 +14,6 @@ interface Team {
 }
 
 const { t } = useI18n()
-const router = useRouter()
 const { org, can, reload } = useOrg()
 
 const teams = ref<Team[]>([])
@@ -22,11 +21,6 @@ const name = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('teams.name') },
-  { key: 'memberCount', label: t('teams.members') },
-  { key: 'actions', label: '' },
-])
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
@@ -70,23 +64,26 @@ watch(
 <template>
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
-    <form v-if="can('team:create')" class="row" @submit.prevent="create">
-      <TextInput v-model="name" :placeholder="t('teams.name')" :aria-label="t('teams.name')" />
-      <Button type="submit" variant="accent" :disabled="busy || !name.trim()">{{ t('teams.create') }}</Button>
-    </form>
-    <Table :columns="columns" :rows="teams" row-key="id">
-      <template #cell-actions="{ row }">
-        <Button size="sm" @click="router.push(`/orgs/${org.id}/teams/${row.id}`)">{{ t('teams.open') }}</Button>
-      </template>
-      <template #empty>{{ t('teams.empty') }}</template>
-    </Table>
+    <Section :label="t('nav.teams')">
+      <Card v-if="can('team:create')">
+        <form class="row" @submit.prevent="create">
+          <TextInput v-model="name" :placeholder="t('teams.name')" :aria-label="t('teams.name')" />
+          <Button type="submit" variant="accent" :disabled="busy || !name.trim()">{{ t('teams.create') }}</Button>
+        </form>
+      </Card>
+      <ResourceList :count="teams.length" :empty="t('teams.empty')">
+        <ResourceRow v-for="team in teams" :key="team.id" :title="team.name" :to="`/orgs/${org.id}/teams/${team.id}`">
+          {{ t('teams.memberCount', team.memberCount) }}
+        </ResourceRow>
+      </ResourceList>
+    </Section>
   </template>
 </template>
 
 <style scoped>
 .row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
 }
 </style>

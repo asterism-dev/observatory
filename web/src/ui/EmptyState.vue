@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import CommandBox from './CommandBox.vue'
+import Eyebrow from './Eyebrow.vue'
 
 defineProps<{ label?: string; title: string; text?: string; command?: string }>()
 </script>
@@ -7,13 +8,13 @@ defineProps<{ label?: string; title: string; text?: string; command?: string }>(
 <template>
   <div class="empty" :class="{ 'empty--split': command }">
     <div class="empty__main">
-      <span v-if="label" class="empty__label">{{ label }}</span>
+      <Eyebrow v-if="label" accent>{{ label }}</Eyebrow>
       <h2>{{ title }}</h2>
       <p v-if="text">{{ text }}</p>
       <div v-if="$slots.default" class="empty__actions"><slot /></div>
     </div>
     <div v-if="command" class="empty__side">
-      <span class="empty__label empty__label--plain">CLI</span>
+      <Eyebrow plain>CLI</Eyebrow>
       <CommandBox :command="command" />
     </div>
   </div>
@@ -41,23 +42,6 @@ defineProps<{ label?: string; title: string; text?: string; command?: string }>(
   gap: 12px;
   padding: 20px;
   border-left: 1px solid var(--border);
-}
-.empty__label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.empty__label:not(.empty__label--plain)::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  background: var(--accent);
-  transform: rotate(45deg);
 }
 h2 {
   margin: 0;

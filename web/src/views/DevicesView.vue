@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Button, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, TextInput } from '@asterism-dev/lumen'
+import { Laptop, Plus } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -7,6 +8,7 @@ import { api } from '@/api'
 import AddDeviceDialog from '@/components/AddDeviceDialog.vue'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { EmptyState, FilterBar, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 interface Device {
   id: string
@@ -26,15 +28,14 @@ const error = ref('')
 const addOpen = ref(false)
 const pendingDelete = ref<Device | null>(null)
 const busy = ref(false)
+const loaded = ref(false)
+const search = ref('')
 
 const showOwner = computed(() => devices.value.some((x) => x.owner.id !== me.value?.user.id))
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('devices.name') },
-  { key: 'ip', label: t('devices.address') },
-  ...(showOwner.value ? [{ key: 'owner', label: t('devices.owner') }] : []),
-  { key: 'handshake', label: t('devices.handshake') },
-  { key: 'actions', label: '' },
-])
+const rows = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return devices.value.filter((x) => !q || x.name.toLowerCase().includes(q))
+})
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
@@ -42,7 +43,9 @@ async function refresh() {
   const id = org.value.id
   try {
     const res = await api<Device[]>(`/api/orgs/${id}/devices`)
-    if (id === org.value?.id) devices.value = res
+    if (id !== org.value?.id) return
+    devices.value = res
+    loaded.value = true
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
   }
@@ -67,6 +70,7 @@ watch(
   () => {
     error.value = ''
     devices.value = []
+    loaded.value = false
     refresh()
   },
   { immediate: true },
@@ -74,23 +78,32 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.devices') }}</h1>
-        <p>{{ t('devices.subtitle') }}</p>
-      </div>
-      <Button variant="accent" @click="addOpen = true">{{ t('devices.add') }}</Button>
-    </div>
+  <Page v-if="org" :icon="Laptop" :title="t('nav.devices')" :subtitle="t('devices.subtitle')">
+    <template #actions>
+      <Button variant="accent" :icon="Plus" @click="addOpen = true">{{ t('devices.add') }}</Button>
+    </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Table :columns="columns" :rows="devices" row-key="id">
-      <template #cell-owner="{ row }">{{ row.owner.name }}</template>
-      <template #cell-handshake="{ row }">{{ row.lastHandshake ? d(new Date(row.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('devices.never') }}</template>
-      <template #cell-actions="{ row }">
-        <Button v-if="row.canDelete" size="sm" variant="danger" :disabled="busy" @click="pendingDelete = row">{{ t('devices.delete') }}</Button>
-      </template>
-      <template #empty>{{ t('devices.empty') }}</template>
-    </Table>
+    <EmptyState v-if="loaded && !devices.length" :label="t('nav.devices')" :title="t('devices.empty')" :text="t('devices.emptyText')" command="observatory device create laptop">
+      <Button variant="accent" :icon="Plus" @click="addOpen = true">{{ t('devices.add') }}</Button>
+    </EmptyState>
+    <template v-else>
+      <FilterBar>
+        <template #end>
+          <TextInput v-model="search" type="search" :placeholder="t('devices.search')" :aria-label="t('devices.search')" />
+        </template>
+      </FilterBar>
+      <ResourceList :count="rows.length" :empty="devices.length ? t('devices.noMatch') : t('devices.empty')">
+        <ResourceRow v-for="x in rows" :key="x.id" :title="x.name" :meta="x.ip">
+          <template v-if="showOwner" #tags>
+            <Tag>{{ x.owner.name }}</Tag>
+          </template>
+          <span>{{ t('devices.handshake') }}: {{ x.lastHandshake ? d(new Date(x.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('devices.never') }}</span>
+          <template v-if="x.canDelete" #actions>
+            <Button size="sm" variant="ghost" :disabled="busy" @click="pendingDelete = x">{{ t('devices.delete') }}</Button>
+          </template>
+        </ResourceRow>
+      </ResourceList>
+    </template>
     <AddDeviceDialog v-model:open="addOpen" :org-id="org.id" @created="refresh" />
     <Dialog
       :open="!!pendingDelete"
@@ -103,14 +116,6 @@ watch(
         <Button variant="danger" :disabled="busy" @click="pendingDelete && remove(pendingDelete)">{{ t('devices.delete') }}</Button>
       </template>
     </Dialog>
-  </template>
+  </Page>
 </template>
 
-<style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-</style>

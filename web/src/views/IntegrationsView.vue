@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, RadioGroup, Table, Tabs, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, RadioGroup, Tabs } from '@asterism-dev/lumen'
+import { Plug, Plus } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -8,6 +9,7 @@ import ConnectIntegrationDialog from '@/components/ConnectIntegrationDialog.vue'
 import { scopeLabel } from '@/composables/envScopes'
 import { kindLabels, tokenPages, type Integration, type IntegrationMode, type IntegrationScope } from '@/composables/integrations'
 import { useOrg } from '@/composables/useOrg'
+import { EmptyState, FilterBar, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 const { t } = useI18n()
 const { org } = useOrg()
@@ -22,16 +24,9 @@ const replacing = ref<Integration | null>(null)
 const modeTarget = ref<Integration | null>(null)
 const newMode = ref<IntegrationMode>('proxy')
 const pendingDelete = ref<Integration | null>(null)
+const loaded = ref(false)
 
 const tabs = computed(() => ['all', 'org', 'teams', 'private'].map((v) => ({ value: v, label: t(`env.tab.${v}`) })))
-const columns = computed<TableColumn[]>(() => [
-  { key: 'kind', label: t('integrations.kind') },
-  { key: 'scope', label: t('integrations.scope') },
-  { key: 'account', label: t('integrations.account') },
-  { key: 'mode', label: t('integrations.delivery') },
-  { key: 'status', label: t('integrations.status') },
-  { key: 'actions', label: '' },
-])
 const rows = computed(() => {
   const scope = { all: null, org: 'org', teams: 'team', private: 'user' }[tab.value]
   return scope ? items.value.filter((v) => v.scope === scope) : items.value
@@ -46,6 +41,7 @@ const teamVmWarning = computed(() => modeTarget.value?.scope === 'team' && newMo
 const daysLeft = (v: Integration) => (v.providerExpiresAt ? Math.max(0, Math.ceil((Date.parse(v.providerExpiresAt) - Date.now()) / 86_400_000)) : null)
 const expiringSoon = (v: Integration) => (daysLeft(v) ?? Infinity) <= 7
 const needsSignIn = (v: Integration) => v.source === 'oauth'
+const statusTone = (v: Integration) => (v.status === 'expired' ? 'danger' : expiringSoon(v) ? 'warning' : 'success')
 
 async function refresh() {
   if (!org.value) return
@@ -55,6 +51,7 @@ async function refresh() {
     if (id !== org.value?.id) return
     items.value = res.integrations
     scopes.value = res.writableScopes
+    loaded.value = true
   } catch (e) {
     if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
   }
@@ -103,6 +100,7 @@ watch(
     error.value = ''
     items.value = []
     scopes.value = []
+    loaded.value = false
     refresh()
   },
   { immediate: true },
@@ -110,36 +108,35 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.integrations') }}</h1>
-        <p>{{ t('integrations.subtitle') }}</p>
-      </div>
-      <Button v-if="scopes.length" variant="accent" @click="openConnect">{{ t('integrations.connect') }}</Button>
-    </div>
+  <Page v-if="org" :icon="Plug" :title="t('nav.integrations')" :subtitle="t('integrations.subtitle')">
+    <template #actions>
+      <Button v-if="scopes.length" variant="accent" :icon="Plus" @click="openConnect">{{ t('integrations.connect') }}</Button>
+    </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Tabs v-model="tab" :tabs="tabs" />
-    <Table :columns="columns" :rows="rows" row-key="id">
-      <template #cell-kind="{ row }">{{ kindLabels[row.kind as Integration['kind']] }}</template>
-      <template #cell-scope="{ row }">{{ scopeLabel(row, t) }}</template>
-      <template #cell-account="{ row }">{{ row.account || '—' }}</template>
-      <template #cell-mode="{ row }">{{ t(`integrations.mode_${row.mode}`) }}</template>
-      <template #cell-status="{ row }">
-        <Badge v-if="row.status === 'expired'" tone="danger" :title="row.lastError">{{ t('integrations.expired') }}</Badge>
-        <Badge v-else :tone="expiringSoon(row) ? 'warning' : 'success'">
-          {{ daysLeft(row) === null ? t('integrations.ok') : t('integrations.okExpires', { n: daysLeft(row) }) }}
-        </Badge>
-      </template>
-      <template #cell-actions="{ row }">
-        <span class="cell">
-          <Button v-if="row.canEdit" size="sm" @click="openReplace(row)">{{ needsSignIn(row) ? t('integrations.signInAgain') : t('integrations.replace') }}</Button>
-          <Button v-if="row.canEdit" size="sm" @click="openMode(row)">{{ t('integrations.mode') }}</Button>
-          <Button v-if="row.canDelete" size="sm" variant="danger" @click="pendingDelete = row">{{ t('integrations.disconnect') }}</Button>
-        </span>
-      </template>
-      <template #empty>{{ t('integrations.empty') }}</template>
-    </Table>
+    <EmptyState v-if="loaded && !items.length" :label="t('nav.integrations')" :title="t('integrations.empty')" :text="t('integrations.emptyText')" command="observatory integration connect github">
+      <Button v-if="scopes.length" variant="accent" :icon="Plus" @click="openConnect">{{ t('integrations.connect') }}</Button>
+    </EmptyState>
+    <template v-else>
+      <FilterBar>
+        <Tabs v-model="tab" :tabs="tabs" variant="underline" />
+      </FilterBar>
+      <ResourceList :count="rows.length" :empty="t('integrations.empty')">
+        <ResourceRow v-for="v in rows" :key="v.id" :title="kindLabels[v.kind]" :meta="v.account || '—'" :tone="statusTone(v)">
+          <template #tags>
+            <Tag>{{ scopeLabel(v, t) }}</Tag>
+            <Tag>{{ t(`integrations.mode_${v.mode}`) }}</Tag>
+            <Tag :tone="statusTone(v)" :title="v.status === 'expired' ? v.lastError : undefined">
+              {{ v.status === 'expired' ? t('integrations.expired') : daysLeft(v) === null ? t('integrations.ok') : t('integrations.okExpires', { n: daysLeft(v) }) }}
+            </Tag>
+          </template>
+          <template #actions>
+            <Button v-if="v.canEdit" size="sm" variant="ghost" @click="openReplace(v)">{{ needsSignIn(v) ? t('integrations.signInAgain') : t('integrations.replace') }}</Button>
+            <Button v-if="v.canEdit" size="sm" variant="ghost" @click="openMode(v)">{{ t('integrations.mode') }}</Button>
+            <Button v-if="v.canDelete" size="sm" variant="ghost" @click="pendingDelete = v">{{ t('integrations.disconnect') }}</Button>
+          </template>
+        </ResourceRow>
+      </ResourceList>
+    </template>
 
     <ConnectIntegrationDialog v-model:open="formOpen" :org-id="org.id" :scopes="scopes" :replacing="replacing" @saved="refresh" @conflict="refresh" />
     <Dialog :open="!!modeTarget" :title="t('integrations.modeTitle')" @update:open="(o) => !o && !busy && (modeTarget = null)">
@@ -169,20 +166,6 @@ watch(
         <Button variant="danger" :disabled="busy" @click="remove">{{ t('integrations.disconnect') }}</Button>
       </template>
     </Dialog>
-  </template>
+  </Page>
 </template>
 
-<style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-.cell {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-</style>
