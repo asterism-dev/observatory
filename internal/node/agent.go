@@ -113,6 +113,9 @@ type vmEntry struct {
 
 func (a *Agent) Run(ctx context.Context) error {
 	a.vms = map[string]*vmEntry{}
+	if ts, ok := a.Provider.(TokenServer); ok {
+		ts.SetTokenLookup(a.integrationToken)
+	}
 	if err := a.restoreAll(ctx); err != nil {
 		return err
 	}
@@ -365,7 +368,7 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	if reason == nil {
 		// A same-generation push (new keys or variables) may have arrived while preparing.
 		a.mu.Lock()
-		f.Boot, f.Egress = e.file.Boot, e.file.Egress
+		f.Boot, f.Egress, f.Integrations, f.IntegrationsUnresolved = e.file.Boot, e.file.Egress, e.file.Integrations, e.file.IntegrationsUnresolved
 		a.mu.Unlock()
 		var err error
 		if inst, note, err = a.start(ctx, e, f, dir); err != nil {

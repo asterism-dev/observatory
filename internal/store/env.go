@@ -319,6 +319,11 @@ func (s *Store) DeleteEnvVar(ctx context.Context, old EnvVar) error {
 }
 
 func (s *Store) envWriteResult(ctx context.Context, old EnvVar, rows int64, err error) error {
+	return s.guardedWriteResult(ctx, "env_vars", old.OrgID, old.ID, rows, err)
+}
+
+// guardedWriteResult tells a guarded write that matched no row apart: ErrStale if the row still exists, else ErrNotFound.
+func (s *Store) guardedWriteResult(ctx context.Context, table string, org, id uuid.UUID, rows int64, err error) error {
 	switch {
 	case isUniqueViolation(err):
 		return ErrConflict
@@ -328,7 +333,7 @@ func (s *Store) envWriteResult(ctx context.Context, old EnvVar, rows int64, err 
 		return nil
 	}
 	var exists bool
-	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM env_vars WHERE org_id = $1 AND id = $2)", old.OrgID, old.ID).Scan(&exists); err != nil {
+	if err := s.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+table+" WHERE org_id = $1 AND id = $2)", org, id).Scan(&exists); err != nil {
 		return err
 	}
 	if exists {

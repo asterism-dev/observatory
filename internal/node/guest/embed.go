@@ -10,3 +10,6 @@ var BootScript string
 
 //go:embed vmm-agent.py
 var AgentScript string
+
+//go:embed vmm-integrations.py
+var IntegrationsScript string

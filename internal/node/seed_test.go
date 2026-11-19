@@ -109,6 +109,12 @@ func TestSeedHasAgent(t *testing.T) {
 	}
 }
 
+func TestSeedHasIntegrationsScript(t *testing.T) {
+	if got := GuestSeedFiles(VMFile{}, PrimaryNet{})["vmm-integrations.py"]; string(got) != guest.IntegrationsScript || len(got) == 0 {
+		t.Fatalf("seed vmm-integrations.py = %q", got)
+	}
+}
+
 func TestSeedKeysTrimmed(t *testing.T) {
 	files := GuestSeedFiles(VMFile{Boot: &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one@host\n", "", "  \n", "ssh-rsa BB\nssh-rsa CC", " ssh-rsa DD two\r\n"}}}, PrimaryNet{})
 	if got := string(files["vmm-authorized-keys"]); got != "ssh-ed25519 AAAA one@host\nssh-rsa DD two\n" {
@@ -296,4 +302,52 @@ func TestBootScriptTrust(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "usr/local/share/ca-certificates/observatory-egress-"+id+".crt")); !os.IsNotExist(err) {
 		t.Fatalf("ca file kept without cas in the seed: %v", err)
 	}
+}
+
+func TestBootScriptInstallsIntegrations(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	root := t.TempDir()
+	tok := "ghp_dummy0000000000000000"
+	f := VMFile{Integrations: []proto.IntegrationToken{{Kind: "github", Token: tok}}}
+	runBoot(t, root, GuestSeedFiles(f, PrimaryNet{}))
+	for path, mode := range map[string]os.FileMode{
+		"usr/local/lib/vmm/vmm-integrations.py":       0o644,
+		"usr/local/bin/vmm-token":                     0o755,
+		"usr/local/bin/git-credential-vmm":            0o755,
+		"usr/local/bin/gh":                            0o755,
+		"etc/vmm/gitconfig":                           0o644,
+		"etc/profile.d/vmm-linear.sh":                 0o644,
+		"etc/systemd/system/vmm-integrations.service": 0o644,
+		"etc/systemd/system/vmm-integrations.timer":   0o644,
+	} {
+		st, err := os.Stat(filepath.Join(root, path))
+		if err != nil || st.Mode().Perm() != mode {
+			t.Errorf("%s: %v, %v; want %v", path, st, err, mode)
+		}
+	}
+	if got := readFile(t, filepath.Join(root, "usr/local/lib/vmm/vmm-integrations.py")); got != guest.IntegrationsScript {
+		t.Error("installed script differs from the seed's")
+	}
+	if got := readFile(t, filepath.Join(root, "usr/local/bin/vmm-token")); !strings.Contains(got, "exec python3 /usr/local/lib/vmm/vmm-integrations.py token \"$@\"") {
+		t.Errorf("vmm-token shim = %q", got)
+	}
+	timer := readFile(t, filepath.Join(root, "etc/systemd/system/vmm-integrations.timer"))
+	for _, want := range []string{"OnBootSec=30s\n", "OnUnitActiveSec=5min\n", "WantedBy=timers.target\n"} {
+		if !strings.Contains(timer, want) {
+			t.Errorf("timer misses %q: %q", want, timer)
+		}
+	}
+	if got := readFile(t, filepath.Join(root, "etc/systemd/system/vmm-integrations.service")); !strings.Contains(got, "Type=oneshot\n") || !strings.Contains(got, "ExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-integrations.py sync\n") {
+		t.Errorf("service = %q", got)
+	}
+	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if b, _ := os.ReadFile(p); strings.Contains(string(b), tok) {
+				t.Errorf("%s contains the token", p)
+			}
+		}
+		return nil
+	})
 }

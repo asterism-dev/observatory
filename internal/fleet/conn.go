@@ -23,6 +23,9 @@ import (
 // desiredRetry is how long a node waits for another desired list or underlay after building one failed.
 var desiredRetry = 5 * time.Second
 
+// integrationRetry is how long the hub waits before pushing again to an org whose integrations failed to resolve.
+var integrationRetry = time.Minute
+
 // The chassis cert is re-signed from the node's start-up CSR when less than underlayRenewBefore is left, checked every underlayCheck.
 var (
 	underlayCheck       = 24 * time.Hour

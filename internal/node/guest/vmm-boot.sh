@@ -86,13 +86,41 @@ for f in "$root/usr/local/lib/vmm/vmm-agent.py" "$root/etc/systemd/system/vmm-ag
 	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod 644 "$f.new" && mv "$f.new" "$f" && changed=1; fi
 done
 
+reload=
+# Static glue only: the scripts ask the node's token service on demand, so no token is ever written here.
+lib=$root/usr/local/lib/vmm bin=$root/usr/local/bin units=$root/etc/systemd/system
+mkdir -p "$bin"
+cp "$seed/vmm-integrations.py" "$lib/vmm-integrations.py.new"
+printf '#!/bin/sh\nexec python3 /usr/local/lib/vmm/vmm-integrations.py token "$@"\n' >"$bin/vmm-token.new"
+printf '#!/bin/sh\nexec python3 /usr/local/lib/vmm/vmm-integrations.py credential "$@"\n' >"$bin/git-credential-vmm.new"
+printf '[credential "https://github.com"]\n\thelper = vmm\n[url "https://github.com/"]\n\tinsteadOf = git@github.com:\n\tinsteadOf = ssh://git@github.com/\n' >"$root/etc/vmm/gitconfig.new"
+cat >"$bin/gh.new" <<'EOF'
+#!/bin/sh
+# A user's own token or gh login wins over the VM's GitHub integration.
+if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ] && ! grep -qs '^github\.com:' "${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml" && vmm_token=$(vmm-token github); then
+	GH_TOKEN=$vmm_token
+	export GH_TOKEN
+fi
+exec "${VMM_GH_BIN:-/usr/bin/gh}" "$@"
+EOF
+cat >"$root/etc/profile.d/vmm-linear.sh.new" <<'EOF'
+if [ -z "${LINEAR_API_KEY+x}" ] && command -v vmm-token >/dev/null 2>&1 && vmm_linear=$(vmm-token linear); then export LINEAR_API_KEY="$vmm_linear"; fi
+unset vmm_linear
+EOF
+printf '[Unit]\nDescription=vmm integrations sync\n\n[Service]\nType=oneshot\nTimeoutStartSec=6min\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-integrations.py sync\n' >"$units/vmm-integrations.service.new"
+printf '[Unit]\nDescription=vmm integrations sync\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=5min\n\n[Install]\nWantedBy=timers.target\n' >"$units/vmm-integrations.timer.new"
+for f in "$lib/vmm-integrations.py" "$root/etc/vmm/gitconfig" "$root/etc/profile.d/vmm-linear.sh" "$units/vmm-integrations.service" "$units/vmm-integrations.timer" "$bin/vmm-token" "$bin/git-credential-vmm" "$bin/gh"; do
+	case $f in "$bin"/*) mode=755 ;; *) mode=644 ;; esac
+	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod $mode "$f.new" && mv "$f.new" "$f" && case $f in "$units"/*) reload=1 ;; esac; fi
+done
+
 # A running sshd reads its config only on start or reload.
 if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	systemctl try-reload-or-restart ssh.service >/dev/null 2>&1
 	# Only a re-executed manager reads DefaultEnvironment again; it reloads the units as well.
 	if [ -n "$reexec" ]; then
 		systemctl daemon-reexec >/dev/null 2>&1
-	elif [ -n "$changed" ]; then
+	elif [ -n "$changed$reload" ]; then
 		systemctl daemon-reload >/dev/null 2>&1
 	fi
 	# enable reloads systemd, which costs a fast-booted VM half a second.
@@ -103,5 +131,7 @@ if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	else
 		systemctl --no-block start vmm-agent.service >/dev/null 2>&1
 	fi
+	systemctl is-enabled -q vmm-integrations.timer || systemctl enable vmm-integrations.timer >/dev/null 2>&1
+	systemctl --no-block start vmm-integrations.timer vmm-integrations.service >/dev/null 2>&1
 fi
 exit 0

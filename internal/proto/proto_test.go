@@ -82,3 +82,10 @@ func TestHostBoundSecretRedacted(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegrationTokenRedacted(t *testing.T) {
+	tok := IntegrationToken{Kind: "github", Token: "ghp_dummy0000000000000000"}
+	if got := fmt.Sprintf("%v %+v %#v %v", tok, tok, tok, []IntegrationToken{tok}); strings.Contains(got, "ghp_dummy") {
+		t.Fatalf("token printed: %s", got)
+	}
+}

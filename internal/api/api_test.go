@@ -32,6 +32,9 @@ type env struct {
 	disks *disks.Hub
 	api   *api
 	h     http.Handler
+
+	verifier *fakeVerifier
+	oauth    *fakeOAuth
 }
 
 const gatewayToken = "0123456789abcdef0123456789abcdef"
@@ -54,8 +57,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
-	h, handler := newAPI(s, a, z, f, nh, dh)
-	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler}
+	fv, fo := &fakeVerifier{}, &fakeOAuth{}
+	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo})
+	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler, verifier: fv, oauth: fo}
 }
 
 func (e *env) newFleet() *fleet.Fleet {
@@ -273,7 +277,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks))
+	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

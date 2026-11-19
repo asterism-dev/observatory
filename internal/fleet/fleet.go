@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -31,6 +33,7 @@ type Fleet struct {
 	conns    map[uuid.UUID]*conn
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 	metrics  map[uuid.UUID][]MetricSample
+	retrying map[uuid.UUID]bool // orgs with a pending integrationRetry push
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -38,7 +41,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}}
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }
@@ -94,6 +97,22 @@ func (f *Fleet) NotifyOrg(org uuid.UUID) {
 			c.kick()
 		}
 	}
+}
+
+// retryIntegrations pushes the org again after integrationRetry; retries already pending absorb later calls.
+func (f *Fleet) retryIntegrations(org uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.retrying[org] {
+		return
+	}
+	f.retrying[org] = true
+	time.AfterFunc(integrationRetry, func() {
+		f.mu.Lock()
+		delete(f.retrying, org)
+		f.mu.Unlock()
+		f.NotifyOrg(org)
+	})
 }
 
 func (f *Fleet) Disconnect(node uuid.UUID) {
@@ -203,9 +222,12 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if plan.Hold {
 			continue
 		}
-		boot, bound, err := f.boot(ctx, org, v)
+		boot, bound, tokens, unresolved, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
+		}
+		if unresolved {
+			f.retryIntegrations(org)
 		}
 		eg, cas, err := f.egress(ctx, org, v, bound)
 		switch {
@@ -224,7 +246,8 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
-			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg,
+			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg, Integrations: tokens,
+			IntegrationsUnresolved: unresolved,
 		})
 	}
 	return out, releasing, nil
@@ -250,7 +273,7 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 }
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
-func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boot, []proto.HostBoundSecret, error) {
+func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.Boot, _ []proto.HostBoundSecret, _ []proto.IntegrationToken, unresolved bool, _ error) {
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -260,7 +283,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 		owner = authz.TeamSubject(*v.TeamID)
 		members, err := f.store.TeamMembers(ctx, org, *v.TeamID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, false, err
 		}
 		for _, m := range members {
 			users = append(users, m.User.ID)
@@ -268,17 +291,42 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (*proto.Boo
 	}
 	keys, err := f.store.SSHKeysOf(ctx, users)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, false, err
 	}
-	// bound is the EgressSecrets hook: integrations append their proxy-mode entries here.
 	env, bound, err := f.store.ResolveVMEnv(ctx, f.authz.Enforcer(), org, owner)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, false, err
+	}
+	var tokens []proto.IntegrationToken
+	res, err := f.store.ResolveVMIntegrations(ctx, f.authz.Enforcer(), org, owner)
+	if err != nil {
+		// Like egress, one VM's integration trouble must not stall the node's list.
+		slog.Error("integrations for vm", "vm", v.ID, "reason", "resolve failed")
+		unresolved = true
+	} else {
+		var ib []proto.HostBoundSecret
+		ib, tokens = IntegrationEntries(res)
+		bound = append(bound, ib...)
 	}
 	if keys == nil {
 		keys = []string{}
 	}
-	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, nil
+	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, unresolved, nil
+}
+
+// IntegrationEntries turns resolved integrations into proxy secrets (proxy mode) and the tokens a VM receives.
+func IntegrationEntries(res []store.ResolvedIntegration) (bound []proto.HostBoundSecret, tokens []proto.IntegrationToken) {
+	for _, r := range res {
+		if r.Mode == integrations.ModeVM {
+			tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Token, ExpiresAt: r.AccessExpiresAt})
+			continue
+		}
+		spec := integrations.Kinds[r.Kind]
+		bound = append(bound, proto.HostBoundSecret{ID: "integration:" + r.ID.String(), Name: string(r.Kind) + " integration",
+			Placeholder: r.Placeholder, Value: r.Token, Hosts: spec.Hosts, Headers: spec.Headers})
+		tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Placeholder})
+	}
+	return bound, tokens
 }
 
 // egress keeps the VM's CAs current for the bound hosts and returns its egress entry plus the public certs by CA ID; nil, nil when nothing is bound.
@@ -320,6 +368,58 @@ func (f *Fleet) SweepEgressCAs(ctx context.Context, every time.Duration) {
 		}
 		for _, org := range orgs {
 			f.NotifyOrg(org)
+		}
+	}
+}
+
+const refreshAhead = 60 * time.Minute
+
+var clock = time.Now
+
+// RefreshIntegrations refreshes Claude sign-ins due within refreshAhead and pushes the new access tokens; failures back off per integration from 1 to 15 minutes. It returns when ctx ends.
+func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, every time.Duration) {
+	type backoff struct {
+		until time.Time
+		wait  time.Duration
+	}
+	backoffs := map[store.IntegrationRef]backoff{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		now := clock()
+		refs, err := f.store.DueOAuthRefreshes(ctx, now.Add(refreshAhead))
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("list due integration refreshes", "err", err)
+			}
+			continue
+		}
+		maps.DeleteFunc(backoffs, func(r store.IntegrationRef, _ backoff) bool { return !slices.Contains(refs, r) })
+		for _, ref := range refs {
+			b := backoffs[ref]
+			now := clock()
+			if now.Before(b.until) {
+				continue
+			}
+			// The provider call runs inside the row-locking tx; the timeout bounds both.
+			rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ok, err := f.store.RefreshIntegration(rctx, ref, now.Add(refreshAhead), oauth.Refresh)
+			cancel()
+			switch {
+			case err != nil:
+				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
+				backoffs[ref] = backoff{until: now.Add(b.wait), wait: b.wait}
+				slog.Error("integration refresh failed", "id", ref.ID, "err", err)
+			case ok:
+				delete(backoffs, ref)
+				slog.Info("integration refreshed", "id", ref.ID)
+				f.NotifyOrg(ref.OrgID)
+			}
 		}
 	}
 }

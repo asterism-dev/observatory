@@ -9,6 +9,7 @@ import VMDisksDialog from '@/components/VMDisksDialog.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
+import { kindLabels, type IntegrationKind } from '@/composables/integrations'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
@@ -26,6 +27,7 @@ const networksOpen = ref(false)
 const disksOpen = ref(false)
 const copyFailed = ref(false)
 const egress = ref<{ secrets: number; hosts: string[]; caNotAfter: string | null; trustChanged: boolean } | null>(null)
+const integrations = ref<{ kind: IntegrationKind; scope?: string; teamName?: string; mode?: string }[]>([])
 
 const base = () => `/api/orgs/${org.value?.id}/vms/${vmId.value}`
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -34,14 +36,24 @@ async function load() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const [res, eg] = await Promise.all([api<VmInfo>(base()), api<NonNullable<typeof egress.value>>(`${base()}/egress`).catch(() => null)])
+    const [res, eg, ig] = await Promise.all([
+      api<VmInfo>(base()),
+      api<NonNullable<typeof egress.value>>(`${base()}/egress`).catch(() => null),
+      api<{ integrations: typeof integrations.value }>(`${base()}/integrations`).then((r) => r.integrations, () => []),
+    ])
     if (id !== org.value?.id) return
     vm.value = res
     egress.value = eg
+    integrations.value = ig
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) return router.replace(`/orgs/${id}/vms`)
     error.value = message(e)
   }
+}
+
+function integrationLine(i: (typeof integrations.value)[number]) {
+  const scope = i.scope === 'team' ? `${t('env.scopeTeam')} ${i.teamName ?? ''}`.trim() : i.scope && t(i.scope === 'org' ? 'env.scopeOrg' : 'env.scopePrivate')
+  return [kindLabels[i.kind], scope, i.mode].filter(Boolean).join(' · ')
 }
 
 async function run(fn: () => Promise<void>) {
@@ -109,6 +121,7 @@ watch(
   () => {
     vm.value = null
     egress.value = null
+    integrations.value = []
     error.value = ''
     load()
   },
@@ -155,6 +168,10 @@ watch(
             <template v-if="egress.caNotAfter">, {{ t('vms.egressCa', { date: d(new Date(egress.caNotAfter), { dateStyle: 'short' }) }) }}</template>
             <small v-if="egress.trustChanged" role="status"> {{ t('vms.egressRestart') }}</small>
           </dd>
+        </template>
+        <template v-if="integrations.length">
+          <dt>{{ t('integrations.vmLine') }}</dt>
+          <dd>{{ integrations.map(integrationLine).join(', ') }}</dd>
         </template>
         <dt>{{ t('vms.created') }}</dt>
         <dd>{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</dd>

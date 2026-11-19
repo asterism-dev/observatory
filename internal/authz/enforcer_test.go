@@ -34,11 +34,12 @@ func TestBuiltinRoles(t *testing.T) {
 	}})
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
+		{"integration:list", ObjIntegrations}, {"integration:use", ObjIntegrations},
 		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
 		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}, {"disk:create", ObjDisks}}
-	// No built-in role reaches other members' private env scopes, connects to or forks VMs, or creates others' devices.
+	// No built-in role reaches other members' private env and integration scopes, connects to or forks VMs, or creates others' devices.
 	notBuiltin := func(p Permission) bool {
-		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
+		return p.Object == ObjUserEnv+"/*" || p.Object == ObjUserIntegrations+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
 	}
 	want := map[uuid.UUID]func(p Permission) bool{
 		owner:  func(p Permission) bool { return !notBuiltin(p) },
@@ -215,8 +216,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-11 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-11)
+	if got := ExpandActions("*"); len(got) != len(Catalog)-19 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-19)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -430,6 +431,91 @@ func TestEnvPermissions(t *testing.T) {
 	}
 	if got := ExpandActions("env:*"); !reflect.DeepEqual(got, []string{"env:list", "env:set", "env:delete", "env:use"}) {
 		t.Errorf("env:*: got %v", got)
+	}
+}
+
+func TestIntegrationPermissions(t *testing.T) {
+	org, otherOrg := uuid.New(), uuid.New()
+	owner, admin, member, teamMember, teamAdmin, denied := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	team, otherTeam, emptyTeam, denyRole := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: org, UserID: owner, Role: "owner"},
+			{OrgID: org, UserID: admin, Role: "admin"},
+			{OrgID: org, UserID: member, Role: "member"},
+			{OrgID: org, UserID: teamMember, Role: "member"},
+			{OrgID: org, UserID: teamAdmin, Role: "member"},
+			{OrgID: org, UserID: denied, Role: "member"},
+		},
+		TeamMembers: []TeamMember{
+			{OrgID: org, TeamID: team, UserID: teamMember},
+			{OrgID: org, TeamID: team, UserID: teamAdmin, Admin: true},
+		},
+		Teams: []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: otherTeam}, {OrgID: org, ID: emptyTeam}},
+		Roles: []CustomRole{{ID: denyRole, OrgID: org, Name: "no-integrations", Rules: []Rule{
+			{Effect: Deny, Object: ObjIntegrations, Action: "integration:use"},
+			{Effect: Deny, Object: ObjUserIntegrations + "/*", Action: "integration:set"},
+		}}},
+		Bindings: []Binding{{OrgID: org, Subject: UserSubject(denied), RoleID: denyRole}},
+	})
+	user := func(id uuid.UUID) string { return UserSubject(id) }
+	tests := []struct {
+		name     string
+		sub      string
+		org      uuid.UUID
+		obj, act string
+		want     bool
+	}{
+		{"member lists org integration", user(member), org, ObjIntegrations, "integration:list", true},
+		{"member uses org integration", user(member), org, ObjIntegrations, "integration:use", true},
+		{"member sets org integration", user(member), org, ObjIntegrations, "integration:set", false},
+		{"admin sets org integration", user(admin), org, ObjIntegrations, "integration:set", true},
+		{"admin deletes org integration", user(admin), org, ObjIntegrations, "integration:delete", true},
+		{"admin sets any team integration", user(admin), org, TeamIntegrationsObject(otherTeam), "integration:set", true},
+		{"admin deletes any team integration", user(admin), org, TeamIntegrationsObject(otherTeam), "integration:delete", true},
+		{"admin uses other user integration", user(admin), org, UserIntegrationsObject(member), "integration:use", false},
+		{"owner uses other user integration", user(owner), org, UserIntegrationsObject(member), "integration:use", false},
+		{"admin sets other user integration", user(admin), org, UserIntegrationsObject(member), "integration:set", false},
+		{"owner sets org integration", user(owner), org, ObjIntegrations, "integration:set", true},
+		{"owner sets any team integration", user(owner), org, TeamIntegrationsObject(team), "integration:set", true},
+		{"owner lists other user integration", user(owner), org, UserIntegrationsObject(member), "integration:list", false},
+		{"member lists own user integration", user(member), org, UserIntegrationsObject(member), "integration:list", true},
+		{"member sets own user integration", user(member), org, UserIntegrationsObject(member), "integration:set", true},
+		{"member deletes own user integration", user(member), org, UserIntegrationsObject(member), "integration:delete", true},
+		{"member uses own user integration", user(member), org, UserIntegrationsObject(member), "integration:use", true},
+		{"member lists other user integration", user(member), org, UserIntegrationsObject(admin), "integration:list", false},
+		{"member uses other user integration", user(member), org, UserIntegrationsObject(admin), "integration:use", false},
+		{"team member lists own team integration", user(teamMember), org, TeamIntegrationsObject(team), "integration:list", true},
+		{"team member uses own team integration", user(teamMember), org, TeamIntegrationsObject(team), "integration:use", true},
+		{"team member lists other team integration", user(teamMember), org, TeamIntegrationsObject(otherTeam), "integration:list", false},
+		{"team member sets own team integration", user(teamMember), org, TeamIntegrationsObject(team), "integration:set", false},
+		{"team admin sets own team integration", user(teamAdmin), org, TeamIntegrationsObject(team), "integration:set", true},
+		{"team admin deletes own team integration", user(teamAdmin), org, TeamIntegrationsObject(team), "integration:delete", true},
+		{"team admin sets other team integration", user(teamAdmin), org, TeamIntegrationsObject(otherTeam), "integration:set", false},
+		{"empty team uses org integration", TeamSubject(emptyTeam), org, ObjIntegrations, "integration:use", true},
+		{"empty team uses own team integration", TeamSubject(emptyTeam), org, TeamIntegrationsObject(emptyTeam), "integration:use", true},
+		{"empty team uses other team integration", TeamSubject(emptyTeam), org, TeamIntegrationsObject(otherTeam), "integration:use", false},
+		{"empty team sets own team integration", TeamSubject(emptyTeam), org, TeamIntegrationsObject(emptyTeam), "integration:set", false},
+		{"deny integration:use on org integration", user(denied), org, ObjIntegrations, "integration:use", false},
+		{"deny keeps integration:list", user(denied), org, ObjIntegrations, "integration:list", true},
+		{"deny integration:set on own user integration", user(denied), org, UserIntegrationsObject(denied), "integration:set", false},
+		{"cross-org org integration", user(admin), otherOrg, ObjIntegrations, "integration:use", false},
+		{"cross-org own user integration", user(member), otherOrg, UserIntegrationsObject(member), "integration:list", false},
+		{"cross-org team integration", user(teamAdmin), otherOrg, TeamIntegrationsObject(team), "integration:set", false},
+		{"cross-org team subject", TeamSubject(team), otherOrg, TeamIntegrationsObject(team), "integration:use", false},
+	}
+	for _, a := range []string{"integration:use", "integration:list", "integration:set"} {
+		if err := e.CanGrant(user(admin), org, true, []Rule{{Allow, ObjUserIntegrations + "/*", a}}); !errors.Is(err, ErrEscalation) {
+			t.Errorf("admin grants %s on all private integrations: got %v", a, err)
+		}
+	}
+	for _, tt := range tests {
+		if got := e.Allowed(tt.sub, tt.org, tt.obj, tt.act); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+	if got := ExpandActions("integration:*"); !reflect.DeepEqual(got, []string{"integration:list", "integration:set", "integration:delete", "integration:use"}) {
+		t.Errorf("integration:*: got %v", got)
 	}
 }
 
