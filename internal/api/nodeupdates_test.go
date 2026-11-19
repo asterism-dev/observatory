@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,12 @@ import (
 	"github.com/asterism-dev/observatory/internal/version"
 )
 
-func init() { version.Version = "v0.5.0" }
+// hubVersion goes before newEnv so the fleet's cleanup stops update runs before the version is restored.
+func hubVersion(t *testing.T, v string) {
+	old := version.Version
+	version.Version = v
+	t.Cleanup(func() { version.Version = old })
+}
 
 func updatesPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/node-updates" }
 
@@ -92,6 +98,7 @@ type runTest struct {
 }
 
 func TestNodeUpdateStartShowCancel(t *testing.T) {
+	hubVersion(t, "v0.5.0")
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
@@ -127,12 +134,14 @@ func TestNodeUpdateStartShowCancel(t *testing.T) {
 			details = append(details, u)
 		}
 	}
-	if len(details) != 2 {
+	slices.Sort(details)
+	if !slices.Equal(details, []string{"cancelled", "started"}) {
 		t.Fatalf("org-level audits: %v", details)
 	}
 }
 
 func TestNodeUpdateRejections(t *testing.T) {
+	hubVersion(t, "v0.5.0")
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
@@ -174,7 +183,15 @@ func TestNodeUpdateRejections(t *testing.T) {
 	}
 }
 
+func TestNotUpdatableFallback(t *testing.T) {
+	e := newEnv(t)
+	if got := notUpdatable(e.api.fleet, nil); got != "these nodes cannot be updated" {
+		t.Fatalf("%q", got)
+	}
+}
+
 func TestNodeUpdateCancelNeedsNodeUpdate(t *testing.T) {
+	hubVersion(t, "v0.5.0")
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
@@ -195,6 +212,7 @@ func TestNodeUpdateCancelNeedsNodeUpdate(t *testing.T) {
 }
 
 func TestNodeJSONUpdatable(t *testing.T) {
+	hubVersion(t, "v0.5.0")
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
@@ -206,5 +224,13 @@ func TestNodeJSONUpdatable(t *testing.T) {
 		if !n.Updatable || n.Updating || n.UpdatePausesOnly != want {
 			t.Errorf("%s: %+v", id, n)
 		}
+	}
+	if rec := e.send("POST", updatesPath(org), tok, startBody(same.ID)); rec.Code != 201 {
+		t.Fatal(rec.Body.String())
+	}
+	var n struct{ Updatable bool }
+	decode(t, e.do("GET", nodesPath(org)+"/"+older.ID.String(), tok), &n)
+	if n.Updatable {
+		t.Error("updatable during a run")
 	}
 }

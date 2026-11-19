@@ -2,7 +2,6 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -102,7 +101,7 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, fleet.ErrNotUpdatable) {
-		writeError(w, http.StatusConflict, "node "+notUpdatable(h.fleet, nodes)+" cannot be updated")
+		writeError(w, http.StatusConflict, notUpdatable(h.fleet, nodes))
 		return
 	}
 	if err != nil {
@@ -121,9 +120,9 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 func notUpdatable(f *fleet.Fleet, nodes []store.Node) string {
 	i := slices.IndexFunc(nodes, func(n store.Node) bool { return !f.Updatable(n) })
 	if i < 0 {
-		return fmt.Sprint(len(nodes), " nodes")
+		return "these nodes cannot be updated"
 	}
-	return nodes[i].Name
+	return "node " + nodes[i].Name + " cannot be updated"
 }
 
 func (h *api) currentNodeUpdate(w http.ResponseWriter, r *http.Request) {

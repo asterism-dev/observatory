@@ -55,9 +55,10 @@ func (f *Fleet) Updatable(n store.Node) bool {
 	return f.updatable(n)
 }
 
-// updatable needs f.mu held.
+// updatable needs f.mu held; no node is while its org has a run going.
 func (f *Fleet) updatable(n store.Node) bool {
-	return f.conns[n.ID] != nil && version.Older(n.Version, version.Version) && n.Hypervisor != nil
+	r := f.runs[n.OrgID]
+	return (r == nil || r.State != "running") && f.conns[n.ID] != nil && version.Older(n.Version, version.Version) && n.Hypervisor != nil
 }
 
 // StartUpdate updates nodes one at a time in list order; the run outlives ctx and ends on its own, by CancelUpdate or when the fleet stops.
