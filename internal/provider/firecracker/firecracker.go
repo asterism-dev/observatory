@@ -75,6 +75,7 @@ func New(c node.Config) (*Provider, error) {
 		return nil, err
 	}
 	p.removeUnfinishedTemplates()
+	removeLegacyImages(p.ImagesDir)
 	return p, nil
 }
 
