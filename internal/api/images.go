@@ -562,6 +562,13 @@ func (h *api) checkRefs(w http.ResponseWriter, r *http.Request, img store.Image,
 			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("reference %s is not allowed for a %s image", describeRef(ref), img.Scope))
 			return nil, false
 		}
+		// The build sees a reference by name only, so two scopes of one name would collide.
+		if slices.ContainsFunc(out, func(o store.RecipeRef) bool {
+			return o.Kind == ref.Kind && o.Name == ref.Name && (o.Scope != ref.Scope || !sameOwner(o.OwnerID, ref.OwnerID))
+		}) {
+			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("the recipe references two %ss named %s; keep one", ref.Kind, ref.Name))
+			return nil, false
+		}
 		var found bool
 		var err error
 		if j.Kind == "secret" {
@@ -624,6 +631,13 @@ func checkRecipe(files []store.RecipeFile) *httpError {
 			return &httpError{http.StatusUnprocessableEntity, fmt.Sprintf("duplicate path %q", f.Path)}
 		}
 		seen[f.Path] = true
+	}
+	for _, f := range files {
+		for dir := path.Dir(f.Path); dir != "."; dir = path.Dir(dir) {
+			if seen[dir] {
+				return &httpError{http.StatusUnprocessableEntity, fmt.Sprintf("%q is a file, so %q cannot be in it", dir, f.Path)}
+			}
+		}
 	}
 	switch {
 	case len(files) > maxRecipeFiles:
@@ -846,6 +860,8 @@ func (h *api) getRecipeFile(w http.ResponseWriter, r *http.Request) {
 		for _, f := range rev.Files {
 			if f.Path == r.PathValue("path") {
 				w.Header().Set("Content-Type", "application/octet-stream")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
+				w.Header().Set("Content-Disposition", "attachment")
 				_, _ = w.Write(f.Content)
 				return
 			}

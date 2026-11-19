@@ -241,6 +241,9 @@ func TestRecipeUploadTarLimits(t *testing.T) {
 	if rec := e.putRecipe(tok, org, id, recipeTar(t, dockerfile, tarEntry{"../x", []byte("x")}), ""); rec.Code != 422 {
 		t.Fatalf("../x: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := e.putRecipe(tok, org, id, recipeTar(t, dockerfile, tarEntry{"a", []byte("x")}, tarEntry{"a/b/c", []byte("x")}), ""); rec.Code != 422 {
+		t.Fatalf("file under a file: %d %s", rec.Code, rec.Body.String())
+	}
 	if rec := e.putRecipe(tok, org, id, recipeTar(t, tarEntry{"sub/Dockerfile", []byte("FROM scratch\n")}), ""); rec.Code != 422 {
 		t.Fatalf("missing Dockerfile: %d %s", rec.Code, rec.Body.String())
 	}
@@ -261,8 +264,9 @@ func TestRecipeUploadTarLimits(t *testing.T) {
 		*got.Files[0].Content != "FROM scratch\n" || got.Files[1].Path != "bin/tool" || got.Files[1].Content != nil || got.Files[1].Size != 2 {
 		t.Fatalf("recipe: %s", rec.Body.String())
 	}
-	if rec := e.do("GET", imagePath(org, id)+"/recipe/files/bin/tool", tok); rec.Code != 200 || rec.Body.String() != "\xff\xfe" {
-		t.Fatalf("raw file: %d %q", rec.Code, rec.Body.String())
+	rec = e.do("GET", imagePath(org, id)+"/recipe/files/bin/tool", tok)
+	if rec.Code != 200 || rec.Body.String() != "\xff\xfe" || rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Disposition") != "attachment" {
+		t.Fatalf("raw file: %d %q %v", rec.Code, rec.Body.String(), rec.Header())
 	}
 }
 
@@ -303,6 +307,8 @@ func TestRefsScopeRule(t *testing.T) {
 	e.makeTeamAdmin(aliceTok, org, team, bob)
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	e.createEnv(aliceTok, org, `{"name":"TEAM_TOKEN","value":"v","kind":"secret","scope":"team","teamId":"`+team.String()+`"}`)
+	e.createEnv(aliceTok, org, `{"name":"SHARED","value":"v","kind":"secret","scope":"org"}`)
+	e.createEnv(aliceTok, org, `{"name":"SHARED","value":"v","kind":"secret","scope":"team","teamId":"`+team.String()+`"}`)
 	e.createEnv(aliceTok, org, `{"name":"OTHER_TOKEN","value":"v","kind":"secret","scope":"team","teamId":"`+other.String()+`"}`)
 	orgImg := e.createImage(aliceTok, org, `{"name":"base","scope":"org"}`)
 	teamImg := e.createImage(bobTok, org, `{"name":"base","scope":"team","teamId":"`+team.String()+`"}`)
@@ -328,6 +334,7 @@ func TestRefsScopeRule(t *testing.T) {
 		{aliceTok, orgImg, `[` + ref("ORG_TOKEN", "org", team) + `]`, 200},
 		{bobTok, teamImg, `[` + ref("OTHER_TOKEN", "team", other) + `]`, 422},
 		{bobTok, teamImg, `[` + ref("TEAM_TOKEN", "team", team) + `,` + ref("ORG_TOKEN", "org", team) + `]`, 200},
+		{bobTok, teamImg, `[` + ref("SHARED", "team", team) + `,` + ref("SHARED", "org", team) + `]`, 422},
 		{bobTok, privImg, `[` + ref("OTHER_TOKEN", "team", other) + `]`, 403},
 		{bobTok, privImg, `[` + ref("TEAM_TOKEN", "team", team) + `]`, 200},
 	} {
