@@ -49,12 +49,12 @@ func runInit() int {
 
 // Main dispatches on the basename of argv[0].
 func Main(argv []string) int {
-	if len(argv) == 2 && argv[1] == "--version" {
-		fmt.Fprintln(stdout, version.Version)
-		return 0
-	}
 	if len(argv) == 0 {
 		return 2
+	}
+	if len(argv) == 2 && argv[1] == "--version" && filepath.Base(argv[0]) == "observatory-init" {
+		fmt.Fprintln(stdout, version.Version)
+		return 0
 	}
 	h, ok := handlers[filepath.Base(argv[0])]
 	if !ok {

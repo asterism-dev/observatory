@@ -37,6 +37,18 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+func TestToolVersionFlagReachesTool(t *testing.T) {
+	var got []string
+	orig := handlers["gh"]
+	handlers["gh"] = func(args []string) int { got = args; return 0 }
+	t.Cleanup(func() { handlers["gh"] = orig })
+
+	Main([]string{"/.observatory/bin/gh", "--version"})
+	if !slices.Equal(got, []string{"--version"}) {
+		t.Fatalf("gh got %v, want [--version]", got)
+	}
+}
+
 func TestMountsBelowDeepestFirst(t *testing.T) {
 	info := `22 1 253:0 / /newroot rw - ext4 /dev/vda rw
 23 22 0:5 / /newroot/dev rw - devtmpfs devtmpfs rw
