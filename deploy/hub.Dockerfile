@@ -1,4 +1,4 @@
-ARG GUESTBOOT_TAG=6.18.64-5e9c566f
+ARG GUESTBOOT_TAG=6.18.64-a4c07d7d
 
 FROM --platform=linux/amd64 ghcr.io/asterism-dev/observatory-guestboot:${GUESTBOOT_TAG} AS guestboot
 

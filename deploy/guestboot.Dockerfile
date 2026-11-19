@@ -14,7 +14,7 @@ COPY deploy/guestboot/kernel.config .config
 RUN cp .config /tmp/committed.config && make olddefconfig \
     && diff /tmp/committed.config .config \
     && for opt in NF_TABLES NFT_COMPAT IP_NF_RAW IP6_NF_RAW NF_CT_NETLINK OVERLAY_FS BRIDGE VETH USER_NS PID_NS SECCOMP \
-         VSOCKETS VIRTIO_VSOCKETS VIRTIO_BALLOON EXT4_FS BLK_DEV_INITRD DEVTMPFS_MOUNT; do \
+         VSOCKETS VIRTIO_VSOCKETS VIRTIO_BALLOON EXT4_FS BLK_DEV_INITRD DEVTMPFS_MOUNT SERIO_I8042 KEYBOARD_ATKBD; do \
          grep -qx "CONFIG_$opt=y" .config || { echo "CONFIG_$opt is not built in" >&2; exit 1; }; \
        done \
     && grep -qx '# CONFIG_MODULES is not set' .config
