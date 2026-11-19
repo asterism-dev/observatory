@@ -21,7 +21,7 @@ the version keeps the index digest, and nodes pull and cache only that manifest.
 | Scope | Who sees and uses it | Who edits and builds it |
 |---|---|---|
 | `private` (yours) | only you | only you |
-| `team` | the team's members | team maintainers |
+| `team` | the team's members | team maintainers and org admins |
 | `org` | every member of the org | org admins |
 
 The standard image is the read-only platform image `observatory/standard`, listed in every org.
@@ -44,6 +44,8 @@ Everywhere an image is named (`vm create --image`, defaults, the CLI, the create
 | `name@sha256:<64 hex>` | an exact version; a VM records this digest |
 | `me/name`, `<team>/name`, `org/name` | qualified by scope: your private image, a team's, the org's |
 | `observatory/standard` | the platform image |
+
+`me`, `org` and `observatory` are reserved and cannot be team names.
 
 A bare name is looked up in your private images, then the VM owner's team, then the org. If it matches in more than one
 place the request fails and lists the qualified forms to choose from. A VM stores the reference and the digest it was
@@ -82,13 +84,16 @@ your access.
 ## Builds
 
 `observatory image build <ref> [--follow]` (or the Build button) queues a build of the current revision. The hub starts
-a hidden **builder VM** on a node of the org (2 vCPU, 4 GB RAM, 40 GB disk), which counts against the org's CPU and RAM
-limits while it runs. The builder runs BuildKit for `linux/amd64`, pushes the result and is deleted afterwards, whether
-the build succeeded or not. No build code runs outside a VM.
+a hidden **builder VM** on a node of the org (2 vCPU, 4 GB RAM, 40 GB disk). While it runs it counts against the vCPU,
+RAM, VM count and disk limits of the org and of its owner (the image's team or user; for an org image, whoever started
+the build); when one would be exceeded, the build fails naming that limit. The builder runs BuildKit for `linux/amd64`,
+pushes the result and is deleted afterwards, whether the build succeeded or not. No build code runs outside a VM.
 
 - A build times out after 60 minutes and then fails.
 - One build per image at a time; another request is rejected while one runs.
-- A successful build adds a version and moves the tag `latest` to it. A failed or cancelled build changes nothing.
+- Cancel a queued or running build on the image page or with `observatory image cancel <build-id>`.
+- A successful build adds a version and moves the tag `latest` to it. A failed or cancelled build never moves `latest`,
+  but when its push landed before it failed or was cancelled, that version and its `build-*` tag remain.
 - Builder VMs are not in the VM list. Org admins see running ones under the org's builder VMs in the web UI, or with
   `observatory image builders`.
 

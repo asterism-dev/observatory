@@ -159,7 +159,7 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `node list` / `node show <node>` | incl. image state |
 | `node add <name>` / `node token <node>` | register a node / issue a new install command; both print it. `token` revokes the current credential, so an enrolled node disconnects until reinstalled (confirms) |
 | `node rename <node> <name>` / `node delete <node>` | delete confirms |
-| `team list` / `team show <team>` / `team create <name>` / `team rename <team> <name>` / `team delete <team>` | delete confirms |
+| `team list` / `team show <team>` / `team create <name>` / `team rename <team> <name>` / `team delete <team>` | delete confirms; `me`, `org` and `observatory` are reserved names |
 | `team add <team> <member> [--admin]` / `team remove <team> <member>` | remove confirms |
 | `member list` / `member role <member> owner\|admin\|member` / `member remove <member>` | remove confirms |
 | `invite list` / `invite create [--role member]` / `invite revoke <id>` | create prints the link once; revoke confirms |
