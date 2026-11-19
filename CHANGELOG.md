@@ -1,3 +1,9 @@
+## v0.3.0 (2026-11-19)
+
+### Feat
+
+- **web**: shared ui components and consistent styling for all pages (#20)
+
 ## v0.2.0 (2026-11-19)
 
 ### Feat
