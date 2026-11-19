@@ -33,7 +33,10 @@
     "disks": "Disks",
     "integrations": "Integrationen",
     "docs": "Doku",
-    "breadcrumb": "Brotkrumen-Navigation"
+    "breadcrumb": "Brotkrumen-Navigation",
+    "settings": "Einstellungen",
+    "orgSettingsSubtitle": "Mitglieder, Teams, Rollen, Limits und Audit deiner Organisation.",
+    "platformSettingsSubtitle": "Organisationen, Benutzer und Audit der gesamten Plattform."
   },
   "theme": {
     "system": "System",
@@ -594,11 +597,15 @@
     "cli": "CLI",
     "cliHint": "Öffnet eine Shell oder den Desktop aus deinem Terminal",
     "desktopHint": "Für den Desktop brauchst du xpra auf deinem Rechner.",
-    "copied": "Kopiert",
     "editors": "Editoren",
     "overSsh": "Über SSH, als",
     "mobile": "Mobil",
     "scan": "Mit dem Handy scannen",
     "scanHint": "Öffnet {name} in einer SSH-App auf deinem Handy. Das Handy braucht ein eigenes WireGuard-Device unter {devices}; im Code steckt nichts Geheimes."
+  },
+  "ui": {
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "copyFailed": "Kopieren fehlgeschlagen"
   }
 }

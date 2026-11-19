@@ -6,11 +6,11 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import CreateVMDialog from '@/components/CreateVMDialog.vue'
-import PageHead from '@/components/PageHead.vue'
 import VMList from '@/components/VMList.vue'
 import type { VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { FilterBar, Page } from '@/ui'
 
 interface Listing {
   vms: VmInfo[]
@@ -76,32 +76,20 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <PageHead :icon="Server" :title="t('nav.vms')" :subtitle="t('vms.subtitle')">
+  <Page v-if="org" :icon="Server" :title="t('nav.vms')" :subtitle="t('vms.subtitle')">
+    <template #actions>
       <Button v-if="data.creatableOwners.length" variant="accent" :icon="Plus" @click="createOpen = true">{{ t('vms.create') }}</Button>
-    </PageHead>
+    </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <div class="filters">
+    <FilterBar>
       <Tabs v-model="tab" :tabs="tabs" variant="underline" />
       <SegmentedControl v-model="status" :options="statuses" size="sm" />
-      <span class="spacer" />
-      <Select v-model="node" :options="nodeOptions" :aria-label="t('vms.node')" />
-      <TextInput v-model="search" type="search" :placeholder="t('vms.search')" :aria-label="t('vms.search')" />
-    </div>
+      <template #end>
+        <Select v-model="node" :options="nodeOptions" :aria-label="t('vms.node')" />
+        <TextInput v-model="search" type="search" :placeholder="t('vms.search')" :aria-label="t('vms.search')" />
+      </template>
+    </FilterBar>
     <VMList :org-id="org.id" :vms="rows" :empty="data.vms.length ? t('vms.noMatch') : t('vms.empty')" @changed="refresh" />
     <CreateVMDialog v-model:open="createOpen" :org-id="org.id" :owners="data.creatableOwners" :nodes="data.nodes" @created="refresh" />
-  </template>
+  </Page>
 </template>
-
-<style scoped>
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.spacer {
-  flex: 1;
-}
-</style>

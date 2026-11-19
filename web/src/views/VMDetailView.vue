@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, NumberInput, Select, Tabs } from '@asterism-dev/lumen'
-import { ArrowUpRight } from '@lucide/vue'
+import { Button, Dialog, NumberInput, Select, Tabs } from '@asterism-dev/lumen'
+import { ArrowUpRight, Box } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -8,6 +8,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '@/api'
 import OpenVMDialog from '@/components/OpenVMDialog.vue'
 import VMDisksDialog from '@/components/VMDisksDialog.vue'
+import VMDisksTab from '@/components/VMDisksTab.vue'
+import VMNetworkingTab from '@/components/VMNetworkingTab.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
@@ -15,6 +17,7 @@ import { kindLabels, type IntegrationKind } from '@/composables/integrations'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
+import { Card, CommandBox, KeyValue, KeyValueList, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d } = useI18n()
 const route = useRoute()
@@ -36,8 +39,6 @@ const confirmDelete = ref(false)
 const networksOpen = ref(false)
 const disksOpen = ref(false)
 const openOpen = ref(false)
-const copyFailed = ref(false)
-const desktopCopyFailed = ref(false)
 const egress = ref<{ secrets: number; hosts: string[]; caNotAfter: string | null; trustChanged: boolean } | null>(null)
 const integrations = ref<{ kind: IntegrationKind; scope?: string; teamName?: string; mode?: string }[]>([])
 
@@ -120,24 +121,6 @@ const remove = () =>
     router.replace(`/orgs/${org.value?.id}/vms`)
   })
 
-async function copyDesktop() {
-  desktopCopyFailed.value = false
-  try {
-    await navigator.clipboard.writeText(`xpra attach ssh://ubuntu@${vm.value?.dnsName}/100`)
-  } catch {
-    desktopCopyFailed.value = true
-  }
-}
-
-async function copySsh() {
-  copyFailed.value = false
-  try {
-    await navigator.clipboard.writeText(`ssh ubuntu@${vm.value?.dnsName}`)
-  } catch {
-    copyFailed.value = true
-  }
-}
-
 const timer = window.setInterval(() => document.visibilityState === 'visible' && !busy.value && load(), 5000)
 onBeforeUnmount(() => window.clearInterval(timer))
 
@@ -156,155 +139,81 @@ watch(
 
 <template>
   <template v-if="org">
-    <p v-if="error" role="alert">{{ error }}</p>
+    <p v-if="error && !vm" role="alert" class="load-error">{{ error }}</p>
     <template v-if="vm">
-      <header class="head">
-        <div class="title">
-          <h1>{{ vm.name }}</h1>
-          <Badge :tone="vmTones[vm.state]">{{ t(`vms.states.${vm.state}`) }}</Badge>
-          <Badge variant="outline" weight="bold">{{ vm.node.name }}</Badge>
-        </div>
-        <p class="row">
+      <PageHeader
+        :icon="Box"
+        :title="vm.name"
+        mono
+        :subtitle="`${vm.owner.name} · ${vm.cpus} vCPU · ${gb(vm.memoryMB)} GB · ${vm.diskGB} GB`"
+      >
+        <template #tags>
+          <Tag :tone="vmTones[vm.state]">{{ t(`vms.states.${vm.state}`) }}</Tag>
+          <Tag strong>{{ vm.node.name }}</Tag>
+        </template>
+        <template #actions>
           <Button variant="accent" :icon="ArrowUpRight" @click="openOpen = true">{{ t('nodes.open') }}</Button>
           <template v-if="vm.canPower">
             <Button v-for="a in powerActions(vm.state)" :key="a" :disabled="busy" @click="power(a)">{{ t(`vms.${a}`) }}</Button>
           </template>
-        </p>
-        <p class="sub">
-          {{ vm.owner.name }} · {{ vm.cpus }} vCPU · {{ gb(vm.memoryMB) }} GB · {{ vm.diskGB }} GB
-        </p>
-      </header>
+        </template>
+      </PageHeader>
+      <div class="page-body">
+      <p v-if="error" role="alert">{{ error }}</p>
       <p v-if="vm.error" role="alert">{{ vm.error }}</p>
       <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
-      <div v-if="tab === 'overview'" class="panel">
+      <template v-if="tab === 'overview'">
         <VMUsage :org-id="org.id" :vm="vm" />
-        <section>
-          <h2 class="label">{{ t('vms.connect') }}</h2>
-          <dl class="card kv">
-            <dt>{{ t('vms.ssh') }}</dt>
-            <dd>
-              <template v-if="vm.dnsName">
-                <code>ssh ubuntu@{{ vm.dnsName }}</code>
-                <Button size="sm" @click="copySsh">{{ t('networks.copy') }}</Button>
-                <small v-if="copyFailed" role="alert">{{ t('networks.copyFailed') }}</small>
+        <Section :label="t('vms.connect')">
+          <Card>
+            <template v-if="vm.dnsName">
+              <CommandBox :command="`ssh ubuntu@${vm.dnsName}`" />
+              <template v-if="vm.image">
+                <CommandBox :command="`xpra attach ssh://ubuntu@${vm.dnsName}/100`" />
+                <small class="muted">
+                  {{ t('vms.desktop') }} ·
+                  <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
+                </small>
               </template>
-              <template v-else>–</template>
-            </dd>
-            <template v-if="vm.image && vm.dnsName">
-              <dt>{{ t('vms.desktop') }}</dt>
-              <dd>
-                <code>xpra attach ssh://ubuntu@{{ vm.dnsName }}/100</code>
-                <Button size="sm" @click="copyDesktop">{{ t('networks.copy') }}</Button>
-                <small v-if="desktopCopyFailed" role="alert">{{ t('networks.copyFailed') }}</small>
-                <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
-              </dd>
             </template>
-          </dl>
-        </section>
+            <span v-else class="muted">–</span>
+          </Card>
+        </Section>
         <div class="split">
-          <section>
-            <h2 class="label">{{ t('vms.details') }}</h2>
-            <dl class="card kv">
-              <dt>{{ t('vms.owner') }}</dt>
-              <dd>{{ vm.owner.name }}</dd>
-              <dt>{{ t('vms.node') }}</dt>
-              <dd><router-link :to="`/orgs/${org.id}/nodes/${vm.node.id}`">{{ vm.node.name }}</router-link></dd>
-              <dt>{{ t('vms.image') }}</dt>
-              <dd>{{ vm.image || (vm.stockImage ? t('vms.imageStock') : '–') }}</dd>
-              <template v-if="integrations.length">
-                <dt>{{ t('integrations.vmLine') }}</dt>
-                <dd>{{ integrations.map(integrationLine).join(', ') }}</dd>
-              </template>
-              <dt>{{ t('vms.created') }}</dt>
-              <dd>{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</dd>
-            </dl>
-          </section>
-          <section>
-            <h2 class="label">{{ t('networks.section') }}</h2>
-            <p class="card badges">
-              <Badge v-for="n in vm.networks" :key="n.id" variant="outline">{{ n.name }}</Badge>
-              <Badge v-if="!vm.networks.length" variant="outline">{{ t('networks.none') }}</Badge>
-              <Badge v-if="egress" variant="outline">{{ t('vms.egressSecrets', { n: egress.secrets }) }}</Badge>
-            </p>
-          </section>
+          <Section :label="t('vms.details')">
+            <Card>
+              <KeyValueList>
+                <KeyValue :label="t('vms.owner')">{{ vm.owner.name }}</KeyValue>
+                <KeyValue :label="t('vms.node')"><router-link :to="`/orgs/${org.id}/nodes/${vm.node.id}`">{{ vm.node.name }}</router-link></KeyValue>
+                <KeyValue :label="t('vms.image')">{{ vm.image || (vm.stockImage ? t('vms.imageStock') : '–') }}</KeyValue>
+                <KeyValue v-if="integrations.length" :label="t('integrations.vmLine')">{{ integrations.map(integrationLine).join(', ') }}</KeyValue>
+                <KeyValue :label="t('vms.created')">{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</KeyValue>
+              </KeyValueList>
+            </Card>
+          </Section>
+          <Section :label="t('networks.section')">
+            <Card>
+              <span class="tags">
+                <Tag v-for="n in vm.networks" :key="n.id">{{ n.name }}</Tag>
+                <Tag v-if="!vm.networks.length">{{ t('networks.none') }}</Tag>
+                <Tag v-if="egress">{{ t('vms.egressSecrets', { n: egress.secrets }) }}</Tag>
+              </span>
+            </Card>
+          </Section>
         </div>
-      </div>
+      </template>
 
-      <div v-else-if="tab === 'networking'" class="panel">
-        <div class="split">
-          <section>
-            <h2 class="label">{{ t('vms.connect') }}</h2>
-            <dl class="card kv">
-              <dt>{{ t('vms.ip') }}</dt>
-              <dd>{{ vm.ip || '–' }} <small v-if="vm.ip">({{ t('vms.ipHint') }})</small></dd>
-              <dt>{{ t('networks.mgmt') }}</dt>
-              <dd>{{ vm.mgmtIP || '–' }}</dd>
-              <dt>{{ t('networks.dns') }}</dt>
-              <dd>{{ vm.dnsName || '–' }}</dd>
-            </dl>
-          </section>
-          <section v-if="egress">
-            <h2 class="label">{{ t('vms.egress') }}</h2>
-            <dl class="card kv">
-              <dt>{{ t('vms.egress') }}</dt>
-              <dd>{{ t('vms.egressSecrets', { n: egress.secrets }) }}</dd>
-              <template v-if="egress.hosts.length">
-                <dt>{{ t('vms.egressHosts') }}</dt>
-                <dd><Badge v-for="h in egress.hosts" :key="h">{{ h }}</Badge></dd>
-              </template>
-              <template v-if="egress.caNotAfter">
-                <dt>{{ t('vms.egressCaLabel') }}</dt>
-                <dd>{{ t('vms.egressCa', { date: d(new Date(egress.caNotAfter), { dateStyle: 'short' }) }) }}</dd>
-              </template>
-            </dl>
-            <small v-if="egress.trustChanged" role="status">{{ t('vms.egressRestart') }}</small>
-          </section>
-        </div>
-        <section>
-          <div class="section-head">
-            <h2 class="label">{{ t('networks.section') }}</h2>
-            <Button v-if="vm.canNetwork" size="sm" :disabled="busy" @click="networksOpen = true">{{ t('networks.change') }}</Button>
-          </div>
-          <dl v-if="vm.networks.length" class="card kv">
-            <template v-for="n in vm.networks" :key="n.id">
-              <dt>{{ n.name }}</dt>
-              <dd><code>{{ n.ip }}</code> <span class="muted">{{ n.dnsName }}</span></dd>
-            </template>
-          </dl>
-          <p v-else class="card muted">{{ t('networks.none') }}</p>
-        </section>
-      </div>
+      <VMNetworkingTab v-if="tab === 'networking'" :vm="vm!" :egress="egress" :busy="busy" @edit="networksOpen = true" />
+      <VMDisksTab v-if="tab === 'disks'" :vm="vm!" :busy="busy" @edit="disksOpen = true" />
 
-      <div v-else-if="tab === 'snapshots'" class="panel">
-        <div class="card"><VMSnapshots :org-id="org.id" :vm="vm" @changed="load" /></div>
-      </div>
+      <template v-if="tab === 'snapshots'">
+        <Card><VMSnapshots :org-id="org.id" :vm="vm!" @changed="load" /></Card>
+      </template>
 
-      <div v-else-if="tab === 'disks'" class="panel">
-        <section>
-          <div class="section-head">
-            <h2 class="label">{{ t('vmDisks.section') }}</h2>
-            <Button v-if="vm.canDisks" size="sm" :disabled="busy" @click="disksOpen = true">{{ t('vmDisks.change') }}</Button>
-          </div>
-          <dl class="card kv">
-            <dt>{{ t('vmDisks.root') }}</dt>
-            <dd><code>/</code> <span class="muted">{{ vm.diskGB }} GB</span></dd>
-            <template v-for="dk in vm.disks" :key="dk.id">
-              <dt>{{ dk.name }}</dt>
-              <dd>
-                <code>{{ dk.mountPath }}</code> <span class="muted">{{ dk.sizeGB }} GB</span>
-                <Badge :tone="dk.error ? 'danger' : 'muted'">{{ t(`disks.states.${dk.state}`) }}</Badge>
-                <small v-if="dk.error" role="alert">{{ dk.error }}</small>
-              </dd>
-            </template>
-          </dl>
-        </section>
-      </div>
-
-      <div v-else class="panel">
-        <section v-if="vm.canPower">
-          <h2 class="label">{{ t('vms.autoSuspend') }}</h2>
-          <div class="card stack">
+      <template v-if="tab === 'settings'">
+        <Section v-if="vm!.canPower" :label="t('vms.autoSuspend')" :description="t('vms.autoSuspendHint')">
+          <Card>
             <p class="row">
               <Select
                 v-model="suspendChoice"
@@ -318,148 +227,53 @@ watch(
                 <Button :disabled="busy || !customValid" @click="setAutoSuspend(customMinutes)">{{ t('vms.autoSuspendApply') }}</Button>
               </template>
             </p>
-            <small class="muted">{{ t('vms.autoSuspendHint') }}</small>
-          </div>
-        </section>
-        <section v-if="vm.canDelete">
-          <h2 class="label">{{ t('vms.deleteTitle') }}</h2>
-          <div class="card stack danger-zone">
-            <span class="muted">{{ t('vms.deleteBody', { name: vm.name }) }}</span>
+          </Card>
+        </Section>
+        <Section v-if="vm!.canDelete" :label="t('vms.deleteTitle')">
+          <Card tone="danger">
+            <span class="muted">{{ t('vms.deleteBody', { name: vm!.name }) }}</span>
             <p><Button variant="danger" :disabled="busy" @click="confirmDelete = true">{{ t('vms.delete') }}</Button></p>
-          </div>
-        </section>
-      </div>
+          </Card>
+        </Section>
+      </template>
 
-      <OpenVMDialog v-model:open="openOpen" :org-id="org.id" :vm="vm" />
-      <VMNetworksDialog v-model:open="networksOpen" :org-id="org.id" :vm="vm" @saved="load" />
-      <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
-      <Dialog
-        :open="confirmDelete"
-        :title="t('vms.deleteTitle')"
-        :description="t('vms.deleteBody', { name: vm.name })"
-        @update:open="(o) => !o && !busy && (confirmDelete = false)"
-      >
-        <template #actions>
-          <Button :disabled="busy" @click="confirmDelete = false">{{ t('profile.cancel') }}</Button>
-          <Button variant="danger" :disabled="busy" @click="remove">{{ t('vms.delete') }}</Button>
-        </template>
-      </Dialog>
+
+      </div>
+    </template>
+    <template v-if="vm && org">
+    <OpenVMDialog v-model:open="openOpen" :org-id="org.id" :vm="vm" />
+    <VMNetworksDialog v-model:open="networksOpen" :org-id="org.id" :vm="vm" @saved="load" />
+    <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
+    <Dialog
+      :open="confirmDelete"
+      :title="t('vms.deleteTitle')"
+      :description="t('vms.deleteBody', { name: vm.name })"
+      @update:open="(o) => !o && !busy && (confirmDelete = false)"
+    >
+      <template #actions>
+        <Button :disabled="busy" @click="confirmDelete = false">{{ t('profile.cancel') }}</Button>
+        <Button variant="danger" :disabled="busy" @click="remove">{{ t('vms.delete') }}</Button>
+      </template>
+    </Dialog>
     </template>
   </template>
 </template>
 
 <style scoped>
-.head {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 4px 16px;
-  margin-bottom: 16px;
-}
-.title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-h1 {
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 1.5rem;
-}
-.sub {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--muted);
-}
-.muted {
-  color: var(--muted);
-}
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-}
-.stack {
-  display: grid;
-  gap: 10px;
-}
-.stack p {
-  margin: 0;
-}
-.danger-zone {
-  border-color: var(--danger);
-}
-.panel {
-  display: grid;
-  gap: 28px;
-  padding-top: 20px;
-}
-.label {
-  margin: 0 0 10px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.7rem;
-  font-weight: normal;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0;
-}
-.badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-}
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 12px 16px;
+.load-error {
+  margin: var(--page-y) var(--page-x);
 }
 .split {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   align-items: start;
-  gap: 28px 16px;
+  gap: var(--section-gap) 16px;
 }
-.kv {
-  align-items: center;
-}
-.kv > dt {
-  color: var(--muted);
-}
-.kv > dt:not(:first-of-type),
-.kv > dt:not(:first-of-type) + dd {
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.kv > dd {
+.tags,
+.row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
   gap: 6px 8px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 16px;
   margin: 0;
-}
-dd {
-  margin: 0;
-}
-@media (max-width: 640px) {
-  .head {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

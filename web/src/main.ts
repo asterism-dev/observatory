@@ -1,4 +1,5 @@
 import '@asterism-dev/lumen/style.css'
+import './ui/theme.css'
 import { createApp } from 'vue'
 
 import App from './App.vue'

@@ -33,7 +33,10 @@
     "disks": "Disks",
     "integrations": "Integrations",
     "docs": "Docs",
-    "breadcrumb": "Breadcrumb"
+    "breadcrumb": "Breadcrumb",
+    "settings": "Settings",
+    "orgSettingsSubtitle": "Members, teams, roles, limits and audit for your organization.",
+    "platformSettingsSubtitle": "Organizations, users and audit across the whole platform."
   },
   "theme": {
     "system": "System",
@@ -594,11 +597,15 @@
     "cli": "CLI",
     "cliHint": "Opens a shell or the desktop from your terminal",
     "desktopHint": "The desktop needs xpra on your computer.",
-    "copied": "Copied",
     "editors": "Editors",
     "overSsh": "Over SSH, as",
     "mobile": "Mobile",
     "scan": "Scan with your phone",
     "scanHint": "Opens {name} in an SSH app on your phone. The phone needs its own WireGuard device under {devices}; nothing secret is in the code."
+  },
+  "ui": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Copy failed"
   }
 }
