@@ -91,3 +91,14 @@ func TestRunStepsRunsEveryStepDespiteFailures(t *testing.T) {
 		t.Fatalf("ran %v", ran)
 	}
 }
+
+func TestRunStepsSurvivesPanics(t *testing.T) {
+	var ran []string
+	runSteps([]bootStep{
+		{"a", func() error { ran = append(ran, "a"); panic("boom") }},
+		{"b", func() error { ran = append(ran, "b"); return nil }},
+	})
+	if !slices.Equal(ran, []string{"a", "b"}) {
+		t.Fatalf("ran %v", ran)
+	}
+}
