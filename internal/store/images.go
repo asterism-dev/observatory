@@ -129,8 +129,37 @@ func (s *Store) CreateImage(ctx context.Context, v Image) (Image, error) {
 	return v, err
 }
 
+// Image returns an image of the org or the platform image.
 func (s *Store) Image(ctx context.Context, org, id uuid.UUID) (Image, error) {
-	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE org_id = $1 AND id = $2", org, id))
+	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE (org_id = $1 OR platform) AND id = $2", org, id))
+}
+
+// LockImage locks the org's image row for the rest of the transaction.
+func (s *Store) LockImage(ctx context.Context, org, id uuid.UUID) (Image, error) {
+	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE org_id = $1 AND id = $2 FOR UPDATE", org, id))
+}
+
+// PlatformImage returns the one global platform image, creating it on first use.
+func (s *Store) PlatformImage(ctx context.Context) (Image, error) {
+	img, err := scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE platform"))
+	if !errors.Is(err, ErrNotFound) {
+		return img, err
+	}
+	err = s.InTx(ctx, func(tx *Store) error {
+		// No unique index can cover the NULL org, so concurrent first uses serialize here.
+		if _, err := tx.q.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('observatory.platform-image'))"); err != nil {
+			return err
+		}
+		img, err = scanImage(tx.q.QueryRow(ctx, `
+			INSERT INTO images (scope, name, description, platform)
+			SELECT 'org', 'standard', 'Standard image (ghcr.io/asterism-dev/observatory-guest), version chosen by the node', true
+			WHERE NOT EXISTS (SELECT 1 FROM images WHERE platform) RETURNING `+imageCols))
+		if errors.Is(err, ErrNotFound) {
+			img, err = scanImage(tx.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE platform"))
+		}
+		return err
+	})
+	return img, err
 }
 
 func (s *Store) ImageByName(ctx context.Context, org uuid.UUID, scope EnvScope, owner *uuid.UUID, name string) (Image, error) {
@@ -293,6 +322,17 @@ func (s *Store) SetImageTag(ctx context.Context, image uuid.UUID, tag, digest st
 	res, err := s.q.Exec(ctx, `
 		INSERT INTO image_tags (image_id, tag, digest) SELECT image_id, $2, digest FROM image_versions WHERE image_id = $1 AND digest = $3
 		ON CONFLICT (image_id, tag) DO UPDATE SET digest = EXCLUDED.digest`, image, tag, digest)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteImageTag(ctx context.Context, image uuid.UUID, tag string) error {
+	res, err := s.q.Exec(ctx, "DELETE FROM image_tags WHERE image_id = $1 AND tag = $2", image, tag)
 	if err != nil {
 		return err
 	}

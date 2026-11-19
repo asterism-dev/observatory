@@ -77,6 +77,7 @@ var storeErrorStatus = []struct {
 	status int
 }{
 	{store.ErrNotFound, http.StatusNotFound},
+	{store.ErrImageExists, http.StatusConflict},
 	{store.ErrLastOwner, http.StatusConflict},
 	{store.ErrPersonalOrg, http.StatusConflict},
 	{store.ErrConflict, http.StatusConflict},
@@ -128,6 +129,11 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		return nil
 	})
 	if err != nil {
+		var he httpError
+		if errors.As(err, &he) {
+			writeError(w, he.status, he.msg)
+			return false
+		}
 		var invalid invalidPolicyError
 		if errors.As(err, &invalid) {
 			slog.Error("policy validation failed", "err", invalid)

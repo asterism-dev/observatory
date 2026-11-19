@@ -34,18 +34,19 @@ type api struct {
 	signIns     *integrations.SignIns[signIn]
 	newer       func() string
 	firecracker string
+	manifests   ManifestDeleter
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string, firecracker string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL, newer, firecracker)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, docsURL string, newer func() string, firecracker string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, docsURL, newer, firecracker)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -99,6 +100,25 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("DELETE /api/orgs/{org}/integrations/{id}", h.deleteIntegration)
 	mux.HandleFunc("POST /api/orgs/{org}/integrations/claude/sign-in", h.startClaudeSignIn)
 	mux.HandleFunc("POST /api/orgs/{org}/integrations/claude/sign-in/finish", h.finishClaudeSignIn)
+	mux.HandleFunc("GET /api/orgs/{org}/images", h.listImages)
+	mux.HandleFunc("POST /api/orgs/{org}/images", h.createImage)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}", h.getImage)
+	mux.HandleFunc("PATCH /api/orgs/{org}/images/{id}", h.updateImage)
+	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}", h.deleteImage)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/recipe", h.getRecipe)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/recipe/files/{path...}", h.getRecipeFile)
+	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/recipe", h.putRecipe)
+	mux.HandleFunc("POST /api/orgs/{org}/images/{id}/recipe/edits", h.editRecipe)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/versions", h.listImageVersions)
+	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/versions/{digest}", h.deleteImageVersion)
+	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/tags/{tag}", h.setImageTag)
+	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/tags/{tag}", h.deleteImageTag)
+	mux.HandleFunc("GET /api/orgs/{org}/image-defaults/{level}", h.getImageDefault)
+	mux.HandleFunc("PUT /api/orgs/{org}/image-defaults/{level}", h.setImageDefault)
+	mux.HandleFunc("DELETE /api/orgs/{org}/image-defaults/{level}", h.clearImageDefault)
+	mux.HandleFunc("GET /api/orgs/{org}/image-defaults/team/{team}", h.getImageDefault)
+	mux.HandleFunc("PUT /api/orgs/{org}/image-defaults/team/{team}", h.setImageDefault)
+	mux.HandleFunc("DELETE /api/orgs/{org}/image-defaults/team/{team}", h.clearImageDefault)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes", h.listNodes)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes", h.createNode)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes/{id}", h.getNode)

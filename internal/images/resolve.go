@@ -67,7 +67,7 @@ func (r Resolver) Resolve(ctx context.Context, org, caller uuid.UUID, owner Owne
 	res := Resolved{Image: &img, Tag: p.Tag, Digest: p.Digest, Source: SourceExplicit}
 	if p.Digest != "" {
 		if _, err := r.Store.ImageVersion(ctx, img.ID, p.Digest); errors.Is(err, store.ErrNotFound) {
-			return Resolved{}, fmt.Errorf("digest %q not found", p.Digest)
+			return Resolved{}, fmt.Errorf("digest %q: %w", p.Digest, store.ErrNotFound)
 		} else if err != nil {
 			return Resolved{}, err
 		}
@@ -77,7 +77,7 @@ func (r Resolver) Resolve(ctx context.Context, org, caller uuid.UUID, owner Owne
 		res.Tag = latestTag
 	}
 	if res.Digest, err = r.Store.ResolveImageTag(ctx, img.ID, res.Tag); errors.Is(err, store.ErrNotFound) {
-		return Resolved{}, fmt.Errorf("tag %q not found", res.Tag)
+		return Resolved{}, fmt.Errorf("tag %q: %w", res.Tag, store.ErrNotFound)
 	} else if err != nil {
 		return Resolved{}, err
 	}
@@ -195,6 +195,9 @@ func (r Resolver) resolveDefault(ctx context.Context, org uuid.UUID, d store.Ima
 	img, err := r.Store.Image(ctx, org, d.ImageID)
 	if err != nil {
 		return Resolved{}, err
+	}
+	if img.Platform {
+		return Resolved{Source: source}, nil
 	}
 	res := Resolved{Image: &img, Tag: d.Tag, Digest: d.Digest, Source: source}
 	if d.Digest != "" {

@@ -130,7 +130,7 @@ func TestResolveTags(t *testing.T) {
 	f := newFixture(t, grants{})
 	img := f.image(t, store.EnvScopeOrg, nil, "tools")
 	owner := images.Owner{UserID: &f.user}
-	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools:v9"); err == nil || !strings.Contains(err.Error(), `tag "v9" not found`) {
+	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools:v9"); err == nil || !strings.Contains(err.Error(), `tag "v9": not found`) {
 		t.Fatalf("missing tag: %v", err)
 	}
 	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools@"+digest); err == nil || !strings.Contains(err.Error(), "not found") {
