@@ -11,6 +11,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
 func nodesPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/nodes" }
@@ -246,5 +247,26 @@ func TestNodeJSONImage(t *testing.T) {
 	}
 	if i := read().Image; i == nil || i.State != proto.ImageBuilding || i.Version != "v1" {
 		t.Fatalf("%+v", i)
+	}
+}
+
+func TestNodeJSONOutdated(t *testing.T) {
+	old := version.Version
+	version.Version = "v0.3.0"
+	t.Cleanup(func() { version.Version = old })
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.enrolledNode(tok, org, "n1")
+	node, _ := uuid.Parse(id)
+	for v, want := range map[string]bool{"v0.2.0": true, "v0.3.0": false, "": false, "dev": false} {
+		if err := e.store.UpdateNodeInfo(context.Background(), node, 2, 2048, nil, v); err != nil {
+			t.Fatal(err)
+		}
+		var n struct{ Outdated bool }
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+		if n.Outdated != want {
+			t.Errorf("node version %q: outdated %v, want %v", v, n.Outdated, want)
+		}
 	}
 }

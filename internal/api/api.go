@@ -19,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
 type api struct {
@@ -31,18 +32,19 @@ type api struct {
 	disks     *disks.Hub
 	ig        Integrations
 	signIns   *integrations.SignIns[signIn]
+	newer     func() string
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL, newer)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now)}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -151,9 +153,11 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		orgs = append(orgs, toOrgJSON(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":    map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
-		"orgs":    orgs,
-		"docsURL": h.docsURL,
+		"user":          map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
+		"orgs":          orgs,
+		"docsURL":       h.docsURL,
+		"version":       version.Version,
+		"latestVersion": h.newer(),
 	})
 }
 

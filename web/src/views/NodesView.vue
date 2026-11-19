@@ -7,11 +7,13 @@ import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
 import { gb, imageLine, stateTones, type NodeInfo } from '@/composables/nodes'
+import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { Meter, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 const { t, locale } = useI18n()
 const { org, can } = useOrg()
+const { me } = useMe()
 
 const nodes = ref<NodeInfo[]>([])
 const error = ref('')
@@ -63,6 +65,7 @@ watch(
         <template #tags>
           <Tag :tone="stateTones[n.state]">{{ t(`nodes.states.${n.state}`) }}</Tag>
           <Tag v-if="n.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Tag>
+          <Tag v-if="n.outdated" tone="warning" :title="t('nodes.outdatedHint', { hub: me?.version })">{{ t('nodes.outdated') }}</Tag>
           <Tag>{{ n.vmCount }} {{ t('nodes.vms') }}</Tag>
         </template>
         <Meter :label="t('usage.cpu')" :percent="n.state === 'pending' ? null : pct(n.usedCPUs, n.cpus)" />

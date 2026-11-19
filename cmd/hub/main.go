@@ -22,6 +22,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
 )
@@ -104,7 +105,13 @@ func run() error {
 	if cfg.DevClaudeTokenURL != "" {
 		slog.Warn("dev mode: claude token endpoint overridden", "url", cfg.DevClaudeTokenURL)
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL))
+	newer := func() string { return "" }
+	if release.Enabled(os.Getenv) {
+		ck := &release.Checker{URL: release.LatestURL, Client: &http.Client{Timeout: 10 * time.Second}}
+		go ck.Run(ctx, 6*time.Hour)
+		newer = ck.Newer
+	}
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL, newer))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

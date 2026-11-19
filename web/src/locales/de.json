@@ -2,6 +2,11 @@
   "app": {
     "name": "Observatory"
   },
+  "release": {
+    "available": "Version {latest} ist verfügbar (läuft: {current}).",
+    "notes": "Release Notes",
+    "dismiss": "Ausblenden"
+  },
   "login": {
     "intro": "Melde dich an, um fortzufahren.",
     "signIn": "Anmelden",
@@ -311,6 +316,8 @@
     },
     "underlay": "Underlay-Adresse",
     "quarantined": "Unter Quarantäne",
+    "outdated": "Veraltet",
+    "outdatedHint": "Der Hub läuft auf {hub}; führe den Installationsbefehl erneut aus, um diesen Node zu aktualisieren.",
     "quarantinedHelp": "Dieser Node hat einen Netzwerk-Port eines anderen Nodes belegt. Das Gateway hat seinen Underlay-Verkehr gesperrt. Erzeuge seine Zugangsdaten neu und installiere ihn erneut, um ihn freizugeben.",
     "registered": "Registriert",
     "handshake": "Letzter Handshake",

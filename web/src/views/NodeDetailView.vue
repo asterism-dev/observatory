@@ -10,6 +10,7 @@ import InstallCommand from '@/components/InstallCommand.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
+import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
 
@@ -17,6 +18,7 @@ const { t, d, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { org } = useOrg()
+const { me } = useMe()
 
 const nodeId = computed(() => String(route.params.nodeId))
 const tabIds = ['overview', 'vms', 'settings']
@@ -123,6 +125,7 @@ watch(
         <template #tags>
           <Tag :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Tag>
           <Tag v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Tag>
+          <Tag v-if="node.outdated" tone="warning" :title="t('nodes.outdatedHint', { hub: me?.version })">{{ t('nodes.outdated') }}</Tag>
         </template>
       </PageHeader>
       <div class="page-body">
@@ -152,7 +155,10 @@ watch(
           <Section :label="t('nodes.machine')">
             <Card>
               <KeyValueList>
-                <KeyValue :label="t('nodes.version')">{{ node.version || '–' }}</KeyValue>
+                <KeyValue :label="t('nodes.version')">
+                  {{ node.version || '–' }}
+                  <span v-if="node.outdated" class="muted"> · {{ t('nodes.outdatedHint', { hub: me?.version }) }}</span>
+                </KeyValue>
                 <KeyValue :label="t('nodes.guestImage')">
                   <i18n-t v-if="node.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
                   <template v-else>{{ imageLine(node.image, t, locale) }}</template>

@@ -3,6 +3,7 @@ export interface NodeInfo {
   name: string
   state: 'pending' | 'online' | 'offline'
   version: string
+  outdated: boolean
   cpus: number
   memoryMB: number
   machine: Record<string, unknown> | null

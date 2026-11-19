@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
 type env struct {
@@ -58,7 +59,7 @@ func newEnv(t *testing.T) *env {
 	}
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo := &fakeVerifier{}, &fakeOAuth{}
-	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo}, "https://docs.test/")
+	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo}, "https://docs.test/", func() string { return "v9.9.9" })
 	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler, verifier: fv, oauth: fo}
 }
 
@@ -135,11 +136,15 @@ func TestMe(t *testing.T) {
 			ID, Name, Role string
 			Personal       bool
 		}
-		DocsURL string
+		DocsURL                string
+		Version, LatestVersion string
 	}
 	decode(t, rec, &got)
 	if got.DocsURL != "https://docs.test/" {
 		t.Fatalf("docsURL: %q", got.DocsURL)
+	}
+	if got.Version != version.Version || got.LatestVersion != "v9.9.9" {
+		t.Fatalf("version %q, latestVersion %q", got.Version, got.LatestVersion)
 	}
 	if got.User.ID != u.ID.String() || got.User.Email != "alice@x.io" || !got.User.PlatformAdmin {
 		t.Fatalf("user: %+v", got.User)
@@ -281,7 +286,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, ""))
+	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, "", func() string { return "" }))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

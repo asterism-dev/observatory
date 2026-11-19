@@ -2,6 +2,11 @@
   "app": {
     "name": "Observatory"
   },
+  "release": {
+    "available": "Version {latest} is available (running {current}).",
+    "notes": "Release notes",
+    "dismiss": "Dismiss"
+  },
   "login": {
     "intro": "Sign in to continue.",
     "signIn": "Sign in",
@@ -311,6 +316,8 @@
     },
     "underlay": "Underlay address",
     "quarantined": "Quarantined",
+    "outdated": "Outdated",
+    "outdatedHint": "The hub runs {hub}; re-run the install command to update this node.",
     "quarantinedHelp": "This node held a network port of another node. The gateway cut its underlay traffic. Regenerate its credential and re-install it to release it.",
     "registered": "Registered",
     "handshake": "Last handshake",
