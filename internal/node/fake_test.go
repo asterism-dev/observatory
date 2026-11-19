@@ -215,6 +215,12 @@ func newFakeProvider() *fakeProvider {
 
 func (p *fakeProvider) Name() string { return "fake" }
 
+func (p *fakeProvider) HypervisorChanged() bool { return p.hvChanged.Load() }
+
+func (p *fakeProvider) Hypervisor() proto.Hypervisor {
+	return proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}
+}
+
 func (p *fakeProvider) Prepare(_ context.Context, f VMFile, dir string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -453,9 +459,3 @@ func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
 func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
 func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
 func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }
-
-func (p *fakeProvider) HypervisorChanged() bool { return p.hvChanged.Load() }
-
-func (p *fakeProvider) Hypervisor() proto.Hypervisor {
-	return proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}
-}
