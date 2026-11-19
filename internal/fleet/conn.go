@@ -120,10 +120,11 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		case m.Type == "status" && m.Status != nil:
 			if err := f.store.SetVMStatus(ctx, node.ID, *m.Status); err != nil {
 				slog.Error("vm status", "node", node.ID, "vm", m.Status.ID, "err", err)
+			} else {
+				f.mu.Lock()
+				c.seen[m.Status.ID] = true // after SetVMStatus, so an update run never pairs it with the stored state from before
+				f.mu.Unlock()
 			}
-			f.mu.Lock()
-			c.seen[m.Status.ID] = true // after SetVMStatus, so an update run never pairs it with the stored state from before
-			f.mu.Unlock()
 			f.noteDiskErrors(c, *m.Status)
 			if changed, err := f.store.ApplySnapshotStatus(ctx, node.ID, *m.Status); err != nil {
 				slog.Error("vm snapshot status", "node", node.ID, "vm", m.Status.ID, "err", err)

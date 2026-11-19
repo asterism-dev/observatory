@@ -238,6 +238,19 @@ func TestUpdateJudgesOnlyStatesWrittenOnNewConnection(t *testing.T) {
 	}
 }
 
+func TestStatusSeenOnlyWhenStored(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	bad := e.vm(e.org.ID, ns[0].ID, "bad", &e.owner, nil)
+	good := e.vm(e.org.ID, ns[0].ID, "good", &e.owner, nil)
+	// Postgres rejects NUL bytes in text, so this status write fails.
+	ns[0].conn.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: bad.ID.String(), State: proto.StateError, Error: "a\x00b"}})
+	ns[0].conn.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: good.ID.String(), State: proto.StateRunning}})
+	waitFor(t, func() bool { return fleet.Seen(e.f, ns[0].ID, good.ID) })
+	if fleet.Seen(e.f, ns[0].ID, bad.ID) {
+		t.Fatal("vm seen although its status was not stored")
+	}
+}
+
 func TestUpdateFailsOnReport(t *testing.T) {
 	e, ns := updEnv(t, "n1", "n2")
 	e.start(ns...)
