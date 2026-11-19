@@ -50,6 +50,9 @@ devices need nothing.
 docker compose -f deploy/compose.yaml cp caddy:/data/caddy/pki/authorities/local/root.crt observatory-hub-ca.crt
 ```
 
+Run it as a user in the `docker` group: with `sudo` the copy is owned by root with mode 0600 and `curl --cacert`
+cannot read it.
+
 - Node hosts, before running the installer: copy the file to `/usr/local/share/ca-certificates/observatory-hub-ca.crt`
   and run `sudo update-ca-certificates`; `curl` and the node then trust the hub.
 - Linux machines running the CLI: the same.
