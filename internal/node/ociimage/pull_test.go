@@ -7,9 +7,13 @@ import (
 	"log"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -216,6 +220,67 @@ func TestPruneKeepsReferenced(t *testing.T) {
 	entries, _ := os.ReadDir(s.blobDir())
 	if len(entries) != 4 { // manifest, config, 2 layers
 		t.Fatalf("%d blobs left, want 4", len(entries))
+	}
+}
+
+func TestPruneLRU(t *testing.T) {
+	reg := testRegistry(t)
+	s := Store{Dir: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(s.Dir, "disks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var digests []string
+	for i := range 13 {
+		ref := reg + "/img:" + strconv.Itoa(i)
+		if err := remote.Write(mustRef(t, ref), platformImage(t, "amd64", v1.Config{})); err != nil {
+			t.Fatal(err)
+		}
+		p, err := s.Pull(context.Background(), ref, authn.Anonymous)
+		if err != nil {
+			t.Fatal(err)
+		}
+		digests = append(digests, p.Digest)
+		disk := filepath.Join(s.Dir, "disks", mustHash(p.Digest).Hex+".raw")
+		if err := os.WriteFile(disk, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		used := time.Now().Add(time.Duration(i-20) * time.Minute)
+		if err := os.Chtimes(disk, used, used); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cached := func() (got []int) {
+		for i, d := range digests {
+			_, err := s.image(mustHash(d))
+			_, derr := os.Stat(filepath.Join(s.Dir, "disks", mustHash(d).Hex+".raw"))
+			if (err == nil) != (derr == nil) {
+				t.Fatalf("image %d: manifest %v, disk %v", i, err, derr)
+			}
+			if err == nil {
+				got = append(got, i)
+			}
+		}
+		return got
+	}
+	fsSpace = func(string) (int64, int64, error) { return 50, 100, nil }
+	// The oldest unused images 1 and 2 go, leaving 10 besides the kept 0.
+	if err := s.Prune([]string{digests[0], "not a digest"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cached(), []int{0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}; !slices.Equal(got, want) {
+		t.Fatalf("cached %v, want %v", got, want)
+	}
+	// Low on space: unused images go, oldest first, until 20% are free.
+	fsSpace = func(string) (int64, int64, error) {
+		entries, _ := os.ReadDir(filepath.Join(s.Dir, "disks"))
+		return 100 - int64(len(entries))*10, 100, nil
+	}
+	t.Cleanup(func() { fsSpace = statfsSpace })
+	if err := s.Prune([]string{digests[0]}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cached(), []int{0, 6, 7, 8, 9, 10, 11, 12}; !slices.Equal(got, want) {
+		t.Fatalf("cached %v, want %v", got, want)
 	}
 }
 

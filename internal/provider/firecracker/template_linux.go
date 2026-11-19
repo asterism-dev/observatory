@@ -69,7 +69,11 @@ func (p *Provider) buildTemplate(ctx context.Context, key, base string, f node.V
 	if err := waitAgent(ctx, dir, inst); err != nil {
 		return err
 	}
-	if err := saveTemplate(inst, dir, dst); err != nil {
+	digest, err := imageDigest(f.Image)
+	if err != nil {
+		return err
+	}
+	if err := saveTemplate(inst, dir, dst, digest); err != nil {
 		return err
 	}
 	log.Printf("template %s: built in %s", key, time.Since(began).Round(time.Second))
@@ -96,7 +100,7 @@ func waitAgent(ctx context.Context, dir string, inst node.Instance) error {
 }
 
 // saveTemplate writes inst's memory and root disk to dst as root-owned 0644 files, shared read-only by every VM started from it.
-func saveTemplate(inst node.Instance, dir, dst string) error {
+func saveTemplate(inst node.Instance, dir, dst, digest string) error {
 	tmp := dst + ".tmp"
 	if err := os.RemoveAll(tmp); err != nil {
 		return err
@@ -107,6 +111,9 @@ func saveTemplate(inst node.Instance, dir, dst string) error {
 	err := inst.SaveState(tmp)
 	if err == nil {
 		err = os.Rename(filepath.Join(dir, "root.img"), filepath.Join(tmp, "root.img"))
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(tmp, templateImage), []byte(digest), 0o644)
 	}
 	for _, n := range []string{node.StateFile, node.MemFile, "root.img"} {
 		if err == nil {

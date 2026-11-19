@@ -63,9 +63,13 @@ func (a *Agent) reconcile(ctx context.Context, seq uint64, desired []proto.Desir
 			if !e.placeholder && d.Generation <= gen {
 				e.file.Boot = d.Boot
 			}
-			// The proxy table applies at once, whatever the generation.
+			// The proxy table and a fresh pull token apply at once, whatever the generation.
 			if !e.placeholder {
 				e.file.Egress = d.Egress
+				if e.file.Spec.Image != nil && d.Spec.Image != nil {
+					e.file.Spec.Image = d.Spec.Image
+					a.wakeImageWaitersLocked()
+				}
 				// A hub that failed to read the integrations leaves the last known tokens in place.
 				if !d.IntegrationsUnresolved || old.Boot == nil || old.IntegrationsUnresolved {
 					e.file.Integrations, e.file.IntegrationsUnresolved = d.Integrations, d.IntegrationsUnresolved

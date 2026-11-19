@@ -643,6 +643,54 @@ func TestAgentWaitsForFailedPull(t *testing.T) {
 	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 }
 
+func TestAgentPullsUserImage(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	userImage := &proto.ImageRef{Repo: "hub.example/i/img1", Digest: "sha256:" + strings.Repeat("b", 64), PullToken: "bad"}
+	vm := env.hub.createWith("dev", func(v *hubVM) { v.Spec.Image = userImage })
+	eventually(t, "pull error", func() bool {
+		v, _ := env.hub.vm(vm.ID)
+		return v.State == proto.StateError && v.Error == "image pull failed: UNAUTHORIZED"
+	})
+	if got := env.provider.gotPrepared(); len(got) != 0 {
+		t.Fatalf("prepared without the image: %v", got)
+	}
+	fresh := *userImage
+	fresh.PullToken = "t1"
+	env.hub.mu.Lock()
+	env.hub.vmsByID[vm.ID].Spec.Image = &fresh
+	env.hub.mu.Unlock()
+	env.hub.push()
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	want := userImage.Repo + "@" + userImage.Digest
+	if img, _ := env.provider.gotPreparedImage("dev"); img != want {
+		t.Fatalf("Prepare got image %q", img)
+	}
+	if f := loadVM(t, env.agent, vm.ID); f.Image != want || !reflect.DeepEqual(f.ImageConfig, proto.ImageConfig{Cmd: []string{"app"}}) {
+		t.Fatalf("vm.json image = %q, config %+v", f.Image, f.ImageConfig)
+	}
+}
+
+func TestPullTokenNotPersisted(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	vm := env.hub.createWith("dev", func(v *hubVM) {
+		v.Spec.Image = &proto.ImageRef{Repo: "hub.example/i/img1", Digest: "sha256:" + strings.Repeat("b", 64), PullToken: "t1"}
+	})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	b, err := os.ReadFile(filepath.Join(VMDir(env.agent.VMsDir, vm.ID), "vm.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "pullToken") || !strings.Contains(string(b), "hub.example/i/img1") {
+		t.Fatalf("vm.json = %s", b)
+	}
+	env.agent.mu.Lock()
+	tok := env.agent.vms[vm.ID].file.Spec.Image.PullToken
+	env.agent.mu.Unlock()
+	if tok != "t1" {
+		t.Fatalf("token in memory = %q", tok)
+	}
+}
+
 func TestAgentReportsImage(t *testing.T) {
 	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	ready := proto.ImageStatus{Version: testImage, State: proto.ImageReady}

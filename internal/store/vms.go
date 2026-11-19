@@ -41,13 +41,15 @@ type VM struct {
 	Image              string
 	RestoreState       string
 	LegacyRuntime      bool
+	// ImageRef is the image reference the VM was created with, ImageDigest the version it runs; empty digest means the platform image.
+	ImageRef, ImageDigest string
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime, coalesce(image_ref, ''), coalesce(image_digest, '')"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime, &v.ImageRef, &v.ImageDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}

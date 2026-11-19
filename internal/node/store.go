@@ -63,6 +63,11 @@ func SaveVM(vmsDir string, f VMFile) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	if f.Spec.Image != nil {
+		img := *f.Spec.Image
+		img.PullToken = ""
+		f.Spec.Image = &img
+	}
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

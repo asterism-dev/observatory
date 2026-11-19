@@ -4,14 +4,17 @@ import (
 	"context"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -43,6 +46,64 @@ func runImages(t *testing.T, p *Provider) []proto.ImageStatus {
 		}
 	})
 	return got
+}
+
+func TestPrepareUserImagePullsWithToken(t *testing.T) {
+	reg := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer t1" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="http://`+r.Host+`/token",service="test"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		reg.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/i/img1"
+	img, err := random.Image(1024, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf, err := img.ConfigFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf = cf.DeepCopy()
+	cf.OS, cf.Architecture, cf.Config = "linux", "amd64", v1.Config{Cmd: []string{"app"}}
+	if img, err = mutate.ConfigFile(img, cf); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := name.ParseReference(repo + ":latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(ref, img, remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: "t1"}))); err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := img.Digest()
+	p := &Provider{VMsDir: t.TempDir(), store: ociimage.Store{Dir: filepath.Join(t.TempDir(), "oci")}}
+
+	for _, tok := range []string{"", "t2"} {
+		if _, _, err := p.PullImage(context.Background(), proto.ImageRef{Repo: repo, Digest: digest.String(), PullToken: tok}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
+			t.Fatalf("token %q: err = %v", tok, err)
+		}
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	if _, err := exec.LookPath("mke2fs"); err != nil {
+		t.Skip("mke2fs not installed")
+	}
+	got, cfg, err := p.PullImage(context.Background(), proto.ImageRef{Repo: repo, Digest: digest.String(), PullToken: "t1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != repo+"@"+digest.String() || !reflect.DeepEqual(cfg, proto.ImageConfig{Cmd: []string{"app"}}) {
+		t.Fatalf("pulled %q, config %+v", got, cfg)
+	}
+	if _, err := os.Stat(filepath.Join(p.store.Dir, "disks", digest.Hex+".raw")); err != nil {
+		t.Fatalf("root disk: %v", err)
+	}
 }
 
 func TestGuestImageFailedPullRetries(t *testing.T) {
@@ -99,5 +160,35 @@ func TestGuestImageReady(t *testing.T) {
 	}
 	if st, err := os.Stat(base); err != nil || st.Size() == 0 {
 		t.Fatalf("root disk: %v %v", st, err)
+	}
+}
+
+func TestPruneKeepsReferenced(t *testing.T) {
+	digest := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	p := &Provider{VMsDir: t.TempDir(), platform: digest("a")}
+	vms := []node.VMFile{
+		{Spec: proto.VMSpec{ID: "user", Image: &proto.ImageRef{Repo: "hub/i/x", Digest: digest("b")}}, NeedsPrepare: true},
+		{Spec: proto.VMSpec{ID: "pinned"}, Image: "hub/i/y@" + digest("c"), NeedsPrepare: true},
+		{Spec: proto.VMSpec{ID: "prepared", Image: &proto.ImageRef{Repo: "hub/i/z", Digest: digest("d")}}, Image: "hub/i/z@" + digest("d")},
+	}
+	for _, f := range vms {
+		if err := node.SaveVM(p.VMsDir, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tpl := p.templateDir("0123456789abcdef")
+	if err := os.MkdirAll(tpl, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tpl, templateImage), []byte(digest("e")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.keptImages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	if want := []string{digest("a"), digest("b"), digest("c"), digest("e")}; !slices.Equal(got, want) {
+		t.Fatalf("kept %v, want %v", got, want)
 	}
 }

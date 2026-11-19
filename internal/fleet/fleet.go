@@ -18,8 +18,11 @@ import (
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
+
+const platformImageRef = "observatory/standard"
 
 type Fleet struct {
 	store *store.Store
@@ -43,6 +46,9 @@ type Fleet struct {
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
 	updateTimeouts updateTimeouts
 	betweenVMReads func() // test hook in vmsBack
+
+	registryHost string
+	issuer       *registry.Issuer
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -55,6 +61,11 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
+}
+
+// PullImagesFrom makes nodes pull VM images through the hub's registry proxy at host, with node pull tokens of iss; call it before nodes connect.
+func (f *Fleet) PullImagesFrom(host string, iss registry.Issuer) {
+	f.registryHost, f.issuer = host, &iss
 }
 
 // Close stops update runs and waits for them; they also stop when New's ctx ends.
@@ -262,8 +273,12 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if err != nil {
 			return nil, nil, err
 		}
+		img, err := f.desiredImage(ctx, v)
+		if err != nil {
+			return nil, nil, err
+		}
 		out = append(out, proto.DesiredVM{
-			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
+			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID], Image: img},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
 			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
 			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq, Egress: eg, Integrations: tokens,
@@ -271,6 +286,32 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		})
 	}
 	return out, releasing, nil
+}
+
+// desiredImage is nil for the platform image; one the hub cannot locate goes without repo, so the node fails instead of booting the platform image.
+func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, error) {
+	if v.ImageDigest == "" || v.ImageRef == platformImageRef {
+		return nil, nil
+	}
+	ref := &proto.ImageRef{Digest: v.ImageDigest}
+	if f.issuer == nil {
+		slog.Error("vm image without a registry", "vm", v.ID)
+		return ref, nil
+	}
+	id, err := f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Error("vm image not found", "vm", v.ID, "digest", v.ImageDigest)
+		return ref, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	repo := "i/" + id.String()
+	ref.Repo = f.registryHost + "/" + repo
+	if ref.PullToken, err = f.issuer.NodePullToken(v.OrgID, []string{repo}); err != nil {
+		slog.Error("node pull token", "vm", v.ID, "err", err)
+	}
+	return ref, nil
 }
 
 // nics lists the management NIC, then network NICs by network name (rank); names and MACs match the gateway's ports.

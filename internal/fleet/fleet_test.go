@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/wgkey"
@@ -1759,4 +1761,57 @@ func TestFleetStoresImage(t *testing.T) {
 	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageReady })
 	node.send(proto.Message{Type: "image", Image: &proto.ImageStatus{Version: "v1", State: proto.ImageFailed, Error: "boom"}})
 	waitFor(t, func() bool { i := image(); return i != nil && i.State == proto.ImageFailed && i.Error == "boom" })
+}
+
+func TestDesiredVMImage(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, unknown := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	setImage := func(v store.VM, ref, d string) {
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = $2, image_digest = $3 WHERE id = $1", v.ID, ref, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	user := e.vm(e.org.ID, n.ID, "user", &e.owner, nil)
+	setImage(user, "org/tools", digest)
+	platform := e.vm(e.org.ID, n.ID, "platform", &e.owner, nil)
+	setImage(platform, "observatory/standard", unknown)
+	e.vm(e.org.ID, n.ID, "plain", &e.owner, nil)
+	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
+	setImage(gone, "org/gone", unknown)
+
+	got := map[string]*proto.ImageRef{}
+	for _, d := range e.connect(cred).desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["platform"] != nil || got["plain"] != nil {
+		t.Fatalf("platform image sent: %+v %+v", got["platform"], got["plain"])
+	}
+	if g := got["gone"]; g == nil || g.Repo != "" || g.PullToken != "" || g.Digest != unknown {
+		t.Fatalf("gone image = %+v", g)
+	}
+	u := got["user"]
+	if u == nil || u.Repo != "hub.test/i/"+img.ID.String() || u.Digest != digest {
+		t.Fatalf("user image = %+v", u)
+	}
+	var c registry.Claims
+	if _, _, err := jwt.NewParser().ParseUnverified(u.PullToken, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Subject != "node-org:"+e.org.ID.String() || len(c.Access) != 1 || c.Access[0].Name != "i/"+img.ID.String() || !slices.Equal(c.Access[0].Actions, []string{"pull"}) {
+		t.Fatalf("claims = %+v", c)
+	}
 }

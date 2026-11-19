@@ -240,7 +240,7 @@ func TestFastBootRestoreFailureFallsBack(t *testing.T) {
 	}
 	templateID := sshVM(t, sshKey, ip, "cat /etc/machine-id")
 	tpl := p.templateDir(keyFor(t, p, f0))
-	if err := saveTemplate(inst0, node.VMDir(p.VMsDir, f0.Spec.ID), tpl); err != nil {
+	if err := saveTemplate(inst0, node.VMDir(p.VMsDir, f0.Spec.ID), tpl, "sha256:"+strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
 	inst0.Kill()

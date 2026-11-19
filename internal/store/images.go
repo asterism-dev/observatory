@@ -304,6 +304,18 @@ func layerColumns(layers []ImageLayer) (digests []string, sizes []int64) {
 	return digests, sizes
 }
 
+// ImageWithVersion returns an image of org holding the version digest, the oldest first, else ErrNotFound.
+func (s *Store) ImageWithVersion(ctx context.Context, org uuid.UUID, digest string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.q.QueryRow(ctx, `
+		SELECT v.image_id FROM image_versions v JOIN images i ON i.id = v.image_id
+		WHERE i.org_id = $1 AND v.digest = $2 ORDER BY v.created_at LIMIT 1`, org, digest).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	return id, err
+}
+
 // SetImagePushError shows why the last push did not become a version; empty clears it.
 func (s *Store) SetImagePushError(ctx context.Context, image uuid.UUID, msg string) error {
 	_, err := s.q.Exec(ctx, "UPDATE images SET push_error = $2 WHERE id = $1", image, msg)

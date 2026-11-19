@@ -473,8 +473,15 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 
 // prepare sets f.Image to the image it prepared from, which Start needs again for a cold-boot fallback.
 func (a *Agent) prepare(ctx context.Context, e *vmEntry, f *VMFile) error {
-	_, pulls := a.Provider.(GuestImages)
-	if pulls && f.Image == "" {
+	gi, pulls := a.Provider.(GuestImages)
+	switch {
+	case pulls && f.Image == "" && f.Spec.Image != nil:
+		img, cfg, err := a.pullImage(ctx, e, gi)
+		if err != nil {
+			return err
+		}
+		f.Image, f.ImageConfig = img, cfg
+	case pulls && f.Image == "":
 		img, err := a.waitImage(ctx, e)
 		if err != nil {
 			return err
@@ -524,6 +531,35 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (proto.ImageStatus, e
 		case <-changed:
 		case <-ctx.Done():
 			return proto.ImageStatus{}, ctx.Err()
+		}
+	}
+}
+
+// pullImage pulls the VM's own image; after a failure it retries when the next desired brings a fresh token.
+func (a *Agent) pullImage(ctx context.Context, e *vmEntry, gi GuestImages) (string, proto.ImageConfig, error) {
+	var shown string
+	for {
+		a.mu.Lock()
+		img, changed, newer, id := *e.file.Spec.Image, a.imageChanged, e.pending != nil && e.pending.Generation > e.file.Generation, e.file.Spec.ID
+		a.mu.Unlock()
+		if newer {
+			return "", proto.ImageConfig{}, errNewerDesired
+		}
+		ref, cfg, err := gi.PullImage(ctx, img)
+		if err == nil {
+			return ref, cfg, nil
+		}
+		if ctx.Err() != nil {
+			return "", proto.ImageConfig{}, ctx.Err()
+		}
+		if msg := fmt.Sprintf("image pull failed: %v", err); msg != shown {
+			a.reportEntry(e, proto.VMStatus{ID: id, State: proto.StateError, Error: msg})
+			shown = msg
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return "", proto.ImageConfig{}, ctx.Err()
 		}
 	}
 }

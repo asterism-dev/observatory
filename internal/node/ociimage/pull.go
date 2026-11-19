@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -158,13 +160,83 @@ func amd64Image(desc *remote.Descriptor) (v1.Image, error) {
 	return nil, fmt.Errorf("image platform %s is not linux/amd64", strings.Join(platforms, ", "))
 }
 
-// Prune removes cached blobs and disks not belonging to the images in keep.
+const (
+	maxUnusedImages = 10
+	minFreePercent  = 20
+)
+
+// Prune keeps the images in keep and drops the least recently used others while more than maxUnusedImages remain or less than minFreePercent of the filesystem is free.
 func (s Store) Prune(keep []string) error {
+	unused, err := s.unusedByAge(keep)
+	if err != nil {
+		return err
+	}
+	for {
+		if err := s.keepOnly(append(slices.Clone(keep), unused...)); err != nil {
+			return err
+		}
+		if len(unused) == 0 {
+			return nil
+		}
+		if len(unused) <= maxUnusedImages {
+			free, total, err := fsSpace(s.Dir)
+			if err != nil {
+				return err
+			}
+			if free*100 >= total*minFreePercent {
+				return nil
+			}
+		}
+		unused = unused[1:]
+	}
+}
+
+// unusedByAge lists the images with a root disk outside keep, least recently used first; Disk touches a disk on every use.
+func (s Store) unusedByAge(keep []string) ([]string, error) {
+	kept := map[string]bool{}
+	for _, d := range keep {
+		if h, err := parseDigest(d); err == nil {
+			kept[h.Hex] = true
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(s.Dir, "disks"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	type disk struct {
+		digest string
+		used   time.Time
+	}
+	var disks []disk
+	for _, e := range entries {
+		hex, ok := strings.CutSuffix(e.Name(), ".raw")
+		if !ok || kept[hex] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			return nil, err
+		}
+		disks = append(disks, disk{"sha256:" + hex, info.ModTime()})
+	}
+	slices.SortFunc(disks, func(a, b disk) int { return a.used.Compare(b.used) })
+	out := make([]string, len(disks))
+	for i, d := range disks {
+		out[i] = d.digest
+	}
+	return out, nil
+}
+
+// keepOnly removes cached blobs and disks not belonging to the images in keep; entries that are no digest keep nothing.
+func (s Store) keepOnly(keep []string) error {
 	blobs, disks := map[string]bool{}, map[string]bool{}
 	for _, d := range keep {
 		h, err := parseDigest(d)
 		if err != nil {
-			return err
+			continue
 		}
 		disks[h.Hex] = true
 		raw, err := os.ReadFile(s.blobPath(h))
