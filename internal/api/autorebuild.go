@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -23,6 +24,7 @@ const (
 	autoCheckEvery  = time.Hour
 	autoBuildEvery  = 6 * time.Hour
 	autoResolveWait = 30 * time.Second
+	autoErrorMax    = 200
 	// autoCheckPrefix marks errors of the base check, so the next good check clears them but not a failed build's.
 	autoCheckPrefix = "base image check failed: "
 )
@@ -36,16 +38,21 @@ type AutoRebuilds struct {
 	builds   *builds.Scheduler
 	hubHosts []string
 	resolve  func(ctx context.Context, ref name.Reference) (string, error)
-	resolved map[string]string // per pass, so a base shared by many images is looked up once
+	resolved map[string]resolution // per pass, so a base shared by many images is looked up once
 
 	Now func() time.Time
+}
+
+type resolution struct {
+	digest string
+	err    error
 }
 
 // NewAutoRebuilds takes the hub URLs that FROM lines may name observatory images by; those are looked up in the database.
 func NewAutoRebuilds(s *store.Store, z *authz.Service, b *builds.Scheduler, hubURLs ...string) *AutoRebuilds {
 	a := &AutoRebuilds{store: s, z: z, builds: b, Now: time.Now,
 		resolve: func(ctx context.Context, ref name.Reference) (string, error) {
-			return registry.PlatformDigest(ctx, ref)
+			return registry.PlatformDigest(ctx, ref, remote.WithTransport(registry.PublicTransport()))
 		}}
 	for _, u := range hubURLs {
 		if p, err := url.Parse(u); err == nil && p.Host != "" {
@@ -76,7 +83,7 @@ func (a *AutoRebuilds) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.resolved = map[string]string{}
+	a.resolved = map[string]resolution{}
 	var errs []error
 	for _, img := range imgs {
 		if err := a.image(ctx, img); err != nil {
@@ -88,18 +95,9 @@ func (a *AutoRebuilds) Tick(ctx context.Context) error {
 
 func (a *AutoRebuilds) image(ctx context.Context, img store.Image) error {
 	now := a.Now()
-	bs, err := a.store.ImageBuilds(ctx, img.ID)
-	if err != nil {
+	active, lastAutomatic, lastSuccess, err := a.store.AutoBuildState(ctx, img.ID)
+	if err != nil || active || lastAutomatic != nil && now.Sub(*lastAutomatic) < autoBuildEvery {
 		return err
-	}
-	var lastSuccess *time.Time
-	for _, b := range bs {
-		if b.State == store.BuildQueued || b.State == store.BuildRunning || b.Automatic && now.Sub(b.QueuedAt) < autoBuildEvery {
-			return nil
-		}
-		if b.State == store.BuildSucceeded && lastSuccess == nil {
-			lastSuccess = b.FinishedAt
-		}
 	}
 	due := false
 	if period, ok := autoPeriods[img.AutoSchedule]; ok {
@@ -109,7 +107,7 @@ func (a *AutoRebuilds) image(ctx context.Context, img store.Image) error {
 		changed, err := a.basesChanged(ctx, img)
 		if err != nil {
 			// The registry may be down; nothing is built and the next pass checks again.
-			return a.store.SetImageAutoResult(ctx, img.ID, autoCheckPrefix+err.Error(), now)
+			return a.store.SetImageAutoCheckError(ctx, img.ID, autoCheckPrefix+trimError(err), autoCheckPrefix)
 		}
 		if err := a.store.SetImageAutoChecked(ctx, img.ID, now, autoCheckPrefix); err != nil {
 			return err
@@ -148,26 +146,34 @@ func (a *AutoRebuilds) basesChanged(ctx context.Context, img store.Image) (bool,
 
 // resolveBase follows the build agent's rules: the linux/amd64 manifest digest, observatory images from the database.
 func (a *AutoRebuilds) resolveBase(ctx context.Context, s string) (string, error) {
-	if d, ok := a.resolved[s]; ok {
-		return d, nil
+	r, ok := a.resolved[s]
+	if !ok {
+		r.digest, r.err = a.lookup(ctx, s)
+		a.resolved[s] = r
 	}
+	return r.digest, r.err
+}
+
+func (a *AutoRebuilds) lookup(ctx context.Context, s string) (string, error) {
 	ref, err := name.ParseReference(s)
 	if err != nil {
 		return "", err
 	}
-	var d string
 	if slices.Contains(a.hubHosts, ref.Context().RegistryStr()) {
-		d, err = a.hubImageDigest(ctx, ref)
-	} else {
-		rctx, cancel := context.WithTimeout(ctx, autoResolveWait)
-		d, err = a.resolve(rctx, ref)
-		cancel()
+		return a.hubImageDigest(ctx, ref)
 	}
-	if err != nil {
-		return "", err
+	ctx, cancel := context.WithTimeout(ctx, autoResolveWait)
+	defer cancel()
+	return a.resolve(ctx, ref)
+}
+
+// trimError keeps registry response bodies out of what members see on the image.
+func trimError(err error) string {
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	if r := []rune(msg); len(r) > autoErrorMax {
+		return string(r[:autoErrorMax]) + "…"
 	}
-	a.resolved[s] = d
-	return d, nil
+	return msg
 }
 
 func (a *AutoRebuilds) hubImageDigest(ctx context.Context, ref name.Reference) (string, error) {
@@ -205,38 +211,57 @@ func (a *AutoRebuilds) start(ctx context.Context, img store.Image) error {
 	if err != nil {
 		return err
 	}
-	b, err := a.store.CreateImageBuild(ctx, store.ImageBuild{ImageID: img.ID, Revision: rev.Number, StartedBy: *img.AutoBy, Automatic: true})
+	b := store.ImageBuild{ImageID: img.ID, Revision: rev.Number, StartedBy: *img.AutoBy, Automatic: true}
+	if msg != "" {
+		_, err = a.store.CreateFailedImageBuild(ctx, b, msg, a.Now())
+	} else {
+		_, err = a.store.CreateImageBuild(ctx, b)
+	}
 	if errors.Is(err, store.ErrBuildRunning) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	if msg != "" {
-		_, err := a.builds.Finish(ctx, b.ID, store.BuildFailed, "", msg)
-		return err
+	if msg == "" {
+		a.builds.Kick()
 	}
-	a.builds.Kick()
 	return nil
 }
 
 // problem applies the checks of a manual build to user and returns why the build may not run.
 func (a *AutoRebuilds) problem(ctx context.Context, img store.Image, rev store.RecipeRevision, user uuid.UUID) (string, error) {
-	u, err := a.store.User(ctx, user)
+	msg, err := a.mayBuild(ctx, img, rev, user)
 	if err != nil {
 		return "", err
 	}
-	sub := authz.UserSubject(user)
-	msg := ""
-	if !a.z.Allowed(sub, img.OrgID, imageObject(img.Scope, img.OwnerID), "image:build") {
-		msg = "no right to build the image"
-	} else if msg, err = refsUsable(ctx, a.store, img.OrgID, rev.Refs, func(obj, act string) bool { return a.z.Allowed(sub, img.OrgID, obj, act) }); err != nil {
-		return "", err
-	}
 	if msg != "" {
-		return fmt.Sprintf("automatic rebuilds run as %s: %s", u.Name, msg), nil
+		return fmt.Sprintf("automatic rebuilds run as %s: %s", a.userName(ctx, user), msg), nil
+	}
+	// Otherwise someone with only image:edit could change the Dockerfile and have it run with user's references.
+	if rev.CreatedBy != user && (img.AutoRevision == nil || rev.Number > *img.AutoRevision) {
+		if msg, err := a.mayBuild(ctx, img, rev, rev.CreatedBy); err != nil {
+			return "", err
+		} else if msg != "" {
+			return fmt.Sprintf("recipe revision %d by %s uses references they may not use — save the automation settings again after review", rev.Number, a.userName(ctx, rev.CreatedBy)), nil
+		}
 	}
 	if over, err := overImageStorageLimit(ctx, a.store, img.OrgID); err != nil || over {
 		return "the org is over its image storage limit", err
 	}
 	return "", nil
+}
+
+func (a *AutoRebuilds) mayBuild(ctx context.Context, img store.Image, rev store.RecipeRevision, user uuid.UUID) (string, error) {
+	sub := authz.UserSubject(user)
+	if !a.z.Allowed(sub, img.OrgID, imageObject(img.Scope, img.OwnerID), "image:build") {
+		return "no right to build the image", nil
+	}
+	return refsUsable(ctx, a.store, img.OrgID, rev.Refs, func(obj, act string) bool { return a.z.Allowed(sub, img.OrgID, obj, act) })
+}
+
+func (a *AutoRebuilds) userName(ctx context.Context, id uuid.UUID) string {
+	if u, err := a.store.User(ctx, id); err == nil {
+		return u.Name
+	}
+	return id.String()
 }

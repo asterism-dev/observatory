@@ -57,6 +57,7 @@ type Image struct {
 	AutoSchedule     string // "", AutoDaily or AutoWeekly
 	AutoOnBaseChange bool
 	AutoBy           *uuid.UUID // automatic builds run as this user
+	AutoRevision     *int       // the recipe revision current when AutoBy saved the settings
 	AutoError        string
 	AutoLastAt       *time.Time
 	AutoCheckedAt    *time.Time // last base-image check that resolved every base
@@ -131,11 +132,11 @@ type ImageDefault struct {
 }
 
 const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, " +
-	"auto_schedule, auto_on_base_change, auto_by, auto_error, auto_last_at, auto_checked_at"
+	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_error, auto_last_at, auto_checked_at"
 
 func scanImage(r pgx.Row) (v Image, err error) {
 	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt,
-		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
+		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -234,10 +235,40 @@ func (s *Store) UpdateImage(ctx context.Context, v Image) (Image, error) {
 	return out, err
 }
 
-// SetImageAuto changes the automatic rebuild settings; by becomes the user automatic builds run as.
+// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as and vouches for the current revision.
 func (s *Store) SetImageAuto(ctx context.Context, image uuid.UUID, schedule string, onBaseChange bool, by uuid.UUID) error {
-	_, err := s.q.Exec(ctx, "UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4 WHERE id = $1", image, schedule, onBaseChange, by)
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_revision = recipe_revision, auto_error = ''
+		WHERE id = $1`, image, schedule, onBaseChange, by)
 	return err
+}
+
+// AutoBuildState sums up an image's builds for the automatic rebuild checks.
+func (s *Store) AutoBuildState(ctx context.Context, image uuid.UUID) (active bool, lastAutomatic, lastSuccess *time.Time, err error) {
+	err = s.q.QueryRow(ctx, `SELECT coalesce(bool_or(state IN ('queued', 'running')), false),
+		max(queued_at) FILTER (WHERE automatic), max(finished_at) FILTER (WHERE state = 'succeeded')
+		FROM image_builds WHERE image_id = $1`, image).Scan(&active, &lastAutomatic, &lastSuccess)
+	return
+}
+
+// CreateFailedImageBuild records an automatic build that may not run as failed at once, so no scheduler ever sees it queued.
+func (s *Store) CreateFailedImageBuild(ctx context.Context, b ImageBuild, msg string, at time.Time) (ImageBuild, error) {
+	err := s.InTx(ctx, func(tx *Store) error {
+		var err error
+		if b, err = tx.CreateImageBuild(ctx, b); err != nil {
+			return err
+		}
+		if b, err = tx.FinishImageBuild(ctx, b.ID, BuildFailed, "", msg, at); err != nil {
+			return err
+		}
+		if err := tx.FinishBuildLog(ctx, b.ID); err != nil {
+			return err
+		}
+		if b.Automatic {
+			return tx.SetImageAutoResult(ctx, b.ImageID, msg, at)
+		}
+		return nil
+	})
+	return b, err
 }
 
 // AutoImages lists the org images with automatic rebuilds on and a recipe, grouped by org.
@@ -253,6 +284,12 @@ func (s *Store) AutoImages(ctx context.Context) ([]Image, error) {
 // SetImageAutoResult records the outcome of an automatic rebuild; an empty msg clears the error.
 func (s *Store) SetImageAutoResult(ctx context.Context, image uuid.UUID, msg string, at time.Time) error {
 	_, err := s.q.Exec(ctx, "UPDATE images SET auto_error = $2, auto_last_at = $3 WHERE id = $1", image, msg, at)
+	return err
+}
+
+// SetImageAutoCheckError shows a failed base-image check unless a failed build's error is showing; errors of checks start with checkPrefix.
+func (s *Store) SetImageAutoCheckError(ctx context.Context, image uuid.UUID, msg, checkPrefix string) error {
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_error = $2 WHERE id = $1 AND (auto_error = '' OR starts_with(auto_error, $3))`, image, msg, checkPrefix)
 	return err
 }
 

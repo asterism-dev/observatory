@@ -141,6 +141,13 @@ func TestAutoSettings(t *testing.T) {
 	if es := e.audit(store.ActionImageUpdate); es[0].Details["autoSchedule"] != "" || es[0].Details["autoOnBaseChange"] != true {
 		t.Fatalf("audit: %+v", es[0].Details)
 	}
+
+	// Turning automation off clears a stale error.
+	e.exec("UPDATE images SET auto_error = 'RUN failed' WHERE id = $1", img)
+	e.setAuto(aliceTok, org, img, `{"autoOnBaseChange":false}`)
+	if i := e.image(img); i.AutoError != "" {
+		t.Fatalf("error kept: %q", i.AutoError)
+	}
 }
 
 func TestAutoScheduleDue(t *testing.T) {
@@ -343,5 +350,90 @@ func TestBuildResultRejectsInvalidBases(t *testing.T) {
 		if rec := e.agentDo("POST", "/api/builds/"+b.ID.String()+"/result", secret, `{"digest":"`+digestN(2)+`","bases":`+bases+`}`); rec.Code != 400 {
 			t.Fatalf("bases %s: %d", bases, rec.Code)
 		}
+	}
+}
+
+func TestAutoEditorCannotBorrowRefs(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.node(org)
+	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
+	refs := `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`
+	img := e.recipeImage(aliceTok, org, "basis", refs)
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly"}`)
+	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"image:build"},{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
+	// "RlJPTSBhbHBpbmU=" is "FROM alpine"; the references stay as alice added them.
+	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+	}
+
+	e.autoTick()
+	e.tick()
+	bs := e.builds(img)
+	if len(bs) != 1 || bs[0].State != store.BuildFailed || bs[0].VMID != nil || bs[0].Revision != 2 ||
+		!strings.Contains(bs[0].Error, "recipe revision 2 by bob uses references they may not use") {
+		t.Fatalf("builds: %+v", bs)
+	}
+	if i := e.image(img); i.AutoError != bs[0].Error || i.AutoSchedule != "weekly" {
+		t.Fatalf("image: %+v", i)
+	}
+
+	// After review, saving the settings vouches for revision 2.
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly"}`)
+	e.now = e.now.Add(7 * time.Hour)
+	e.autoTick()
+	if bs := e.builds(img); len(bs) != 2 || bs[0].State != store.BuildQueued {
+		t.Fatalf("after review: %+v", bs)
+	}
+}
+
+func TestAutoCheckErrorKeepsBuildError(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "basis", "")
+	e.startBuild(aliceTok, org, img)
+	e.finish(org, img, 1, `[{"ref":"alpine:3","digest":"`+digestN(0x100)+`"}]`, "")
+	e.setAuto(aliceTok, org, img, `{"autoOnBaseChange":true}`)
+	e.exec("UPDATE images SET auto_error = 'RUN failed', auto_last_at = NULL WHERE id = $1", img)
+
+	e.autoTick()
+	if i := e.image(img); i.AutoError != "RUN failed" || i.AutoLastAt != nil {
+		t.Fatalf("check error replaced the build error: %+v", i)
+	}
+	if e.looks != 1 {
+		t.Fatalf("lookups %d", e.looks)
+	}
+}
+
+func TestAutoFailedLookupCachedPerPass(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	bases := `[{"ref":"alpine:3","digest":"` + digestN(0x100) + `"}]`
+	for _, n := range []string{"one", "two"} {
+		img := e.recipeImage(aliceTok, org, n, "")
+		e.startBuild(aliceTok, org, img)
+		e.finish(org, img, 1, bases, "")
+		e.setAuto(aliceTok, org, img, `{"autoOnBaseChange":true}`)
+	}
+	e.autoTick()
+	if e.looks != 1 {
+		t.Fatalf("lookups %d", e.looks)
+	}
+}
+
+func TestTrimError(t *testing.T) {
+	if got := trimError(errors.New("GET x: UNAUTHORIZED\n{\"body\":\"secret\"}")); got != "GET x: UNAUTHORIZED" {
+		t.Fatalf("got %q", got)
+	}
+	if got := trimError(errors.New(strings.Repeat("é", 300))); len([]rune(got)) != autoErrorMax+1 {
+		t.Fatalf("not trimmed: %d", len([]rune(got)))
 	}
 }
