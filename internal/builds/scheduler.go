@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
 )
@@ -67,27 +67,11 @@ func ResolveBuilder(ctx context.Context, repo string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	desc, err := remote.Get(ref, remote.WithContext(ctx))
+	d, err := registry.PlatformDigest(ctx, ref)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", ref, err)
+		return "", err
 	}
-	if !desc.MediaType.IsIndex() {
-		return repo + "@" + desc.Digest.String(), nil
-	}
-	idx, err := desc.ImageIndex()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", ref, err)
-	}
-	im, err := idx.IndexManifest()
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", ref, err)
-	}
-	for _, m := range im.Manifests {
-		if m.Platform != nil && m.Platform.OS == "linux" && m.Platform.Architecture == "amd64" {
-			return repo + "@" + m.Digest.String(), nil
-		}
-	}
-	return "", fmt.Errorf("%s has no linux/amd64 image", ref)
+	return repo + "@" + d, nil
 }
 
 // Kick makes Run look at the queue now.
@@ -260,6 +244,11 @@ func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg
 		}
 		if state == store.BuildSucceeded {
 			if err := tx.SetImageTag(ctx, b.ImageID, latestTag, digest); err != nil {
+				return err
+			}
+		}
+		if b.Automatic && state != store.BuildCancelled {
+			if err := tx.SetImageAutoResult(ctx, b.ImageID, b.Error, s.Now()); err != nil {
 				return err
 			}
 		}

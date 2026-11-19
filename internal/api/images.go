@@ -172,12 +172,18 @@ type imageJSON struct {
 	CreatedAt      time.Time         `json:"createdAt"`
 	CanEdit        bool              `json:"canEdit"`
 	CanBuild       bool              `json:"canBuild"`
+
+	AutoSchedule     string     `json:"autoSchedule"`
+	AutoOnBaseChange bool       `json:"autoOnBaseChange"`
+	AutoError        string     `json:"autoError"`
+	AutoLastAt       *time.Time `json:"autoLastAt"`
 }
 
 // ponytail: three queries per image; join them in the store if image lists get long.
 func (h *api) imageJSON(ctx context.Context, img store.Image, teams map[uuid.UUID]string) (imageJSON, error) {
 	j := imageJSON{ID: img.ID, Name: img.Name, Description: img.Description, Ref: imageRef(img, teams, "", ""), Scope: img.Scope,
-		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, PushError: img.PushError, CreatedAt: img.CreatedAt}
+		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, PushError: img.PushError, CreatedAt: img.CreatedAt,
+		AutoSchedule: img.AutoSchedule, AutoOnBaseChange: img.AutoOnBaseChange, AutoError: img.AutoError, AutoLastAt: img.AutoLastAt}
 	if img.Platform {
 		return j, nil
 	}
@@ -372,11 +378,34 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		Scope                 *store.EnvScope
 		TeamID                *uuid.UUID
 		ConfirmDeleteVersions bool
+		AutoSchedule          *string
+		AutoOnBaseChange      *bool
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
 	v := old
+	auto := body.AutoSchedule != nil || body.AutoOnBaseChange != nil
+	if auto {
+		if body.AutoSchedule != nil {
+			if !slices.Contains([]string{"", store.AutoDaily, store.AutoWeekly}, *body.AutoSchedule) {
+				writeError(w, http.StatusBadRequest, "invalid autoSchedule")
+				return
+			}
+			v.AutoSchedule = *body.AutoSchedule
+		}
+		if body.AutoOnBaseChange != nil {
+			v.AutoOnBaseChange = *body.AutoOnBaseChange
+		}
+		// Automatic builds run as whoever set them up, so that person needs the build right too.
+		if !h.authorize(w, r, old.OrgID, imageObject(old.Scope, old.OwnerID), "image:build") {
+			return
+		}
+		if old.RecipeRevision == nil && (v.AutoSchedule != "" || v.AutoOnBaseChange) {
+			writeError(w, http.StatusUnprocessableEntity, "the image has no recipe")
+			return
+		}
+	}
 	if body.Name != nil {
 		if !vmNamePattern.MatchString(*body.Name) {
 			writeError(w, http.StatusBadRequest, "invalid name")
@@ -440,6 +469,12 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 				deleted = append(deleted, ver.Digest)
 			}
 		}
+		if auto {
+			p, _ := auth.PrincipalFrom(ctx)
+			if err := tx.SetImageAuto(ctx, old.ID, v.AutoSchedule, v.AutoOnBaseChange, p.User.ID); err != nil {
+				return err
+			}
+		}
 		var err error
 		if v, err = tx.UpdateImage(ctx, v); err != nil {
 			return err
@@ -450,6 +485,9 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		e := imageAudit(r, store.ActionImageUpdate, v)
 		e.Details["previousName"], e.Details["previousScope"], e.Details["previousOwnerId"] = old.Name, old.Scope, old.OwnerID
 		e.Details["deletedVersions"] = len(deleted)
+		if auto {
+			e.Details["autoSchedule"], e.Details["autoOnBaseChange"] = v.AutoSchedule, v.AutoOnBaseChange
+		}
 		return tx.Audit(ctx, e)
 	}) {
 		return
