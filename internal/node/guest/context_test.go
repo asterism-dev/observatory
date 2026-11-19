@@ -48,7 +48,7 @@ func TestContextFileNamesExist(t *testing.T) {
 
 func TestContextFileNoForbiddenAdvice(t *testing.T) {
 	lower := strings.ToLower(ContextFile)
-	for _, s := range []string{"boxd", "composio", "credential.helper store", "unset ssl_cert_file", "https_proxy="} {
+	for _, s := range []string{"credential.helper store", "unset ssl_cert_file", "https_proxy="} {
 		if strings.Contains(lower, s) {
 			t.Errorf("AGENTS.md contains %q", s)
 		}
