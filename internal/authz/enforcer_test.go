@@ -35,11 +35,12 @@ func TestBuiltinRoles(t *testing.T) {
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
 		{"integration:list", ObjIntegrations}, {"integration:use", ObjIntegrations},
+		{"image:list", ObjImages}, {"image:use", ObjImages},
 		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
 		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}, {"disk:create", ObjDisks}}
 	// No built-in role reaches other members' private env and integration scopes, connects to or forks VMs, or creates others' devices.
 	notBuiltin := func(p Permission) bool {
-		return p.Object == ObjUserEnv+"/*" || p.Object == ObjUserIntegrations+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
+		return p.Object == ObjUserEnv+"/*" || p.Object == ObjUserIntegrations+"/*" || p.Object == ObjUserImages+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
 	}
 	want := map[uuid.UUID]func(p Permission) bool{
 		owner:  func(p Permission) bool { return !notBuiltin(p) },
@@ -216,8 +217,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-19 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-19)
+	if got := ExpandActions("*"); len(got) != len(Catalog)-29 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-29)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -988,4 +989,73 @@ func TestEnforcerVMLifecycleGrants(t *testing.T) {
 			t.Errorf("catalog lacks %s", act)
 		}
 	}
+}
+
+func imageEnforcer(t *testing.T) (e *Enforcer, org, owner, admin, member, teamMember, teamMaint, team, otherTeam uuid.UUID) {
+	t.Helper()
+	org, owner, admin, member = uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	teamMember, teamMaint, team, otherTeam = uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	e = mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: org, UserID: owner, Role: "owner"},
+			{OrgID: org, UserID: admin, Role: "admin"},
+			{OrgID: org, UserID: member, Role: "member"},
+			{OrgID: org, UserID: teamMember, Role: "member"},
+			{OrgID: org, UserID: teamMaint, Role: "member"},
+		},
+		TeamMembers: []TeamMember{
+			{OrgID: org, TeamID: team, UserID: teamMember},
+			{OrgID: org, TeamID: team, UserID: teamMaint, Admin: true},
+		},
+		Teams: []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: otherTeam}},
+	})
+	return
+}
+
+func checkImageRights(t *testing.T, e *Enforcer, org uuid.UUID, sub, obj string, want map[string]bool) {
+	t.Helper()
+	for _, act := range []string{"image:list", "image:use", "image:edit", "image:build", "image:default"} {
+		if got := e.Allowed(sub, org, obj, act); got != want[act] {
+			t.Errorf("%s on %s: got %v", act, obj, got)
+		}
+	}
+}
+
+func TestImageRightsAdmin(t *testing.T) {
+	e, org, owner, admin, _, _, _, team, otherTeam := imageEnforcer(t)
+	all := map[string]bool{"image:list": true, "image:use": true, "image:edit": true, "image:build": true, "image:default": true}
+	for _, u := range []uuid.UUID{owner, admin} {
+		checkImageRights(t, e, org, UserSubject(u), ObjImages, all)
+		checkImageRights(t, e, org, UserSubject(u), TeamImagesObject(team), all)
+		checkImageRights(t, e, org, UserSubject(u), TeamImagesObject(otherTeam), all)
+	}
+}
+
+func TestImageRightsMember(t *testing.T) {
+	e, org, _, _, member, teamMember, _, team, otherTeam := imageEnforcer(t)
+	readUse := map[string]bool{"image:list": true, "image:use": true}
+	checkImageRights(t, e, org, UserSubject(member), ObjImages, readUse)
+	checkImageRights(t, e, org, UserSubject(member), TeamImagesObject(team), nil)
+	checkImageRights(t, e, org, UserSubject(teamMember), ObjImages, readUse)
+	checkImageRights(t, e, org, UserSubject(teamMember), TeamImagesObject(team), readUse)
+	checkImageRights(t, e, org, UserSubject(teamMember), TeamImagesObject(otherTeam), nil)
+	checkImageRights(t, e, org, TeamSubject(team), TeamImagesObject(team), readUse)
+	checkImageRights(t, e, org, TeamSubject(team), ObjImages, map[string]bool{"image:use": true})
+}
+
+func TestImageRightsTeamMaintainer(t *testing.T) {
+	e, org, _, _, _, _, teamMaint, team, otherTeam := imageEnforcer(t)
+	all := map[string]bool{"image:list": true, "image:use": true, "image:edit": true, "image:build": true, "image:default": true}
+	checkImageRights(t, e, org, UserSubject(teamMaint), TeamImagesObject(team), all)
+	checkImageRights(t, e, org, UserSubject(teamMaint), TeamImagesObject(otherTeam), nil)
+	checkImageRights(t, e, org, UserSubject(teamMaint), ObjImages, map[string]bool{"image:list": true, "image:use": true})
+}
+
+func TestPrivateImagesOnlyOwner(t *testing.T) {
+	e, org, owner, admin, member, _, _, _, _ := imageEnforcer(t)
+	all := map[string]bool{"image:list": true, "image:use": true, "image:edit": true, "image:build": true, "image:default": true}
+	checkImageRights(t, e, org, UserSubject(member), UserImagesObject(member), all)
+	checkImageRights(t, e, org, UserSubject(owner), UserImagesObject(member), nil)
+	checkImageRights(t, e, org, UserSubject(admin), UserImagesObject(member), nil)
+	checkImageRights(t, e, org, UserSubject(member), UserImagesObject(admin), nil)
 }
