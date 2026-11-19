@@ -32,7 +32,8 @@
     "networks": "Netzwerke",
     "disks": "Disks",
     "integrations": "Integrationen",
-    "docs": "Doku"
+    "docs": "Doku",
+    "breadcrumb": "Brotkrumen-Navigation"
   },
   "theme": {
     "system": "System",
@@ -312,6 +313,13 @@
       "failedRetry": "fehlgeschlagen: {error} (nächster Versuch {time})",
       "fallback": "neue VMs nutzen solange {version}",
       "custom": "eigenes Image ({key})"
+    },
+    "allocated": "Belegung",
+    "machine": "Maschine",
+    "tabs": {
+      "overview": "Übersicht",
+      "vms": "VMs",
+      "settings": "Einstellungen"
     }
   },
   "vms": {
@@ -374,7 +382,23 @@
     "imageStock": "Standard",
     "desktop": "Desktop",
     "desktopInstall": "xpra installieren",
-    "memoryHint": "Desktop und Browser brauchen 4 GB RAM oder mehr"
+    "memoryHint": "Desktop und Browser brauchen 4 GB RAM oder mehr",
+    "allNodes": "Alle Nodes",
+    "search": "VMs suchen…",
+    "noMatch": "Keine VM passt zu den Filtern.",
+    "mine": "Meine",
+    "ssh": "SSH",
+    "details": "Details",
+    "connect": "Verbinden",
+    "tabs": {
+      "overview": "Übersicht",
+      "networking": "Netzwerk",
+      "snapshots": "Snapshots",
+      "disks": "Disks",
+      "settings": "Einstellungen"
+    },
+    "egressHosts": "Hosts",
+    "egressCaLabel": "CA"
   },
   "devices": {
     "subtitle": "WireGuard-Geräte, die dich mit deinen VMs verbinden.",
@@ -447,7 +471,8 @@
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Disk-Änderung zu übernehmen.",
     "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Disk-Änderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
-    "restart": "Speichern und neu starten"
+    "restart": "Speichern und neu starten",
+    "root": "Root-Disk"
   },
   "disks": {
     "subtitle": "Persistente Disks, die du an VMs anhängen kannst.",
@@ -493,12 +518,17 @@
     "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
   },
   "usage": {
-    "section": "Auslastung",
     "cpu": "CPU",
-    "ram": "RAM",
     "none": "Noch keine Daten. Messwerte erscheinen, solange die VM läuft.",
     "stale": "Läuft nicht, keine aktuellen Werte.",
-    "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart."
+    "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart.",
+    "live": "Live",
+    "window": "Auslastung · letzte {n} min",
+    "ago": "vor {n} min",
+    "now": "jetzt",
+    "mem": "MEM",
+    "dsk": "DSK",
+    "diskHint": "DSK ist der Platz, den die VM auf dem Host belegt: die belegten Blöcke ihres Root-Disk-Images, einschließlich des Guest-Images, aus dem sie erstellt wurde. Der Wert liegt höher als df in der VM."
   },
   "snapshots": {
     "section": "Snapshots",
@@ -557,5 +587,18 @@
       "total": "gesamt"
     },
     "loadFailed": "Konnte nicht geladen werden"
+  },
+  "open": {
+    "title": "{name} öffnen",
+    "subtitle": "Wähle, wie du in diese VM kommst.",
+    "cli": "CLI",
+    "cliHint": "Öffnet eine Shell oder den Desktop aus deinem Terminal",
+    "desktopHint": "Für den Desktop brauchst du xpra auf deinem Rechner.",
+    "copied": "Kopiert",
+    "editors": "Editoren",
+    "overSsh": "Über SSH, als",
+    "mobile": "Mobil",
+    "scan": "Mit dem Handy scannen",
+    "scanHint": "Öffnet {name} in einer SSH-App auf deinem Handy. Das Handy braucht ein eigenes WireGuard-Device unter {devices}; im Code steckt nichts Geheimes."
   }
 }

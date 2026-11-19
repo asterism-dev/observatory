@@ -29,12 +29,12 @@ func TestNoteMetricsClamps(t *testing.T) {
 	}
 	id := v.ID.String()
 	e.f.NoteMetrics(context.Background(), n.ID, []proto.VMMetrics{
-		{ID: id, CPUPercent: 250, MemTotalMB: 9000, MemUsedMB: 9000},
-		{ID: id, CPUPercent: -5, MemTotalMB: 4096, MemUsedMB: -3},
+		{ID: id, CPUPercent: 250, MemTotalMB: 9000, MemUsedMB: 9000, DiskUsedMB: 9000},
+		{ID: id, CPUPercent: -5, MemTotalMB: 4096, MemUsedMB: -3, DiskUsedMB: -1},
 		{ID: "not-a-uuid"},
 	})
 	got := e.f.Metrics(v.ID)
-	if len(got) != 2 || got[0].CPUPercent != 100 || got[0].MemUsedMB != 4096 || got[0].MemTotalMB != 4096 || got[1].CPUPercent != 0 || got[1].MemUsedMB != 0 {
+	if len(got) != 2 || got[0].CPUPercent != 100 || got[0].MemUsedMB != 4096 || got[0].MemTotalMB != 4096 || got[0].DiskUsedMB != 5120 || got[1].CPUPercent != 0 || got[1].MemUsedMB != 0 || got[1].DiskUsedMB != 0 {
 		t.Fatalf("samples = %+v", got)
 	}
 	if got[0].At.IsZero() || time.Since(got[0].At) > time.Minute {

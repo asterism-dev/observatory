@@ -32,7 +32,8 @@
     "networks": "Networks",
     "disks": "Disks",
     "integrations": "Integrations",
-    "docs": "Docs"
+    "docs": "Docs",
+    "breadcrumb": "Breadcrumb"
   },
   "theme": {
     "system": "System",
@@ -312,6 +313,13 @@
       "failedRetry": "failed: {error} (next try {time})",
       "fallback": "new VMs use {version} meanwhile",
       "custom": "custom image ({key})"
+    },
+    "allocated": "Allocation",
+    "machine": "Machine",
+    "tabs": {
+      "overview": "Overview",
+      "vms": "VMs",
+      "settings": "Settings"
     }
   },
   "vms": {
@@ -374,7 +382,23 @@
     "imageStock": "stock",
     "desktop": "Desktop",
     "desktopInstall": "How to install xpra",
-    "memoryHint": "Desktop and browser want 4 GB RAM or more"
+    "memoryHint": "Desktop and browser want 4 GB RAM or more",
+    "allNodes": "All nodes",
+    "search": "Search VMs…",
+    "noMatch": "No VMs match the filters.",
+    "mine": "Mine",
+    "ssh": "SSH",
+    "details": "Details",
+    "connect": "Connect",
+    "tabs": {
+      "overview": "Overview",
+      "networking": "Networking",
+      "snapshots": "Snapshots",
+      "disks": "Disks",
+      "settings": "Settings"
+    },
+    "egressHosts": "Hosts",
+    "egressCaLabel": "CA"
   },
   "devices": {
     "subtitle": "WireGuard devices that connect you to your VMs.",
@@ -447,7 +471,8 @@
     "restartTitle": "Restart VM",
     "restartBody": "{name} is running and restarts to apply the disk change.",
     "restartBodySaved": "{name} is paused or hibernated. Applying the disk change discards the saved memory state and boots it fresh.",
-    "restart": "Save and restart"
+    "restart": "Save and restart",
+    "root": "Root disk"
   },
   "disks": {
     "subtitle": "Persistent disks that you can attach to VMs.",
@@ -493,12 +518,17 @@
     "deleteBody": "Delete {name}? Its data is permanently lost."
   },
   "usage": {
-    "section": "Usage",
     "cpu": "CPU",
-    "ram": "RAM",
     "none": "No data yet. Metrics appear while the VM is running.",
     "stale": "Not running, no current values.",
-    "noRam": "RAM statistics are available after the next cold boot."
+    "noRam": "RAM statistics are available after the next cold boot.",
+    "live": "Live",
+    "window": "Resource usage · last {n} min",
+    "ago": "{n} min ago",
+    "now": "now",
+    "mem": "MEM",
+    "dsk": "DSK",
+    "diskHint": "DSK is the host disk footprint of the VM: allocated blocks of its root disk image, including the guest image it was created from. It runs higher than df inside the VM."
   },
   "snapshots": {
     "section": "Snapshots",
@@ -557,5 +587,18 @@
       "total": "total"
     },
     "loadFailed": "Could not load"
+  },
+  "open": {
+    "title": "Open {name}",
+    "subtitle": "Pick how you want to get into this VM.",
+    "cli": "CLI",
+    "cliHint": "Opens a shell or the desktop from your terminal",
+    "desktopHint": "The desktop needs xpra on your computer.",
+    "copied": "Copied",
+    "editors": "Editors",
+    "overSsh": "Over SSH, as",
+    "mobile": "Mobile",
+    "scan": "Scan with your phone",
+    "scanHint": "Opens {name} in an SSH app on your phone. The phone needs its own WireGuard device under {devices}; nothing secret is in the code."
   }
 }

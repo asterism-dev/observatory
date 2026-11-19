@@ -29,6 +29,17 @@ export const stateTones = { online: 'success', offline: 'danger', pending: 'warn
 
 export const gb = (mb: number) => (mb / 1024).toFixed(1)
 
+// Samples arrive every 10 s while the VM runs; older ones describe a VM that stopped.
+export function liveUsage(vm: VmInfo, now = Date.now()) {
+  const u = vm.usage
+  if (!u || now - Date.parse(u.at) > 30000) return { cpu: null, mem: null, dsk: null }
+  return {
+    cpu: u.cpuPercent,
+    mem: u.memTotalMB ? (u.memUsedMB / u.memTotalMB) * 100 : null,
+    dsk: vm.diskGB ? (u.diskUsedMB / (vm.diskGB * 1024)) * 100 : null,
+  }
+}
+
 export interface VmInfo {
   id: string
   name: string
@@ -56,6 +67,7 @@ export interface VmInfo {
   canDelete: boolean
   image: string
   stockImage: boolean
+  usage?: { at: string; cpuPercent: number; memTotalMB: number; memUsedMB: number; diskUsedMB: number }
 }
 
 export const vmTones = {

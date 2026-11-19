@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { Badge, Button, Table, type TableColumn } from '@asterism-dev/lumen'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { Badge, Button } from '@asterism-dev/lumen'
+import { HardDrive, Plus } from '@lucide/vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
+import Meter from '@/components/Meter.vue'
+import PageHead from '@/components/PageHead.vue'
 import { gb, imageLine, stateTones, type NodeInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
@@ -17,16 +20,7 @@ const nodes = ref<NodeInfo[]>([])
 const error = ref('')
 const addOpen = ref(false)
 
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('nodes.name') },
-  { key: 'state', label: t('nodes.state') },
-  { key: 'version', label: t('nodes.version') },
-  { key: 'image', label: t('nodes.guestImage') },
-  { key: 'cpu', label: t('nodes.cpu') },
-  { key: 'memory', label: t('nodes.memory') },
-  { key: 'vmCount', label: t('nodes.vms') },
-  { key: 'actions', label: '' },
-])
+const pct = (used: number, total: number) => (total ? (used / total) * 100 : null)
 
 async function refresh() {
   if (!org.value) return
@@ -56,35 +50,121 @@ watch(
 
 <template>
   <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.nodes') }}</h1>
-        <p>{{ t('nodes.subtitle') }}</p>
-      </div>
-      <Button v-if="can('node:create')" variant="accent" @click="addOpen = true">{{ t('nodes.add') }}</Button>
-    </div>
+    <PageHead :icon="HardDrive" :title="t('nav.nodes')" :subtitle="t('nodes.subtitle')">
+      <Button v-if="can('node:create')" variant="accent" :icon="Plus" @click="addOpen = true">{{ t('nodes.add') }}</Button>
+    </PageHead>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Table :columns="columns" :rows="nodes" row-key="id">
-      <template #cell-state="{ row }"><Badge :tone="stateTones[row.state as NodeInfo['state']]">{{ t(`nodes.states.${row.state}`) }}</Badge></template>
-      <template #cell-version="{ row }">{{ row.version || '–' }}</template>
-      <template #cell-image="{ row }"><i18n-t v-if="row.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
-        <template v-else>{{ imageLine(row.image, t, locale) }}</template></template>
-      <template #cell-cpu="{ row }">{{ row.state === 'pending' ? '–' : `${row.usedCPUs} / ${row.cpus}` }}</template>
-      <template #cell-memory="{ row }">{{ row.state === 'pending' ? '–' : `${gb(row.usedMemoryMB)} / ${gb(row.memoryMB)} GB` }}</template>
-      <template #cell-actions="{ row }">
-        <Button size="sm" @click="router.push(`/orgs/${org.id}/nodes/${row.id}`)">{{ t('nodes.open') }}</Button>
-      </template>
-      <template #empty>{{ t('nodes.empty') }}</template>
-    </Table>
+    <ul class="rows">
+      <li v-for="n in nodes" :key="n.id" class="node" @click="router.push(`/orgs/${org.id}/nodes/${n.id}`)">
+        <span class="dot" :class="stateTones[n.state]" />
+        <div class="ident">
+          <router-link :to="`/orgs/${org.id}/nodes/${n.id}`" class="name" @click.stop>{{ n.name }}</router-link>
+          <span class="mono muted">{{ n.state === 'pending' ? '–' : `${n.cpus} vCPU · ${gb(n.memoryMB)} GB` }} · {{ n.version || '–' }}</span>
+        </div>
+        <span class="badges">
+          <Badge :tone="stateTones[n.state]">{{ t(`nodes.states.${n.state}`) }}</Badge>
+          <Badge v-if="n.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Badge>
+          <Badge variant="outline">{{ n.vmCount }} {{ t('nodes.vms') }}</Badge>
+        </span>
+        <span class="mono muted image">
+          <i18n-t v-if="n.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
+          <template v-else>{{ imageLine(n.image, t, locale) }}</template>
+        </span>
+        <span class="meters">
+          <Meter :label="t('usage.cpu')" :percent="n.state === 'pending' ? null : pct(n.usedCPUs, n.cpus)" />
+          <Meter :label="t('usage.mem')" :percent="n.state === 'pending' ? null : pct(n.usedMemoryMB, n.memoryMB)" />
+        </span>
+      </li>
+      <li v-if="!nodes.length" class="empty">{{ t('nodes.empty') }}</li>
+    </ul>
     <AddNodeDialog v-model:open="addOpen" :org-id="org.id" @created="refresh" />
   </template>
 </template>
 
 <style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
   gap: 8px;
+}
+.node {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto minmax(0, 1.2fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  cursor: pointer;
+}
+.node:hover {
+  border-color: var(--accent);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.dot.success {
+  background: var(--success);
+}
+.dot.warning {
+  background: var(--warning);
+}
+.dot.danger {
+  background: var(--danger);
+}
+.ident {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.name {
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  text-decoration: none;
+}
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+}
+.muted {
+  color: var(--muted);
+}
+.image {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badges,
+.meters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.badges {
+  gap: 6px;
+}
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+@media (max-width: 900px) {
+  .node {
+    grid-template-columns: auto 1fr;
+  }
+  .node > :nth-child(n + 3) {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 </style>
