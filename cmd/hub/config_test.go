@@ -31,6 +31,20 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil || cfg.Listen != ":8090" || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
 		t.Fatalf("%+v, %v", cfg, err)
 	}
+	if cfg.NodeURL.String() != "http://h" {
+		t.Fatalf("node url default: %v", cfg.NodeURL)
+	}
+	env["OBSERVATORY_NODE_URL"] = "http://100.64.0.1:8090"
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.NodeURL.Host != "100.64.0.1:8090" {
+		t.Fatalf("explicit node url: %v, %v", cfg.NodeURL, err)
+	}
+	for _, bad := range []string{"/relative", "ftp://h", "h:8090"} {
+		env["OBSERVATORY_NODE_URL"] = bad
+		if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_NODE_URL") {
+			t.Errorf("node url %q: err = %v", bad, err)
+		}
+	}
+	delete(env, "OBSERVATORY_NODE_URL")
 	if cfg.DocsURL != "https://asterism-dev.github.io/observatory/" {
 		t.Fatalf("docs url default: %q", cfg.DocsURL)
 	}

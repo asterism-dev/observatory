@@ -188,7 +188,10 @@ func TestAgentMarksPlainHTTPHubInBuildkitConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := strings.TrimPrefix(os.Getenv("OBSERVATORY_BUILD_URL"), "http://")
-	conf, _ := os.ReadFile(filepath.Join(rec, "buildkitd.toml"))
+	conf, err := os.ReadFile(filepath.Join(rec, "buildkitd.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if want := "[registry.\"" + host + "\"]\n  http = true\n"; string(conf) != want {
 		t.Errorf("buildkitd.toml = %q, want %q", conf, want)
 	}

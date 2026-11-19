@@ -336,19 +336,24 @@ func TestPullPlainHTTPOption(t *testing.T) {
 	if err := remote.Write(mustRef(t, addr+"/app@"+digest.String()), img); err != nil {
 		t.Fatal(err)
 	}
-	dial := remote.DefaultTransport.(*http.Transport).DialContext
-	remote.DefaultTransport.(*http.Transport).DialContext = func(ctx context.Context, network, host string) (net.Conn, error) {
-		if host == "hub.example:5000" {
+	tr := remote.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = func(ctx context.Context, network, host string) (net.Conn, error) {
+		if h, _, _ := net.SplitHostPort(host); strings.HasSuffix(h, ".example") {
 			host = addr
 		}
-		return dial(ctx, network, host)
+		return (&net.Dialer{}).DialContext(ctx, network, host)
 	}
-	t.Cleanup(func() { remote.DefaultTransport.(*http.Transport).DialContext = dial })
 	ref := "hub.example:5000/app@" + digest.String()
-	if _, err := (Store{Dir: t.TempDir()}).Pull(context.Background(), ref, authn.Anonymous); err == nil {
-		t.Fatal("pull from a public host name over http without the option succeeded")
+	s := Store{Dir: t.TempDir(), Transport: tr}
+	_, err = s.Pull(context.Background(), ref, authn.Anonymous)
+	if err == nil || !strings.Contains(err.Error(), "HTTP response to HTTPS client") {
+		t.Fatalf("pull over http without the option: %v, want a TLS error", err)
 	}
-	if _, err := (Store{Dir: t.TempDir()}).Pull(context.Background(), ref, authn.Anonymous, name.Insecure); err != nil {
+	other := strings.Replace(ref, "hub.example:5000", "other.example:5000", 1)
+	if _, err = s.Pull(context.Background(), other, authn.Anonymous); err == nil || !strings.Contains(err.Error(), "HTTP response to HTTPS client") {
+		t.Fatalf("other host without the option: %v, want a TLS error", err)
+	}
+	if _, err = s.Pull(context.Background(), ref, authn.Anonymous, name.Insecure); err != nil {
 		t.Fatal(err)
 	}
 }
