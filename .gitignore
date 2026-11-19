@@ -1,6 +1,8 @@
 !docs/superpowers/
 docs/superpowers/plans/
-deploy/dev/zitadel/.bootstrap/
+deploy/idp/.bootstrap/
+deploy/idp/.env
+deploy/.env
 deploy/dev/hub.env
 bin/
 web/node_modules/

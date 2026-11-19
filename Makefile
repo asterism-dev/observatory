@@ -19,13 +19,14 @@ gateway-down:
 	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf storage gateway modules
 
 idp-up:
-	docker compose -f deploy/dev/zitadel/compose.yaml --env-file deploy/dev/zitadel/.env up -d --wait
+	[ -f deploy/idp/.env ] || cp deploy/idp/.env.example deploy/idp/.env
+	docker compose -f deploy/idp/compose.yaml --env-file deploy/idp/.env up -d --wait
 
 idp-down:
-	docker compose -f deploy/dev/zitadel/compose.yaml --env-file deploy/dev/zitadel/.env down
+	docker compose -f deploy/idp/compose.yaml --env-file deploy/idp/.env down
 
 idp-bootstrap:
-	sh deploy/dev/zitadel/bootstrap.sh
+	sh deploy/idp/bootstrap.sh
 
 hub: web node
 	go build -o bin/hub ./cmd/hub

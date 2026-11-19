@@ -2,11 +2,23 @@
 set -eu
 
 dir=$(cd "$(dirname "$0")" && pwd)
-hub_env="$dir/../hub.env"
+hub_env="$dir/../dev/hub.env"
 pat_file="$dir/.bootstrap/admin.pat"
-api=http://localhost:8080
+api=${ZITADEL_URL:-http://localhost:8080}
 
-if [ -f "$hub_env" ]; then
+# Without arguments: dev setup, writes deploy/dev/hub.env. With --print <hub URL>: registers that hub and prints its OIDC values.
+hub_url=''
+case ${1:-} in
+  '') ;;
+  --print)
+    [ $# -eq 2 ] || { echo "usage: bootstrap.sh [--print http(s)://HUB]" >&2; exit 2; }
+    hub_url=${2%/}
+    case $hub_url in http://?* | https://?*) ;; *) echo "hub URL must be http(s)://…, got '$hub_url'" >&2; exit 2 ;; esac
+    ;;
+  *) echo "usage: bootstrap.sh [--print http(s)://HUB]" >&2; exit 2 ;;
+esac
+
+if [ -z "$hub_url" ] && [ -f "$hub_env" ]; then
   echo "$hub_env exists, nothing to do"
   exit 0
 fi
@@ -33,15 +45,24 @@ post() {
 resp=$(post /management/v1/projects '{"name":"observatory"}')
 project_id=$(printf %s "$resp" | jq -er .id)
 
+if [ -n "$hub_url" ]; then
+  redirects="[\"$hub_url/auth/callback\"]" logouts="[\"$hub_url/\"]"
+  # devMode only allows plain-http redirect URIs; https hubs do not need it.
+  case $hub_url in http://*) dev=true ;; *) dev=false ;; esac
+else
+  redirects='["http://localhost:5173/auth/callback","http://localhost:8090/auth/callback"]'
+  logouts='["http://localhost:5173/","http://localhost:8090/"]' dev=true
+fi
+
 resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
   "name":"observatory-web",
-  "redirectUris":["http://localhost:5173/auth/callback","http://localhost:8090/auth/callback"],
-  "postLogoutRedirectUris":["http://localhost:5173/","http://localhost:8090/"],
+  "redirectUris":'"$redirects"',
+  "postLogoutRedirectUris":'"$logouts"',
   "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
   "grantTypes":["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
   "appType":"OIDC_APP_TYPE_USER_AGENT",
   "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
-  "devMode":true,
+  "devMode":'"$dev"',
   "idTokenUserinfoAssertion":true}')
 web_id=$(printf %s "$resp" | jq -er .clientId)
 
@@ -54,6 +75,11 @@ resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
   "devMode":true,
   "idTokenUserinfoAssertion":true}')
 cli_id=$(printf %s "$resp" | jq -er .clientId)
+
+if [ -n "$hub_url" ]; then
+  printf 'OBSERVATORY_OIDC_ISSUER=%s\nOBSERVATORY_OIDC_WEB_CLIENT_ID=%s\nOBSERVATORY_OIDC_CLI_CLIENT_ID=%s\n' "$api" "$web_id" "$cli_id"
+  exit 0
+fi
 
 cat > "$hub_env" <<ENV
 OBSERVATORY_OIDC_ISSUER=$api

@@ -40,9 +40,10 @@ tokens out entirely.
 
 ## Zitadel
 
-`deploy/dev/zitadel/` runs a separate dev Zitadel at `http://localhost:8080`;
-`make idp-up idp-bootstrap` starts it, registers both clients and writes
-`deploy/dev/hub.env`. For your own Zitadel, create two OIDC applications in a
+`deploy/idp/` runs a separate Zitadel, at `http://localhost:8080` with the defaults
+in `.env.example`; `make idp-up idp-bootstrap` starts it, registers both clients
+and writes `deploy/dev/hub.env`. For the compose deployment, `sh deploy/idp/bootstrap.sh --print <hub URL>`
+registers the clients for that hub and prints the values for `deploy/.env` instead (see [deploy.md](deploy.md)). For your own Zitadel, create two OIDC applications in a
 project: a user-agent app (auth method none, code) and a native app (auth
 method none, device code). Enable `idTokenUserinfoAssertion` on both so `email`
 and `name` appear in the ID token.
