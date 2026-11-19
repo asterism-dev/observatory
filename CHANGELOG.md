@@ -1,3 +1,9 @@
+## v0.2.0 (2026-11-19)
+
+### Feat
+
+- **web**: rebuild VM and node pages with live disk usage (#18)
+
 ## v0.1.0 (2026-11-19)
 
 ### Feat
