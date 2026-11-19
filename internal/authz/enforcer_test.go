@@ -35,10 +35,10 @@ func TestBuiltinRoles(t *testing.T) {
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
 		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
-		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}}
+		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}, {"disk:create", ObjDisks}}
 	// No built-in role reaches other members' private env scopes, connects to VMs or creates others' devices.
 	notBuiltin := func(p Permission) bool {
-		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "device:create"
+		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "device:create" || p.Action == "disk:use"
 	}
 	want := map[uuid.UUID]func(p Permission) bool{
 		owner:  func(p Permission) bool { return !notBuiltin(p) },
@@ -215,8 +215,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-10 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-10)
+	if got := ExpandActions("*"); len(got) != len(Catalog)-11 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-11)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -225,7 +225,7 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("audit:read"); !reflect.DeepEqual(got, []string{"audit:read"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network"}) {
+	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks"}) {
 		t.Errorf("vm:*: got %v", got)
 	}
 	if got := ExpandActions("vm:ssh"); len(got) != 0 {
@@ -732,6 +732,134 @@ func TestNetworkPermissions(t *testing.T) {
 	for _, tt := range tests {
 		if got := e.Allowed(UserSubject(tt.sub), f.org, tt.obj, tt.act); got != tt.want {
 			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+}
+
+type diskFixture struct {
+	org, owner, admin, member, colleague, teamMember, teamAdmin, team uuid.UUID
+	memberDisk, teamDisk, denyDisk                                    uuid.UUID
+	vm                                                                uuid.UUID
+	e                                                                 *Enforcer
+}
+
+func newDiskFixture(t *testing.T) diskFixture {
+	f := diskFixture{org: uuid.New(), owner: uuid.New(), admin: uuid.New(), member: uuid.New(), colleague: uuid.New(),
+		teamMember: uuid.New(), teamAdmin: uuid.New(), team: uuid.New(),
+		memberDisk: uuid.New(), teamDisk: uuid.New(), denyDisk: uuid.New(), vm: uuid.New()}
+	denyRole := uuid.New()
+	f.e = mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: f.org, UserID: f.owner, Role: "owner"},
+			{OrgID: f.org, UserID: f.admin, Role: "admin"},
+			{OrgID: f.org, UserID: f.member, Role: "member"},
+			{OrgID: f.org, UserID: f.colleague, Role: "member"},
+			{OrgID: f.org, UserID: f.teamMember, Role: "member"},
+			{OrgID: f.org, UserID: f.teamAdmin, Role: "member"},
+		},
+		TeamMembers: []TeamMember{
+			{OrgID: f.org, TeamID: f.team, UserID: f.teamMember},
+			{OrgID: f.org, TeamID: f.team, UserID: f.teamAdmin, Admin: true},
+		},
+		Teams: []TeamRef{{OrgID: f.org, ID: f.team}},
+		VMs:   []VMRef{{OrgID: f.org, ID: f.vm, UserID: &f.colleague}},
+		Disks: []DiskRef{
+			{OrgID: f.org, ID: f.memberDisk, UserID: &f.member},
+			{OrgID: f.org, ID: f.teamDisk, TeamID: &f.team},
+			{OrgID: f.org, ID: f.denyDisk, UserID: &f.colleague},
+		},
+		Roles: []CustomRole{{ID: denyRole, OrgID: f.org, Name: "no-disk-delete", Rules: []Rule{
+			{Effect: Deny, Object: ObjDisks + "/*", Action: "disk:delete"},
+		}}},
+		Bindings: []Binding{{OrgID: f.org, Subject: UserSubject(f.colleague), RoleID: denyRole}},
+	})
+	return f
+}
+
+func TestDiskPermissions(t *testing.T) {
+	f := newDiskFixture(t)
+	tests := []struct {
+		name     string
+		sub      uuid.UUID
+		obj, act string
+		want     bool
+	}{
+		{"member reads own disk", f.member, DiskObject(f.memberDisk), "disk:read", true},
+		{"member updates own disk", f.member, DiskObject(f.memberDisk), "disk:update", true},
+		{"member deletes own disk", f.member, DiskObject(f.memberDisk), "disk:delete", true},
+		{"member uses own disk", f.member, DiskObject(f.memberDisk), "disk:use", true},
+		{"colleague reads disk", f.colleague, DiskObject(f.memberDisk), "disk:read", false},
+		{"colleague updates disk", f.colleague, DiskObject(f.memberDisk), "disk:update", false},
+		{"colleague deletes disk", f.colleague, DiskObject(f.memberDisk), "disk:delete", false},
+		{"colleague uses disk", f.colleague, DiskObject(f.memberDisk), "disk:use", false},
+		{"member creates disk", f.member, ObjDisks, "disk:create", true},
+		{"member creates team disk", f.member, TeamDisksObject(f.team), "disk:create", false},
+		{"team member reads team disk", f.teamMember, DiskObject(f.teamDisk), "disk:read", true},
+		{"team member uses team disk", f.teamMember, DiskObject(f.teamDisk), "disk:use", true},
+		{"team member deletes team disk", f.teamMember, DiskObject(f.teamDisk), "disk:delete", false},
+		{"team member updates team disk", f.teamMember, DiskObject(f.teamDisk), "disk:update", false},
+		{"team member creates team disk", f.teamMember, TeamDisksObject(f.team), "disk:create", false},
+		{"team admin reads team disk", f.teamAdmin, DiskObject(f.teamDisk), "disk:read", true},
+		{"team admin updates team disk", f.teamAdmin, DiskObject(f.teamDisk), "disk:update", true},
+		{"team admin deletes team disk", f.teamAdmin, DiskObject(f.teamDisk), "disk:delete", true},
+		{"team admin uses team disk", f.teamAdmin, DiskObject(f.teamDisk), "disk:use", true},
+		{"team admin creates team disk", f.teamAdmin, TeamDisksObject(f.team), "disk:create", true},
+		{"team admin creates other team disk", f.teamAdmin, TeamDisksObject(uuid.New()), "disk:create", false},
+		{"team admin reads member disk", f.teamAdmin, DiskObject(f.memberDisk), "disk:read", false},
+		{"member reads team disk", f.member, DiskObject(f.teamDisk), "disk:read", false},
+		{"admin creates team disk", f.admin, TeamDisksObject(f.team), "disk:create", true},
+		{"member changes own vm disks", f.colleague, VMObject(f.vm), "vm:disks", true},
+		{"member changes other vm disks", f.member, VMObject(f.vm), "vm:disks", false},
+	}
+	for _, tc := range tests {
+		if got := f.e.Allowed(UserSubject(tc.sub), f.org, tc.obj, tc.act); got != tc.want {
+			t.Errorf("%s: got %v", tc.name, got)
+		}
+	}
+}
+
+func TestAdminsNeverDiskUse(t *testing.T) {
+	f := newDiskFixture(t)
+	for name, u := range map[string]uuid.UUID{"admin": f.admin, "owner": f.owner} {
+		for act, want := range map[string]bool{"disk:read": true, "disk:update": true, "disk:delete": true, "disk:use": false} {
+			for _, d := range []uuid.UUID{f.memberDisk, f.teamDisk} {
+				if got := f.e.Allowed(UserSubject(u), f.org, DiskObject(d), act); got != want {
+					t.Errorf("%s %s: got %v", name, act, got)
+				}
+			}
+		}
+		if !f.e.Allowed(UserSubject(u), f.org, VMObject(f.vm), "vm:disks") {
+			t.Errorf("%s: vm:disks denied", name)
+		}
+	}
+}
+
+func TestDenyDiskDeleteCoversUserDisks(t *testing.T) {
+	f := newDiskFixture(t)
+	if f.e.Allowed(UserSubject(f.colleague), f.org, DiskObject(f.denyDisk), "disk:delete") {
+		t.Error("owner deleted own disk despite deny")
+	}
+	if !f.e.Allowed(UserSubject(f.colleague), f.org, DiskObject(f.denyDisk), "disk:use") {
+		t.Error("owner lost disk:use")
+	}
+}
+
+func TestNoDiskWildcardInBuiltins(t *testing.T) {
+	f := newDiskFixture(t)
+	for _, key := range []string{"owner", "admin", "member"} {
+		for _, r := range BuiltinRules(key) {
+			if strings.HasPrefix(r.Object, "org/disks") && (r.Action == "*" || r.Action == "disk:*") {
+				t.Errorf("%s: wildcard %s@%s", key, r.Action, r.Object)
+			}
+		}
+	}
+	policy, err := f.e.ce.GetPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range policy {
+		if strings.HasPrefix(p[2], "org/disks") && p[4] == string(Allow) && (p[3] == "*" || p[3] == "disk:*") {
+			t.Errorf("generated wildcard rule %v", p)
 		}
 	}
 }

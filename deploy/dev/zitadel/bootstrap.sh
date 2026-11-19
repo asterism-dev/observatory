@@ -63,5 +63,6 @@ OBSERVATORY_DATABASE_URL=postgres://observatory:observatory@localhost:55432/obse
 OBSERVATORY_PUBLIC_URL=http://localhost:5173
 OBSERVATORY_SECRETS_KEY=$(openssl rand -base64 32)
 OBSERVATORY_GATEWAY_TOKEN=$(openssl rand -hex 32)
+OBSERVATORY_STORAGE_TOKEN=$(openssl rand -hex 32)
 ENV
 echo "wrote $hub_env"

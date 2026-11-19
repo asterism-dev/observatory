@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
+import VMDisksDialog from '@/components/VMDisksDialog.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
@@ -20,6 +21,7 @@ const error = ref('')
 const busy = ref(false)
 const confirmDelete = ref(false)
 const networksOpen = ref(false)
+const disksOpen = ref(false)
 const copyFailed = ref(false)
 
 const base = () => `/api/orgs/${org.value?.id}/vms/${vmId.value}`
@@ -125,6 +127,15 @@ watch(
       <p v-else>{{ t('networks.none') }}</p>
       <p v-if="vm.canNetwork"><Button :disabled="busy" @click="networksOpen = true">{{ t('networks.change') }}</Button></p>
       <VMNetworksDialog v-model:open="networksOpen" :org-id="org.id" :vm="vm" @saved="load" />
+      <h2>{{ t('vmDisks.section') }}</h2>
+      <ul v-if="vm.disks.length">
+        <li v-for="dk in vm.disks" :key="dk.id">
+          {{ dk.name }}: {{ dk.mountPath }}, {{ dk.sizeGB }} GB, {{ t(`disks.states.${dk.state}`) }}<template v-if="dk.error"> ({{ dk.error }})</template>
+        </li>
+      </ul>
+      <p v-else>{{ t('vmDisks.none') }}</p>
+      <p v-if="vm.canDisks"><Button :disabled="busy" @click="disksOpen = true">{{ t('vmDisks.change') }}</Button></p>
+      <VMDisksDialog v-model:open="disksOpen" :org-id="org.id" :vm="vm" @saved="load" />
       <p v-if="vm.canPower || vm.canDelete" class="row">
         <template v-if="vm.canPower">
           <Button v-for="a in powerActions(vm.state)" :key="a" :disabled="busy" @click="power(a)">{{ t(`vms.${a}`) }}</Button>

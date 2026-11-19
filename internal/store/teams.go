@@ -65,7 +65,9 @@ func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 			return err
 		}
 		var owns bool
-		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND team_id = $2)", orgID, teamID).Scan(&owns); err != nil {
+		if err := tx.q.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND team_id = $2)
+				OR EXISTS (SELECT 1 FROM disks WHERE org_id = $1 AND team_id = $2 AND deleted_at IS NULL)`, orgID, teamID).Scan(&owns); err != nil {
 			return err
 		}
 		if owns {

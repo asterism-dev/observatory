@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token gateway-up gateway-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -9,11 +9,14 @@ dev-down:
 gateway-token:
 	grep -q '^OBSERVATORY_GATEWAY_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_GATEWAY_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
 
-gateway-up: gateway-token
-	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway
+storage-token:
+	grep -q '^OBSERVATORY_STORAGE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_STORAGE_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
+
+gateway-up: gateway-token storage-token
+	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway storage
 
 gateway-down:
-	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf gateway modules
+	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf storage gateway modules
 
 idp-up:
 	docker compose -f deploy/dev/zitadel/compose.yaml --env-file deploy/dev/zitadel/.env up -d --wait

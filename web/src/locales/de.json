@@ -29,7 +29,8 @@
     "general": "Allgemein",
     "newOrg": "Neue Organisation",
     "userMenu": "Kontomenü",
-    "networks": "Netzwerke"
+    "networks": "Netzwerke",
+    "disks": "Disks"
   },
   "theme": {
     "system": "System",
@@ -344,5 +345,67 @@
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
     "restart": "Speichern und neu starten"
+  },
+  "vmDisks": {
+    "section": "Disks",
+    "none": "Keine Disks angehängt.",
+    "change": "Disks ändern",
+    "changeTitle": "Disks ändern",
+    "add": "Disk hinzufügen",
+    "noneAvailable": "Keine weiteren Disks verfügbar. Nur bereite, nicht angehängte Disks mit demselben Besitzer wie die VM können angehängt werden.",
+    "createAndAdd": "Erstellen und hinzufügen",
+    "mountPath": "Mount-Pfad",
+    "remove": "Entfernen",
+    "invalidPath": "Absoluten Pfad ohne abschließenden Schrägstrich und Sonderzeichen verwenden.",
+    "reservedPath": "Dieser Pfad ist reserviert.",
+    "duplicatePath": "Mount-Pfade müssen eindeutig sein.",
+    "nestedPath": "Mount-Pfade dürfen nicht ineinander liegen.",
+    "save": "Speichern",
+    "restartTitle": "VM neu starten",
+    "restartBody": "{name} läuft und wird neu gestartet, um die Disk-Änderung zu übernehmen.",
+    "restart": "Speichern und neu starten"
+  },
+  "disks": {
+    "subtitle": "Persistente Disks, die du an VMs anhängen kannst.",
+    "create": "Disk erstellen",
+    "createTitle": "Disk erstellen",
+    "name": "Name",
+    "owner": "Besitzer",
+    "size": "Größe (GB)",
+    "used": "Belegt",
+    "state": "Status",
+    "attachedTo": "Angehängt an",
+    "empty": "Noch keine Disks.",
+    "tab": {
+      "all": "Alle",
+      "mine": "Meine",
+      "teams": "Teams"
+    },
+    "states": {
+      "creating": "Wird erstellt",
+      "ready": "Bereit",
+      "growing": "Wächst",
+      "releasing": "Wird freigegeben",
+      "missing": "Fehlt"
+    },
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche verwenden.",
+    "invalidSize": "Die Größe muss zwischen 1 und 4096 GB liegen.",
+    "storageOffline": "Speicherserver offline. Änderungen an Disks werden angewendet, sobald er wieder erreichbar ist.",
+    "copy": "Kopieren",
+    "copyTitle": "{name} kopieren",
+    "copyName": "Name der Kopie",
+    "copyHint": "Die Kopie ist ein vollständiges Duplikat. Beim Kopieren einer Disk in Benutzung kann die Kopie inkonsistent sein.",
+    "copyUnsettled": "Diese Disk ist in Benutzung oder nicht abgeschlossen. Die Kopie kann inkonsistent sein; für eine konsistente Kopie die Disk zuerst abhängen oder ihre VM stoppen.",
+    "copyWarning": "Die Kopie wurde erstellt, aber die Quell-Disk ist in Benutzung oder nicht abgeschlossen, daher kann die Kopie inkonsistent sein.",
+    "grow": "Vergrößern",
+    "growTitle": "{name} vergrößern",
+    "growHint": "Disks können nur wachsen. Gib eine Größe über {size} GB ein.",
+    "growRestart": "Angehängte VM neu starten, falls sie läuft, um die neue Größe zu übernehmen",
+    "release": "Freigabe erzwingen",
+    "releaseTitle": "Freigabe der Disk erzwingen",
+    "releaseBody": "Freigabe von {name} von der VM erzwingen? Nicht geschriebene Daten der VM können verloren gehen.",
+    "delete": "Löschen",
+    "deleteTitle": "Disk löschen",
+    "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
   }
 }

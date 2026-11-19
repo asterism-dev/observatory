@@ -18,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db"
+	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -81,11 +82,16 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	f := fleet.New(s, z, nh)
+	f, err := fleet.New(ctx, s, z, nh)
+	if err != nil {
+		return err
+	}
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
+	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
+	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary)
-	mux.Handle("/api/", api.New(s, a, z, f, nh))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

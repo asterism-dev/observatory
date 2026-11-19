@@ -96,6 +96,9 @@ var storeErrorStatus = []struct {
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
 	{store.ErrRestartRequired, http.StatusConflict},
+	{store.ErrInvalidSize, http.StatusBadRequest},
+	{store.ErrOwnerMismatch, http.StatusConflict},
+	{store.ErrNoStoragePort, http.StatusConflict},
 	{store.ErrSubnetOverlap, http.StatusConflict},
 	{store.ErrAddressesExhausted, http.StatusConflict},
 	{netaddr.ErrInvalidSubnet, http.StatusBadRequest},
@@ -130,6 +133,9 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 				// These name the caller's own missing permission or bad input, which they need to fix the request.
 				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet {
 					msg = err.Error()
+				}
+				if errors.Is(err, errDiskMissing) {
+					msg = errDiskMissing.Error()
 				}
 				writeError(w, se.status, msg)
 				return false

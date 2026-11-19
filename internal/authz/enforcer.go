@@ -42,6 +42,12 @@ type VMRef struct {
 	UserID, TeamID *uuid.UUID
 }
 
+// DiskRef is a live disk's owner: exactly one of UserID and TeamID is set.
+type DiskRef struct {
+	OrgID, ID      uuid.UUID
+	UserID, TeamID *uuid.UUID
+}
+
 type CustomRole struct {
 	ID, OrgID         uuid.UUID
 	Name, Description string
@@ -65,6 +71,7 @@ type Policy struct {
 	// Teams lists every team, including those without members, so team subjects get their env rules.
 	Teams []TeamRef
 	VMs   []VMRef
+	Disks []DiskRef
 }
 
 type Enforcer struct {
@@ -114,6 +121,7 @@ func New(p Policy) (*Enforcer, error) {
 			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "team:manage-members", string(Allow)})
 			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
 			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "vm:create", string(Allow)})
+			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "disk:create", string(Allow)})
 			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
 		}
 	}
@@ -134,11 +142,28 @@ func New(p Policy) (*Enforcer, error) {
 		}
 		switch {
 		case vm.UserID != nil:
-			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:connect")
+			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:connect")
 		case vm.TeamID != nil:
 			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect")
 			for _, admin := range teamAdmins[*vm.TeamID] {
-				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network")
+				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks")
+			}
+		}
+	}
+	for _, d := range p.Disks {
+		obj, org := DiskObject(d.ID), d.OrgID.String()
+		grant := func(sub string, acts ...string) {
+			for _, act := range acts {
+				rules = append(rules, []string{sub, org, obj, act, string(Allow)})
+			}
+		}
+		switch {
+		case d.UserID != nil:
+			grant(UserSubject(*d.UserID), "disk:read", "disk:update", "disk:delete", "disk:use")
+		case d.TeamID != nil:
+			grant(TeamSubject(*d.TeamID), "disk:read", "disk:use")
+			for _, admin := range teamAdmins[*d.TeamID] {
+				grant(UserSubject(admin), "disk:read", "disk:update", "disk:delete", "disk:use")
 			}
 		}
 	}

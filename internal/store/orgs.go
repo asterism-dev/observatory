@@ -144,7 +144,9 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 			return err
 		}
 		var owns bool
-		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND user_id = $2)", orgID, userID).Scan(&owns); err != nil {
+		if err := tx.q.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND user_id = $2)
+				OR EXISTS (SELECT 1 FROM disks WHERE org_id = $1 AND user_id = $2 AND deleted_at IS NULL)`, orgID, userID).Scan(&owns); err != nil {
 			return err
 		}
 		if owns {

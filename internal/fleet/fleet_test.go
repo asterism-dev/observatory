@@ -11,6 +11,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,12 +20,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -39,6 +44,7 @@ import (
 
 type env struct {
 	t     *testing.T
+	pool  *pgxpool.Pool
 	s     *store.Store
 	z     *authz.Service
 	h     *network.Hub
@@ -51,7 +57,8 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(seal.Key{1})
 	u, err := s.Login(ctx, store.Identity{Subject: "owner", Email: "owner@x.io", Name: "owner"})
 	if err != nil {
 		t.Fatal(err)
@@ -68,10 +75,13 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fleet.New(s, z, h)
+	f, err := fleet.New(ctx, s, z, h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
-	return &env{t: t, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
+	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
 }
 
 func (e *env) node(org uuid.UUID, name string) (store.Node, string) {
@@ -494,11 +504,14 @@ func TestNoSecretsInLogs(t *testing.T) {
 	key := e.sshKey(e.owner)
 	e.envVar("TOKEN", "s3cr3t-value")
 
+	e.readyDisk(v, "data")
+
 	node := e.connect(cred)
-	node.desired()
+	psk := node.desired().Desired[0].Spec.Attachments[0].PSK
 	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning}})
-	e.f.NotifyOrg(e.org.ID)
-	node.desired()
+	s := e.detach(node, v)
+	node.send(proto.Message{Type: "disks", AppliedSeq: s})
+	waitFor(t, func() bool { return strings.Contains(buf.String(), "disk release confirmed") })
 	if _, err := e.s.RegenerateNodeCredential(ctx, e.org.ID, n.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +524,7 @@ func TestNoSecretsInLogs(t *testing.T) {
 		t.Fatalf("log capture broken: %q", out)
 	}
 	keyBody := strings.Fields(key)[1]
-	for _, secret := range []string{"s3cr3t-value", "TOKEN", keyBody, cred} {
+	for _, secret := range []string{"s3cr3t-value", "TOKEN", keyBody, cred, psk, "nbd://"} {
 		if strings.Contains(out, secret) {
 			t.Errorf("log contains %q:\n%s", secret, out)
 		}
@@ -720,4 +733,261 @@ func certCN(t *testing.T, certPEM string) string {
 		t.Fatal(err)
 	}
 	return c.Subject.CommonName
+}
+
+// readyDisk creates a disk of the owner that the storage server already has, attached to v at /data.
+func (e *env) readyDisk(v store.VM, name string) store.Disk {
+	e.t.Helper()
+	ctx := context.Background()
+	d, err := e.s.CreateDisk(ctx, store.Disk{OrgID: v.OrgID, UserID: v.UserID, TeamID: v.TeamID, Name: name, SizeGB: 1, CreatedBy: e.owner})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.s.ApplyStorageFiles(ctx, []proto.StorageFile{{Name: proto.StorageFileName(d.ID.String()), SizeBytes: 1 << 30}}); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, _, err := e.s.SetVMDisks(ctx, v.OrgID, v.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, true); err != nil {
+		e.t.Fatal(err)
+	}
+	return d
+}
+
+// releaseSeq returns the export's release_seq; ok is false once the export is gone.
+func (e *env) releaseSeq(disk uuid.UUID) (seq *int64, ok bool) {
+	e.t.Helper()
+	err := e.pool.QueryRow(context.Background(), "SELECT release_seq FROM disk_exports WHERE disk_id = $1", disk).Scan(&seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false
+	}
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return seq, true
+}
+
+// detach removes every disk of v and returns the seq of the first list sent without them.
+func (e *env) detach(node *fakeNode, v store.VM) uint64 {
+	e.t.Helper()
+	if _, _, err := e.s.SetVMDisks(context.Background(), v.OrgID, v.ID, nil, true); err != nil {
+		e.t.Fatal(err)
+	}
+	e.f.NotifyOrg(v.OrgID)
+	m := node.desired()
+	if len(m.Desired) != 1 || len(m.Desired[0].Spec.Attachments) != 0 {
+		e.t.Fatalf("list after detach: %+v", m.Desired)
+	}
+	return m.Seq
+}
+
+var barriers atomic.Int32
+
+// barrier returns once the hub has handled every message the node sent before it.
+func (e *env) barrier(node *fakeNode, v store.VM) {
+	e.t.Helper()
+	ip := fmt.Sprintf("10.0.%d.1", barriers.Add(1))
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, IP: ip}})
+	waitFor(e.t, func() bool {
+		got, err := e.s.VM(context.Background(), v.OrgID, v.ID)
+		return err == nil && got.IP == ip
+	})
+}
+
+func TestDesiredCarriesAttachments(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	other, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "n")
+	b, bcred := e.node(other.ID, "b")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+
+	m := e.connect(cred).desired()
+	atts := m.Desired[0].Spec.Attachments
+	if len(atts) != 1 {
+		t.Fatalf("attachments = %+v", atts)
+	}
+	a := atts[0]
+	if a.DiskID != d.ID.String() || a.URL != "nbd://10.198.0.1:10810/"+d.ID.String() || len(a.PSK) != 64 || a.MountPath != "/data" || a.SizeGB != 1 {
+		t.Errorf("attachment = %+v", a)
+	}
+	for _, dv := range e.connect(bcred).desired().Desired {
+		if len(dv.Spec.Attachments) != 0 {
+			t.Errorf("foreign node got attachments %+v", dv.Spec.Attachments)
+		}
+	}
+}
+
+func TestReleaseSeqMarkedOnlyForListsWithoutDisk(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+
+	node := e.connect(cred)
+	if len(node.desired().Desired[0].Spec.Attachments) != 1 {
+		t.Fatal("attachment missing")
+	}
+	if seq, ok := e.releaseSeq(d.ID); !ok || seq != nil {
+		t.Fatalf("release_seq before detach = %v %v", seq, ok)
+	}
+	s := e.detach(node, v)
+	waitFor(t, func() bool { seq, _ := e.releaseSeq(d.ID); return seq != nil })
+	if seq, _ := e.releaseSeq(d.ID); uint64(*seq) != s {
+		t.Fatalf("release_seq = %d, want %d", *seq, s)
+	}
+	// Later lists keep the first seq.
+	e.f.NotifyOrg(e.org.ID)
+	node.desired()
+	e.barrier(node, v)
+	if seq, _ := e.releaseSeq(d.ID); uint64(*seq) != s {
+		t.Fatalf("release_seq moved to %d", *seq)
+	}
+}
+
+func TestStaleDisksMessageDoesNotRelease(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+
+	node := e.connect(cred)
+	node.desired()
+	s := e.detach(node, v)
+	waitFor(t, func() bool { seq, _ := e.releaseSeq(d.ID); return seq != nil })
+
+	node.send(proto.Message{Type: "disks", DisksInUse: []string{}, AppliedSeq: s - 1})
+	node.send(proto.Message{Type: "disks", DisksInUse: []string{d.ID.String(), "not-a-uuid"}, AppliedSeq: s})
+	e.barrier(node, v)
+	if _, ok := e.releaseSeq(d.ID); !ok {
+		t.Fatal("export released by a stale or in-use disks message")
+	}
+	node.send(proto.Message{Type: "disks", DisksInUse: []string{"not-a-uuid"}, AppliedSeq: s})
+	waitFor(t, func() bool { _, ok := e.releaseSeq(d.ID); return !ok })
+}
+
+func TestStaleRegisterDoesNotRelease(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+
+	node := e.connect(cred)
+	node.desired()
+	s := e.detach(node, v)
+	waitFor(t, func() bool { seq, _ := e.releaseSeq(d.ID); return seq != nil })
+	node.sess.Close()
+	waitFor(t, func() bool { return !e.f.Online(n.ID) })
+
+	node = e.register(cred, proto.Register{AppliedSeq: s - 1})
+	node.desired()
+	if _, ok := e.releaseSeq(d.ID); !ok {
+		t.Fatal("export released by a register from before the detach")
+	}
+	node.sess.Close()
+	waitFor(t, func() bool { return !e.f.Online(n.ID) })
+	e.register(cred, proto.Register{AppliedSeq: s}).desired()
+	if _, ok := e.releaseSeq(d.ID); ok {
+		t.Fatal("register after the detach did not release")
+	}
+}
+
+func TestSeqMonotonicAcrossConnections(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	node := e.connect(cred)
+	first := node.desired().Seq
+	e.f.NotifyOrg(e.org.ID)
+	last := node.desired().Seq
+	if last <= first {
+		t.Fatalf("seq %d after %d", last, first)
+	}
+	node.sess.Close()
+	waitFor(t, func() bool { return !e.f.Online(n.ID) })
+	if got := e.connect(cred).desired().Seq; got <= last {
+		t.Fatalf("seq after reconnect %d, last before %d", got, last)
+	}
+}
+
+// A clock step back between hub runs must not let a new list's seq fall below a recorded release_seq.
+func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	d := e.readyDisk(v, "data")
+	future := time.Now().Add(time.Hour).UnixNano()
+	if _, err := e.pool.Exec(ctx, "UPDATE disk_exports SET releasing = true, release_seq = $2 WHERE disk_id = $1", d.ID, future); err != nil {
+		t.Fatal(err)
+	}
+	f, err := fleet.New(ctx, e.s, e.z, e.h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f = f
+	e.srv = httptest.NewServer(http.HandlerFunc(f.ServeConnect))
+	t.Cleanup(e.srv.Close)
+	if got := e.connect(cred).desired().Seq; got <= uint64(future) {
+		t.Fatalf("seq %d not above release_seq %d", got, future)
+	}
+}
+
+func TestDiskErrorsFromStatus(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	other, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "n")
+	b, _ := e.node(other.ID, "b")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	foreign := e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
+	id := uuid.NewString()
+
+	node := e.connect(cred)
+	node.desired()
+	for _, vm := range []store.VM{foreign, v} {
+		node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: vm.ID.String(), State: proto.StateRunning,
+			Disks: []proto.Disk{{Name: "root"}, {Name: id, Error: "NBD connection lost"}}}})
+	}
+	waitFor(t, func() bool { return e.f.DiskErrors(v.ID)[id] == "NBD connection lost" })
+	if got := e.f.DiskErrors(v.ID); len(got) != 1 {
+		t.Errorf("disk errors = %v", got)
+	}
+	if got := e.f.DiskErrors(foreign.ID); len(got) != 0 {
+		t.Errorf("foreign node set disk errors %v", got)
+	}
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Disks: []proto.Disk{{Name: id}}}})
+	waitFor(t, func() bool { return len(e.f.DiskErrors(v.ID)) == 0 })
+}
+
+func TestDiskErrorsDroppedWithVMOrNode(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
+	kept := e.vm(e.org.ID, n.ID, "kept", &e.owner, nil)
+	node := e.connect(cred)
+	node.desired()
+	for _, vm := range []store.VM{gone, kept} {
+		node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: vm.ID.String(), State: proto.StateRunning,
+			Disks: []proto.Disk{{Name: "d", Error: "NBD connection lost"}}}})
+	}
+	waitFor(t, func() bool { return len(e.f.DiskErrors(gone.ID)) == 1 && len(e.f.DiskErrors(kept.ID)) == 1 })
+	if err := e.s.DeleteVM(ctx, e.org.ID, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	node.desired()
+	if len(e.f.DiskErrors(gone.ID)) != 0 || len(e.f.DiskErrors(kept.ID)) != 1 {
+		t.Fatalf("after delete: gone %v kept %v", e.f.DiskErrors(gone.ID), e.f.DiskErrors(kept.ID))
+	}
+	e.f.Disconnect(n.ID)
+	if got := e.f.DiskErrors(kept.ID); len(got) != 0 {
+		t.Fatalf("after disconnect: %v", got)
+	}
 }

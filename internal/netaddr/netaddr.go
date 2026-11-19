@@ -26,6 +26,9 @@ const (
 	GuestMTU     = 1300
 	UnderlayPort = 51820
 	ClientsPort  = 51821
+	// Storage NBD exports listen on GatewayUnderlay, one port per attachment.
+	StoragePortFirst = 10810
+	StoragePortLast  = 11809
 )
 
 var (
@@ -120,4 +123,8 @@ func Router(slice netip.Prefix) netip.Addr { return slice.Masked().Addr().Next()
 func MAC(ip netip.Addr) string {
 	b := ip.As4()
 	return fmt.Sprintf("02:%02x:%02x:00:%02x:%02x", b[0], b[1], b[2], b[3])
+}
+
+func StorageURL(port int, diskID string) string {
+	return fmt.Sprintf("nbd://%s:%d/%s", GatewayUnderlay, port, diskID)
 }

@@ -13,13 +13,13 @@ import (
 )
 
 func TestStartWithNBDDisk(t *testing.T) {
-	url := os.Getenv("VMM_TEST_NBD")
+	url, psk := os.Getenv("VMM_TEST_NBD"), os.Getenv("VMM_TEST_NBD_PSK")
 	if url == "" {
-		t.Skip("needs VMM_TEST_NBD")
+		t.Skip("needs VMM_TEST_NBD and VMM_TEST_NBD_PSK")
 	}
 	p := testProvider(t)
 	f := testVM("fcnbd")
-	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: "d1", MountPath: "/data", URL: url}}
+	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: "d1", MountPath: "/data", URL: url, PSK: psk}}
 	inst := startVM(t, p, f)
 	dir := node.VMDir(p.VMsDir, f.Spec.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

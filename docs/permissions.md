@@ -44,10 +44,12 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
-| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:connect` | `org/vms/*` |
+| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect` | `org/vms/*` |
 | `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
 | `network:read`, `network:create` | `org/networks` |
 | `network:use`, `network:delete` | `org/networks/*` |
+| `disk:create` | `org/disks` (user disks), `org/team-disks/*` (team disks) |
+| `disk:read`, `disk:update`, `disk:delete`, `disk:use` | `org/disks/*` |
 
 ## Built-in roles
 
@@ -65,14 +67,16 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
-| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network` on `org/vms/*` | | yes | yes |
+| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks` on `org/vms/*` | | yes | yes |
 | `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
 | `network:delete` on `org/networks/*` | | yes | yes |
 | `device:list`, `device:delete` on `org/user-devices/*` | | yes | yes |
+| `disk:create` on `org/disks` | yes | yes | yes |
+| `disk:create` on `org/team-disks/*`; `disk:read`, `disk:update`, `disk:delete` on `org/disks/*` | | yes | yes |
 
-No built-in role holds `vm:connect` or `device:create` on others' objects; those come only from the
+No built-in role holds `vm:connect`, `disk:use` or `device:create` on others' objects; those come only from the
 generated rules below. VM actions are always granted as explicit lists, never `vm:*`, so a new VM action
-is never granted by accident.
+is never granted by accident. Disk actions are explicit too, never `disk:*`.
 
 ## Custom roles and bindings
 
@@ -150,8 +154,24 @@ off. A custom role granting `vm:connect` has no effect on connecting in this ver
 holds `vm:connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`node:use`); only admins and owners
 add, rename or delete nodes.
 
-A member who still owns VMs cannot be removed from the org or leave it, and a team that owns VMs cannot be
-deleted (`409` "owns VMs").
+A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
+disks cannot be deleted (`409` "owns VMs or disks").
+
+## Disks
+
+Every disk object is org-scoped (`org/disks/<id>`), whether a user or a team owns it, so org-wide rules such
+as `deny disk:delete@org/disks/*` also cover a member's own disks. Owner rights come from generated rules:
+
+- A user disk gives its user `disk:read`, `disk:update`, `disk:delete` and `disk:use` on that disk.
+- A team disk gives the team subject `disk:read` and `disk:use`, and each admin of that team `disk:read`,
+  `disk:update`, `disk:delete` and `disk:use`.
+- Team admins also get `disk:create` on `org/team-disks/<team>`.
+- Owners of a user VM and admins of the owning team of a team VM get `vm:disks` on it (attach and detach).
+
+Org admins and owners may detach and delete any disk (`disk:read`, `disk:update`, `disk:delete`,
+`vm:disks`) but never get `disk:use`, so no action lets them read a member's disk contents. An org admin can
+still add themselves to a team (`team:update`) and so gets `disk:use` on that team's disks, as with team VMs;
+user disks stay out of reach.
 
 ## Devices and networks
 

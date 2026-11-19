@@ -15,7 +15,7 @@ import (
 
 var (
 	ErrLimitExceeded = errors.New("limit exceeded")
-	ErrOwnsResources = errors.New("owns VMs")
+	ErrOwnsResources = errors.New("owns VMs or disks")
 	ErrNotEnrolled   = errors.New("node not enrolled")
 )
 
@@ -54,23 +54,70 @@ func collectVMs(rows pgx.Rows, err error) ([]VM, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (VM, error) { return scanVM(r) })
 }
 
-// vmUsage sums the VMs matching the filter, whatever their power state.
-func (s *Store) vmUsage(ctx context.Context, orgID uuid.UUID, ownerCol string, owner *uuid.UUID) (u Limits, err error) {
+// usage sums the VMs matching the filter, whatever their power state, plus live standalone disks.
+func (s *Store) usage(ctx context.Context, orgID uuid.UUID, ownerCol string, owner *uuid.UUID) (u Limits, err error) {
 	var count, cpus, mem, disk int
-	q := "SELECT count(*), coalesce(sum(cpus), 0), coalesce(sum(memory_mb), 0), coalesce(sum(disk_gb), 0) FROM vms WHERE org_id = $1"
+	filter := ""
 	args := []any{orgID}
 	if owner != nil {
-		q += " AND " + ownerCol + " = $2"
+		filter = " AND " + ownerCol + " = $2"
 		args = append(args, *owner)
 	}
+	q := "SELECT count(*), coalesce(sum(cpus), 0), coalesce(sum(memory_mb), 0), coalesce(sum(disk_gb), 0) + " +
+		"(SELECT coalesce(sum(size_gb), 0) FROM disks WHERE org_id = $1 AND deleted_at IS NULL" + filter + ") " +
+		"FROM vms WHERE org_id = $1" + filter
 	if err = s.q.QueryRow(ctx, q, args...).Scan(&count, &cpus, &mem, &disk); err != nil {
 		return
 	}
 	return Limits{VCPU: &cpus, RAMMB: &mem, DiskGB: &disk, VMCount: &count}, nil
 }
 
-func (u Limits) plus(v VM) Limits {
-	return Limits{VCPU: ptr(*u.VCPU + v.CPUs), RAMMB: ptr(*u.RAMMB + v.MemoryMB), DiskGB: ptr(*u.DiskGB + v.DiskGB), VMCount: ptr(*u.VMCount + 1)}
+// plus leaves a dimension nil (unchecked) when the addend has none, so an operation is only held to the limits it uses.
+func (u Limits) plus(a Limits) Limits {
+	add := func(used, n *int) *int {
+		if n == nil {
+			return nil
+		}
+		return ptr(*used + *n)
+	}
+	return Limits{VCPU: add(u.VCPU, a.VCPU), RAMMB: add(u.RAMMB, a.RAMMB), DiskGB: add(u.DiskGB, a.DiskGB), VMCount: add(u.VMCount, a.VMCount)}
+}
+
+// checkLimits checks that the owner belongs to the org and that adding add stays within the org and owner limits.
+func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID *uuid.UUID, add Limits) error {
+	ownerScope, ownerCol, owner := "", "team_id", teamID
+	switch {
+	case userID != nil && teamID == nil:
+		ownerScope, ownerCol, owner = authz.UserSubject(*userID), "user_id", userID
+	case teamID != nil && userID == nil:
+		ownerScope = authz.TeamSubject(*teamID)
+	default:
+		return ErrNotFound
+	}
+	if err := s.checkScopeInOrg(ctx, orgID, ownerScope); err != nil {
+		return err
+	}
+	limits, err := s.Limits(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	for _, c := range []struct {
+		scope string
+		owner *uuid.UUID
+	}{{ScopeOrg, nil}, {ownerScope, owner}} {
+		l, ok := limits[c.scope]
+		if !ok {
+			continue
+		}
+		used, err := s.usage(ctx, orgID, ownerCol, c.owner)
+		if err != nil {
+			return err
+		}
+		if used.plus(add).exceeds(l) {
+			return ErrLimitExceeded
+		}
+	}
+	return nil
 }
 
 func ptr(n int) *int { return &n }
@@ -90,37 +137,8 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 		if !enrolled {
 			return ErrNotEnrolled
 		}
-		ownerScope, ownerCol, owner := "", "team_id", v.TeamID
-		switch {
-		case v.UserID != nil && v.TeamID == nil:
-			ownerScope, ownerCol, owner = authz.UserSubject(*v.UserID), "user_id", v.UserID
-		case v.TeamID != nil && v.UserID == nil:
-			ownerScope = authz.TeamSubject(*v.TeamID)
-		default:
-			return ErrNotFound
-		}
-		if err := tx.checkScopeInOrg(ctx, v.OrgID, ownerScope); err != nil {
+		if err := tx.checkLimits(ctx, v.OrgID, v.UserID, v.TeamID, Limits{VCPU: &v.CPUs, RAMMB: &v.MemoryMB, DiskGB: &v.DiskGB, VMCount: ptr(1)}); err != nil {
 			return err
-		}
-		limits, err := tx.Limits(ctx, v.OrgID)
-		if err != nil {
-			return err
-		}
-		for _, c := range []struct {
-			scope string
-			owner *uuid.UUID
-		}{{ScopeOrg, nil}, {ownerScope, owner}} {
-			l, ok := limits[c.scope]
-			if !ok {
-				continue
-			}
-			used, err := tx.vmUsage(ctx, v.OrgID, ownerCol, c.owner)
-			if err != nil {
-				return err
-			}
-			if used.plus(v).exceeds(l) {
-				return ErrLimitExceeded
-			}
 		}
 		mgmtIP, err := tx.nextMgmtIP(ctx, v.OrgID)
 		if err != nil {
@@ -156,15 +174,24 @@ func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power
 		WHERE id = $1 AND org_id = $2 RETURNING `+vmColumns, id, org, p, m))
 }
 
+// DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.
 func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, "DELETE FROM vms WHERE id = $1 AND org_id = $2", id, org)
-	if err != nil {
+	return s.InTx(ctx, func(tx *Store) error {
+		var one int
+		err := tx.q.QueryRow(ctx, "SELECT 1 FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", id, org).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if _, err := tx.q.Exec(ctx, `
+			UPDATE disk_exports SET releasing = true, release_seq = NULL
+			WHERE disk_id IN (SELECT disk_id FROM vm_disks WHERE vm_id = $1)`, id); err != nil {
+			return err
+		}
+		_, err = tx.q.Exec(ctx, "DELETE FROM vms WHERE id = $1", id)
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	})
 }
 
 // SetVMStatus ignores VMs that are not on the reporting node.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -25,10 +26,18 @@ type api struct {
 	publicURL *url.URL
 	fleet     *fleet.Fleet
 	network   *network.Hub
+	disks     *disks.Hub
+
+	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub) http.Handler {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n}
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d)
+	return handler
+}
+
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub) (*api, http.Handler) {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -92,10 +101,18 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/stop", h.powerVM(proto.PowerStopped, proto.StopHard))
 	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}", h.deleteVM)
 	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/networks", h.setVMNetworks)
+	mux.HandleFunc("PUT /api/orgs/{org}/vms/{id}/disks", h.setVMDisks)
 	mux.HandleFunc("GET /api/orgs/{org}/networks", h.listNetworks)
 	mux.HandleFunc("POST /api/orgs/{org}/networks", h.createNetwork)
 	mux.HandleFunc("DELETE /api/orgs/{org}/networks/{id}", h.deleteNetwork)
-	return a.Require(mux)
+	mux.HandleFunc("GET /api/orgs/{org}/disks", h.listDisks)
+	mux.HandleFunc("POST /api/orgs/{org}/disks", h.createDisk)
+	mux.HandleFunc("GET /api/orgs/{org}/disks/{id}", h.getDisk)
+	mux.HandleFunc("DELETE /api/orgs/{org}/disks/{id}", h.deleteDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/copy", h.copyDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/grow", h.growDisk)
+	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/release", h.releaseDisk)
+	return h, a.Require(mux)
 }
 
 func (h *api) me(w http.ResponseWriter, r *http.Request) {

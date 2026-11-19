@@ -26,6 +26,8 @@ const (
 
 	ObjUserDevices = "org/user-devices"
 	ObjNetworks    = "org/networks"
+	ObjDisks       = "org/disks"
+	ObjTeamDisks   = "org/team-disks"
 )
 
 // Subjects; "vm:<id>" is reserved for VM identities.
@@ -53,6 +55,11 @@ func TeamVMsObject(teamID uuid.UUID) string { return ObjTeamVMs + "/" + teamID.S
 func UserDevicesObject(user uuid.UUID) string { return ObjUserDevices + "/" + user.String() }
 
 func NetworkObject(id uuid.UUID) string { return ObjNetworks + "/" + id.String() }
+
+// DiskObject is org-scoped for user and team disks alike, so org-wide rules cover every disk.
+func DiskObject(id uuid.UUID) string { return ObjDisks + "/" + id.String() }
+
+func TeamDisksObject(team uuid.UUID) string { return ObjTeamDisks + "/" + team.String() }
 
 type Effect string
 
@@ -115,6 +122,7 @@ var Catalog = []Permission{
 	{"vm:delete", ObjVMs + "/*"},
 	{"vm:connect", ObjVMs + "/*"},
 	{"vm:network", ObjVMs + "/*"},
+	{"vm:disks", ObjVMs + "/*"},
 	{"device:create", ObjUserDevices + "/*"},
 	{"device:list", ObjUserDevices + "/*"},
 	{"device:delete", ObjUserDevices + "/*"},
@@ -122,6 +130,12 @@ var Catalog = []Permission{
 	{"network:create", ObjNetworks},
 	{"network:use", ObjNetworks + "/*"},
 	{"network:delete", ObjNetworks + "/*"},
+	{"disk:create", ObjDisks},
+	{"disk:create", ObjTeamDisks + "/*"},
+	{"disk:read", ObjDisks + "/*"},
+	{"disk:update", ObjDisks + "/*"},
+	{"disk:delete", ObjDisks + "/*"},
+	{"disk:use", ObjDisks + "/*"},
 }
 
 // BuiltinRules returns the allow rules of a built-in role, or nil for an unknown key.
@@ -141,6 +155,7 @@ func BuiltinRules(key string) []Rule {
 		{Allow, ObjNetworks, "network:read"},
 		{Allow, ObjNetworks, "network:create"},
 		{Allow, ObjNetworks + "/*", "network:use"},
+		{Allow, ObjDisks, "disk:create"},
 	}
 	admin := append(member,
 		Rule{Allow, ObjSettings, "org:update"},
@@ -164,6 +179,12 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjUserDevices + "/*", "device:list"},
 		Rule{Allow, ObjUserDevices + "/*", "device:delete"},
 		Rule{Allow, ObjNetworks + "/*", "network:delete"},
+		// Never disk:use or disk:*: admins detach and delete a member's disk but cannot read it.
+		Rule{Allow, ObjTeamDisks + "/*", "disk:create"},
+		Rule{Allow, ObjDisks + "/*", "disk:read"},
+		Rule{Allow, ObjDisks + "/*", "disk:update"},
+		Rule{Allow, ObjDisks + "/*", "disk:delete"},
+		Rule{Allow, ObjVMs + "/*", "vm:disks"},
 	)
 	switch key {
 	case "member":

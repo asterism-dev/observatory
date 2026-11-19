@@ -20,12 +20,17 @@ import (
 )
 
 type Process struct {
-	Cmd     *exec.Cmd
-	Console string
-	Offset  int64
-	IP      string
-	done    chan struct{}
+	Cmd       *exec.Cmd
+	Console   string
+	Offset    int64
+	IP        string
+	done      chan struct{}
+	vmID, dir string
+	nbdIDs    []string
 }
+
+// ponytail: fixed grace for a killed VMM blocked on an unreachable NBD export; watch /sys/block/nbdN/stat if a healthy flush takes longer.
+var nbdStuckAfter = 30 * time.Second
 
 // AttachDisks returns the host path of each node.AttachOrder disk; on error it detaches the NBDs already attached.
 func AttachDisks(f node.VMFile, dir string) ([]string, []string, error) {
@@ -35,7 +40,7 @@ func AttachDisks(f node.VMFile, dir string) ([]string, []string, error) {
 			paths = append(paths, filepath.Join(dir, d.File))
 			continue
 		}
-		dev, err := AttachNBD(dir, d.Name, d.File)
+		dev, err := AttachNBD(dir, d.Name, d.File, d.PSK)
 		if err != nil {
 			DetachAll(f.Spec.ID, dir, nbdIDs)
 			return nil, nil, err
@@ -77,7 +82,7 @@ func Spawn(f node.VMFile, dir string, cmd *exec.Cmd, nbdIDs []string, tapOwner i
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
-	p := &Process{Cmd: cmd, Console: console, Offset: offset, IP: node.MgmtIP(f), done: make(chan struct{})}
+	p := &Process{Cmd: cmd, Console: console, Offset: offset, IP: node.MgmtIP(f), done: make(chan struct{}), vmID: f.Spec.ID, dir: dir, nbdIDs: nbdIDs}
 	started := make(chan error, 1)
 	go func() {
 		// Pdeathsig fires when the starting thread exits, so this goroutine keeps its thread until the VM is gone.
@@ -114,7 +119,13 @@ func (p *Process) Kill() error {
 	if err := p.Cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	<-p.done
+	select {
+	case <-p.done:
+	case <-time.After(nbdStuckAfter):
+		log.Printf("vm %s: still running %s after SIGKILL, dropping its NBD disks", p.vmID, nbdStuckAfter)
+		DetachAll(p.vmID, p.dir, p.nbdIDs)
+		<-p.done
+	}
 	return nil
 }
 

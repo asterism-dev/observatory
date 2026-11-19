@@ -26,12 +26,15 @@ export interface VmInfo {
   owner: { kind: 'user' | 'team'; id: string; name: string }
   node: { id: string; name: string }
   state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
+  power: 'running' | 'stopped'
   error?: string
   ip?: string
   mgmtIP?: string
   dnsName: string
   networks: { id: string; name: string; ip: string; dnsName: string }[]
   canNetwork: boolean
+  disks: { id: string; name: string; mountPath: string; sizeGB: number; state: string; error?: string }[]
+  canDisks: boolean
   cpus: number
   memoryMB: number
   diskGB: number

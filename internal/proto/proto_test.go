@@ -53,3 +53,22 @@ func TestRegisterOmitsEmptyVersion(t *testing.T) {
 		t.Errorf("empty fields are sent: %s", s)
 	}
 }
+
+func TestStorageJSON(t *testing.T) {
+	for _, c := range []struct {
+		in   any
+		want string
+	}{
+		{StorageState{Disks: []StorageDisk{}, Deleted: []string{}, Exports: []StorageExport{{DiskID: "d1", Port: 10810, PSK: "k"}}},
+			`{"disks":[],"deleted":[],"exports":[{"diskId":"d1","port":10810,"psk":"k"}]}`},
+		{StorageStatus{Files: []StorageFile{}, Exports: []StorageExportStatus{{DiskID: "d1", Port: 10810, Error: "bind"}, {DiskID: "d2", Port: 10811}}, Version: "v"},
+			`{"files":[],"exports":[{"diskId":"d1","port":10810,"error":"bind"},{"diskId":"d2","port":10811}],"version":"v"}`},
+		{DiskAttachment{DiskID: "d1", MountPath: "/data", SizeGB: 1, URL: "nbd://h:1/d1", PSK: "k"},
+			`{"diskId":"d1","mountPath":"/data","sizeGB":1,"url":"nbd://h:1/d1","psk":"k"}`},
+	} {
+		b, err := json.Marshal(c.in)
+		if err != nil || string(b) != c.want {
+			t.Errorf("got %s, %v\nwant %s", b, err, c.want)
+		}
+	}
+}

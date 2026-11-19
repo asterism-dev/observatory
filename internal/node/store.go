@@ -36,7 +36,11 @@ func SaveVM(vmsDir string, f VMFile) error {
 		return err
 	}
 	tmp := filepath.Join(dir, "vm.json.tmp")
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	// WriteFile keeps the mode of an existing file, and vm.json carries export keys.
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(dir, "vm.json"))

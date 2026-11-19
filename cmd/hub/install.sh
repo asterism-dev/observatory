@@ -97,6 +97,15 @@ table ip vmm {
     type nat hook postrouting priority 100;
     ip saddr 192.168.64.0/24 ip daddr != 192.168.64.0/24 masquerade
   }
+  # VMs get internet through the NAT, but never the underlay: it would reach the gateway's exports and SB as this node
+  chain from_vms {
+    type filter hook forward priority 0;
+    iifname "vmm0" ip daddr 10.198.0.0/16 drop
+  }
+  chain to_host {
+    type filter hook input priority 0;
+    iifname "vmm0" ip daddr 10.198.0.0/16 drop
+  }
 }
 NFT
 grep -qs 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf ||

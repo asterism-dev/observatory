@@ -48,8 +48,24 @@ services:
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch
+  # Shares the gateway's network namespace so exports listen on the underlay address only, nothing published on the host.
+  storage:
+    build:
+      context: ../..
+      dockerfile: deploy/storage.Dockerfile
+    profiles: [gateway]
+    restart: unless-stopped
+    network_mode: service:gateway
+    depends_on: [gateway]
+    environment:
+      HUB_URL: ${HUB_URL:-http://host.docker.internal:8090}
+      OBSERVATORY_STORAGE_TOKEN: ${OBSERVATORY_STORAGE_TOKEN:-}
+    volumes:
+      - disks:/disks
+    tmpfs: [/run/storage]
 
 volumes:
   postgres-data:
   ovn:
   ovs:
+  disks:
