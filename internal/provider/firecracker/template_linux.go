@@ -76,7 +76,7 @@ func (p *Provider) buildTemplate(ctx context.Context, key, base string, f node.V
 	return evictTemplates(filepath.Dir(dst), maxTemplates)
 }
 
-// waitAgent pings the guest agent until it answers, which it does once cloud-init has finished.
+// waitAgent pings the guest agent until it answers, which it does once the init has set the guest up.
 func waitAgent(ctx context.Context, dir string, inst node.Instance) error {
 	for {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

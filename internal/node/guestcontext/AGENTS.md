@@ -1,14 +1,16 @@
 # This machine
 
-You are in an observatory VM: a Firecracker microVM running Ubuntu 24.04. The user is `ubuntu` with passwordless
-sudo. The owner reaches it from their own devices as `<vm>.internal` (SSH over WireGuard). The guest image version
-is in `/etc/observatory/image`. Preinstalled system-wide: `claude`, `codex`, `gh`, `git`, Docker, Node, Python, `uv`.
-npm's global prefix is `~/.local`; tools in `~/.local/bin` come first in login shells' `PATH`.
+You are in an observatory VM: a Firecracker microVM booted by the platform's own init, with the root filesystem
+built from a container image. The user is `dev` (home `/home/dev`), with passwordless sudo if the image has `sudo`.
+The owner reaches it from their own devices as `<vm>.internal` (SSH over WireGuard). The platform's tools live in the
+read-only directory `/.observatory/bin`, which comes first in `PATH`; this file is
+`/usr/local/share/observatory/AGENTS.md`. What else is installed depends on the image; the standard image has
+`claude`, `codex`, `gh`, `git`, Docker, Node, Python and `uv`.
 
 ## Variables
 
-The VM's variables are in `/etc/environment` and `/etc/vmm/env.sh` (sourced by login shells). They are written at
-every boot; a changed variable reaches the VM at its next reboot, and running processes keep the values they
+The VM's variables are in `/etc/environment` and `/etc/profile.d/observatory.sh` (sourced by login shells). They
+are written at every boot; a changed variable reaches the VM at its next reboot, and running processes keep the values they
 started with. A changed value of a host-bound secret needs no reboot (see below).
 
 ## Secrets and integrations
@@ -20,8 +22,8 @@ started with. A changed value of a host-bound secret needs no reboot (see below)
 - `vmm-token <github|claude|linear>` prints the token (or its placeholder) of a connected integration. Exit 3:
   not connected, 4: unavailable.
 - GitHub: git uses HTTPS with the credential helper `git-credential-vmm`; `git@github.com:` and
-  `ssh://git@github.com/` remotes are rewritten to HTTPS. The `gh` wrapper in `/usr/local/bin/gh` sets `GH_TOKEN`
-  from `vmm-token github` and runs `/usr/bin/gh`.
+  `ssh://git@github.com/` remotes are rewritten to HTTPS. The `gh` wrapper in `/.observatory/bin/gh` sets `GH_TOKEN`
+  from `vmm-token github` and runs the image's own `gh`.
 - Claude: Claude Code is signed in through `~/.claude/.credentials.json`, kept current by the integrations sync.
 - Linear: the `linear` MCP server is configured for Claude Code; login shells have `LINEAR_API_KEY`.
 - Never print, log or commit a token or placeholder, and never copy one into files, issues, pull requests or chat.
@@ -29,9 +31,9 @@ started with. A changed value of a host-bound secret needs no reboot (see below)
 
 ## Do not
 
-- Overwrite or edit `/usr/local/bin/gh`, the vmm include in `/etc/gitconfig`, `~/.claude/.credentials.json` or the
-  trust variables (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`).
-- Stop, disable or mask `vmm-agent` or `vmm-integrations`.
+- Edit the observatory include in `/etc/gitconfig`, `~/.claude/.credentials.json` or the trust variables
+  (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`), or remove the observatory block from
+  the system CA bundle.
 - Run `claude /login` or `gh auth login` unless the user asks for it.
 - Configure git's `store` credential helper or write tokens into `~/.git-credentials`.
 - Route traffic around the egress proxy or turn off certificate verification.
@@ -39,8 +41,8 @@ started with. A changed value of a host-bound secret needs no reboot (see below)
 ## Network and egress
 
 The internet is open; there is no allowlist. HTTPS (IPv4, port 443) to hosts with bound secrets goes through the
-node's egress proxy, which presents certificates from a per-VM CA in the system store
-`/etc/ssl/certs/ca-certificates.crt`. A certificate error on such a host means the client has a pinned or its own
+node's egress proxy, which presents certificates from a per-VM CA added to the system bundle
+(`/etc/ssl/certs/ca-certificates.crt`, or `/etc/pki/tls/certs/ca-bundle.crt` on Fedora-style images). A certificate error on such a host means the client has a pinned or its own
 trust store (containers, a JVM): point it at the system bundle. Connections to other hosts are passed through. A program
 started before a new host was bound must be restarted to trust it.
 
@@ -55,7 +57,8 @@ started before a new host was bound must be restarted to trust it.
 ## Desktop and browser
 
 A desktop (display `:100`) runs on demand. The user can watch it from their laptop with
-`xpra attach ssh://ubuntu@<vm>.internal/100`; assume they may be watching.
+`xpra attach ssh://dev@<vm>.internal/100`; assume they may be watching. Desktop and browser need xpra (and Chrome
+for the browser) in the image; the standard image has them.
 
 - `vmm-desktop start|stop|status` controls it; it stops after 30 minutes without a viewer and without windows.
 - `agent-browser` drives a visible Chrome on that desktop and starts the desktop itself:
@@ -67,9 +70,9 @@ A desktop (display `:100`) runs on demand. The user can watch it from their lapt
 - `DISPLAY=:100 <app> &` shows any other window on the desktop.
 - Desktop and browser want 4 GB RAM or more.
 
-## Docker
+## Docker (standard image)
 
-- `docker.socket` is enabled: the daemon starts on the first `docker` command, which can take a few seconds.
+- The daemon starts on the first `docker` command, which can take a few seconds.
 - Networks come from `172.17.0.1/16` and pools in `172.18.0.0/15` to `172.31.0.0/16` (`/etc/docker/daemon.json`).
   Do not add pools or networks elsewhere: they can cut the VM off from its gateway and the owner's devices.
 - Containers get no credential helper, `gh` wrapper or token service. For HTTPS to bound hosts, mount the VM's CA

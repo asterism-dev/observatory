@@ -158,11 +158,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}
-	if v.Image == "" && v.Provisioned {
-		j.StockImage = !slices.ContainsFunc(names.nodeList, func(n store.Node) bool {
-			return n.ID == v.NodeID && n.Image != nil && n.Image.State == proto.ImageCustom
-		})
-	}
+	j.StockImage = v.Image == "" && v.Provisioned
 	for _, nic := range names.nics[v.ID] {
 		nn := names.networks[nic.NetworkID]
 		j.Networks = append(j.Networks, vmNICJSON{nic.NetworkID, nn, nic.IP.String(), v.Name + "." + nn + ".internal"})

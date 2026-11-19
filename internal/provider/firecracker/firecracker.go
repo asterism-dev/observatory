@@ -21,7 +21,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node"
-	"github.com/asterism-dev/observatory/internal/node/guestimage"
+	"github.com/asterism-dev/observatory/internal/node/ociimage"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
@@ -29,14 +29,16 @@ import (
 const chassisTimeout = 60 * time.Second
 
 type Provider struct {
-	VMsDir, ImagesDir, ImageURL string
+	VMsDir, ImagesDir string
 
-	custom bool // imageURL set in node.json: VMs boot that image as is
-	image  guestimage.Image
+	imageRef string
+	store    ociimage.Store
+	// storeMu is held for writing only while pruning, which must not remove what a pull or disk build is using.
+	storeMu sync.RWMutex
+	boot    guestboot
 
-	mu     sync.Mutex // serializes NAT address allocation
-	baseMu sync.Mutex // serializes base image downloads, which must not hold up mu
-	nbd    linuxvm.NBDWatch
+	mu  sync.Mutex // serializes NAT address allocation
+	nbd linuxvm.NBDWatch
 
 	fastBoot  bool
 	fcVersion string
@@ -47,8 +49,8 @@ type Provider struct {
 
 func New(c node.Config) (*Provider, error) {
 	var s struct {
-		ImageURL string `json:"imageURL"`
-		FastBoot *bool  `json:"fastBoot"`
+		GuestImage string `json:"guestImage"`
+		FastBoot   *bool  `json:"fastBoot"`
 	}
 	if err := c.ProviderSection(&s); err != nil {
 		return nil, fmt.Errorf("config firecracker section: %w", err)
@@ -56,11 +58,19 @@ func New(c node.Config) (*Provider, error) {
 	if err := linuxvm.CheckHost("firecracker", "jailer", "qemu-nbd"); err != nil {
 		return nil, err
 	}
-	img, err := guestimage.Current()
+	boot, err := loadGuestboot(guestbootDir, filepath.Join(c.Paths.VMs, ".guestboot"))
 	if err != nil {
 		return nil, err
 	}
-	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL, custom: s.ImageURL != "", image: img, fastBoot: s.FastBoot == nil || *s.FastBoot}
+	// Layers and the unpacked tree hold setuid files and device nodes of any owner.
+	store := ociimage.Store{Dir: filepath.Join(c.Paths.Images, "oci")}
+	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(store.Dir, 0o700); err != nil {
+		return nil, err
+	}
+	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, imageRef: guestImageRef(s.GuestImage), store: store, boot: boot, fastBoot: s.FastBoot == nil || *s.FastBoot}
 	if p.fcVersion, err = installedFirecracker(); err != nil {
 		return nil, err
 	}
@@ -102,35 +112,23 @@ func (p *Provider) Hypervisor() proto.Hypervisor {
 	return proto.Hypervisor{Type: "firecracker", Version: strings.TrimPrefix(p.fcVersion, "Firecracker ")}
 }
 
-// stockBase is the custom image, or else the pinned cloud image guest images are built from.
-func (p *Provider) stockBase() (string, error) {
-	p.baseMu.Lock()
-	defer p.baseMu.Unlock()
-	url, sha := p.image.Manifest.Base.URL, p.image.Manifest.Base.SHA256
-	if p.custom {
-		url, sha = p.ImageURL, ""
-	}
-	base, err := node.EnsureBaseImage(p.ImagesDir, url, sha)
+// baseFor is the root disk of f's image, built on demand; VMs own their root.img clones of it.
+func (p *Provider) baseFor(ctx context.Context, f node.VMFile) (string, error) {
+	digest, err := imageDigest(f.Image)
 	if err != nil {
-		return "", fmt.Errorf("base image: %w", err)
+		return "", err
+	}
+	p.storeMu.RLock()
+	defer p.storeMu.RUnlock()
+	base, err := p.store.Disk(ctx, digest)
+	if err != nil {
+		return "", fmt.Errorf("image %s: %w", f.Image, err)
 	}
 	return base, nil
 }
 
-// baseFor is the image f was (or is to be) cloned from; it is needed only while cloning, VMs own their root.img.
-func (p *Provider) baseFor(f node.VMFile) (string, error) {
-	if f.Image == "" {
-		return p.stockBase()
-	}
-	base := guestImagePath(p.ImagesDir, f.Image)
-	if _, err := os.Stat(base); err != nil {
-		return "", fmt.Errorf("guest image %s is gone", f.Image)
-	}
-	return base, nil
-}
-
-func (p *Provider) cloneBase(f node.VMFile, dir string) error {
-	base, err := p.baseFor(f)
+func (p *Provider) cloneBase(ctx context.Context, f node.VMFile, dir string) error {
+	base, err := p.baseFor(ctx, f)
 	if err != nil {
 		return err
 	}
@@ -138,8 +136,8 @@ func (p *Provider) cloneBase(f node.VMFile, dir string) error {
 }
 
 // recloneBase replaces a template-cloned root.img with the base image, leaving an empty marker on failure so the next start retries.
-func (p *Provider) recloneBase(f node.VMFile, dir, marker string) error {
-	err := p.cloneBase(f, dir)
+func (p *Provider) recloneBase(ctx context.Context, f node.VMFile, dir, marker string) error {
+	err := p.cloneBase(ctx, f, dir)
 	if err != nil {
 		if werr := os.WriteFile(marker, nil, 0o600); werr != nil {
 			return errors.Join(err, werr)
@@ -149,7 +147,7 @@ func (p *Provider) recloneBase(f node.VMFile, dir, marker string) error {
 }
 
 func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error {
-	base, err := p.baseFor(f)
+	base, err := p.baseFor(ctx, f)
 	if err != nil {
 		return err
 	}
@@ -158,7 +156,7 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 		return err
 	}
 	if p.fastBoot && len(f.Spec.Attachments) == 0 && f.Spec.DiskGB >= templateDiskGB {
-		key, err := templateKey(base, p.fcVersion, f)
+		key, err := templateKey(f, p.fcVersion, p.boot.id)
 		if err != nil {
 			return err
 		}
@@ -225,7 +223,7 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 			}
 			if ctx.Err() != nil {
 				// The marker is gone and the guest may have written to the disk: the next start must not boot it.
-				if cerr := p.recloneBase(f, dir, marker); cerr != nil {
+				if cerr := p.recloneBase(context.Background(), f, dir, marker); cerr != nil {
 					return nil, cerr
 				}
 				return nil, err
@@ -235,8 +233,8 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 				log.Printf("template %s: %v", key, err)
 			}
 		}
-		// The template's disk carries its machine id and cloud-init state; a cold boot starts from the base image instead.
-		if err := p.recloneBase(f, dir, marker); err != nil {
+		// The template's disk carries its machine id and host keys; a cold boot starts from the base image instead.
+		if err := p.recloneBase(ctx, f, dir, marker); err != nil {
 			return nil, err
 		}
 	}
@@ -248,15 +246,11 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 
 // coldBoot boots dir's root.img with the seed already in dir.
 func (p *Provider) coldBoot(_ context.Context, f node.VMFile, dir string) (*instance, error) {
-	kernel, initrd, err := bootFiles(filepath.Join(dir, "root.img"), dir)
-	if err != nil {
-		return nil, fmt.Errorf("boot files: %w", err)
-	}
 	drives, nbds, err := linuxvm.AttachDisks(f, dir)
 	if err != nil {
 		return nil, err
 	}
-	files := append([]jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}}, driveFiles(f, drives)...)
+	files := append([]jailFile{{path: p.boot.kernel, shared: true}, {path: p.boot.initrd, shared: true}}, driveFiles(f, drives)...)
 	return p.launch(f, dir, files, drives, nbds, true)
 }
 

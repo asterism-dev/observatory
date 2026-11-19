@@ -23,15 +23,15 @@ const (
 	templatesDir   = ".templates"
 )
 
-// templateKey identifies the template f can start from: same base image, Firecracker, vCPUs, RAM, NIC count, seed and boot config.
-func templateKey(base, fcVersion string, f node.VMFile) (string, error) {
-	st, err := os.Stat(base)
+// templateKey identifies the template f can start from: same image, kernel and init, Firecracker, vCPUs, RAM, NIC count, seed and boot config.
+func templateKey(f node.VMFile, fcVersion, bootID string) (string, error) {
+	digest, err := imageDigest(f.Image)
 	if err != nil {
 		return "", err
 	}
 	t := templateFile("tpl", f)
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00", base, st.Size(), st.ModTime().UnixNano(), fcVersion)
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00", digest, bootID, fcVersion)
 	seed := node.GuestSeedFiles(t, templateNet)
 	for _, n := range slices.Sorted(maps.Keys(seed)) {
 		fmt.Fprintf(h, "%s\x00%d\x00", n, len(seed[n]))
@@ -41,7 +41,7 @@ func templateKey(base, fcVersion string, f node.VMFile) (string, error) {
 	for _, d := range node.AttachOrder(t) {
 		drives = append(drives, "/"+d.File)
 	}
-	cfg, err := vmConfig(t, "/vmlinux", "/initrd.img", drives)
+	cfg, err := vmConfig(t, "/vmlinux", "/initramfs.cpio", drives)
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +53,7 @@ var templateNet = node.PrimaryNet{Address: linuxvm.TemplateNATIP + "/24", Gatewa
 
 // templateFile is the VM a template of f's shape is built from: no keys, variables, attachments or OVN ports.
 func templateFile(id string, f node.VMFile) node.VMFile {
-	t := node.VMFile{MAC: "02:00:00:00:00:00", Image: f.Image, Spec: proto.VMSpec{ID: id, Name: "template", CPUs: f.Spec.CPUs, MemoryMB: f.Spec.MemoryMB, DiskGB: templateDiskGB}}
+	t := node.VMFile{MAC: "02:00:00:00:00:00", Image: f.Image, ImageConfig: f.ImageConfig, Spec: proto.VMSpec{ID: id, Name: "template", CPUs: f.Spec.CPUs, MemoryMB: f.Spec.MemoryMB, DiskGB: templateDiskGB}}
 	for i := range f.Spec.NICs {
 		// No OVN logical port has this name (the hub names ports after VM ids), so the template never joins a network.
 		t.Spec.NICs = append(t.Spec.NICs, proto.NIC{Network: "template", MAC: "02:00:00:00:00:00", Port: fmt.Sprintf("%s-%d", id, i)})

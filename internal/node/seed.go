@@ -1,6 +1,7 @@
 package node
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,38 +17,47 @@ import (
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/filesystem/iso9660"
 
-	"github.com/asterism-dev/observatory/internal/node/guest"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 const SeedISO = "seed.iso"
 
-// GuestSeedFiles is the cloud-init NoCloud seed of a guest VM; a nil f.Boot gives a guest without hub-managed keys and variables.
+//go:embed guestcontext/AGENTS.md
+var contextFile string
+
+// GuestSeedFiles is the seed of a guest VM for its init; a nil f.Boot gives a guest without hub-managed keys and variables.
 func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 	var boot proto.Boot
 	if f.Boot != nil {
 		boot = *f.Boot
 	}
-	env, _ := json.Marshal(boot.Env) // a map[string]string always marshals
-	cas := boot.EgressCAs
-	if cas == nil {
-		cas = map[string]string{}
+	seed := proto.GuestSeed{
+		Hostname: f.Spec.Name, InstanceID: f.Spec.ID, Env: boot.Env, EgressCAs: boot.EgressCAs, Context: contextFile, Image: f.ImageConfig,
+		NICs: []proto.GuestNIC{{MAC: f.MAC, Name: "eth0", Address: primary.Address, Gateway: primary.Gateway, DHCP: primary.Address == ""}},
 	}
-	casJSON, _ := json.Marshal(cas)
-	var keys strings.Builder
 	for _, k := range boot.SSHPublicKeys {
-		// One key per line: a line break inside a key would smuggle in another one.
+		// A line break inside a key would smuggle in another one.
 		if k = strings.TrimSpace(k); k != "" && !strings.ContainsAny(k, "\r\n") {
-			keys.WriteString(k + "\n")
+			seed.SSHKeys = append(seed.SSHKeys, k)
 		}
 	}
-	userData, metaData, networkConfig := CloudInit(f, primary)
-	return map[string][]byte{
-		"user-data": []byte(userData), "meta-data": []byte(metaData),
-		"network-config": []byte(networkConfig), "vmm-disks.sh": []byte(DiskScript(f)),
-		"vmm-boot.sh": []byte(guest.BootScript), "vmm-agent.py": []byte(guest.AgentScript), "vmm-integrations.py": []byte(guest.IntegrationsScript), "vmm-desktop": []byte(guest.DesktopScript), "vmm-browser.py": []byte(guest.BrowserScript),
-		"vmm-env": env, "vmm-authorized-keys": []byte(keys.String()), "vmm-egress-cas": casJSON, "vmm-AGENTS.md": []byte(guest.ContextFile),
+	netIdx := 0
+	for _, n := range f.Spec.NICs {
+		// OVN NICs take their address from OVN DHCP.
+		nic := proto.GuestNIC{MAC: n.MAC, Name: "mgmt0", DHCP: true, Mgmt: true}
+		if n.Network != "mgmt" {
+			nic.Name, nic.Mgmt = fmt.Sprintf("net%d", netIdx), false
+			netIdx++
+		}
+		seed.NICs = append(seed.NICs, nic)
 	}
+	for i, d := range AttachOrder(f) {
+		if d.NBD {
+			seed.Disks = append(seed.Disks, proto.GuestDisk{Device: "/dev/" + DeviceName(i), MountPath: f.Spec.Attachments[i-1].MountPath})
+		}
+	}
+	b, _ := json.Marshal(seed) // plain strings, slices and maps always marshal
+	return map[string][]byte{proto.GuestSeedFile: b}
 }
 
 // ReadSeedFile returns one file of dir's seed.iso; a missing file gives an error wrapping fs.ErrNotExist.
@@ -78,39 +88,18 @@ func ReadSeedFile(dir, name string) ([]byte, error) {
 
 // SeedBoot recovers the keys, variables and egress CAs last written into dir's seed.iso, so a reseed without a pushed Boot keeps them.
 func SeedBoot(dir string) (*proto.Boot, error) {
-	var b proto.Boot
-	env, err := ReadSeedFile(dir, "vmm-env")
-	switch {
-	case errors.Is(err, iofs.ErrNotExist):
-	case err != nil:
-		return nil, err
-	default:
-		if err := json.Unmarshal(env, &b.Env); err != nil {
-			return nil, err
-		}
+	b, err := ReadSeedFile(dir, proto.GuestSeedFile)
+	if errors.Is(err, iofs.ErrNotExist) {
+		return &proto.Boot{}, nil
 	}
-	keys, err := ReadSeedFile(dir, "vmm-authorized-keys")
-	if err != nil && !errors.Is(err, iofs.ErrNotExist) {
+	if err != nil {
 		return nil, err
 	}
-	for k := range strings.Lines(string(keys)) {
-		b.SSHPublicKeys = append(b.SSHPublicKeys, strings.TrimSuffix(k, "\n"))
-	}
-	cas, err := ReadSeedFile(dir, "vmm-egress-cas")
-	switch {
-	case errors.Is(err, iofs.ErrNotExist):
-	case err != nil:
+	var seed proto.GuestSeed
+	if err := json.Unmarshal(b, &seed); err != nil {
 		return nil, err
-	default:
-		var m map[string]string
-		if err := json.Unmarshal(cas, &m); err != nil {
-			return nil, err
-		}
-		if len(m) > 0 {
-			b.EgressCAs = m
-		}
 	}
-	return &b, nil
+	return &proto.Boot{SSHPublicKeys: seed.SSHKeys, Env: seed.Env, EgressCAs: seed.EgressCAs}, nil
 }
 
 // WriteSeedISO builds beside dir/seed.iso and renames, so a failed build keeps the old seed bootable.

@@ -242,10 +242,10 @@ func TestNodeJSONImage(t *testing.T) {
 		t.Fatal("image before report")
 	}
 	node, _ := uuid.Parse(id)
-	if err := e.store.SetNodeImage(context.Background(), node, proto.ImageStatus{Version: "v1", State: proto.ImageBuilding}); err != nil {
+	if err := e.store.SetNodeImage(context.Background(), node, proto.ImageStatus{Version: "v1", State: proto.ImagePulling}); err != nil {
 		t.Fatal(err)
 	}
-	if i := read().Image; i == nil || i.State != proto.ImageBuilding || i.Version != "v1" {
+	if i := read().Image; i == nil || i.State != proto.ImagePulling || i.Version != "v1" {
 		t.Fatalf("%+v", i)
 	}
 }

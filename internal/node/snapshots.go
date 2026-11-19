@@ -417,7 +417,7 @@ func (a *Agent) forkLocal(d proto.DesiredVM) (VMFile, error) {
 		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
 	a.mu.Lock()
 	if src, ok := a.vms[fk.SourceVMID]; ok {
-		f.Image = src.file.Image
+		f.Image, f.ImageConfig = src.file.Image, src.file.ImageConfig
 	}
 	a.mu.Unlock()
 	dir := VMDir(a.VMsDir, f.Spec.ID)

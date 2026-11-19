@@ -131,7 +131,7 @@ func TestSetNodeImage(t *testing.T) {
 	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.Image != nil {
 		t.Fatalf("image before report: %+v", got.Image)
 	}
-	for _, st := range []string{proto.ImageBuilding, proto.ImageReady} {
+	for _, st := range []string{proto.ImagePulling, proto.ImageReady} {
 		if err := s.SetNodeImage(ctx, n.ID, proto.ImageStatus{Version: "v1", State: st}); err != nil {
 			t.Fatal(err)
 		}

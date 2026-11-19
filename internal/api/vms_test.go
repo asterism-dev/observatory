@@ -625,12 +625,6 @@ func TestVMJSONStockImage(t *testing.T) {
 	if !stock() {
 		t.Fatal("not stock after running without a guest image")
 	}
-	if err := e.store.SetNodeImage(context.Background(), nodeID, proto.ImageStatus{State: proto.ImageCustom}); err != nil {
-		t.Fatal(err)
-	}
-	if stock() {
-		t.Fatal("stock on a custom-image node")
-	}
 }
 
 func TestCreateVMDiskMinimum(t *testing.T) {

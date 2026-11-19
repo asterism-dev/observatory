@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -14,6 +12,8 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,11 +23,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/node"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
-const testImageURL = "test://noble"
-
-// testProvider needs root, KVM, bridge vmm0 and VMM_TEST_IMAGE (a raw bootable noble disk).
+// testProvider needs root, KVM, bridge vmm0, VMM_TEST_IMAGE (ociimage's ext4 disk of an image with sudo) and VMM_TEST_GUESTBOOT (unpacked guestboot.tar).
 // testProvider has fast boot off: a background template build in one test's VMs dir would take NAT addresses another test's VMs use.
 func testProvider(t *testing.T) *Provider {
 	t.Helper()
@@ -39,23 +38,39 @@ func testProvider(t *testing.T) *Provider {
 // testProviderWith adds settings (JSON object members) to the firecracker config section.
 func testProviderWith(t *testing.T, settings string) *Provider {
 	t.Helper()
-	img := os.Getenv("VMM_TEST_IMAGE")
-	if img == "" || os.Geteuid() != 0 {
-		t.Skip("needs root and VMM_TEST_IMAGE")
+	img, gb := os.Getenv("VMM_TEST_IMAGE"), os.Getenv("VMM_TEST_GUESTBOOT")
+	if img == "" || gb == "" || os.Geteuid() != 0 {
+		t.Skip("needs root, VMM_TEST_IMAGE and VMM_TEST_GUESTBOOT")
 	}
 	base := t.TempDir()
-	images := filepath.Join(base, "images")
-	if err := os.MkdirAll(images, 0o755); err != nil {
+	// The node refuses a guestboot of another version, and test binaries are "dev".
+	boot := filepath.Join(base, "guestboot")
+	if err := os.Mkdir(boot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256([]byte(testImageURL))
-	if err := os.Link(img, filepath.Join(images, hex.EncodeToString(sum[:8])+".raw")); err != nil {
+	for _, n := range []string{"vmlinux", "observatory-init", "mke2fs", "resize2fs"} {
+		if err := os.Symlink(filepath.Join(gb, n), filepath.Join(boot, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(boot, "VERSION"), []byte(version.Version+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := guestbootDir
+	guestbootDir = boot
+	t.Cleanup(func() { guestbootDir = old })
+	images := filepath.Join(base, "images")
+	disks := filepath.Join(images, "oci", "disks")
+	if err := os.MkdirAll(disks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(img, filepath.Join(disks, strings.TrimPrefix(testDigest, "sha256:")+".raw")); err != nil {
 		t.Fatal(err)
 	}
 	p, err := New(node.Config{Provider: "firecracker", Paths: struct {
 		VMs    string `json:"vms"`
 		Images string `json:"images"`
-	}{VMs: filepath.Join(base, "vms"), Images: images}, Raw: map[string]json.RawMessage{"firecracker": json.RawMessage(`{"imageURL":"` + testImageURL + `"` + settings + `}`)}})
+	}{VMs: filepath.Join(base, "vms"), Images: images}, Raw: map[string]json.RawMessage{"firecracker": json.RawMessage(`{"guestImage":"test"` + settings + `}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +78,7 @@ func testProviderWith(t *testing.T, settings string) *Provider {
 }
 
 func testVM(id string) node.VMFile {
-	return node.VMFile{MAC: "06:00:00:00:00:01", Spec: proto.VMSpec{ID: id, Name: id, CPUs: 1, MemoryMB: 1024, DiskGB: 10}}
+	return node.VMFile{MAC: "06:00:00:00:00:01", Image: "test@" + testDigest, Spec: proto.VMSpec{ID: id, Name: id, CPUs: 1, MemoryMB: 1024, DiskGB: 10}}
 }
 
 func startVM(t *testing.T, p *Provider, f node.VMFile) node.Instance {
@@ -89,44 +104,43 @@ func TestReseedKeepsSeedWithoutBoot(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	seedFile := func(name string) []byte {
+	seed := func() proto.GuestSeed {
 		t.Helper()
-		b, err := node.ReadSeedFile(dir, name)
+		b, err := node.ReadSeedFile(dir, proto.GuestSeedFile)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return b
+		var s proto.GuestSeed
+		if err := json.Unmarshal(b, &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
 	f.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 AAAA one", "ssh-rsa BBBB two"}, Env: map[string]string{"A": "x\ny", "B": `it's $HOME \ "q"`}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	env, keys := seedFile("vmm-env"), seedFile("vmm-authorized-keys")
+	first := seed()
 
 	f.Boot = nil
 	f.Spec.NICs = []proto.NIC{{Network: "mgmt", MAC: "02:0a:c8:00:00:0a"}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	if got := seedFile("vmm-env"); !bytes.Equal(got, env) {
-		t.Fatalf("vmm-env after nil-Boot reseed = %q, want %q", got, env)
+	got := seed()
+	if !reflect.DeepEqual(got.Env, first.Env) || !slices.Equal(got.SSHKeys, first.SSHKeys) {
+		t.Fatalf("after nil-Boot reseed: env %v keys %q, want %v %q", got.Env, got.SSHKeys, first.Env, first.SSHKeys)
 	}
-	if got := seedFile("vmm-authorized-keys"); !bytes.Equal(got, keys) {
-		t.Fatalf("vmm-authorized-keys after nil-Boot reseed = %q, want %q", got, keys)
-	}
-	if nc := seedFile("network-config"); !bytes.Contains(nc, []byte("02:0a:c8:00:00:0a")) {
-		t.Fatalf("new NIC missing from network-config:\n%s", nc)
+	if len(got.NICs) != 2 || got.NICs[1].MAC != "02:0a:c8:00:00:0a" {
+		t.Fatalf("new NIC missing: %+v", got.NICs)
 	}
 
 	f.Boot = &proto.Boot{Env: map[string]string{"A": "two"}}
 	if err := p.Reseed(context.Background(), f, dir); err != nil {
 		t.Fatal(err)
 	}
-	if got := seedFile("vmm-env"); string(got) != `{"A":"two"}` {
-		t.Fatalf("vmm-env after new Boot = %q", got)
-	}
-	if got := seedFile("vmm-authorized-keys"); len(got) != 0 {
-		t.Fatalf("vmm-authorized-keys after new Boot = %q", got)
+	if got := seed(); !reflect.DeepEqual(got.Env, map[string]string{"A": "two"}) || len(got.SSHKeys) != 0 {
+		t.Fatalf("after new Boot: env %v keys %q", got.Env, got.SSHKeys)
 	}
 }
 
@@ -204,7 +218,7 @@ func TestGuestPoweroffEndsInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Firecracker has no ACPI power-off: a halt from inside the guest must still end the instance.
-	ssh := exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "ubuntu@"+ip, "sudo poweroff")
+	ssh := exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "dev@"+ip, "sudo poweroff")
 	if out, err := ssh.CombinedOutput(); err != nil && len(out) > 0 && !strings.Contains(string(out), "closed") {
 		t.Logf("ssh: %v: %s", err, out)
 	}
@@ -348,7 +362,7 @@ func TestSnapshotRestore(t *testing.T) {
 	}
 	ssh := func(cmd string) string {
 		t.Helper()
-		out, err := exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "ubuntu@"+ip, cmd).CombinedOutput()
+		out, err := exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "dev@"+ip, cmd).CombinedOutput()
 		if err != nil {
 			t.Fatalf("ssh %q: %v: %s", cmd, err, out)
 		}
@@ -385,15 +399,11 @@ func TestSnapshotRestore(t *testing.T) {
 	inst.Kill()
 	<-inst.Done()
 
-	kernel, initrd, err := bootFiles(filepath.Join(dir, "root.img"), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	uid, err := jailUID(ip)
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := []jailFile{{path: kernel, readOnly: true}, {path: initrd, readOnly: true}, {path: filepath.Join(dir, "root.img")},
+	files := []jailFile{{path: p.boot.kernel, shared: true}, {path: p.boot.initrd, shared: true}, {path: filepath.Join(dir, "root.img")},
 		{path: filepath.Join(dir, node.SeedISO), readOnly: true}, {path: filepath.Join(state, "vmstate")}, {path: filepath.Join(state, "mem")}}
 	if _, err := buildJail(dir, uid, files); err != nil {
 		t.Fatal(err)
@@ -492,9 +502,9 @@ func sshVM(t *testing.T, key, ip, cmd string) string {
 	t.Helper()
 	var out []byte
 	var err error
-	// sshd may answer before cloud-init has installed the key.
+	// The SSH server may answer before the init has the seed's keys.
 	for range 10 {
-		if out, err = exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "ubuntu@"+ip, cmd).CombinedOutput(); err == nil || !bytes.Contains(out, []byte("Permission denied")) {
+		if out, err = exec.Command("ssh", "-i", key, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=30", "-o", "LogLevel=ERROR", "dev@"+ip, cmd).CombinedOutput(); err == nil || !bytes.Contains(out, []byte("Permission denied")) {
 			break
 		}
 		time.Sleep(3 * time.Second)
@@ -522,11 +532,14 @@ func testHibernateResume(t *testing.T, f node.VMFile, logFile string) {
 		inst.Kill()
 		t.Fatal(err)
 	}
-	// The agent unit is enabled by cloud-init; wait for it so the resume call finds it.
-	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; systemctl is-active vmm-agent")
+	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	// The resume call needs the agent, which answers once the guest is set up.
+	if err := waitAgent(ctx, dir, inst); err != nil {
+		inst.Kill()
+		t.Fatal(err)
+	}
 	pid := sshVM(t, key, ip, "sudo sh -c 'nohup sh -c \"while :; do date +%s >> "+logFile+"; sleep 1; done\" >/dev/null 2>&1 & echo $!'")
 	time.Sleep(3 * time.Second)
-	dir := node.VMDir(p.VMsDir, f.Spec.ID)
 	state := hibernate(t, inst, dir)
 	hibernatedAt := time.Now()
 	time.Sleep(30 * time.Second)
@@ -664,7 +677,7 @@ func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := fmt.Sprintf("unsynced-%d", time.Now().UnixNano())
-	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; echo "+marker+" | sudo tee /data/marker /dev/shm/marker >/dev/null")
+	sshVM(t, key, ip, "echo "+marker+" | sudo tee /data/marker /dev/shm/marker >/dev/null")
 	dir := node.VMDir(p.VMsDir, f.Spec.ID)
 	state := hibernate(t, inst, dir)
 
@@ -711,7 +724,7 @@ func TestHibernatedWithDiskWaitsForStorage(t *testing.T) {
 	if _, err := inst.WaitIP(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := sshVM(t, key, ip, "cloud-init status --wait >/dev/null; cat /data/marker"); got != marker {
+	if got := sshVM(t, key, ip, "cat /data/marker"); got != marker {
 		t.Fatalf("marker after shutdown = %q, want %q", got, marker)
 	}
 }
