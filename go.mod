@@ -14,6 +14,7 @@ require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/insomniacslk/dhcp v0.0.0-20261014062924-c6bb46ad3f3a
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/pkg/sftp v1.13.12
 	github.com/pressly/goose/v3 v3.30.1
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -39,6 +40,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/josharian/native v1.1.0 // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/mdlayher/packet v1.1.2 // indirect
 	github.com/mdlayher/socket v0.4.1 // indirect
 	github.com/mfridman/interpolate v0.2.0 // indirect

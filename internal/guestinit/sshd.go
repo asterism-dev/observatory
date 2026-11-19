@@ -6,19 +6,39 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
 const maxAuthorizedKeys = 1 << 20
 
-// subsystems maps an SSH subsystem name to its handler; sftp goes here.
-var subsystems = map[string]func(ssh.Channel){}
+// subsystems maps an SSH subsystem name to the argv run for it in the image as dev.
+var subsystems = map[string][]string{
+	"sftp": {platformBin + "/observatory-init", "sftp-server"},
+}
+
+// sftpServerMain is `observatory-init sftp-server`: it serves SFTP on stdin/stdout as the user it runs as, so the kernel enforces permissions.
+func sftpServerMain() int {
+	srv, err := sftp.NewServer(struct {
+		io.Reader
+		io.WriteCloser
+	}{os.Stdin, os.Stdout})
+	if err == nil {
+		err = srv.Serve()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sftp-server:", err)
+		return 1
+	}
+	return 0
+}
 
 // SSHServer is the guest's SSH server: only dev logs in, sessions are spawned into the image.
 type SSHServer struct {
