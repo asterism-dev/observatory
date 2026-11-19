@@ -85,8 +85,9 @@ func Run() error {
 		fmt.Fprintln(os.Stderr, "init: image:", err)
 	}
 	agent.SetSSH(startSSH(root, agent, hostKeys, img))
-	// Before SetReady: takeoff reads agent.Sync, and none is served until ready.
+	// Before SetReady: takeoff reads agent.Sync and StopDesktop, and none is served until ready.
 	startIntegrations(root, agent, img)
+	agent.StopDesktop = startDesktop(root, agent, devSpawn(root, img))
 	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 
@@ -113,16 +114,20 @@ func startIntegrations(root Root, agent *Agent, img *Image) {
 		default:
 		}
 	}
-	startIn := func(cmd *exec.Cmd) error {
+	startIn := devSpawn(root, img)
+	go runIntegrationSync(context.Background(), integrationsInterval, trigger, func(ctx context.Context) error {
+		return root.SyncIntegrations(ctx, startIn, agent.Env())
+	})
+}
+
+func devSpawn(root Root, img *Image) func(*exec.Cmd) error {
+	return func(cmd *exec.Cmd) error {
 		if img == nil {
 			return errors.New("the image is not running")
 		}
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: devID, Gid: devID, Groups: root.devGroups()}}
 		return img.Exec(cmd)
 	}
-	go runIntegrationSync(context.Background(), integrationsInterval, trigger, func(ctx context.Context) error {
-		return root.SyncIntegrations(ctx, startIn, agent.Env())
-	})
 }
 
 func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHServer {

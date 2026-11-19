@@ -12,22 +12,15 @@ import (
 
 var stdout io.Writer = os.Stdout
 
-// handlers maps the argv[0] basename to its tool; later tasks replace the placeholders.
+// handlers maps the argv[0] basename to its tool.
 var handlers = map[string]func(args []string) int{
 	"init":               func([]string) int { return runInit() },
 	"observatory-init":   runSubcommand,
 	"vmm-token":          tokenMain,
 	"git-credential-vmm": credentialMain,
 	"gh":                 ghMain,
-	"agent-browser":      notImplemented("agent-browser"),
-	"vmm-desktop":        notImplemented("vmm-desktop"),
-}
-
-func notImplemented(name string) func([]string) int {
-	return func([]string) int {
-		fmt.Fprintln(os.Stderr, name+": not implemented")
-		return 1
-	}
+	"agent-browser":      browserMain,
+	"vmm-desktop":        desktopMain,
 }
 
 // runSubcommand serves the internal commands of the binary under its own name, such as the image's nsinit shim.
