@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
+import UpdateNodesDialog from '@/components/UpdateNodesDialog.vue'
 import InstallCommand from '@/components/InstallCommand.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
@@ -40,6 +41,7 @@ const busy = ref(false)
 const confirmRegen = ref(false)
 const command = ref('')
 const confirmDelete = ref(false)
+const updateOpen = ref(false)
 
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -125,8 +127,10 @@ watch(
         <template #tags>
           <Tag :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Tag>
           <Tag v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Tag>
+          <Tag v-if="node.updating" tone="warning">{{ t('nodes.updating') }}</Tag>
           <Tag v-if="node.outdated" tone="warning" :title="t('nodes.outdatedHint', { hub: me?.version })">{{ t('nodes.outdated') }}</Tag>
         </template>
+        <Button v-if="node.canUpdate && node.updatable" @click="updateOpen = true">{{ t('nodes.update.node') }}</Button>
       </PageHeader>
       <div class="page-body">
         <p v-if="error" role="alert">{{ error }}</p>
@@ -201,6 +205,7 @@ watch(
         </template>
       </div>
 
+      <UpdateNodesDialog v-model:open="updateOpen" :org-id="org.id" :nodes="[node]" @started="load" />
       <Dialog :open="confirmRegen" :title="t('nodes.regenerateTitle')" :description="t('nodes.regenerateBody')" @update:open="(o) => !o && !busy && (confirmRegen = false)">
         <template #actions>
           <Button :disabled="busy" @click="confirmRegen = false">{{ t('profile.cancel') }}</Button>
