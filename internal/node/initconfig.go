@@ -67,6 +67,18 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	return writeFileAtomic(o.Path, append(out, '\n'))
 }
 
+// CheckEnrollMemory fails before the one-time token is redeemed when the resulting node.json could not start the node.
+func CheckEnrollMemory(path string, memoryMB int) error {
+	if memoryMB > 0 {
+		return nil
+	}
+	if _, err := LoadConfig(path); err == nil {
+		return nil
+	}
+	_, err := defaultMemoryMB(totalMemoryMB())
+	return err
+}
+
 // connectURL turns the hub's http(s)://host:port into the node's websocket URL.
 func connectURL(hub string) (string, error) {
 	u, err := url.Parse(hub)

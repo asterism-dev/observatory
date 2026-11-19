@@ -95,8 +95,12 @@ func TestAdminCannotFork(t *testing.T) {
 	if rec := e.do("DELETE", snapshotsPath(org, v.ID)+"/"+other.ID, adminTok); rec.Code != 204 {
 		t.Fatalf("admin delete snapshot: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.send("POST", base+"/restore", adminTok, `{"restartAllowed":true}`); rec.Code != 200 {
+	rec := e.send("POST", base+"/restore", adminTok, `{"restartAllowed":true}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"restoring":true`) {
 		t.Fatalf("admin restore: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("GET", vmsPath(org)+"/"+v.ID, adminTok); !strings.Contains(rec.Body.String(), `"restoring":true`) {
+		t.Fatalf("vm during restore: %s", rec.Body.String())
 	}
 	if es := e.audit(store.ActionVMRestore); len(es) != 1 || es[0].Details["snapshot"] != "base" || es[0].Details["memory"] != false {
 		t.Fatalf("restore audit: %+v", es)

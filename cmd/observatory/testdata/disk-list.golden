@@ -1,0 +1,3 @@
+NAME  SIZE   USED     OWNER         ATTACHED    STATE
+a     10 GB  1.0 GiB  private       dev:/mnt/a  ready
+b     50 GB  0 B      team backend  –           creating

@@ -75,6 +75,9 @@ Integrations page (`/orgs/:orgId/integrations`, tabs All / Org / Teams / Private
 | `DELETE /api/orgs/{org}/integrations/{id}` | Disconnect |
 | `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below) |
 
+From the CLI, the token comes from stdin, never an argument: `printf %s "$TOKEN" | observatory integration connect github`
+(see [cli.md](cli.md#secrets-input)).
+
 Request bodies of these endpoints are never logged. Audit rows `integration:set` (create, replace, sign-in, mode
 change) and `integration:delete` carry kind, source, scope, owner, mode and account, never a token; a mode change also
 carries `previousMode`.

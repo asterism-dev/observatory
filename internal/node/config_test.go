@@ -101,3 +101,17 @@ func TestConfigPublicDropsCredential(t *testing.T) {
 		t.Fatalf("token leaked: %s", pub)
 	}
 }
+
+func TestDefaultMemoryMB(t *testing.T) {
+	if mb, err := defaultMemoryMB(16384); err != nil || mb != 12288 {
+		t.Fatalf("16 GB host: %d %v", mb, err)
+	}
+	for _, total := range []int{0, 3922, 4096} {
+		if _, err := defaultMemoryMB(total); err == nil || !strings.Contains(err.Error(), "capacity.memoryMB") {
+			t.Errorf("%d MB host: err = %v", total, err)
+		}
+	}
+	if _, err := defaultMemoryMB(3922); !strings.Contains(err.Error(), "3922 MB") || !strings.Contains(err.Error(), "--memory-mb") {
+		t.Errorf("small host error does not name the RAM and the flag: %v", err)
+	}
+}

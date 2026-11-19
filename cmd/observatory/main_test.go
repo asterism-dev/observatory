@@ -1,93 +1,91 @@
 package main
 
 import (
-	"bytes"
-	"context"
+	"errors"
+	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestCredentialsRoundTripPermissions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "observatory", "credentials.json")
-	want := credentials{Hub: "http://hub.test", Token: "tok"}
-	if err := saveCredentials(path, want); err != nil {
-		t.Fatal(err)
+func TestParseIntersperse(t *testing.T) {
+	c, _, _ := newTestCLI(t, nil)
+	fs := c.flags("vm delete")
+	wait := fs.Bool("wait", false, "")
+	pos, err := c.parse(fs, []string{"dev", "--yes", "--wait"}, 1, 1)
+	if err != nil || !slices.Equal(pos, []string{"dev"}) || !c.g.yes || !*wait {
+		t.Fatalf("pos %v err %v yes %v wait %v", pos, err, c.g.yes, *wait)
 	}
-	got, err := loadCredentials(path)
-	if err != nil {
-		t.Fatal(err)
+
+	fs = c.flags("ssh")
+	pos, err = c.parse(fs, []string{"dev", "--", "-L", "1:2"}, 1, -1)
+	if err != nil || !slices.Equal(pos, []string{"dev", "-L", "1:2"}) {
+		t.Fatalf("pos %v err %v", pos, err)
 	}
-	if got != want {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("file mode %v, want 0600", fi.Mode().Perm())
-	}
-	di, err := os.Stat(filepath.Dir(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if di.Mode().Perm() != 0o700 {
-		t.Fatalf("dir mode %v, want 0700", di.Mode().Perm())
+
+	for _, args := range [][]string{nil, {"a", "b"}} {
+		_, err := c.parse(c.flags("vm delete"), args, 1, 1)
+		if exitCode(err) != 2 {
+			t.Errorf("%v: exit %d (%v), want 2", args, exitCode(err), err)
+		}
 	}
 }
 
-func TestWhoami(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer good" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+func TestExitCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{nil, 0},
+		{usagef("bad %s", "x"), 2},
+		{&apiError{Status: 401}, 3},
+		{&apiError{Status: 403, Msg: "forbidden"}, 4},
+		{&apiError{Status: 404, Msg: "not found"}, 5},
+		{notFoundf("vm %q not found", "x"), 5},
+		{&exitError{6, "timed out"}, 6},
+		{&apiError{Status: 500, Msg: "internal error"}, 1},
+		{errors.New("boom"), 1},
+		{fmt.Errorf("wrapped: %w", &apiError{Status: 403}), 4},
+	} {
+		if got := exitCode(tc.err); got != tc.want {
+			t.Errorf("exitCode(%v) = %d, want %d", tc.err, got, tc.want)
 		}
-		w.Write([]byte(`{"user":{"id":"u1","email":"ada@example.com","name":"Ada Lovelace","platformAdmin":false},"orgs":[{"id":"o1","name":"Ada","personal":true,"role":"owner"}]}`))
-	}))
-	defer srv.Close()
-
-	var out bytes.Buffer
-	if err := whoami(context.Background(), credentials{Hub: srv.URL, Token: "good"}, &out); err != nil {
-		t.Fatal(err)
 	}
-	for _, s := range []string{"Ada Lovelace", "ada@example.com", "Ada (owner)"} {
-		if !strings.Contains(out.String(), s) {
-			t.Errorf("output %q missing %q", out.String(), s)
-		}
+	if msg := (&apiError{Status: http.StatusUnauthorized, Msg: "unauthorized"}).Error(); !strings.Contains(msg, "observatory login") {
+		t.Errorf("401 message %q lacks login hint", msg)
 	}
-
-	err := whoami(context.Background(), credentials{Hub: srv.URL, Token: "bad"}, &out)
-	if err == nil || !strings.Contains(err.Error(), "observatory login") {
-		t.Fatalf("want login hint error, got %v", err)
+	if err := exec.Command("sh", "-c", "exit 7").Run(); exitCode(err) != 7 {
+		t.Errorf("exec exit code: %d", exitCode(err))
 	}
 }
 
-func TestLoginIgnoresCorruptCredentials(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	path, err := credentialsPath()
-	if err != nil {
-		t.Fatal(err)
+func TestHelpGolden(t *testing.T) {
+	c, stdout, _ := newTestCLI(t, nil)
+	if code := run(c, []string{"help"}); code != 0 {
+		t.Fatalf("help exit %d", code)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+	for _, cmd := range commands() {
+		if !strings.Contains(stdout.String(), cmd.path) {
+			t.Errorf("help lacks %q", cmd.path)
+		}
 	}
-	if err := os.WriteFile(path, []byte("{corrupt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(http.NotFoundHandler())
-	defer srv.Close()
+	golden(t, "help.golden", stdout.String())
 
-	err = run(context.Background(), "login", []string{"--hub", srv.URL})
-	if err == nil || !strings.Contains(err.Error(), "fetch hub config") {
-		t.Fatalf("login should get past corrupt credentials, got %v", err)
+	c, _, stderr := newTestCLI(t, nil)
+	if code := run(c, []string{"nope"}); code != 2 {
+		t.Fatalf("unknown command exit %d", code)
 	}
-	if err := run(context.Background(), "whoami", nil); err == nil || strings.Contains(err.Error(), "not logged in") {
-		t.Fatalf("whoami should report the corrupt file, got %v", err)
+	if !strings.Contains(stderr.String(), `unknown command "nope"`) {
+		t.Errorf("stderr %q", stderr.String())
+	}
+	c, _, _ = newTestCLI(t, nil)
+	if code := run(c, nil); code != 2 {
+		t.Errorf("no command exit %d, want 2", code)
+	}
+	c, stdout, _ = newTestCLI(t, nil)
+	if code := run(c, []string{"org", "--help"}); code != 0 || !strings.Contains(stdout.String(), "org audit") || strings.Contains(stdout.String(), "whoami") {
+		t.Errorf("org --help exit %d, stdout %q", code, stdout.String())
 	}
 }

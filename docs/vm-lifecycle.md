@@ -5,7 +5,8 @@ named snapshot, forked into a new VM, park itself when idle and wake on the firs
 pre-booted template where possible, and the VM page shows live CPU and RAM.
 
 Permissions are in [permissions.md](permissions.md#vm-lifecycle); attached disks in [disks.md](disks.md); the node
-host in [nodes.md](nodes.md).
+host in [nodes.md](nodes.md). Every lifecycle action is also an `observatory vm …` / `observatory snapshot …` command
+([cli.md](cli.md#command-reference)).
 
 ## Power states
 

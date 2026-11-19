@@ -1,0 +1,4 @@
+NAME   STATE                  VMS  CPU   RAM          IMAGE                   LAST SEEN
+orga   online                 3    6/16  12 GB/64 GB  building v7             1 min ago
+orgc   offline (quarantined)  0    0/8   0 MB/32 GB   failed v7, retry 14:10  2026-11-18 09:00
+fresh  pending                0    0/0   0 MB/0 MB    -                       -

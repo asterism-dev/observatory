@@ -60,6 +60,7 @@ type vmJSON struct {
 	CanSnapshot        bool `json:"canSnapshot"`
 	CanRestore         bool `json:"canRestore"`
 	CanFork            bool `json:"canFork"`
+	Restoring          bool `json:"restoring"`
 }
 
 type vmDiskJSON struct {
@@ -146,7 +147,8 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
 		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
-		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
+		Restoring: v.RestoreState == "node" || v.RestoreState == "storage",
+		DNSName:   v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}

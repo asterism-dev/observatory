@@ -120,3 +120,17 @@ func TestInitConfigKeepsPaths(t *testing.T) {
 		t.Fatalf("mode = %o", st.Mode().Perm())
 	}
 }
+
+func TestCheckEnrollMemory(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "node.json")
+	if err := CheckEnrollMemory(missing, 2048); err != nil {
+		t.Fatalf("explicit memory: %v", err)
+	}
+	if err := CheckEnrollMemory(writeConfig(t, fullConfig), 0); err != nil {
+		t.Fatalf("existing config with capacity: %v", err)
+	}
+	_, want := defaultMemoryMB(totalMemoryMB())
+	if err := CheckEnrollMemory(missing, 0); (err == nil) != (want == nil) {
+		t.Fatalf("fresh config: err = %v, want %v", err, want)
+	}
+}

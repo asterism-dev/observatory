@@ -1,0 +1,133 @@
+usage: observatory <command> [args] [flags]
+
+  login                                  log in with your browser (device flow)
+  logout                                 revoke this CLI session
+  whoami                                 show the user, orgs and session
+  version                                print the CLI version
+  help [noun]                            show this help
+  ssh <vm> [--user ubuntu] [-- args...]  ssh into a VM
+  desktop <vm> [--user ubuntu]           start the VM desktop and attach with xpra
+
+org:
+  org list           list your orgs
+  org use <org>      set the default org
+  org show           show the current org and your permissions
+  org create <name>  create an org
+  org rename <name>  rename the current org
+  org audit [flags]  show the org's audit log
+
+vm:
+  vm list                             list VMs
+  vm show <vm>                        show a VM
+  vm create <name> [flags]            create a VM
+  vm start <vm> [--wait]              start a stopped VM
+  vm resume <vm> [--wait]             resume a paused or hibernated VM
+  vm pause <vm> [--wait]              pause a running VM
+  vm hibernate <vm> [--wait]          hibernate a running VM
+  vm stop <vm> [--force] [--wait]     shut a VM down (--force: power off)
+  vm restart <vm> [--force] [--wait]  stop, then start a VM
+  vm delete <vm> [--wait]             delete a VM
+  vm auto-suspend <vm> <minutes|off>  suspend an idle VM after N minutes (5-1440)
+  vm metrics <vm>                     show recent CPU and memory samples
+  vm egress <vm>                      show egress proxy hosts and CA of a VM
+  vm integrations <vm>                show the integrations a VM gets
+
+ssh-key:
+  ssh-key list                   list your SSH keys
+  ssh-key add [FILE] [--name N]  add a public key (default ~/.ssh/id_ed25519.pub)
+  ssh-key delete <key>           delete an SSH key
+
+device:
+  device list                          list WireGuard devices
+  device create <name> [--out FILE|-]  create a device and write its WireGuard config
+  device delete <device>               delete a device
+
+snapshot:
+  snapshot list <vm>                                            list the snapshots of a VM
+  snapshot create <vm> <name> [--memory] [--wait]               snapshot a VM (--memory: include RAM)
+  snapshot restore <vm> <snap> [--memory] [--restart] [--wait]  restore a VM to a snapshot
+  snapshot delete <vm> <snap>                                   delete a snapshot
+  snapshot fork <vm> <snap> <new-vm> [--memory] [--wait]        create a new VM from a snapshot
+
+disk:
+  disk list                                           list disks
+  disk show <disk>                                    show a disk
+  disk create <name> --size GB [--team T] [--wait]    create a disk
+  disk copy <disk> <new> [--team T] [--wait]          copy a disk
+  disk grow <disk> --size GB [--restart]              grow a disk
+  disk release <disk>                                 force-release a disk from its VM
+  disk delete <disk>                                  delete a disk
+  disk attach <disk> <vm> [--mount PATH] [--restart]  attach a disk to a VM
+  disk detach <disk> <vm> [--restart]                 detach a disk from a VM
+
+network:
+  network list                           list networks
+  network create <name> [--subnet CIDR]  create a network
+  network delete <net>                   delete a network
+  network attach <net> <vm> [--restart]  attach a VM to a network
+  network detach <net> <vm> [--restart]  detach a VM from a network
+
+var:
+  var list [--scope private|team|org] [--team T]                                              list variables and secrets
+  var set <name> [--secret] [--host H]... [--scope S] [--team T] [--value V | --from-file F]  create or update a variable (secrets from stdin or --from-file)
+  var move <name> [--scope S] [--team T] --to private|team|org [--to-team T]                  move a variable to another scope
+  var delete <name> [--scope S] [--team T]                                                    delete a variable
+
+integration:
+  integration list                                                                                   list integrations
+  integration connect github|linear|claude [--scope S] [--team T] [--mode proxy|vm] [--from-file F]  connect an integration (token from stdin or --from-file)
+  integration sign-in claude [--scope S] [--team T] [--mode proxy|vm] [--replace]                    connect Claude by signing in with your browser
+  integration replace <kind> [--scope S] [--team T] [--from-file F]                                  replace an integration's token (from stdin or --from-file)
+  integration mode <kind> proxy|vm [--scope S] [--team T]                                            change how the token reaches VMs
+  integration disconnect <kind> [--scope S] [--team T]                                               disconnect an integration
+
+node:
+  node list                  list nodes
+  node show <node>           show a node
+  node add <name>            register a node and print its install command
+  node token <node>          issue a new install command (revokes the current credential)
+  node rename <node> <name>  rename a node
+  node delete <node>         delete a node
+
+team:
+  team list                           list teams
+  team show <team>                    show a team and its members
+  team create <name>                  create a team
+  team rename <team> <name>           rename a team
+  team delete <team>                  delete a team
+  team add <team> <member> [--admin]  add a member to a team
+  team remove <team> <member>         remove a member from a team
+
+member:
+  member list                              list org members
+  member role <member> owner|admin|member  change a member's org role
+  member remove <member>                   remove a member from the org
+
+invite:
+  invite list                      list open invites
+  invite create [--role member]    create an invite link
+  invite revoke <id>               revoke an invite
+  invite accept [--from-file F|-]  join an org with an invite (token or URL from stdin or --from-file)
+
+role:
+  role list                    list roles
+  role show <role>             show a role's rules
+  role catalog                 list the permissions a rule can name
+  role create --file F         create a custom role from a JSON file
+  role update <role> --file F  replace a custom role from a JSON file
+  role delete <role>           delete a custom role
+
+binding:
+  binding list                  list role bindings
+  binding add <subject> <role>  bind a custom role to user:<x> or team:<x>
+  binding delete <id>           delete a role binding
+
+limit:
+  limit show                         show resource limits
+  limit set <team:T|user:M> [flags]  set resource limits
+
+session:
+  session list         list your sessions
+  session revoke <id>  revoke a session
+
+global flags: --hub URL, --org NAME|ID, --json, --yes/-y, --timeout DURATION (default 5m), --help

@@ -138,6 +138,8 @@ your laptop.
 ssh ubuntu@<vm>.internal vmm-desktop start && xpra attach ssh://ubuntu@<vm>.internal/100
 ```
 
+`observatory desktop <vm>` does both steps ([cli.md](cli.md#connecting)).
+
 - **No network listener:** xpra listens only on Unix sockets in `/run/user/1000/xpra/` and `~/.xpra/` (sockets 0600,
   `ubuntu` only); the X server has no TCP or abstract socket and requires an X authority
   (`/home/ubuntu/.Xauthority`). `xpra attach ssh://…` logs in over SSH and talks to that socket, so access is

@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -57,12 +58,25 @@ func LoadConfig(path string) (Config, error) {
 		c.Capacity.CPUs = runtime.NumCPU()
 	}
 	if c.Capacity.MemoryMB == 0 {
-		c.Capacity.MemoryMB = totalMemoryMB() - 4096
-	}
-	if c.Capacity.MemoryMB <= 0 {
-		return c, fmt.Errorf("config: capacity.memoryMB is required on this platform")
+		mb, err := defaultMemoryMB(totalMemoryMB())
+		if err != nil {
+			return c, err
+		}
+		c.Capacity.MemoryMB = mb
 	}
 	return c, nil
+}
+
+const hostReserveMB = 4096
+
+func defaultMemoryMB(totalMB int) (int, error) {
+	if totalMB == 0 {
+		return 0, errors.New("config: capacity.memoryMB is required on this platform")
+	}
+	if totalMB <= hostReserveMB {
+		return 0, fmt.Errorf("config: this host has %d MB of RAM and %d MB stay with the host; set capacity.memoryMB (installer: --memory-mb N)", totalMB, hostReserveMB)
+	}
+	return totalMB - hostReserveMB, nil
 }
 
 // Public returns the config file as written, minus the hub credential, for display on the hub.
