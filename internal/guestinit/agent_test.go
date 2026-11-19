@@ -168,6 +168,25 @@ func TestPingWaitsForReady(t *testing.T) {
 	}
 }
 
+func TestOpsWaitForReady(t *testing.T) {
+	a := &Agent{Root: Root{t.TempDir()}}
+	put(t, a.Root, debBundle, "ROOTS\n", 0o644)
+	b, _ := json.Marshal(map[string]any{"op": "trust", "certs": map[string]string{caID1: testPEM}})
+	got := make(chan reply, 1)
+	go func() { got <- call(t, a, string(b)) }()
+	time.Sleep(100 * time.Millisecond)
+	if strings.Contains(get(t, a.Root, debBundle), testPEM) {
+		t.Fatal("trust ran before ready")
+	}
+	a.SetReady()
+	if r := <-got; !r.OK {
+		t.Fatalf("reply = %+v", r)
+	}
+	if !strings.Contains(get(t, a.Root, debBundle), testPEM) {
+		t.Fatal("trust did not run after ready")
+	}
+}
+
 func TestUnknownFieldIgnored(t *testing.T) {
 	a, _ := testAgent(t, webSeed)
 	if r := call(t, a, `{"op":"ping","extra":{"x":1}}`); !r.OK {

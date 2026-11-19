@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/insomniacslk/dhcp/dhcpv4"
@@ -64,6 +65,9 @@ func configureNIC(links []netlink.Link, n proto.GuestNIC, primary bool) error {
 			return err
 		}
 	}
+	if err := clearIPv4(link); err != nil {
+		return err
+	}
 	// OVN NICs are IPv4 only, as with today's netplan link-local: [] and accept-ra: false.
 	if !primary {
 		err := os.WriteFile("/proc/sys/net/ipv6/conf/"+n.Name+"/disable_ipv6", []byte("1"), 0)
@@ -92,6 +96,32 @@ func configureNIC(links []netlink.Link, n proto.GuestNIC, primary bool) error {
 		}
 	case n.DHCP:
 		startDHCP(n.Name, link)
+	}
+	return nil
+}
+
+// clearIPv4 drops the addresses and routes a restored template left on the link, so only the seed's addressing remains.
+func clearIPv4(link netlink.Link) error {
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return err
+	}
+	for _, a := range addrs {
+		if err := netlink.AddrDel(link, &a); err != nil && !errors.Is(err, syscall.EADDRNOTAVAIL) {
+			return err
+		}
+	}
+	routes, err := netlink.RouteList(link, netlink.FAMILY_V4)
+	if err != nil {
+		return err
+	}
+	for _, r := range routes {
+		if r.Dst != nil && r.Dst.IP.IsLinkLocalUnicast() {
+			continue
+		}
+		if err := netlink.RouteDel(&r); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
 	}
 	return nil
 }

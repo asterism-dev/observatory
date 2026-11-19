@@ -40,14 +40,14 @@ type Agent struct {
 	ConfigureNICs func([]proto.GuestNIC) error
 	GrowRoot      func() error
 	MountDisks    func(Root, []proto.GuestDisk) error
-	// SSH, Sync and StopDesktop are nil-safe: the SSH server and the integrations and desktop tasks are wired in by Run.
-	SSH         *SSHServer
+	// Sync and StopDesktop are nil-safe: the integrations and desktop tasks are wired in by Run.
 	Sync        func()
 	StopDesktop func()
 
 	mu        sync.Mutex // serializes takeoff, resume and trust
 	stateMu   sync.RWMutex
 	seedKeys  []string
+	ssh       *SSHServer
 	env       map[string]string
 	readyOnce sync.Once
 	ready     chan struct{}
@@ -90,6 +90,13 @@ func (a *Agent) Env() map[string]string {
 	return a.env
 }
 
+// SetSSH registers the server that takeoff hands new host keys to.
+func (a *Agent) SetSSH(s *SSHServer) {
+	a.stateMu.Lock()
+	a.ssh = s
+	a.stateMu.Unlock()
+}
+
 func (a *Agent) setSeedKeys(keys []string) {
 	a.stateMu.Lock()
 	a.seedKeys = keys
@@ -129,13 +136,14 @@ func (a *Agent) handle(line []byte) agentReply {
 	if err != nil {
 		return agentReply{Error: err.Error()}
 	}
+	// Every op waits for Run's setup, or a trust could be overwritten by the setup's older seed.
+	select {
+	case <-a.readyChan():
+	case <-time.After(pingBootTimeout):
+		return agentReply{Error: "booting"}
+	}
 	if req.Op == "ping" {
-		select {
-		case <-a.readyChan():
-			return agentReply{OK: true, Version: version.Version}
-		case <-time.After(pingBootTimeout):
-			return agentReply{Error: "booting"}
-		}
+		return agentReply{OK: true, Version: version.Version}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -264,8 +272,11 @@ func (a *Agent) takeoff(req parsedRequest) error {
 	if err != nil {
 		return err
 	}
-	if a.SSH != nil {
-		a.SSH.SetHostKeys(keys)
+	a.stateMu.RLock()
+	srv := a.ssh
+	a.stateMu.RUnlock()
+	if srv != nil {
+		srv.SetHostKeys(keys)
 	}
 	a.setSeedKeys(seed.SSHKeys)
 	if err := a.GrowRoot(); err != nil {
@@ -290,6 +301,7 @@ func (a *Agent) takeoff(req parsedRequest) error {
 type agentConn interface {
 	io.ReadWriteCloser
 	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
 }
 
 // ServeAgent accepts until accept fails; accept reports whether the peer is the host, as guest users could reach the agent over vsock loopback.
@@ -327,6 +339,7 @@ func (a *Agent) serveAgentConn(c agentConn) {
 	} else {
 		reply = a.Handle(line)
 	}
+	_ = c.SetWriteDeadline(time.Now().Add(requestReadWindow))
 	_, _ = c.Write(append(reply, '\n'))
 }
 

@@ -83,7 +83,7 @@ func Run() error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init: image:", err)
 	}
-	agent.SSH = startSSH(root, agent, hostKeys, img)
+	agent.SetSSH(startSSH(root, agent, hostKeys, img))
 	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 

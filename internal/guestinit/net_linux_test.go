@@ -75,3 +75,37 @@ func TestConfigureNICsDummy(t *testing.T) {
 		t.Fatal("lo down")
 	}
 }
+
+func TestConfigureNICsReplacesOldAddress(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	runtime.LockOSThread()
+	orig, err := netns.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns, err := netns.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { netns.Set(orig); ns.Close(); orig.Close() })
+
+	mac, _ := net.ParseMAC("02:00:00:00:00:01")
+	if err := netlink.LinkAdd(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "dummyA", HardwareAddr: mac}}); err != nil {
+		t.Fatal(err)
+	}
+	link, _ := netlink.LinkByName("dummyA")
+	old, _ := netlink.ParseAddr("10.9.9.9/24")
+	if err := netlink.LinkSetUp(link); err != nil || netlink.AddrAdd(link, old) != nil {
+		t.Fatal("setup failed")
+	}
+	if err := ConfigureNICs([]proto.GuestNIC{{MAC: "02:00:00:00:00:01", Name: "eth0", Address: "10.1.1.2/24"}}); err != nil {
+		t.Fatal(err)
+	}
+	eth0, _ := netlink.LinkByName("eth0")
+	addrs, _ := netlink.AddrList(eth0, netlink.FAMILY_V4)
+	if len(addrs) != 1 || addrs[0].IPNet.String() != "10.1.1.2/24" {
+		t.Fatalf("addrs = %v", addrs)
+	}
+}
