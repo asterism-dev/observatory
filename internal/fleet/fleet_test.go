@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -1770,7 +1771,7 @@ func TestDesiredVMImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.f.PullImagesFrom("hub.test", iss)
+	e.f.PullImagesFrom(&url.URL{Scheme: "https", Host: "hub.test"}, iss)
 	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
 	if err != nil {
 		t.Fatal(err)
@@ -1851,7 +1852,7 @@ func TestDesiredVMImageIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.f.PullImagesFrom("hub.test", iss)
+	e.f.PullImagesFrom(&url.URL{Scheme: "https", Host: "hub.test"}, iss)
 	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
 	if err != nil {
 		t.Fatal(err)
@@ -1906,7 +1907,7 @@ func TestImagePullRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.f.PullImagesFrom("hub.test", iss)
+	e.f.PullImagesFrom(&url.URL{Scheme: "https", Host: "hub.test"}, iss)
 	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
 	if err != nil {
 		t.Fatal(err)
@@ -1979,5 +1980,38 @@ func TestDesiredBuilderVM(t *testing.T) {
 	}
 	if !d.Spec.NoTemplate {
 		t.Fatal("builder spec allows a fast-boot template")
+	}
+}
+
+func TestDesiredImageNodeURL(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		hub       string
+		plainHTTP bool
+	}{{"https://hub.test", false}, {"http://100.64.0.1:8090", true}} {
+		e := newEnv(t)
+		iss, err := registry.LoadIssuer(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		hub, _ := url.Parse(tc.hub)
+		e.f.PullImagesFrom(hub, iss)
+		img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := "sha256:" + strings.Repeat("a", 64)
+		if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+			t.Fatal(err)
+		}
+		n, cred := e.node(e.org.ID, "a")
+		e.vm(e.org.ID, n.ID, "user", &e.owner, nil)
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = 'org/tools', image_digest = $1, image_id = $2", digest, img.ID); err != nil {
+			t.Fatal(err)
+		}
+		got := e.connect(cred).desired().Desired[0].Spec.Image
+		if want := hub.Host + "/i/" + img.ID.String(); got.Repo != want || got.PlainHTTP != tc.plainHTTP {
+			t.Errorf("%s: repo %q plainHTTP %v, want %q %v", tc.hub, got.Repo, got.PlainHTTP, want, tc.plainHTTP)
+		}
 	}
 }

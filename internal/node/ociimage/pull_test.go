@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -322,4 +324,36 @@ func mustRef(t *testing.T, s string) name.Reference {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestPullPlainHTTPOption(t *testing.T) {
+	addr := testRegistry(t)
+	img := platformImage(t, "amd64", v1.Config{})
+	digest, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(mustRef(t, addr+"/app@"+digest.String()), img); err != nil {
+		t.Fatal(err)
+	}
+	tr := remote.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = func(ctx context.Context, network, host string) (net.Conn, error) {
+		if h, _, _ := net.SplitHostPort(host); strings.HasSuffix(h, ".example") {
+			host = addr
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, host)
+	}
+	ref := "hub.example:5000/app@" + digest.String()
+	s := Store{Dir: t.TempDir(), Transport: tr}
+	_, err = s.Pull(context.Background(), ref, authn.Anonymous)
+	if err == nil || !strings.Contains(err.Error(), "HTTP response to HTTPS client") {
+		t.Fatalf("pull over http without the option: %v, want a TLS error", err)
+	}
+	other := strings.Replace(ref, "hub.example:5000", "other.example:5000", 1)
+	if _, err = s.Pull(context.Background(), other, authn.Anonymous); err == nil || !strings.Contains(err.Error(), "HTTP response to HTTPS client") {
+		t.Fatalf("other host without the option: %v, want a TLS error", err)
+	}
+	if _, err = s.Pull(context.Background(), ref, authn.Anonymous, name.Insecure); err != nil {
+		t.Fatal(err)
+	}
 }

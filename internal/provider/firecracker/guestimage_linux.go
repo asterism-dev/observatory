@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/asterism-dev/observatory/internal/node"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -57,7 +58,11 @@ func (p *Provider) PullImage(ctx context.Context, img proto.ImageRef) (string, p
 	if img.PullToken != "" {
 		auth = authn.FromConfig(authn.AuthConfig{RegistryToken: img.PullToken})
 	}
-	ref, cfg, err := p.pull(ctx, img.Repo+"@"+img.Digest, auth)
+	var opts []name.Option
+	if img.PlainHTTP {
+		opts = append(opts, name.Insecure)
+	}
+	ref, cfg, err := p.pull(ctx, img.Repo+"@"+img.Digest, auth, opts...)
 	if err != nil {
 		return "", proto.ImageConfig{}, err
 	}
@@ -66,10 +71,10 @@ func (p *Provider) PullImage(ctx context.Context, img proto.ImageRef) (string, p
 	return ref, cfg, nil
 }
 
-func (p *Provider) pull(ctx context.Context, ref string, auth authn.Authenticator) (string, proto.ImageConfig, error) {
+func (p *Provider) pull(ctx context.Context, ref string, auth authn.Authenticator, opts ...name.Option) (string, proto.ImageConfig, error) {
 	p.storeMu.RLock()
 	defer p.storeMu.RUnlock()
-	pulled, err := p.store.Pull(ctx, ref, auth)
+	pulled, err := p.store.Pull(ctx, ref, auth, opts...)
 	if err != nil {
 		return "", proto.ImageConfig{}, err
 	}

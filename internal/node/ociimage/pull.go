@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,7 +34,10 @@ const spaceReserve = 256 << 20
 const metadataLimit = 4 << 20
 
 // Store keeps manifests, configs and layers in Dir/blobs/sha256/ and built disks in Dir/disks/.
-type Store struct{ Dir string }
+type Store struct {
+	Dir       string
+	Transport http.RoundTripper // nil: the default
+}
 
 type Pulled struct {
 	Digest    string // platform image manifest digest, the key for Disk
@@ -41,8 +45,9 @@ type Pulled struct {
 	SizeBytes int64 // compressed layers
 }
 
-func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (Pulled, error) {
-	r, err := name.ParseReference(ref)
+// Pull fetches ref; opts such as name.Insecure apply to parsing it.
+func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator, opts ...name.Option) (Pulled, error) {
+	r, err := name.ParseReference(ref, opts...)
 	if err != nil {
 		return Pulled{}, err
 	}
@@ -52,7 +57,11 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 			return s.cached(h)
 		}
 	}
-	desc, err := remote.Get(r, remote.WithContext(ctx), remote.WithAuth(auth))
+	ropts := []remote.Option{remote.WithContext(ctx), remote.WithAuth(auth)}
+	if s.Transport != nil {
+		ropts = append(ropts, remote.WithTransport(s.Transport))
+	}
+	desc, err := remote.Get(r, ropts...)
 	if err != nil {
 		return Pulled{}, err
 	}

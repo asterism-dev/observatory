@@ -18,6 +18,8 @@ type config struct {
 	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
 	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
 	BuilderImage, BuilderHubURL string
+	// NodeURL is the hub URL nodes pull images from, the public URL by default.
+	NodeURL *url.URL
 }
 
 const minTokenLen = 32
@@ -91,6 +93,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if cfg.BuilderHubURL = getenv("OBSERVATORY_BUILDER_HUB_URL"); cfg.BuilderHubURL == "" {
 		cfg.BuilderHubURL = cfg.PublicURL
+	}
+	nodeURL := getenv("OBSERVATORY_NODE_URL")
+	if nodeURL == "" {
+		nodeURL = cfg.PublicURL
+	}
+	if cfg.NodeURL, err = url.Parse(nodeURL); err != nil || cfg.NodeURL.Host == "" || cfg.NodeURL.Scheme != "http" && cfg.NodeURL.Scheme != "https" {
+		return config{}, errors.New("OBSERVATORY_NODE_URL must be an absolute http(s) URL")
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

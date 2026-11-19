@@ -132,7 +132,7 @@ func run() error {
 		tags = api.NewTagSync(s, client)
 		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
 		manifests = client
-		f.PullImagesFrom(publicURL.Host, iss)
+		f.PullImagesFrom(cfg.NodeURL, iss)
 		sched = newScheduler(ctx, s, f, cfg)
 		f.BootBuildersWith(sched.BootEnv)
 		api.BuildEndpoints(mux, s, sched, client, tags)
