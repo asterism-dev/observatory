@@ -8,7 +8,8 @@ Postgres, serves a Vue web app embedded in the Go binary, and ships a small CLI
 It needs an external OIDC identity provider for login; see
 [docs/idp.md](docs/idp.md) for requirements and client setup.
 
-To run it on a server with Docker Compose, see [docs/deploy.md](docs/deploy.md).
+To run it on a server with Docker Compose, see [docs/deploy.md](docs/deploy.md); releases are described in
+[docs/releasing.md](docs/releasing.md).
 
 ## Development
 

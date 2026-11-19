@@ -1,0 +1,147 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# Runs one after another so each bump sees the previous tag; a release is never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # The token is handed only to the push step, never to commitizen and its dependencies.
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: pip install --require-hashes -r .github/release-requirements.txt
+      - id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          status=0
+          cz bump --yes --changelog-to-stdout --git-output-to-stderr > notes.md || status=$?
+          # 21: nothing since the last tag warrants a release (only docs, chore, ci, …).
+          if [ "$status" = 21 ]; then
+            echo "nothing to release"
+            exit 0
+          fi
+          [ "$status" = 0 ] || exit "$status"
+          echo "tag=v$(cz version --project)" >> "$GITHUB_OUTPUT"
+      # Atomic, so a moved main leaves no orphan tag (the queued run releases both); GITHUB_TOKEN pushes start no workflow.
+      - if: steps.bump.outputs.tag != ''
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --atomic origin HEAD:main "refs/tags/$TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+      - if: steps.bump.outputs.tag != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+
+  binaries:
+    needs: bump
+    if: needs.bump.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: make web
+      - run: sh scripts/release-build.sh "$TAG" dist
+        env:
+          TAG: ${{ needs.bump.outputs.tag }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  images:
+    needs: bump
+    if: needs.bump.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [hub, gateway, storage]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ needs.bump.outputs.tag }}
+          # latest moves only in the release job, once every image and binary of this version exists.
+          tags: ghcr.io/asterism-dev/observatory-${{ matrix.image }}:${{ needs.bump.outputs.tag }}
+          # Links the package to this repository so it inherits the repository's access.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.bump.outputs.tag }}
+
+  release:
+    needs: [bump, binaries, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+      - run: gh release create "$TAG" artifacts/dist/* --repo "$REPO" --title "$TAG" --notes-file artifacts/notes/notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.bump.outputs.tag }}
+          REPO: ${{ github.repository }}
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - run: |
+          for image in hub gateway storage; do
+            docker buildx imagetools create -t "ghcr.io/asterism-dev/observatory-$image:latest" "ghcr.io/asterism-dev/observatory-$image:$TAG"
+          done
+        env:
+          TAG: ${{ needs.bump.outputs.tag }}
