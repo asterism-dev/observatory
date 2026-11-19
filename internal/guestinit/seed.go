@@ -21,6 +21,7 @@ import (
 var (
 	hostnameRE = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 	envNameRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	nonHostRE  = regexp.MustCompile(`[^A-Za-z0-9-]`)
 )
 
 // Root is the directory all of the init's file writes go through: "/" in the VM once the init has switched into the image's root.
@@ -37,7 +38,10 @@ func ReadSeed(dev string) (proto.GuestSeed, error) {
 		return seed, fmt.Errorf("seed %s: %w", proto.GuestSeedFile, err)
 	}
 	if !hostnameRE.MatchString(seed.Hostname) {
-		return seed, fmt.Errorf("seed: invalid hostname %q", seed.Hostname)
+		// A bad name must not stop the boot: PID 1 exiting panics the kernel.
+		name := sanitizeHostname(seed.Hostname)
+		fmt.Fprintf(os.Stderr, "init: seed: invalid hostname %q, using %q\n", seed.Hostname, name)
+		seed.Hostname = name
 	}
 	seed.SSHKeys = slices.DeleteFunc(seed.SSHKeys, func(k string) bool {
 		return strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n")
@@ -48,6 +52,16 @@ func ReadSeed(dev string) (proto.GuestSeed, error) {
 		}
 	}
 	return seed, nil
+}
+
+// sanitizeHostname makes name a valid hostname, falling back to "vm".
+func sanitizeHostname(name string) string {
+	name = strings.Trim(nonHostRE.ReplaceAllString(name, ""), "-")
+	name = strings.TrimRight(name[:min(len(name), 63)], "-")
+	if name == "" {
+		return "vm"
+	}
+	return name
 }
 
 // readISOFile reads the ISO as such: diskfs.Open would take a block device's 512-byte sectors as the ISO block size.

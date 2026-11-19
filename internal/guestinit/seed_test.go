@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/node"
@@ -23,9 +24,27 @@ func writeSeed(t *testing.T, seed proto.GuestSeed) string {
 	return filepath.Join(dir, node.SeedISO)
 }
 
-func TestReadSeedRejectsBadHostname(t *testing.T) {
-	if _, err := ReadSeed(writeSeed(t, proto.GuestSeed{Hostname: "a;b"})); err == nil {
-		t.Fatal("want error for hostname a;b")
+func TestReadSeedSanitizesHostname(t *testing.T) {
+	seed, err := ReadSeed(writeSeed(t, proto.GuestSeed{Hostname: "vm-"}))
+	if err != nil || seed.Hostname != "vm" {
+		t.Fatalf("hostname %q, %v; want vm", seed.Hostname, err)
+	}
+}
+
+func TestSanitizeHostname(t *testing.T) {
+	long := strings.Repeat("a", 62) + "-b"
+	for in, want := range map[string]string{
+		"vm1":   "vm1",
+		"a;b":   "ab",
+		"-x-":   "x",
+		"my-vm": "my-vm",
+		"":      "vm",
+		";;":    "vm",
+		long:    strings.Repeat("a", 62),
+	} {
+		if got := sanitizeHostname(in); got != want {
+			t.Errorf("sanitizeHostname(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
