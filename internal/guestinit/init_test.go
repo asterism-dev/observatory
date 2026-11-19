@@ -2,6 +2,8 @@ package guestinit
 
 import (
 	"bytes"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/version"
@@ -32,5 +34,20 @@ func TestVersionFlag(t *testing.T) {
 	}
 	if buf.String() != version.Version+"\n" {
 		t.Fatalf("out = %q", buf.String())
+	}
+}
+
+func TestMountsBelowDeepestFirst(t *testing.T) {
+	info := `22 1 253:0 / /newroot rw - ext4 /dev/vda rw
+23 22 0:5 / /newroot/dev rw - devtmpfs devtmpfs rw
+24 23 0:6 / /newroot/dev/pts rw - devpts devpts rw
+25 22 253:16 / /newroot/data\040disk rw - ext4 /dev/vdc rw
+26 1 253:1 / /newroot2 rw - ext4 /dev/vdd rw
+27 1 0:3 / /proc rw - proc proc rw
+`
+	got := mountsBelow(strings.NewReader(info), "/newroot")
+	want := []string{"/newroot/data disk", "/newroot/dev/pts", "/newroot/dev", "/newroot"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

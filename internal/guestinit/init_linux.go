@@ -1,9 +1,9 @@
 package guestinit
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -15,6 +15,10 @@ const rootDevice = "/dev/vda"
 // Run is PID 1: it boots the guest, then blocks until the kernel asks for poweroff or reboot.
 func Run() error {
 	// Registered first so a signal during boot is not lost.
+	// With ctrl-alt-del off the kernel delivers it to PID 1 as SIGINT instead of rebooting hard.
+	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_CAD_OFF); err != nil {
+		return fmt.Errorf("disable ctrl-alt-del: %w", err)
+	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGHUP)
 
@@ -42,13 +46,9 @@ func Run() error {
 
 	announceReady()
 
-	// The kernel sends SIGINT to PID 1 on poweroff and SIGHUP on reboot.
+	// The kernel signals PID 1 only for ctrl-alt-del (SIGINT); the image's own poweroff/restart reaches us as its exit status.
 	sig := <-sigs
-	cmd := syscall.LINUX_REBOOT_CMD_POWER_OFF
-	if sig == syscall.SIGHUP {
-		cmd = syscall.LINUX_REBOOT_CMD_RESTART
-	}
-	shutdown(cmd)
+	shutdown(shutdownFor(sig.(syscall.Signal)))
 	return nil
 }
 
@@ -65,14 +65,41 @@ func announceReady() {
 	}
 }
 
+// shutdownFor maps the signal that ends a guest to a reboot(2) command: SIGHUP restarts, anything else powers off.
+func shutdownFor(sig syscall.Signal) int {
+	if sig == syscall.SIGHUP {
+		return syscall.LINUX_REBOOT_CMD_RESTART
+	}
+	return syscall.LINUX_REBOOT_CMD_POWER_OFF
+}
+
 // shutdown stops the image (Task 7 hook), unmounts /newroot and powers off or reboots; it only returns on failure.
 func shutdown(cmd int) {
 	// Task 7: stop the image process here.
-	if err := exec.Command("/bin/umount", "-R", "/newroot").Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "init: umount /newroot:", err)
+	if err := unmountRoot(); err != nil {
+		fmt.Fprintln(os.Stderr, "init:", err)
 	}
 	syscall.Sync()
 	if err := syscall.Reboot(cmd); err != nil {
 		fmt.Fprintln(os.Stderr, "init: reboot:", err)
 	}
+}
+
+func unmountRoot() error {
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var errs []error
+	for _, m := range mountsBelow(f, "/newroot") {
+		err := syscall.Unmount(m, 0)
+		if errors.Is(err, syscall.EBUSY) {
+			err = syscall.Unmount(m, syscall.MNT_DETACH)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("umount %s: %w", m, err))
+		}
+	}
+	return errors.Join(errs...)
 }
