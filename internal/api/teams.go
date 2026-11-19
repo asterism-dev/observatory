@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,12 +40,22 @@ func (h *api) listTeams(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// readTeamName refuses the qualifiers of image refs, which a team name would shadow.
+func readTeamName(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name, ok := readName(w, r)
+	if ok && slices.Contains([]string{"me", "org", "observatory"}, name) {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("%q is reserved for image references", name))
+		return "", false
+	}
+	return name, ok
+}
+
 func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
 	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, store.ActionTeamCreate) {
 		return
 	}
-	name, ok := readName(w, r)
+	name, ok := readTeamName(w, r)
 	if !ok {
 		return
 	}
@@ -110,7 +122,7 @@ func (h *api) renameTeam(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	name, ok := readName(w, r)
+	name, ok := readTeamName(w, r)
 	if !ok {
 		return
 	}
