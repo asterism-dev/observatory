@@ -1925,4 +1925,7 @@ func TestDesiredBuilderVM(t *testing.T) {
 	if len(d.Integrations) != 1 || d.Integrations[0].Token != "real" {
 		t.Fatalf("builder integrations = %+v", d.Integrations)
 	}
+	if !d.Spec.NoTemplate {
+		t.Fatal("builder spec allows a fast-boot template")
+	}
 }

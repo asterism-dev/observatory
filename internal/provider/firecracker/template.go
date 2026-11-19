@@ -92,3 +92,8 @@ func evictTemplates(dir string, keep int) error {
 	}
 	return nil
 }
+
+// usesTemplate says whether a VM is cloned from, and its shape builds, a fast-boot template.
+func usesTemplate(fastBoot bool, s proto.VMSpec) bool {
+	return fastBoot && !s.NoTemplate && len(s.Attachments) == 0 && s.DiskGB >= templateDiskGB
+}

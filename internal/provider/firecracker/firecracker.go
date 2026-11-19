@@ -157,7 +157,7 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 	if err := os.Remove(marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if p.fastBoot && len(f.Spec.Attachments) == 0 && f.Spec.DiskGB >= templateDiskGB {
+	if usesTemplate(p.fastBoot, f.Spec) {
 		key, err := templateKey(f, p.fcVersion, p.boot.id)
 		if err != nil {
 			return err
