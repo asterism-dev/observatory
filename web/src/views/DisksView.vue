@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Table, Tabs, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
+import { HardDrive, Plus } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -9,6 +10,7 @@ import CreateDiskDialog from '@/components/CreateDiskDialog.vue'
 import GrowDiskDialog from '@/components/GrowDiskDialog.vue'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { EmptyState, FilterBar, Meter, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 interface Disk {
   id: string
@@ -40,22 +42,17 @@ const growing = ref<Disk | null>(null)
 const pendingRelease = ref<Disk | null>(null)
 const pendingDelete = ref<Disk | null>(null)
 const busy = ref(false)
+const loaded = ref(false)
+const search = ref('')
 
 const tabs = computed(() => ['all', 'mine', 'teams'].map((v) => ({ value: v, label: t(`disks.tab.${v}`) })))
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('disks.name') },
-  { key: 'owner', label: t('disks.owner') },
-  { key: 'size', label: t('disks.size') },
-  { key: 'used', label: t('disks.used') },
-  { key: 'state', label: t('disks.state') },
-  { key: 'attached', label: t('disks.attachedTo') },
-  { key: 'actions', label: '' },
-])
-const rows = computed(() =>
-  disks.value.filter((d) => (tab.value === 'mine' ? d.owner.kind === 'user' && d.owner.id === me.value?.user.id : tab.value === 'teams' ? d.owner.kind === 'team' : true)),
-)
+const isMine = (d: Disk) => d.owner.kind === 'user' && d.owner.id === me.value?.user.id
+const rows = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return disks.value.filter((d) => (tab.value === 'mine' ? isMine(d) : tab.value === 'teams' ? d.owner.kind === 'team' : true) && (!q || d.name.includes(q)))
+})
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
-const used = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
+const usedGB = (d: Disk) => d.allocatedBytes / 1024 ** 3
 
 async function refresh() {
   if (!org.value) return
@@ -65,6 +62,7 @@ async function refresh() {
     if (id === org.value?.id) {
       disks.value = res.disks
       storageOnline.value = res.storageOnline
+      loaded.value = true
     }
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
@@ -97,6 +95,7 @@ watch(
   () => {
     error.value = ''
     disks.value = []
+    loaded.value = false
     refresh()
   },
   { immediate: true },
@@ -104,38 +103,40 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.disks') }}</h1>
-        <p>{{ t('disks.subtitle') }}</p>
-      </div>
-      <Button variant="accent" @click="createOpen = true">{{ t('disks.create') }}</Button>
-    </div>
+  <Page v-if="org" :icon="HardDrive" :title="t('nav.disks')" :subtitle="t('disks.subtitle')">
+    <template #actions>
+      <Button variant="accent" :icon="Plus" @click="createOpen = true">{{ t('disks.create') }}</Button>
+    </template>
     <p v-if="!storageOnline" role="alert">{{ t('disks.storageOffline') }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Tabs v-model="tab" :tabs="tabs" />
-    <Table :columns="columns" :rows="rows" row-key="id">
-      <template #cell-owner="{ row }">{{ row.owner.name }}</template>
-      <template #cell-size="{ row }">{{ row.sizeGB }} GB</template>
-      <template #cell-used="{ row }">{{ used(row.allocatedBytes) }}</template>
-      <template #cell-state="{ row }">
-        <Badge :tone="tones[row.state as Disk['state']]">{{ t(`disks.states.${row.state}`) }}</Badge>
-        <small v-if="row.exportError" role="alert">{{ row.exportError }}</small>
-      </template>
-      <template #cell-attached="{ row }">
-        <router-link v-if="row.attachment" :to="`/orgs/${org.id}/vms/${row.attachment.vm.id}`">{{ row.attachment.vm.name }}</router-link>
-      </template>
-      <template #cell-actions="{ row }">
-        <span class="row">
-          <Button v-if="row.canUse" size="sm" :disabled="busy" @click="copying = row">{{ t('disks.copy') }}</Button>
-          <Button v-if="row.canUpdate" size="sm" :disabled="busy" @click="growing = row">{{ t('disks.grow') }}</Button>
-          <Button v-if="row.canUpdate && row.state === 'releasing'" size="sm" variant="danger" :disabled="busy" @click="pendingRelease = row">{{ t('disks.release') }}</Button>
-          <Button v-if="row.canDelete" size="sm" variant="danger" :disabled="busy" @click="pendingDelete = row">{{ t('disks.delete') }}</Button>
-        </span>
-      </template>
-      <template #empty>{{ t('disks.empty') }}</template>
-    </Table>
+    <EmptyState v-if="loaded && !disks.length" :label="t('nav.disks')" :title="t('disks.empty')" :text="t('disks.emptyText')" command="observatory disk create data --size 20">
+      <Button variant="accent" :icon="Plus" @click="createOpen = true">{{ t('disks.create') }}</Button>
+    </EmptyState>
+    <template v-else>
+      <FilterBar>
+        <Tabs v-model="tab" :tabs="tabs" variant="underline" />
+        <template #end>
+          <TextInput v-model="search" type="search" :placeholder="t('disks.search')" :aria-label="t('disks.search')" />
+        </template>
+      </FilterBar>
+      <ResourceList :count="rows.length" :empty="disks.length ? t('disks.noMatch') : t('disks.empty')">
+        <ResourceRow v-for="d in rows" :key="d.id" :title="d.name" :meta="`${usedGB(d).toFixed(1)} / ${d.sizeGB} GB`" :tone="tones[d.state]">
+          <template #tags>
+            <Tag>{{ isMine(d) ? t('disks.tab.mine') : d.owner.name }}</Tag>
+            <Tag :tone="tones[d.state]">{{ t(`disks.states.${d.state}`) }}</Tag>
+          </template>
+          <Meter :label="t('usage.dsk')" :percent="d.sizeGB ? (usedGB(d) / d.sizeGB) * 100 : null" />
+          <span v-if="d.attachment">{{ t('disks.attachedTo') }} <router-link :to="`/orgs/${org.id}/vms/${d.attachment.vm.id}`" class="mono">{{ d.attachment.vm.name }}</router-link></span>
+          <small v-if="d.exportError" role="alert">{{ d.exportError }}</small>
+          <template #actions>
+            <Button v-if="d.canUse" size="sm" variant="ghost" :disabled="busy" @click="copying = d">{{ t('disks.copy') }}</Button>
+            <Button v-if="d.canUpdate" size="sm" variant="ghost" :disabled="busy" @click="growing = d">{{ t('disks.grow') }}</Button>
+            <Button v-if="d.canUpdate && d.state === 'releasing'" size="sm" variant="ghost" :disabled="busy" @click="pendingRelease = d">{{ t('disks.release') }}</Button>
+            <Button v-if="d.canDelete" size="sm" variant="ghost" :disabled="busy" @click="pendingDelete = d">{{ t('disks.delete') }}</Button>
+          </template>
+        </ResourceRow>
+      </ResourceList>
+    </template>
     <CreateDiskDialog v-model:open="createOpen" :org-id="org.id" @created="refresh" />
     <CopyDiskDialog
       :open="!!copying"
@@ -178,18 +179,6 @@ watch(
         <Button variant="danger" :disabled="busy" @click="pendingDelete && remove(pendingDelete)">{{ t('disks.delete') }}</Button>
       </template>
     </Dialog>
-  </template>
+  </Page>
 </template>
 
-<style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-.row {
-  display: flex;
-  gap: 8px;
-}
-</style>

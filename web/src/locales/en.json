@@ -72,7 +72,10 @@
     "publicKey": "Public key",
     "deleteKey": "Delete",
     "deleteKeyTitle": "Delete SSH key?",
-    "deleteKeyBody": "New VMs will no longer get this key; running VMs keep it until their next boot."
+    "deleteKeyBody": "New VMs will no longer get this key; running VMs keep it until their next boot.",
+    "subtitle": "Your account, sessions and SSH keys.",
+    "account": "Account",
+    "noKeys": "No SSH keys yet."
   },
   "audit": {
     "actor": "Actor",
@@ -97,7 +100,12 @@
     "name": "Name",
     "create": "Create",
     "save": "Save",
-    "personalNote": "Your personal organization cannot be renamed."
+    "personalNote": "Your personal organization cannot be renamed.",
+    "identity": "Identity",
+    "identityHint": "How this organization is named and referenced.",
+    "displayName": "Organization name",
+    "id": "Organization ID",
+    "edit": "Edit"
   },
   "members": {
     "name": "Name",
@@ -127,7 +135,6 @@
     "name": "Name",
     "members": "Members",
     "create": "Create team",
-    "open": "Open",
     "empty": "No teams",
     "admin": "Team admin",
     "promote": "Make admin",
@@ -138,7 +145,8 @@
     "delete": "Delete team",
     "deleteTitle": "Delete team?",
     "deleteBody": "{name} and its role bindings will be removed.",
-    "leave": "Leave team"
+    "leave": "Leave team",
+    "memberCount": "{n} member | {n} members"
   },
   "roles": {
     "create": "Create role",
@@ -207,7 +215,6 @@
     "delete": "Delete",
     "deleteTitle": "Delete variable",
     "deleteBody": "Delete {name}? This cannot be undone.",
-    "copy": "Copy value",
     "empty": "No variables yet.",
     "tab": {
       "all": "All",
@@ -222,7 +229,10 @@
     "restartNote": "Programs already running in VMs trust the new host only after a restart.",
     "unbindBody": "VMs will receive the real value at their next boot.",
     "unbindConfirm": "Unbind and save",
-    "hostsTooMany": "Too many hosts (max 10)"
+    "hostsTooMany": "Too many hosts (max 10)",
+    "search": "Search variables…",
+    "noMatch": "No variables match the filters.",
+    "emptyText": "Add variables and secrets that are injected into your VMs."
   },
   "integrations": {
     "subtitle": "Connect GitHub, Claude and Linear so your VMs can use them.",
@@ -264,7 +274,8 @@
     "okExpires": "ok · expires in {n} days",
     "expired": "expired",
     "empty": "No integrations yet.",
-    "vmLine": "Integrations"
+    "vmLine": "Integrations",
+    "emptyText": "Connect an integration so your VMs can use it. By default, VMs only get a placeholder and the proxy adds the token."
   },
   "nodes": {
     "subtitle": "Machines that run your VMs.",
@@ -424,7 +435,10 @@
     "copy": "Copy",
     "qr": "WireGuard configuration QR code",
     "copyFailed": "Copy failed.",
-    "qrFailed": "The QR code could not be generated; use the text configuration."
+    "qrFailed": "The QR code could not be generated; use the text configuration.",
+    "search": "Search devices…",
+    "noMatch": "No devices match the search.",
+    "emptyText": "Add a WireGuard device to reach your VMs from your laptop or phone."
   },
   "networks": {
     "subtitle": "Private networks that connect your VMs.",
@@ -454,7 +468,8 @@
     "restartTitle": "Restart VM",
     "restartBody": "{name} is running and restarts to apply the network change.",
     "restartBodySaved": "{name} is paused or hibernated. Applying the network change discards the saved memory state and boots it fresh.",
-    "restart": "Save and restart"
+    "restart": "Save and restart",
+    "emptyText": "Create a private network so your VMs can reach each other."
   },
   "vmDisks": {
     "section": "Disks",
@@ -518,7 +533,10 @@
     "releaseBody": "Force release {name} from its VM? Writes the VM has not flushed may be lost.",
     "delete": "Delete",
     "deleteTitle": "Delete disk",
-    "deleteBody": "Delete {name}? Its data is permanently lost."
+    "deleteBody": "Delete {name}? Its data is permanently lost.",
+    "search": "Search disks…",
+    "noMatch": "No disks match the filters.",
+    "emptyText": "Create a persistent disk and attach it to a VM. Its data outlives the VM."
   },
   "usage": {
     "cpu": "CPU",
@@ -542,9 +560,6 @@
     "includeMemory": "Include memory (running processes)",
     "memory": "Memory",
     "disks": "Disks",
-    "size": "Size",
-    "yes": "yes",
-    "no": "no",
     "empty": "No snapshots yet.",
     "states": {
       "creating": "creating",
@@ -568,7 +583,8 @@
   "dashboard": {
     "guide": {
       "title": "Get started",
-      "hide": "Hide"
+      "hide": "Hide",
+      "label": "Setup"
     },
     "step": {
       "node": "Add a node",
@@ -589,7 +605,11 @@
       "connected": "connected",
       "total": "total"
     },
-    "loadFailed": "Could not load"
+    "loadFailed": "Could not load",
+    "subtitle": "Your organization at a glance.",
+    "overview": "Overview",
+    "yourVms": "Your VMs",
+    "noOwnVms": "You don't own any VMs yet."
   },
   "open": {
     "title": "Open {name}",

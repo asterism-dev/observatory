@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { Badge, Button, Checkbox, Dialog, Select, Table, TextInput, type TableColumn } from '@asterism-dev/lumen'
-import { computed, ref, watch } from 'vue'
+import { Button, Checkbox, Dialog, Select, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { Card, DataTable, Section, Tag } from '@/ui'
 
 interface TeamMember {
   id: string
@@ -36,6 +38,10 @@ const { me } = useMe()
 const { org, reload } = useOrg()
 
 const team = ref<Team | null>(null)
+const { setCrumbs } = useCrumbs()
+watchEffect(() => {
+  if (team.value) setCrumbs(route.path, [{ label: team.value.name, to: route.path }])
+})
 const orgMembers = ref<OrgMember[]>([])
 const name = ref('')
 const newUser = ref<string | null>(null)
@@ -137,37 +143,54 @@ watch(
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="team">
-      <h1>{{ team.name }}</h1>
-      <form v-if="team.canUpdate" class="row" @submit.prevent="rename">
-        <TextInput v-model="name" :aria-label="t('teams.name')" />
-        <Button type="submit" variant="accent" :disabled="busy || !name.trim() || name.trim() === team.name">
-          {{ t('org.save') }}
-        </Button>
-      </form>
-
-      <h2>{{ t('teams.members') }}</h2>
-      <Table :columns="columns" :rows="team.members" row-key="id">
-        <template #cell-admin="{ row }"><Badge v-if="row.admin">{{ t('teams.admin') }}</Badge></template>
-        <template #cell-actions="{ row }">
-          <span class="cell">
-            <Button v-if="team.canManageMembers" size="sm" :disabled="busy" @click="setMember(row.id, !row.admin)">
-              {{ row.admin ? t('teams.demote') : t('teams.promote') }}
+      <Section v-if="team.canUpdate" :label="t('nav.general')">
+        <Card>
+          <form class="row" @submit.prevent="rename">
+            <TextInput v-model="name" :aria-label="t('teams.name')" />
+            <Button type="submit" variant="accent" :disabled="busy || !name.trim() || name.trim() === team.name">
+              {{ t('org.save') }}
             </Button>
-            <Button v-if="row.id === me?.user.id ? team.canLeave : team.canManageMembers" variant="danger" size="sm" :disabled="busy" @click="removeMember(row.id)">
-              {{ row.id === me?.user.id ? t('teams.leave') : t('members.remove') }}
-            </Button>
-          </span>
-        </template>
-        <template #empty>{{ t('teams.noMembers') }}</template>
-      </Table>
+          </form>
+        </Card>
+      </Section>
 
-      <form v-if="team.canManageMembers" class="row" @submit.prevent="newUser && setMember(newUser, newAdmin)">
-        <Select v-model="newUser" :options="candidates" :placeholder="t('teams.addMember')" :aria-label="t('teams.addMember')" />
-        <Checkbox v-model="newAdmin">{{ t('teams.admin') }}</Checkbox>
-        <Button type="submit" variant="accent" :disabled="busy || !newUser">{{ t('teams.add') }}</Button>
-      </form>
+      <Section :label="t('teams.members')">
+        <Card v-if="team.canManageMembers">
+          <form class="row" @submit.prevent="newUser && setMember(newUser, newAdmin)">
+            <Select v-model="newUser" :options="candidates" :placeholder="t('teams.addMember')" :aria-label="t('teams.addMember')" />
+            <Checkbox v-model="newAdmin">{{ t('teams.admin') }}</Checkbox>
+            <Button type="submit" variant="accent" :disabled="busy || !newUser">{{ t('teams.add') }}</Button>
+          </form>
+        </Card>
+        <DataTable :columns="columns" :rows="team.members" row-key="id">
+          <template #cell-admin="{ row }"><Tag v-if="row.admin">{{ t('teams.admin') }}</Tag></template>
+          <template #cell-actions="{ row }">
+            <span class="row">
+              <Button v-if="team?.canManageMembers" size="sm" :disabled="busy" @click="setMember(row.id, !row.admin)">
+                {{ row.admin ? t('teams.demote') : t('teams.promote') }}
+              </Button>
+              <Button
+                v-if="row.id === me?.user.id ? team?.canLeave : team?.canManageMembers"
+                variant="danger"
+                size="sm"
+                :disabled="busy"
+                @click="removeMember(row.id)"
+              >
+                {{ row.id === me?.user.id ? t('teams.leave') : t('members.remove') }}
+              </Button>
+            </span>
+          </template>
+          <template #empty>{{ t('teams.noMembers') }}</template>
+        </DataTable>
+      </Section>
 
-      <Button v-if="team.canDelete" variant="danger" @click="confirmDelete = true">{{ t('teams.delete') }}</Button>
+      <Section v-if="team.canDelete" :label="t('teams.delete')">
+        <Card tone="danger">
+          <span class="muted">{{ t('teams.deleteBody', { name: team.name }) }}</span>
+          <p><Button variant="danger" @click="confirmDelete = true">{{ t('teams.delete') }}</Button></p>
+        </Card>
+      </Section>
+
       <Dialog
         :open="confirmDelete"
         :title="t('teams.deleteTitle')"
@@ -187,12 +210,7 @@ watch(
 <style scoped>
 .row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0;
-}
-.cell {
-  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Badge, Button, Combobox, SegmentedControl, Textarea, TextInput } from '@asterism-dev/lumen'
-import { computed, ref, watch } from 'vue'
+import { Button, Combobox, SegmentedControl, Textarea, TextInput } from '@asterism-dev/lumen'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
+import { Card, Section, Tag } from '@/ui'
 
 interface Rule {
   uid: number
@@ -48,6 +50,11 @@ const error = ref('')
 const roleId = computed(() => route.params.roleId as string | undefined)
 const current = computed(() => roles.value.find((r) => (r.key ?? r.id) === roleId.value))
 const readonly = computed(() => !!current.value?.builtin || !can('role:write'))
+const { setCrumbs } = useCrumbs()
+watchEffect(() => {
+  const label = roleId.value === 'new' ? t('roles.create') : current.value?.name
+  if (label) setCrumbs(route.path, [{ label, to: route.path }])
+})
 const canDeny = computed(() => ['owner', 'admin'].includes(org.value?.role ?? ''))
 
 const effectOptions = computed(() => [
@@ -132,55 +139,62 @@ watch(
 
 <template>
   <template v-if="org">
-    <h1>{{ roleId === 'new' ? t('roles.create') : name }}</h1>
-    <p v-if="current?.builtin">{{ t('roles.builtinNote') }}</p>
+    <p v-if="current?.builtin" class="muted">{{ t('roles.builtinNote') }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
 
-    <template v-if="current?.builtin">
-      <TextInput :model-value="name" :aria-label="t('members.name')" disabled />
-    </template>
-    <template v-else>
-      <TextInput v-model="name" :placeholder="t('members.name')" :aria-label="t('members.name')" :disabled="readonly" />
-      <Textarea v-model="description" :placeholder="t('roles.description')" :aria-label="t('roles.description')" :disabled="readonly" />
+    <Section :label="t('nav.general')">
+      <Card>
+        <TextInput v-if="current?.builtin" :model-value="name" :aria-label="t('members.name')" disabled />
+        <template v-else>
+          <TextInput v-model="name" :placeholder="t('members.name')" :aria-label="t('members.name')" :disabled="readonly" />
+          <Textarea v-model="description" :placeholder="t('roles.description')" :aria-label="t('roles.description')" :disabled="readonly" />
+        </template>
+      </Card>
+    </Section>
 
-      <h2>{{ t('roles.parents') }}</h2>
-      <div class="chips">
-        <Badge v-for="p in parents" :key="p">
-          {{ parentLabel(p) }}
-          <Button v-if="!readonly" size="sm" variant="ghost" :aria-label="t('roles.removeRule')" @click="parents = parents.filter((x) => x !== p)">x</Button>
-        </Badge>
-      </div>
-      <Combobox
-        v-if="!readonly"
-        v-model="addParent"
-        :items="parentOptions"
-        :placeholder="t('roles.addParent')"
-        @select="(v) => { parents = [...parents, v]; addParent = '' }"
-      />
-    </template>
+    <Section v-if="!current?.builtin" :label="t('roles.parents')">
+      <Card>
+        <div v-if="parents.length" class="row">
+          <Tag v-for="p in parents" :key="p">
+            {{ parentLabel(p) }}
+            <Button v-if="!readonly" size="sm" variant="ghost" :aria-label="t('roles.removeRule')" @click="parents = parents.filter((x) => x !== p)">x</Button>
+          </Tag>
+        </div>
+        <Combobox
+          v-if="!readonly"
+          v-model="addParent"
+          :items="parentOptions"
+          :placeholder="t('roles.addParent')"
+          @select="(v) => { parents = [...parents, v]; addParent = '' }"
+        />
+      </Card>
+    </Section>
 
-    <h2>{{ t('roles.rules') }}</h2>
-    <div v-for="(rule, i) in rules" :key="rule.uid" class="rule">
-      <SegmentedControl v-model="rule.effect" :options="effectOptions" :disabled="readonly" />
-      <Combobox
-        v-model="rule.object"
-        v-model:search="searches[`o${rule.uid}`]"
-        :items="suggestions(objects, `o${rule.uid}`)"
-        :placeholder="t('roles.object')"
-        :disabled="readonly"
-      />
-      <Combobox
-        v-model="rule.action"
-        v-model:search="searches[`a${rule.uid}`]"
-        :items="suggestions(actions, `a${rule.uid}`)"
-        :placeholder="t('audit.action')"
-        :disabled="readonly"
-      />
-      <Button v-if="!readonly" size="sm" variant="danger" @click="rules.splice(i, 1)">{{ t('roles.removeRule') }}</Button>
-    </div>
-    <Button v-if="!readonly" @click="rules.push(withUid({ effect: 'allow', object: '', action: '' }))">{{ t('roles.addRule') }}</Button>
+    <Section :label="t('roles.rules')">
+      <Card>
+        <div v-for="(rule, i) in rules" :key="rule.uid" class="row">
+          <SegmentedControl v-model="rule.effect" :options="effectOptions" :disabled="readonly" />
+          <Combobox
+            v-model="rule.object"
+            v-model:search="searches[`o${rule.uid}`]"
+            :items="suggestions(objects, `o${rule.uid}`)"
+            :placeholder="t('roles.object')"
+            :disabled="readonly"
+          />
+          <Combobox
+            v-model="rule.action"
+            v-model:search="searches[`a${rule.uid}`]"
+            :items="suggestions(actions, `a${rule.uid}`)"
+            :placeholder="t('audit.action')"
+            :disabled="readonly"
+          />
+          <Button v-if="!readonly" size="sm" variant="danger" @click="rules.splice(i, 1)">{{ t('roles.removeRule') }}</Button>
+        </div>
+        <p v-if="!readonly"><Button @click="rules.push(withUid({ effect: 'allow', object: '', action: '' }))">{{ t('roles.addRule') }}</Button></p>
+      </Card>
+    </Section>
 
-    <div class="actions">
+    <div class="row">
       <Button @click="router.push(`/orgs/${org.id}/roles`)">{{ t('roles.back') }}</Button>
       <Button v-if="!readonly" variant="accent" :disabled="busy || !name.trim()" @click="save">{{ t('org.save') }}</Button>
     </div>
@@ -188,17 +202,10 @@ watch(
 </template>
 
 <style scoped>
-.rule {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.chips,
-.actions {
+.row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin: 12px 0;
 }
 </style>

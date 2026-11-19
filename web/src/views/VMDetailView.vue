@@ -208,7 +208,7 @@ watch(
       <VMDisksTab v-if="tab === 'disks'" :vm="vm!" :busy="busy" @edit="disksOpen = true" />
 
       <template v-if="tab === 'snapshots'">
-        <Card><VMSnapshots :org-id="org.id" :vm="vm!" @changed="load" /></Card>
+        <VMSnapshots :org-id="org.id" :vm="vm!" @changed="load" />
       </template>
 
       <template v-if="tab === 'settings'">

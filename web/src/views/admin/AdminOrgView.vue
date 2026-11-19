@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Badge, Button, Table, type TableColumn } from '@asterism-dev/lumen'
-import { computed, ref, watch } from 'vue'
+import { Button, type TableColumn } from '@asterism-dev/lumen'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import { api } from '@/api'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
+import { useCrumbs } from '@/composables/useCrumbs'
+import { Card, DataTable, Section, Tag, ValueField } from '@/ui'
 
 interface AdminOrg {
   id: string
@@ -18,6 +20,10 @@ interface AdminOrg {
 const { t } = useI18n()
 const route = useRoute()
 const org = ref<AdminOrg | null>(null)
+const { setCrumbs } = useCrumbs()
+watchEffect(() => {
+  if (org.value) setCrumbs(route.path, [{ label: org.value.name, to: route.path }])
+})
 const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null })
 const valid = ref(true)
 const busy = ref(false)
@@ -65,13 +71,24 @@ watch(() => route.params.orgId, () => {
 <template>
   <p v-if="error" role="alert">{{ error }}</p>
   <template v-if="org">
-    <h1>{{ org.name }} <Badge v-if="org.personal">{{ t('admin.personal') }}</Badge></h1>
-    <h2>{{ t('nav.members') }}</h2>
-    <Table :columns="columns" :rows="org.members" row-key="id">
-      <template #cell-role="{ row }"><Badge>{{ t(`role.${row.role}`) }}</Badge></template>
-    </Table>
-    <h2>{{ t('limits.org') }}</h2>
-    <LimitFields v-model="limits" v-model:valid="valid" :disabled="busy" />
-    <Button variant="accent" :disabled="busy || !valid" @click="save">{{ t('org.save') }}</Button>
+    <Section :label="t('org.identity')">
+      <Card>
+        <ValueField :label="t('org.displayName')" :value="org.name">
+          <template v-if="org.personal" #actions><Tag>{{ t('admin.personal') }}</Tag></template>
+        </ValueField>
+        <ValueField :label="t('org.id')" :value="org.id" mono copy />
+      </Card>
+    </Section>
+    <Section :label="t('nav.members')">
+      <DataTable :columns="columns" :rows="org.members" row-key="id">
+        <template #cell-role="{ row }"><Tag>{{ t(`role.${row.role}`) }}</Tag></template>
+      </DataTable>
+    </Section>
+    <Section :label="t('limits.org')">
+      <Card>
+        <LimitFields v-model="limits" v-model:valid="valid" :disabled="busy" />
+        <p><Button variant="accent" :disabled="busy || !valid" @click="save">{{ t('org.save') }}</Button></p>
+      </Card>
+    </Section>
   </template>
 </template>

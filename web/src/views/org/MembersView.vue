@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Select, Table, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, Select, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { api } from '@/api'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { Card, DataTable, Section, Tag } from '@/ui'
 
 interface Member {
   id: string
@@ -158,52 +159,55 @@ watch(
 <template>
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
-    <Table :columns="columns" :rows="members" row-key="id">
-      <template #cell-role="{ row }">
-        <Select
-          v-if="can('member:set-role')"
-          :model-value="row.role"
-          :options="roleOptions"
-          :disabled="busy"
-          :aria-label="t('members.role')"
-          @update:model-value="(r) => r !== row.role && setRole(row, String(r))"
-        />
-        <Badge v-else>{{ t(`role.${row.role}`) }}</Badge>
-      </template>
-      <template #cell-joinedAt="{ row }">{{ fmt(row.joinedAt) }}</template>
-      <template #cell-actions="{ row }">
-        <Button
-          v-if="isSelf(row) ? !org.personal : can('member:remove')"
-          variant="danger"
-          size="sm"
-          @click="pending = row"
-        >
-          {{ isSelf(row) ? t('members.leave') : t('members.remove') }}
-        </Button>
-      </template>
-    </Table>
+    <Section :label="t('nav.members')">
+      <DataTable :columns="columns" :rows="members" row-key="id">
+        <template #cell-role="{ row }">
+          <Select
+            v-if="can('member:set-role')"
+            :model-value="row.role"
+            :options="roleOptions"
+            :disabled="busy"
+            :aria-label="t('members.role')"
+            @update:model-value="(r) => r !== row.role && setRole(row, String(r))"
+          />
+          <Tag v-else>{{ t(`role.${row.role}`) }}</Tag>
+        </template>
+        <template #cell-joinedAt="{ row }">{{ fmt(row.joinedAt) }}</template>
+        <template #cell-actions="{ row }">
+          <Button
+            v-if="isSelf(row) ? !org.personal : can('member:remove')"
+            variant="danger"
+            size="sm"
+            @click="pending = row"
+          >
+            {{ isSelf(row) ? t('members.leave') : t('members.remove') }}
+          </Button>
+        </template>
+      </DataTable>
+    </Section>
 
-    <template v-if="canInvite">
-      <h2>{{ t('members.invitations') }}</h2>
-      <div class="row">
-        <Select v-model="inviteRole" :options="roleOptions" :aria-label="t('members.role')" />
-        <Button variant="accent" :disabled="busy" @click="createInvite">{{ t('members.invite') }}</Button>
-      </div>
-      <div v-if="link" ref="linkBox">
-        <p>{{ t('members.linkOnce') }}</p>
+    <Section v-if="canInvite" :label="t('members.invitations')">
+      <Card>
         <div class="row">
-          <TextInput :model-value="link" :aria-label="t('members.link')" readonly @focus="($event.target as HTMLInputElement).select()" />
-          <Button @click="copyLink">{{ copied ? t('members.copied') : t('members.copy') }}</Button>
+          <Select v-model="inviteRole" :options="roleOptions" :aria-label="t('members.role')" />
+          <Button variant="accent" :disabled="busy" @click="createInvite">{{ t('members.invite') }}</Button>
         </div>
-      </div>
-      <Table :columns="inviteColumns" :rows="invites" row-key="id">
-        <template #cell-role="{ row }"><Badge>{{ t(`role.${row.role}`) }}</Badge></template>
+        <div v-if="link" ref="linkBox" class="link">
+          <span class="muted">{{ t('members.linkOnce') }}</span>
+          <div class="row">
+            <TextInput :model-value="link" :aria-label="t('members.link')" readonly @focus="($event.target as HTMLInputElement).select()" />
+            <Button @click="copyLink">{{ copied ? t('members.copied') : t('members.copy') }}</Button>
+          </div>
+        </div>
+      </Card>
+      <DataTable :columns="inviteColumns" :rows="invites" row-key="id">
+        <template #cell-role="{ row }"><Tag>{{ t(`role.${row.role}`) }}</Tag></template>
         <template #cell-expiresAt="{ row }">{{ fmt(row.expiresAt) }}</template>
         <template #cell-actions="{ row }">
           <Button variant="danger" size="sm" :disabled="busy" @click="revokeInvite(row)">{{ t('profile.revoke') }}</Button>
         </template>
-      </Table>
-    </template>
+      </DataTable>
+    </Section>
 
     <Dialog
       :open="!!pending"
@@ -225,8 +229,12 @@ watch(
 <style scoped>
 .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 12px 0;
+}
+.link {
+  display: grid;
+  gap: 6px;
 }
 </style>
