@@ -270,7 +270,7 @@ func TestDiskScriptEmitsReadyMarker(t *testing.T) {
 		if strings.Contains(probe, "--expand-environment") || !strings.Contains(probe, "sh /run/vmm-ready.sh") || !strings.Contains(s, "<<'VMM_READY'") {
 			t.Errorf("probe depends on systemd expansion rules:\n%s", s)
 		}
-		if n := strings.Count(s, ReadyMarker); n != 1 {
+		if n := strings.Count(s, proto.ReadyMarker); n != 1 {
 			t.Errorf("marker appears %d times, want 1:\n%s", n, s)
 		}
 	}

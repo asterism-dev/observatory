@@ -1,18 +1,12 @@
-// Command init is the guest's PID 1; this is a placeholder until the real init lands.
+// Command init is the guest's PID 1 and, under other names, the guest-side helper tools.
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"github.com/asterism-dev/observatory/internal/version"
+	"github.com/asterism-dev/observatory/internal/guestinit"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println(version.Version)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "not implemented")
-	os.Exit(1)
+	os.Exit(guestinit.Main(os.Args))
 }

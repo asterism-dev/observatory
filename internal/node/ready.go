@@ -8,13 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"time"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-const (
-	// ReadyMarker is what the guest writes to its console once its primary NIC has an address.
-	ReadyMarker = "vmm-guest-ready"
-	ConsoleLog  = "console.log"
-)
+const ConsoleLog = "console.log"
 
 // ConsoleOffset is the console log's current size; WaitReady ignores everything before it.
 func ConsoleOffset(path string) (int64, error) {
@@ -28,9 +26,9 @@ func ConsoleOffset(path string) (int64, error) {
 	return st.Size(), nil
 }
 
-// WaitReady polls the console log until ReadyMarker appears after offset.
+// WaitReady polls the console log until proto.ReadyMarker appears after offset.
 func WaitReady(ctx context.Context, path string, offset int64, every time.Duration) error {
-	return WaitConsole(ctx, path, offset, every, ReadyMarker)
+	return WaitConsole(ctx, path, offset, every, proto.ReadyMarker)
 }
 
 // WaitConsole polls the console log until text appears after offset.

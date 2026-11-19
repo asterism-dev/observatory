@@ -13,6 +13,8 @@ import (
 
 	"github.com/lima-vm/go-qcow2reader"
 	"github.com/lima-vm/go-qcow2reader/convert"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 // EnsureBaseImage downloads url once into imagesDir and converts it (qcow2 or raw) to a raw disk.
@@ -226,7 +228,7 @@ for i in $(seq 300); do
 done
 VMM_READY
 systemd-run --no-block --collect --description='vmm ready probe' sh /run/vmm-ready.sh
-`, strings.ToLower(f.MAC), ReadyMarker)
+`, strings.ToLower(f.MAC), proto.ReadyMarker)
 	return b.String()
 }
 

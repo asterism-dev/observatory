@@ -25,7 +25,7 @@ func appendFile(t *testing.T, path, s string) {
 
 func TestWaitReadyIgnoresOldOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ConsoleLog)
-	appendFile(t, path, "boot 1\n"+ReadyMarker+"\r\n")
+	appendFile(t, path, "boot 1\n"+proto.ReadyMarker+"\r\n")
 	off, err := ConsoleOffset(path)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestWaitReadyIgnoresOldOutput(t *testing.T) {
 		t.Fatalf("WaitReady = %v, want deadline exceeded", err)
 	}
 	// The guest may write the marker onto a line that already holds other output.
-	appendFile(t, path, "spike login: "+ReadyMarker+"\r\n")
+	appendFile(t, path, "spike login: "+proto.ReadyMarker+"\r\n")
 	if err := WaitReady(context.Background(), path, off, 10*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestWaitReadyMissingFile(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		appendFile(t, path, ReadyMarker+"\n")
+		appendFile(t, path, proto.ReadyMarker+"\n")
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
