@@ -73,6 +73,12 @@ async function refreshRun() {
 
 const reload = () => Promise.all([refresh(), refreshRun()])
 
+function onStarted(runId: string) {
+  seenRunning.add(runId)
+  selected.value = []
+  reload()
+}
+
 async function cancelRun() {
   cancelling.value = true
   try {
@@ -155,7 +161,7 @@ watch(
       </ResourceRow>
     </ResourceList>
     <AddNodeDialog v-model:open="addOpen" :org-id="org.id" @created="refresh" />
-    <UpdateNodesDialog v-model:open="updateOpen" :org-id="org.id" :nodes="selectedNodes" @started="selected = []; reload()" />
+    <UpdateNodesDialog v-model:open="updateOpen" :org-id="org.id" :nodes="selectedNodes" @started="onStarted" />
   </Page>
 </template>
 

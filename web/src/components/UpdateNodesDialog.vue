@@ -5,10 +5,10 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import { vmImpact } from '@/composables/nodeUpdates'
-import type { NodeInfo } from '@/composables/nodes'
+import type { NodeInfo, UpdateRun } from '@/composables/nodes'
 
 const props = defineProps<{ open: boolean; orgId: string; nodes: NodeInfo[] }>()
-const emit = defineEmits<{ 'update:open': [boolean]; started: [] }>()
+const emit = defineEmits<{ 'update:open': [boolean]; started: [runId: string] }>()
 
 const { t } = useI18n()
 const busy = ref(false)
@@ -23,12 +23,12 @@ async function start() {
   busy.value = true
   error.value = ''
   try {
-    await api(`/api/orgs/${props.orgId}/node-updates`, {
+    const run = await api<UpdateRun>(`/api/orgs/${props.orgId}/node-updates`, {
       method: 'POST',
       body: JSON.stringify({ nodes: props.nodes.map((n) => n.id) }),
     })
     emit('update:open', false)
-    emit('started')
+    emit('started', run.id)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
