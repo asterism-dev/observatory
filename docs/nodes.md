@@ -172,6 +172,11 @@ the offline phase of a re-enroll. When the installer fails before it restarts th
 running and reports the update as failed to the hub, right after it reconnects if the connection was down; the next
 update retries.
 
+The hub gives a node 15 minutes to come back on the hub's version and 10 more for its VMs to settle. A timeout only
+fails the node in the hub: the installer may still be running and finish later, so check
+`journalctl -u observatory-node-update` on the node. The next update follows a still-running installer unit instead of
+starting a second one.
+
 What happens to the VMs depends on the Firecracker version (the node reports it as `hypervisor`):
 
 - **Same Firecracker version:** the service restart hibernates the VMs and resumes them afterwards
