@@ -20,7 +20,7 @@ RUN apt-get -y -q update \
 RUN install -d -m 0755 /etc/apt/keyrings; \
     addrepo() { \
       name=$1 url=$2 suite=$3 component=$4 keyurl=$5 fpr=$6; shift 6; \
-      curl -fsSL --proto =https --proto-redir =https --retry 3 -o "/tmp/$name.key" "$keyurl"; \
+      curl -fsSL --proto =https --proto-redir =https --retry 5 --retry-all-errors -o "/tmp/$name.key" "$keyurl"; \
       primary=$(gpg --show-keys --with-colons "/tmp/$name.key" | awk -F: '/^pub:/ { p = 1; next } p && /^fpr:/ { print $10; p = 0 }'); \
       echo "$primary" | grep -qx "$fpr" || { echo "$name key fingerprint is not $fpr (got $primary)" >&2; exit 1; }; \
       gpg --batch --quiet --import "/tmp/$name.key"; \
@@ -61,7 +61,7 @@ ARG CHROME_VERSION=158.0.8127.36
 ARG CHROME_SHA256=dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7
 
 RUN fetch() { \
-      curl -fsSL --proto =https --proto-redir =https --retry 3 -o "/tmp/$1" "$2"; \
+      curl -fsSL --proto =https --proto-redir =https --retry 5 --retry-all-errors -o "/tmp/$1" "$2"; \
       echo "$3  /tmp/$1" | sha256sum -c --quiet -; \
     }; \
     fetch node "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" "$NODE_SHA256"; \

@@ -5,7 +5,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       build-essential bc bison flex libelf-dev libssl-dev xz-utils curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN curl -fsSLO "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz" \
+RUN curl -fsSLO --retry 5 --retry-all-errors "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KERNEL_VERSION.tar.xz" \
     && echo "$KERNEL_SHA256  linux-$KERNEL_VERSION.tar.xz" | sha256sum -c - \
     && tar -xJf "linux-$KERNEL_VERSION.tar.xz" --strip-components=1 \
     && rm "linux-$KERNEL_VERSION.tar.xz"
@@ -27,7 +27,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
       build-essential curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN curl -fsSLO "https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$E2FSPROGS_VERSION/e2fsprogs-$E2FSPROGS_VERSION.tar.xz" \
+RUN curl -fsSLO --retry 5 --retry-all-errors "https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$E2FSPROGS_VERSION/e2fsprogs-$E2FSPROGS_VERSION.tar.xz" \
     && echo "$E2FSPROGS_SHA256  e2fsprogs-$E2FSPROGS_VERSION.tar.xz" | sha256sum -c - \
     && tar -xJf "e2fsprogs-$E2FSPROGS_VERSION.tar.xz" --strip-components=1
 RUN LDFLAGS=-static ./configure --disable-nls --disable-fuse2fs --disable-defrag --disable-e2initrd-helper \
