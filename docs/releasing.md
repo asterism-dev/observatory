@@ -8,15 +8,34 @@ Every push to `main` runs `.github/workflows/release.yml`:
    and the tag. Only `docs`, `chore`, `ci`, `test`, `style` or `build` commits: the run ends without a release.
 2. **Binaries:** `scripts/release-build.sh` builds `observatory` (CLI) and `hub` for linux and darwin on amd64 and
    arm64, and `observatory-node` for linux/amd64, one `tar.gz` each, plus `SHA256SUMS`.
-3. **Images:** `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` for linux/amd64 and linux/arm64, tagged with the
-   version.
-4. **Release:** a GitHub release named after the tag, with the changelog section as text and the archives attached;
+3. **Guest boot files:** the `guestboot` job builds `ghcr.io/asterism-dev/observatory-guestboot` (guest kernel,
+   `mke2fs`, `resize2fs`) for linux/amd64, tagged with `GUESTBOOT_TAG` from `deploy/hub.Dockerfile`. The kernel build is
+   slow, so it runs only when that tag is not published yet; raise the tag to rebuild.
+4. **Images:** `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` for linux/amd64 and linux/arm64, and the guest
+   image `ghcr.io/asterism-dev/observatory-guest` for linux/amd64, tagged with the version. The hub image bundles the
+   guest boot files of step 3.
+5. **Release:** a GitHub release named after the tag, with the changelog section as text and the archives attached;
    then `latest` moves to this version's images.
 
 The version lives only in the tag; binaries get it at build time (`observatory version` prints it). PR titles become
 the squash commit messages on `main` (the repository squashes with the PR title and an empty body), so they decide the
 next version: write them as conventional commits. Commitizen reads every line of a commit message, so a body line such
 as `BREAKING CHANGE: …` would count too.
+
+## Package visibility
+
+A new GHCR package is private, and a workflow cannot change that with `GITHUB_TOKEN`. Nodes pull
+`observatory-guest` anonymously, and hub builds outside the release workflow pull `observatory-guestboot`, so make
+both public once, after the first release that publishes them:
+
+1. On GitHub open the organization `asterism-dev` → **Packages** → `observatory-guest`.
+2. **Package settings** → **Danger Zone** → **Change visibility** → **Public**, type the package name to confirm.
+3. Repeat for `observatory-guestboot`.
+
+GitHub has no REST endpoint to change the visibility, so this is a UI step. Check the result with
+`gh api /orgs/asterism-dev/packages/container/observatory-guest --jq .visibility` (needs the `read:packages` scope)
+or with an anonymous `docker buildx imagetools inspect ghcr.io/asterism-dev/observatory-guest:latest` after
+`docker logout ghcr.io`.
 
 ## If a release fails
 

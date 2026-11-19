@@ -194,7 +194,9 @@ curl -fsSL http://hub.example:8090/node/install.sh | sudo sh -s -- --hub http://
 
 Upgrade the hub first, then update all nodes from the hub. VMs created with the old runtime must be recreated: the
 update hibernates them as on any node restart, but they cannot be started or resumed again on the new runtime. Their
-data disks can be detached and attached to the new VM.
+data disks can be detached and attached to the new VM. Nodes pull the guest image `ghcr.io/asterism-dev/observatory-guest`
+anonymously, so the package must be public before the first upgrade ([releasing.md](releasing.md#package-visibility)).
+On its first start the new node removes the old runtime's guest and base images from the images directory.
 
 ## Re-enroll
 
