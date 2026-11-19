@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ type Fleet struct {
 	betweenVMReads func() // test hook in vmsBack
 
 	registryHost string
+	plainHTTP    bool
 	issuer       *registry.Issuer
 	builderBoot  BuilderBoot
 }
@@ -69,9 +71,9 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	return f, nil
 }
 
-// PullImagesFrom makes nodes pull VM images through the hub's registry proxy at host, with node pull tokens of iss; call it before nodes connect.
-func (f *Fleet) PullImagesFrom(host string, iss registry.Issuer) {
-	f.registryHost, f.issuer = host, &iss
+// PullImagesFrom makes nodes pull VM images through the hub's registry proxy at the hub URL nodes reach, with node pull tokens of iss; call it before nodes connect.
+func (f *Fleet) PullImagesFrom(hub *url.URL, iss registry.Issuer) {
+	f.registryHost, f.plainHTTP, f.issuer = hub.Host, hub.Scheme == "http", &iss
 }
 
 // BootBuildersWith makes builder VMs boot with fn's env instead of their owner's; call it before nodes connect.
@@ -377,7 +379,7 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 		digest = ver.PlatformDigest
 	}
 	repo := "i/" + ver.ImageID.String()
-	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: digest}
+	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: digest, PlainHTTP: f.plainHTTP}
 	if ref.PullToken, err = f.issuer.NodePullToken(v.OrgID, []string{repo}); err != nil {
 		slog.Error("node pull token", "vm", v.ID, "err", err)
 	}

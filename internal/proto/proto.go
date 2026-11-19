@@ -43,6 +43,7 @@ type ImageRef struct {
 	Digest    string `json:"digest"`
 	PullToken string `json:"pullToken,omitempty"` // node memory only, like Boot
 	Gone      bool   `json:"gone,omitempty"`      // the hub no longer has the image
+	PlainHTTP bool   `json:"plainHTTP,omitempty"` // the hub serves the registry over http
 }
 
 type Boot struct {

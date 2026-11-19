@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -322,4 +324,31 @@ func mustRef(t *testing.T, s string) name.Reference {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestPullPlainHTTPOption(t *testing.T) {
+	addr := testRegistry(t)
+	img := platformImage(t, "amd64", v1.Config{})
+	digest, err := img.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(mustRef(t, addr+"/app@"+digest.String()), img); err != nil {
+		t.Fatal(err)
+	}
+	dial := remote.DefaultTransport.(*http.Transport).DialContext
+	remote.DefaultTransport.(*http.Transport).DialContext = func(ctx context.Context, network, host string) (net.Conn, error) {
+		if host == "hub.example:5000" {
+			host = addr
+		}
+		return dial(ctx, network, host)
+	}
+	t.Cleanup(func() { remote.DefaultTransport.(*http.Transport).DialContext = dial })
+	ref := "hub.example:5000/app@" + digest.String()
+	if _, err := (Store{Dir: t.TempDir()}).Pull(context.Background(), ref, authn.Anonymous); err == nil {
+		t.Fatal("pull from a public host name over http without the option succeeded")
+	}
+	if _, err := (Store{Dir: t.TempDir()}).Pull(context.Background(), ref, authn.Anonymous, name.Insecure); err != nil {
+		t.Fatal(err)
+	}
 }

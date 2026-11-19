@@ -92,6 +92,10 @@ cannot read it.
   at least 32 characters.
 - `OBSERVATORY_BUILDER_IMAGE` overrides the builder image repository and `OBSERVATORY_BUILDER_HUB_URL` the hub URL
   builder VMs use (default: the public URL); set the latter when VMs cannot reach the public URL.
+- `OBSERVATORY_NODE_URL` is the hub URL nodes pull VM images from (default: the public URL). Set it when browsers and
+  nodes reach the hub at different addresses, e.g. `http://localhost:8090` for you and `http://100.64.0.1:8090` over an
+  overlay network for nodes. Use `https` for public hubs; plain `http` (for nodes and `OBSERVATORY_BUILDER_HUB_URL`)
+  only on trusted private networks such as an overlay or VPN.
 
 ## Image registry
 

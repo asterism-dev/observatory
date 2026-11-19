@@ -56,7 +56,7 @@ func fakeTools(t *testing.T, dir, buildctlExit string) {
 	t.Helper()
 	bin := t.TempDir()
 	scripts := map[string]string{
-		"buildkitd": "exec sleep 60\n",
+		"buildkitd": "cp \"$2\" " + dir + "/buildkitd.toml\nexec sleep 60\n",
 		"vmm-token": `[ -n "$FAKE_TOKEN_LEAK" ] && echo "npm_s3cr3t_value rejected" >&2 && exit 1
 [ "$1" = github ] && echo ghs_integration_token && exit 0; exit 3` + "\n",
 		"buildctl": `[ "$1" = debug ] && exit 0
@@ -179,5 +179,17 @@ func assertCleanedUp(t *testing.T, dir string) {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Errorf("%s still exists after Run (stat: %v)", name, err)
 		}
+	}
+}
+
+func TestAgentMarksPlainHTTPHubInBuildkitConfig(t *testing.T) {
+	_, rec, _, err := runAgent(t, "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := strings.TrimPrefix(os.Getenv("OBSERVATORY_BUILD_URL"), "http://")
+	conf, _ := os.ReadFile(filepath.Join(rec, "buildkitd.toml"))
+	if want := "[registry.\"" + host + "\"]\n  http = true\n"; string(conf) != want {
+		t.Errorf("buildkitd.toml = %q, want %q", conf, want)
 	}
 }

@@ -41,8 +41,9 @@ type Pulled struct {
 	SizeBytes int64 // compressed layers
 }
 
-func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (Pulled, error) {
-	r, err := name.ParseReference(ref)
+// Pull fetches ref; opts such as name.Insecure apply to parsing it.
+func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator, opts ...name.Option) (Pulled, error) {
+	r, err := name.ParseReference(ref, opts...)
 	if err != nil {
 		return Pulled{}, err
 	}
