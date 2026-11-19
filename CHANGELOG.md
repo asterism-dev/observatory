@@ -1,3 +1,9 @@
+## v0.4.0 (2026-11-19)
+
+### Feat
+
+- release version checks and cli self-update (#21)
+
 ## v0.3.0 (2026-11-19)
 
 ### Feat
