@@ -1,3 +1,9 @@
+## v0.8.0 (2026-11-19)
+
+### Feat
+
+- **images**: images as an org resource with registry, builds and defaults (#26)
+
 ## v0.7.1 (2026-11-19)
 
 ### Fix
