@@ -93,8 +93,9 @@ state they were in before, with memory kept unless the update changes the hyperv
 - The node downloads `/node/install.sh` from its hub and starts it detached with
   `systemd-run --unit observatory-node-update --collect sh <script> --update --hub <hub>` so the script survives the
   service restart it triggers. A second `update` while that unit is active is ignored.
-- The node reports progress to the hub *(message shape is the builder's call)*: `started` once the unit runs, and
-  `failed` with a reason if starting the unit fails or the unit exits unsuccessfully. The node watches the unit's
+- The node reports only failures to the hub (`{"type":"update","update":{"error":…}}`) if starting the unit fails or
+  the unit exits unsuccessfully; success shows as a re-register on the new version. A report sent while disconnected
+  is dropped and the hub falls back to its timeout. The node watches the unit's
   result (`systemctl show -p Result,ExecMainStatus`) while it is still the old binary; a successful script ends in a
   service restart, so the old binary never sees success. *(our call: fail fast instead of waiting for the timeout)*
 - `install.sh --update` removes the Firecracker marker (and anything else it wrote for the restart) on any failure
@@ -104,7 +105,7 @@ state they were in before, with memory kept unless the update changes the hyperv
 
 ### VMs during the restart
 
-- `stopAll` checks the marker: present → stop VMs gracefully (60 s budget, then kill) instead of hibernating; the marker
+- `stopAll` checks the marker: present → stop VMs gracefully (the existing 240 s stop budget, then kill) instead of hibernating; the marker
   is removed after the node starts again.
 - The hub never changes a VM's desired power for an update. After the restart `restoreAll` brings every VM back to its
   desired state: hibernated memory is resumed when it could be kept, otherwise the VM cold-boots (running, suspended),
@@ -116,7 +117,8 @@ state they were in before, with memory kept unless the update changes the hyperv
 - A run is a list of node IDs of one org, processed in list order, one at a time. At most one run per org.
 - Per node: send `update`, then wait until the node registers again with `version == hub version`, then until every VM
   on the node has reached its desired power state or reported an error → done. Failure when it reports `failed`, is
-  not back on the hub version within 15 minutes, a VM reports an error while restoring (the failure names the VM), or
+  not back on the hub version within 15 minutes, a VM stays in error for over 2 minutes while restoring (the failure names the VM and its error; disk-attached VMs
+  error briefly while the underlay comes up), or
   the VMs are not all back within a further 10 minutes. Re-registrations with the old version while
   the update runs are ignored: the installer touches networking, so the old binary may reconnect mid-update.
   *(our call)* A failure stops the run.

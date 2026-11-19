@@ -166,9 +166,9 @@ cold-boot. A crash of the node service or a power loss still cold-boots them.
 - A Firecracker upgrade on the node (re-running the installer) can make existing memory states unloadable:
   hibernated and suspended VMs then cold-boot and their memory is lost, and memory restores from older snapshots boot
   fresh from the restored disks. When upgrading by re-enrolling, shut such VMs down first.
-- Hub-driven updates and any node restart after a Firecracker change shut VMs down cleanly instead of hibernating
-  them (the node also detects a changed Firecracker binary itself); they cold-boot and lose their memory, not their
-  disks ([nodes.md](nodes.md#updating)).
+- A node restart after a Firecracker change (hub-driven or not) shuts VMs down cleanly instead of hibernating them (the
+  node also detects a changed Firecracker binary itself); they cold-boot and lose their memory, not their disks
+  ([nodes.md](nodes.md#updating)).
 - Snapshot memory and root disks live on the node: no restore or fork on another node, no export.
 - **Any desired change wakes a suspended VM**, including ones that would not need it (for example a changed
   auto-suspend setting).

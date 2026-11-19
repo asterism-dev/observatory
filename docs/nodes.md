@@ -180,6 +180,10 @@ What happens to the VMs depends on the Firecracker version (the node reports it 
   back to their power state and lose their memory. The marker is removed when the update fails before the restart,
   and by the new node at start.
 
+The update dialog's "pause" assumes the hibernated memory fits on the node's disk; otherwise VMs are stopped as on
+any node restart. A hub-driven update runs the hub's `install.sh` as root on the node, so serve the hub over https in
+production ([deploy.md](deploy.md#serving-modes)).
+
 Nodes on releases before hub updates existed do not report a hypervisor and cannot be updated from the hub. Update
 them once by hand; later updates work from the hub. On the node host:
 
