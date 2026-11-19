@@ -70,10 +70,17 @@ func New(c node.Config) (*Provider, error) {
 
 func (p *Provider) Name() string { return "firecracker" }
 
-var firecrackerVersionCmd = func() ([]byte, error) { return exec.Command("firecracker", "--version").Output() }
+var (
+	firecrackerVersionCmd = func(ctx context.Context) ([]byte, error) {
+		return exec.CommandContext(ctx, "firecracker", "--version").Output()
+	}
+	versionTimeout = 5 * time.Second
+)
 
 func installedFirecracker() (string, error) {
-	out, err := firecrackerVersionCmd()
+	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+	defer cancel()
+	out, err := firecrackerVersionCmd(ctx)
 	if err != nil {
 		return "", fmt.Errorf("firecracker --version: %w", err)
 	}

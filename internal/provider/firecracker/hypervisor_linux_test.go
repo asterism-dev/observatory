@@ -1,8 +1,10 @@
 package firecracker
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -15,8 +17,9 @@ func TestFirecrackerHypervisor(t *testing.T) {
 }
 
 func TestFirecrackerHypervisorChanged(t *testing.T) {
-	old := firecrackerVersionCmd
-	t.Cleanup(func() { firecrackerVersionCmd = old })
+	old, oldTimeout := firecrackerVersionCmd, versionTimeout
+	t.Cleanup(func() { firecrackerVersionCmd, versionTimeout = old, oldTimeout })
+	versionTimeout = 10 * time.Millisecond
 	p := &Provider{fcVersion: "Firecracker v1.18.0"}
 	for _, c := range []struct {
 		out  string
@@ -27,9 +30,16 @@ func TestFirecrackerHypervisorChanged(t *testing.T) {
 		{"Firecracker v1.19.0\n", nil, true},
 		{"", errors.New("not found"), false},
 	} {
-		firecrackerVersionCmd = func() ([]byte, error) { return []byte(c.out), c.err }
+		firecrackerVersionCmd = func(context.Context) ([]byte, error) { return []byte(c.out), c.err }
 		if got := p.HypervisorChanged(); got != c.want {
 			t.Errorf("%q, %v: changed = %v, want %v", c.out, c.err, got, c.want)
 		}
+	}
+	firecrackerVersionCmd = func(ctx context.Context) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if p.HypervisorChanged() {
+		t.Error("hung version check: changed")
 	}
 }
