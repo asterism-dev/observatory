@@ -15,14 +15,14 @@ die() {
 }
 say() { echo "==> $*"; }
 
-HUB='' TOKEN='' MEMORY_MB='' UPDATE='' result=installed
+HUB='' TOKEN='' TOKEN_GIVEN='' MEMORY_MB='' UPDATE='' result=installed
 while [ $# -gt 0 ]; do
 	case $1 in
 	--hub | --token | --memory-mb)
 		[ $# -ge 2 ] || usage
 		case $1 in
 		--hub) HUB=${2%/} ;;
-		--token) TOKEN=$2 ;;
+		--token) TOKEN=$2 TOKEN_GIVEN=1 ;;
 		--memory-mb) MEMORY_MB=$2 ;;
 		esac
 		shift 2
@@ -31,6 +31,7 @@ while [ $# -gt 0 ]; do
 		# Under curl | sh the script itself is stdin: reading the token would swallow the rest of the script.
 		[ -f "$0" ] || die "--token-stdin needs the script as a file: curl -fsSLO HUB/node/install.sh, then sudo sh install.sh ... --token-stdin"
 		IFS= read -r TOKEN || true
+		TOKEN_GIVEN=1
 		shift
 		;;
 	--update)
@@ -45,7 +46,7 @@ case $MEMORY_MB in
 esac
 [ -n "$HUB" ] || usage
 if [ -n "$UPDATE" ]; then
-	[ -z "$TOKEN$MEMORY_MB" ] || usage
+	[ -z "$TOKEN_GIVEN$MEMORY_MB" ] || usage
 	[ -f /etc/observatory-node/node.json ] || die "--update needs an enrolled node (/etc/observatory-node/node.json missing)"
 else
 	[ -n "$TOKEN" ] || usage

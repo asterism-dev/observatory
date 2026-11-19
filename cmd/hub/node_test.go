@@ -64,6 +64,18 @@ func TestInstallUpdateRefusesToken(t *testing.T) {
 	}
 }
 
+func TestInstallUpdateRefusesTokenStdin(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(script, installScript, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", script, "--hub", "http://x", "--update", "--token-stdin")
+	out, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 2 {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
 func TestInstallUpdateNeedsEnrolledNode(t *testing.T) {
 	if _, err := os.Stat("/etc/observatory-node"); err == nil {
 		t.Skip("/etc/observatory-node exists on this machine")
