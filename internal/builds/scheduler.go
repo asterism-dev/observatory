@@ -3,6 +3,7 @@ package builds
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,9 @@ const (
 	builderDiskGB   = 40
 	latestTag       = "latest"
 )
+
+// errNameTaken tells a VM name already in the org apart from a build that is no longer queued.
+var errNameTaken = errors.New("a VM with the builder's name exists")
 
 type Scheduler struct {
 	store      *store.Store
@@ -165,13 +169,24 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 	if err != nil {
 		return err
 	}
-	err = s.store.InTx(ctx, func(tx *store.Store) error {
-		created, err := tx.CreateVM(ctx, v)
-		if err != nil {
-			return err
+	base := v.Name
+	for try := 0; try < 3; try++ {
+		if try > 0 {
+			v.Name = base + "-" + strings.ToLower(rand.Text()[:4])
 		}
-		return tx.StartImageBuild(ctx, b.ID, node, created.ID, secret, s.Now())
-	})
+		err = s.store.InTx(ctx, func(tx *store.Store) error {
+			created, err := tx.CreateVM(ctx, v)
+			if errors.Is(err, store.ErrConflict) {
+				return errNameTaken
+			} else if err != nil {
+				return err
+			}
+			return tx.StartImageBuild(ctx, b.ID, node, created.ID, secret, s.Now())
+		})
+		if !errors.Is(err, errNameTaken) {
+			break
+		}
+	}
 	switch {
 	case errors.Is(err, store.ErrLimitExceeded):
 		return s.fail(ctx, b.ID, fmt.Sprintf("the builder VM (%d vCPU, %d MB, %d GB) would exceed the limits", builderCPUs, builderMemoryMB, builderDiskGB))
@@ -305,6 +320,11 @@ func (s *Scheduler) BootEnv(ctx context.Context, v store.VM) (map[string]string,
 			tok, err := s.store.IntegrationToken(ctx, igs[i])
 			if err != nil {
 				return nil, nil, err
+			}
+			if !igs[i].WasInVM {
+				if err := s.store.MarkIntegrationInVM(ctx, igs[i]); err != nil {
+					return nil, nil, err
+				}
 			}
 			tokens = append(tokens, proto.IntegrationToken{Kind: ref.Name, Token: tok, ExpiresAt: igs[i].AccessExpiresAt})
 		}

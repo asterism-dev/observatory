@@ -231,6 +231,44 @@ func TestBuildCreatesHiddenBuilderVM(t *testing.T) {
 	if len(tokens) != 1 || tokens[0].Kind != "github" || tokens[0].Token != dummyGitHub {
 		t.Fatalf("integration tokens: %+v", tokens)
 	}
+	if igs := e.listIntegrations(aliceTok, org).Integrations; len(igs) != 1 || !igs[0].WasInVM {
+		t.Fatalf("real token in a builder not recorded: %+v", igs)
+	}
+
+	device, _ := e.createDevice(aliceTok, org, "laptop")
+	plain, err := e.store.CreateVM(ctx, store.VM{OrgID: org, NodeID: *b.NodeID, UserID: &alice.ID, Name: "plain", CPUs: 1, MemoryMB: 512, DiskGB: 10, CreatedBy: alice.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.reload()
+	st, err := e.net.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ports map[string][]string
+	for _, o := range st.Orgs {
+		if o.ID != org.String() {
+			continue
+		}
+		ports = map[string][]string{}
+		for _, p := range o.Ports {
+			ports[p.Name] = p.AllowFrom
+		}
+		for name := range o.Records {
+			if strings.HasPrefix(name, "build-") {
+				t.Fatalf("builder DNS record %s", name)
+			}
+		}
+		if o.Records["plain.internal"] == "" {
+			t.Fatalf("records: %v", o.Records)
+		}
+	}
+	if allow, ok := ports[b.VMID.String()+"-mgmt"]; !ok || len(allow) != 0 {
+		t.Fatalf("builder mgmt port: present %v, allowFrom %v", ok, allow)
+	}
+	if allow := ports[plain.ID.String()+"-mgmt"]; !slices.Equal(allow, []string{device.IP}) {
+		t.Fatalf("plain VM allowFrom %v, device %s", allow, device.IP)
+	}
 	if got, err := e.store.BuildBySecret(ctx, secret); err != nil || got.ID != b.ID {
 		t.Fatalf("build by secret: %+v %v", got, err)
 	}
@@ -504,5 +542,27 @@ func TestBuildResultLinksVersion(t *testing.T) {
 	}
 	if rec := e.agentDo("POST", "/api/builds/"+b4.ID.String()+"/result", secret4, `{"error":"again"}`); rec.Code != 401 {
 		t.Fatalf("result after the build: %d", rec.Code)
+	}
+}
+
+func TestBuildRenamesOnVMNameConflict(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.recipeImage(aliceTok, org, "tools", "")
+	node := e.node(org)
+	id := e.startBuild(aliceTok, org, img)
+	taken := "build-" + strings.ReplaceAll(id.String(), "-", "")
+	if _, err := e.store.CreateVM(context.Background(), store.VM{OrgID: org, NodeID: node, UserID: &alice.ID, Name: taken, CPUs: 1, MemoryMB: 512, DiskGB: 10, CreatedBy: alice.ID}); err != nil {
+		t.Fatal(err)
+	}
+	e.tick()
+	b := e.build(id)
+	if b.State != store.BuildRunning || b.VMID == nil {
+		t.Fatalf("build: %+v", b)
+	}
+	v, err := e.store.VM(context.Background(), org, *b.VMID)
+	if err != nil || v.Kind != store.VMKindBuilder || !strings.HasPrefix(v.Name, taken+"-") || len(v.Name) != len(taken)+5 {
+		t.Fatalf("builder VM: %+v %v", v, err)
 	}
 }

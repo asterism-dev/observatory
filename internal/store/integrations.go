@@ -135,6 +135,12 @@ func (s *Store) IntegrationToken(ctx context.Context, v Integration) (string, er
 	return string(plain), err
 }
 
+// MarkIntegrationInVM records that v's real token reached a VM, as vm mode does.
+func (s *Store) MarkIntegrationInVM(ctx context.Context, v Integration) error {
+	_, err := s.q.Exec(ctx, "UPDATE integrations SET was_in_vm = true WHERE org_id = $1 AND id = $2", v.OrgID, v.ID)
+	return err
+}
+
 func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec IntegrationSecret) (Integration, error) {
 	if v.Mode == "" {
 		v.Mode = integrations.ModeProxy
