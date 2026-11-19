@@ -88,9 +88,20 @@ func TestConnectURLDefaultPorts(t *testing.T) {
 		"https://hub.test/": "wss://hub.test/api/nodes/connect",
 		"http://h:8090":     "ws://h:8090/api/nodes/connect",
 		"http://10.0.0.1":   "ws://10.0.0.1/api/nodes/connect",
+		"https://h/obs":     "wss://h/obs/api/nodes/connect",
+		"https://h/a/obs/":  "wss://h/a/obs/api/nodes/connect",
 	} {
 		if got, err := connectURL(hub); err != nil || got != want {
 			t.Errorf("%s → %q, %v; want %q", hub, got, err, want)
+		}
+	}
+}
+
+func TestConnectURLRoundTripsHubBase(t *testing.T) {
+	for _, hub := range []string{"https://hub.test", "http://h:8090", "https://h/obs", "https://h/a/obs"} {
+		c, err := connectURL(hub)
+		if err != nil || hubBase(c) != hub {
+			t.Errorf("%s → %q → %q, %v", hub, c, hubBase(c), err)
 		}
 	}
 }

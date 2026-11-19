@@ -79,17 +79,17 @@ func CheckEnrollMemory(path string, memoryMB int) error {
 	return err
 }
 
-// connectURL turns the hub's http(s)://host:port into the node's websocket URL.
+// connectURL turns the hub's http(s)://host:port[/path] into the node's websocket URL.
 func connectURL(hub string) (string, error) {
 	u, err := url.Parse(hub)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", fmt.Errorf("hub %q: want http(s)://host[:port]", hub)
+		return "", fmt.Errorf("hub %q: want http(s)://host[:port][/path]", hub)
 	}
 	scheme := "ws"
 	if u.Scheme == "https" {
 		scheme = "wss"
 	}
-	return scheme + "://" + u.Host + "/api/nodes/connect", nil
+	return scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/") + "/api/nodes/connect", nil
 }
 
 func setJSON(doc map[string]json.RawMessage, key string, v any) error {

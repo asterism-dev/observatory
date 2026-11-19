@@ -5,8 +5,8 @@ set -eu
 FIRECRACKER_VERSION=v1.18.0
 
 usage() {
-	echo "usage: install.sh --hub http://HOST[:PORT] --token TOKEN|--token-stdin [--memory-mb N]" >&2
-	echo "       install.sh --hub http://HOST[:PORT] --update" >&2
+	echo "usage: install.sh --hub http(s)://HOST[:PORT][/PATH] --token TOKEN|--token-stdin [--memory-mb N]" >&2
+	echo "       install.sh --hub http(s)://HOST[:PORT][/PATH] --update" >&2
 	exit 2
 }
 die() {
@@ -53,7 +53,7 @@ else
 fi
 case $HUB in
 http://?* | https://?*) ;;
-*) die "--hub must be http(s)://HOST[:PORT], got '$HUB'" ;;
+*) die "--hub must be http(s)://HOST[:PORT][/PATH], got '$HUB'" ;;
 esac
 
 [ "$(uname -s)/$(uname -m)" = Linux/x86_64 ] || die "nodes need an amd64 (x86_64) Linux host, this one is $(uname -s)/$(uname -m)"
