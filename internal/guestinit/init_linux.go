@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -44,6 +45,25 @@ func Run() error {
 	if err := root.EnsureDev(); err != nil {
 		return err
 	}
+	// Failures below leave a reachable or at least debuggable guest, so they are logged rather than fatal.
+	if err := root.WriteHostname(seed.Hostname, seed.InstanceID); err != nil {
+		fmt.Fprintln(os.Stderr, "init: hostname:", err)
+	}
+	if err := syscall.Sethostname([]byte(seed.Hostname)); err != nil {
+		fmt.Fprintln(os.Stderr, "init: hostname:", err)
+	}
+	if err := ConfigureNICs(seed.NICs); err != nil {
+		fmt.Fprintln(os.Stderr, "init: network:", err)
+	}
+	if err := root.WriteResolv(seed.NICs); err != nil {
+		fmt.Fprintln(os.Stderr, "init: resolv.conf:", err)
+	}
+	if _, err := root.HostKeys(false); err != nil {
+		fmt.Fprintln(os.Stderr, "init: host keys:", err)
+	}
+	if err := MountDisks(root, seed.Disks); err != nil {
+		fmt.Fprintln(os.Stderr, "init: disks:", err)
+	}
 	// A guest without the CAs still runs; only hosts bound to the egress proxy fail TLS.
 	if _, err := root.InstallCAs(seed.EgressCAs); err != nil {
 		fmt.Fprintln(os.Stderr, "init: egress CAs:", err)
@@ -52,7 +72,7 @@ func Run() error {
 		fmt.Fprintln(os.Stderr, "init: environment:", err)
 	}
 
-	announceReady()
+	go announceReadyWhenAddressed(seed.NICs)
 
 	// The kernel signals PID 1 only for ctrl-alt-del (SIGINT); the image's own poweroff/restart reaches us as its exit status.
 	sig := <-sigs
@@ -60,8 +80,12 @@ func Run() error {
 	return nil
 }
 
-// announceReady writes the ready marker to the first console that opens; Task 6 gates it on the primary NIC address.
-func announceReady() {
+// announceReadyWhenAddressed writes the ready marker once the primary NIC has an IPv4 address, giving up after 300 s like /run/vmm-ready.sh did.
+func announceReadyWhenAddressed(nics []proto.GuestNIC) {
+	if len(nics) > 0 && !waitIPv4(nics[0].Name, 300*time.Second) {
+		fmt.Fprintln(os.Stderr, "init: primary NIC got no IPv4 address, not reporting ready")
+		return
+	}
 	for _, path := range []string{"/dev/hvc0", "/dev/ttyS0"} {
 		f, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err != nil {

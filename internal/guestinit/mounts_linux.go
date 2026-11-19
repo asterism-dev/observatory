@@ -37,7 +37,7 @@ func mountRoot(dev string) (Root, error) {
 }
 
 func growRoot(dev string) error {
-	if out, err := exec.Command("/bin/resize2fs", dev).CombinedOutput(); err != nil {
+	if out, err := exec.Command(resize2fs, dev).CombinedOutput(); err != nil {
 		return fmt.Errorf("resize2fs %s: %w: %s", dev, err, out)
 	}
 	return nil
