@@ -104,7 +104,7 @@ func run() error {
 	if cfg.DevClaudeTokenURL != "" {
 		slog.Warn("dev mode: claude token endpoint overridden", "url", cfg.DevClaudeTokenURL)
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

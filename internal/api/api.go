@@ -25,6 +25,7 @@ type api struct {
 	store     *store.Store
 	z         *authz.Service
 	publicURL *url.URL
+	docsURL   string
 	fleet     *fleet.Fleet
 	network   *network.Hub
 	disks     *disks.Hub
@@ -34,13 +35,13 @@ type api struct {
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations) (*api, http.Handler) {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string) (*api, http.Handler) {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
 		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
@@ -150,8 +151,9 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		orgs = append(orgs, toOrgJSON(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user": map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
-		"orgs": orgs,
+		"user":    map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
+		"orgs":    orgs,
+		"docsURL": h.docsURL,
 	})
 }
 

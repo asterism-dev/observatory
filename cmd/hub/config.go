@@ -13,7 +13,7 @@ type config struct {
 	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, GatewayToken, GatewayHost, StorageToken string
 	SecretsKey                                                                                                            seal.Key
 	Dev, DevSkipVerify                                                                                                    bool
-	DevClaudeTokenURL                                                                                                     string
+	DevClaudeTokenURL, DocsURL                                                                                            string
 }
 
 const minTokenLen = 32
@@ -22,6 +22,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{Listen: getenv("OBSERVATORY_LISTEN")}
 	if cfg.Listen == "" {
 		cfg.Listen = ":8090"
+	}
+	if cfg.DocsURL = getenv("OBSERVATORY_DOCS_URL"); cfg.DocsURL == "" {
+		cfg.DocsURL = "https://asterism-dev.github.io/observatory/"
 	}
 	cfg.NodeBinary = getenv("OBSERVATORY_NODE_BINARY")
 	if cfg.NodeBinary == "" {

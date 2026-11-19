@@ -36,6 +36,7 @@ tokens out entirely.
 | `OBSERVATORY_DATABASE_URL` | Postgres connection string |
 | `OBSERVATORY_SECRETS_KEY` | master key for encrypted values, base64 of 32 random bytes (`openssl rand -base64 32`) |
 | `OBSERVATORY_LISTEN` | listen address, default `:8090` |
+| `OBSERVATORY_DOCS_URL` | docs link in the header, default `https://asterism-dev.github.io/observatory/` |
 
 ## Zitadel
 
