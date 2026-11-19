@@ -217,6 +217,9 @@ func TestDesktopStartRemovesStaleSockets(t *testing.T) {
 	if fi, err := os.Stat(run); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("run dir = %v, %v; want mode 0700", fi, err)
 	}
+	if fi, err := os.Stat(filepath.Dir(run)); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("/run/user = %v, %v; want mode 0755 so dev reaches its run dir", fi, err)
+	}
 }
 
 func TestDesktopNoXpra(t *testing.T) {

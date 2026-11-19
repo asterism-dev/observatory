@@ -103,6 +103,10 @@ func (d *Desktop) launch() error {
 	if err := os.MkdirAll(run, 0o700); err != nil {
 		return err
 	}
+	// Without systemd nothing else creates /run/user, and dev must be able to traverse it.
+	if err := os.Chmod(filepath.Dir(run), 0o755); err != nil {
+		return err
+	}
 	if err := os.Chmod(run, 0o700); err != nil {
 		return err
 	}
