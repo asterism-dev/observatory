@@ -40,10 +40,16 @@ func Run() error {
 	if err := growRoot(rootDevice); err != nil {
 		return err
 	}
-	// Tasks 5-10 add their steps here, in boot order, each taking root and seed.
-	_ = seed
+	// Tasks 6-10 add their steps here, in boot order, each taking root and seed.
 	if err := root.EnsureDev(); err != nil {
 		return err
+	}
+	// A guest without the CAs still runs; only hosts bound to the egress proxy fail TLS.
+	if _, err := root.InstallCAs(seed.EgressCAs); err != nil {
+		fmt.Fprintln(os.Stderr, "init: egress CAs:", err)
+	}
+	if _, err := root.WriteEnv(seed.Env, seed.Image.Env); err != nil {
+		fmt.Fprintln(os.Stderr, "init: environment:", err)
 	}
 
 	announceReady()
