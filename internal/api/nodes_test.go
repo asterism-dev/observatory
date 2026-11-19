@@ -250,6 +250,27 @@ func TestNodeJSONImage(t *testing.T) {
 	}
 }
 
+func TestNodeJSONHypervisor(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.enrolledNode(tok, org, "n1")
+	read := func() (n struct{ Hypervisor *proto.Hypervisor }) {
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+		return
+	}
+	if read().Hypervisor != nil {
+		t.Fatal("hypervisor before report")
+	}
+	node, _ := uuid.Parse(id)
+	if err := e.store.SetNodeHypervisor(context.Background(), node, &proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if h := read().Hypervisor; h == nil || h.Version != "v1.18.0" {
+		t.Fatalf("%+v", h)
+	}
+}
+
 func TestNodeJSONOutdated(t *testing.T) {
 	old := version.Version
 	version.Version = "v0.3.0"

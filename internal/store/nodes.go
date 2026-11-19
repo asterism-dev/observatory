@@ -38,12 +38,13 @@ type Node struct {
 	CreatedBy   uuid.UUID
 	CreatedAt   time.Time
 	Image       *proto.ImageStatus
+	Hypervisor  *proto.Hypervisor
 }
 
-const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, image"
+const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, image, hypervisor"
 
 func scanNode(row pgx.Row) (n Node, err error) {
-	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt, &n.Image)
+	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt, &n.Image, &n.Hypervisor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -194,6 +195,18 @@ func (s *Store) QuarantineNodes(ctx context.Context, ids []uuid.UUID) ([]uuid.UU
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
+
+// SetNodeHypervisor stores what the node reported; nil clears it.
+func (s *Store) SetNodeHypervisor(ctx context.Context, id uuid.UUID, h *proto.Hypervisor) error {
+	tag, err := s.q.Exec(ctx, "UPDATE nodes SET hypervisor = $2 WHERE id = $1", id, h)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) SetNodeImage(ctx context.Context, id uuid.UUID, img proto.ImageStatus) error {

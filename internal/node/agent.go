@@ -253,6 +253,10 @@ func (a *Agent) registerMsg() *proto.Register {
 	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
 		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version, Image: a.image}
 	reg.Hostname, _ = os.Hostname()
+	if h, ok := a.Provider.(interface{ Hypervisor() proto.Hypervisor }); ok {
+		hv := h.Hypervisor()
+		reg.Hypervisor = &hv
+	}
 	for _, e := range a.vms {
 		st := e.status
 		st.Disks = a.disks(e.file)

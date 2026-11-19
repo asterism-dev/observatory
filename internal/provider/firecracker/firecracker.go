@@ -72,6 +72,10 @@ func New(c node.Config) (*Provider, error) {
 
 func (p *Provider) Name() string { return "firecracker" }
 
+func (p *Provider) Hypervisor() proto.Hypervisor {
+	return proto.Hypervisor{Type: "firecracker", Version: strings.TrimPrefix(p.fcVersion, "Firecracker ")}
+}
+
 // stockBase is the custom image, or else the pinned cloud image guest images are built from.
 func (p *Provider) stockBase() (string, error) {
 	p.baseMu.Lock()

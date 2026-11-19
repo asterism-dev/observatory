@@ -452,3 +452,7 @@ func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
 func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
 func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
 func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }
+
+func (p *fakeProvider) Hypervisor() proto.Hypervisor {
+	return proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}
+}

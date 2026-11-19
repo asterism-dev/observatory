@@ -34,6 +34,7 @@ type nodeJSON struct {
 	Underlay     *underlayJSON      `json:"underlay"`
 	Quarantined  bool               `json:"quarantined"`
 	Image        *proto.ImageStatus `json:"image"`
+	Hypervisor   *proto.Hypervisor  `json:"hypervisor"`
 }
 
 type underlayJSON struct {
@@ -53,7 +54,7 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		return nodeJSON{}, err
 	}
 	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, Outdated: version.Older(n.Version, version.Version), CPUs: n.CPUs, MemoryMB: n.MemoryMB,
-		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image}
+		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image, Hypervisor: n.Hypervisor}
 	if len(n.Machine) > 0 {
 		j.Machine = n.Machine
 	}
