@@ -1,3 +1,9 @@
+## v0.8.1 (2026-11-19)
+
+### Fix
+
+- boot step panics and fork/disk name checks (#27)
+
 ## v0.8.0 (2026-11-19)
 
 ### Feat
