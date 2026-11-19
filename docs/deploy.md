@@ -29,8 +29,7 @@ docker compose -f deploy/compose.yaml --profile tls up -d
 ```
 
 `up` pulls the published images `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` at `OBSERVATORY_VERSION`
-(`latest` by default, or a release tag such as `v0.1.0`); `up --build` builds them from the checkout instead. While the
-repository is private, the images are too: `docker login ghcr.io` with a token that has `read:packages` first.
+(`latest` by default, or a release tag such as `v0.1.0`); `up --build` builds them from the checkout instead.
 
 The bundled Zitadel serves plain HTTP; its `.env.example` holds insecure defaults that must change before the host is
 reachable from a network: `ZITADEL_DOMAIN` (the host name browsers use), `ZITADEL_MASTERKEY` (exactly 32 characters,
