@@ -2,10 +2,12 @@ package guestinit
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	iofs "io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,4 +72,31 @@ func readISOFile(dev, name string) ([]byte, error) {
 		return nil, err
 	}
 	return io.ReadAll(f)
+}
+
+// FindSeedDevice returns the last read-only virtio disk: the node attaches the seed after root and data disks.
+func FindSeedDevice(sysBlock string) (string, error) {
+	entries, err := os.ReadDir(sysBlock)
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "vd") {
+			names = append(names, e.Name())
+		}
+	}
+	// vdz sorts before vdaa by length first.
+	slices.SortFunc(names, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(a) - len(b)
+		}
+		return strings.Compare(a, b)
+	})
+	for _, n := range slices.Backward(names) {
+		if ro, err := os.ReadFile(filepath.Join(sysBlock, n, "ro")); err == nil && strings.TrimSpace(string(ro)) == "1" {
+			return "/dev/" + n, nil
+		}
+	}
+	return "", errors.New("seed: no read-only virtio disk found")
 }

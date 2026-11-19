@@ -10,11 +10,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-const (
-	rootDevice = "/dev/vda"
-	// SeedDevice is the drive after the root disk, where the node attaches the seed ISO.
-	SeedDevice = "/dev/vdb"
-)
+const rootDevice = "/dev/vda"
 
 // Run is PID 1: it boots the guest, then blocks until the kernel asks for poweroff or reboot.
 func Run() error {
@@ -25,7 +21,11 @@ func Run() error {
 	if err := mountBase(); err != nil {
 		return err
 	}
-	seed, err := ReadSeed(SeedDevice)
+	seedDev, err := FindSeedDevice("/sys/block")
+	if err != nil {
+		return err
+	}
+	seed, err := ReadSeed(seedDev)
 	if err != nil {
 		return err
 	}
