@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
+import { Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
+import { HardDrive } from '@lucide/vue'
 import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
 import InstallCommand from '@/components/InstallCommand.vue'
-import Meter from '@/components/Meter.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
+import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d, locale } = useI18n()
 const route = useRoute()
@@ -116,93 +117,82 @@ watch(
 
 <template>
   <template v-if="org">
-    <p v-if="error" role="alert">{{ error }}</p>
+    <p v-if="error && !node" role="alert" class="load-error">{{ error }}</p>
     <template v-if="node">
-      <header class="head">
-        <div class="title">
-          <h1>{{ node.name }}</h1>
-          <Badge :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Badge>
-          <Badge v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Badge>
-        </div>
-        <p class="sub">
-          {{ node.cpus }} vCPU · {{ gb(node.memoryMB) }} GB · {{ node.version || '–' }}
-        </p>
-      </header>
-      <p v-if="node.quarantined" role="alert">{{ t('nodes.quarantinedHelp') }}</p>
-      <Tabs v-model="tab" :tabs="tabs" variant="underline" />
+      <PageHeader :icon="HardDrive" :title="node.name" mono :subtitle="`${node.cpus} vCPU · ${gb(node.memoryMB)} GB · ${node.version || '–'}`">
+        <template #tags>
+          <Tag :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Tag>
+          <Tag v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Tag>
+        </template>
+      </PageHeader>
+      <div class="page-body">
+        <p v-if="error" role="alert">{{ error }}</p>
+        <p v-if="node.quarantined" role="alert">{{ t('nodes.quarantinedHelp') }}</p>
+        <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
-      <div v-if="tab === 'overview'" class="panel">
-        <section v-if="node.state !== 'pending'">
-          <h2 class="label">{{ t('nodes.allocated') }}</h2>
-          <div class="cards">
-            <div class="card">
-              <div class="mono muted">{{ t('nodes.cpu') }}</div>
-              <strong>{{ node.usedCPUs }} / {{ node.cpus }}</strong>
-              <Meter :label="t('usage.cpu')" :percent="pct(node.usedCPUs, node.cpus)" />
+        <template v-if="tab === 'overview'">
+          <Section v-if="node.state !== 'pending'" :label="t('nodes.allocated')">
+            <div class="cards">
+              <Card>
+                <span class="muted">{{ t('nodes.cpu') }}</span>
+                <strong>{{ node.usedCPUs }} / {{ node.cpus }}</strong>
+                <Meter :label="t('usage.cpu')" :percent="pct(node.usedCPUs, node.cpus)" />
+              </Card>
+              <Card>
+                <span class="muted">{{ t('nodes.memory') }}</span>
+                <strong>{{ gb(node.usedMemoryMB) }} / {{ gb(node.memoryMB) }} GB</strong>
+                <Meter :label="t('usage.mem')" :percent="pct(node.usedMemoryMB, node.memoryMB)" />
+              </Card>
+              <Card>
+                <span class="muted">{{ t('nodes.vms') }}</span>
+                <strong>{{ node.vmCount }}</strong>
+              </Card>
             </div>
-            <div class="card">
-              <div class="mono muted">{{ t('nodes.memory') }}</div>
-              <strong>{{ gb(node.usedMemoryMB) }} / {{ gb(node.memoryMB) }} GB</strong>
-              <Meter :label="t('usage.mem')" :percent="pct(node.usedMemoryMB, node.memoryMB)" />
-            </div>
-            <div class="card">
-              <div class="mono muted">{{ t('nodes.vms') }}</div>
-              <strong>{{ node.vmCount }}</strong>
-            </div>
-          </div>
-        </section>
-        <section>
-          <h2 class="label">{{ t('nodes.machine') }}</h2>
-          <dl class="card kv">
-            <dt>{{ t('nodes.version') }}</dt>
-            <dd>{{ node.version || '–' }}</dd>
-            <dt>{{ t('nodes.guestImage') }}</dt>
-            <dd><i18n-t v-if="node.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
-            <template v-else>{{ imageLine(node.image, t, locale) }}</template></dd>
-            <dt>{{ t('nodes.lastSeen') }}</dt>
-            <dd>{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</dd>
-            <template v-if="node.underlay">
-              <dt>{{ t('nodes.underlay') }}</dt>
-              <dd>{{ node.underlay.ip }}</dd>
-              <dt>{{ t('nodes.registered') }}</dt>
-              <dd>{{ node.underlay.registered ? t('nodes.yes') : t('nodes.no') }}</dd>
-              <dt>{{ t('nodes.handshake') }}</dt>
-              <dd>{{ node.underlay.lastHandshake ? d(new Date(node.underlay.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('nodes.never') }}</dd>
-            </template>
-            <template v-for="[k, v] in machine" :key="k">
-              <dt>{{ k }}</dt>
-              <dd>{{ v }}</dd>
-            </template>
-          </dl>
-        </section>
-      </div>
+          </Section>
+          <Section :label="t('nodes.machine')">
+            <Card>
+              <KeyValueList>
+                <KeyValue :label="t('nodes.version')">{{ node.version || '–' }}</KeyValue>
+                <KeyValue :label="t('nodes.guestImage')">
+                  <i18n-t v-if="node.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
+                  <template v-else>{{ imageLine(node.image, t, locale) }}</template>
+                </KeyValue>
+                <KeyValue :label="t('nodes.lastSeen')">{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</KeyValue>
+                <template v-if="node.underlay">
+                  <KeyValue :label="t('nodes.underlay')">{{ node.underlay.ip }}</KeyValue>
+                  <KeyValue :label="t('nodes.registered')">{{ node.underlay.registered ? t('nodes.yes') : t('nodes.no') }}</KeyValue>
+                  <KeyValue :label="t('nodes.handshake')">{{ node.underlay.lastHandshake ? d(new Date(node.underlay.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('nodes.never') }}</KeyValue>
+                </template>
+                <KeyValue v-for="[k, v] in machine" :key="k" :label="k">{{ v }}</KeyValue>
+              </KeyValueList>
+            </Card>
+          </Section>
+        </template>
 
-      <div v-else-if="tab === 'vms'" class="panel">
-        <VMList :org-id="org.id" :vms="vms" :empty="t('nodes.noVms')" @changed="load" />
-      </div>
+        <VMList v-if="tab === 'vms'" :org-id="org.id" :vms="vms" :empty="t('nodes.noVms')" @changed="load" />
 
-      <div v-else class="panel">
-        <section v-if="node.canUpdate">
-          <h2 class="label">{{ t('nodes.rename') }}</h2>
-          <form class="card row" @submit.prevent="rename">
-            <TextInput v-model="name" :aria-label="t('nodes.name')" />
-            <Button type="submit" :disabled="busy || !name.trim() || name.trim() === node.name">{{ t('nodes.rename') }}</Button>
-          </form>
-        </section>
-        <section v-if="node.canUpdate">
-          <h2 class="label">{{ t('nodes.regenerateTitle') }}</h2>
-          <div class="card stack">
-            <span class="muted">{{ t('nodes.regenerateBody') }}</span>
-            <p><Button :disabled="busy" @click="confirmRegen = true">{{ t('nodes.regenerate') }}</Button></p>
-          </div>
-        </section>
-        <section v-if="node.canDelete">
-          <h2 class="label">{{ t('nodes.deleteTitle') }}</h2>
-          <div class="card stack danger-zone">
-            <span class="muted">{{ t('nodes.deleteBody', { name: node.name }) }}</span>
-            <p><Button variant="danger" :disabled="busy" @click="confirmDelete = true">{{ t('nodes.delete') }}</Button></p>
-          </div>
-        </section>
+        <template v-if="tab === 'settings'">
+          <Section v-if="node.canUpdate" :label="t('nodes.rename')">
+            <Card>
+              <form class="row" @submit.prevent="rename">
+                <TextInput v-model="name" :aria-label="t('nodes.name')" />
+                <Button type="submit" :disabled="busy || !name.trim() || name.trim() === node.name">{{ t('nodes.rename') }}</Button>
+              </form>
+            </Card>
+          </Section>
+          <Section v-if="node.canUpdate" :label="t('nodes.regenerateTitle')">
+            <Card>
+              <span class="muted">{{ t('nodes.regenerateBody') }}</span>
+              <p><Button :disabled="busy" @click="confirmRegen = true">{{ t('nodes.regenerate') }}</Button></p>
+            </Card>
+          </Section>
+          <Section v-if="node.canDelete" :label="t('nodes.deleteTitle')">
+            <Card tone="danger">
+              <span class="muted">{{ t('nodes.deleteBody', { name: node.name }) }}</span>
+              <p><Button variant="danger" :disabled="busy" @click="confirmDelete = true">{{ t('nodes.delete') }}</Button></p>
+            </Card>
+          </Section>
+        </template>
       </div>
 
       <Dialog :open="confirmRegen" :title="t('nodes.regenerateTitle')" :description="t('nodes.regenerateBody')" @update:open="(o) => !o && !busy && (confirmRegen = false)">
@@ -231,94 +221,17 @@ watch(
 </template>
 
 <style scoped>
-.head {
-  margin-bottom: 16px;
-}
-.title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-h1 {
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 1.5rem;
-}
-.sub {
-  margin: 4px 0 0;
-  color: var(--muted);
-}
-.mono {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.75rem;
-}
-.muted {
-  color: var(--muted);
-}
-.panel {
-  display: grid;
-  gap: 28px;
-  padding-top: 20px;
-}
-.label {
-  margin: 0 0 10px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.7rem;
-  font-weight: normal;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+.load-error {
+  margin: var(--page-y) var(--page-x);
 }
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
 }
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 12px 16px;
-}
-.cards > .card,
-.stack {
-  display: grid;
-  gap: 6px;
-}
-.stack p {
-  margin: 0;
-}
-.danger-zone {
-  border-color: var(--danger);
-}
-.kv {
-  align-items: center;
-}
-.kv > dt {
-  color: var(--muted);
-}
-.kv > dt:not(:first-of-type),
-.kv > dt:not(:first-of-type) + dd {
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.kv > dd {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
 .row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
-}
-dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 16px;
-  margin: 0;
-}
-dd {
-  margin: 0;
+  gap: 8px;
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Table, Tabs, type TableColumn } from '@asterism-dev/lumen'
-import { Copy } from '@lucide/vue'
+import { Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
+import { KeyRound, Plus } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -9,6 +9,7 @@ import EnvMoveDialog from '@/components/EnvMoveDialog.vue'
 import EnvVarDialog from '@/components/EnvVarDialog.vue'
 import { scopeKey, scopeLabel, type EnvVar, type WritableScope } from '@/composables/envScopes'
 import { useOrg } from '@/composables/useOrg'
+import { CopyButton, EmptyState, FilterBar, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 const { t } = useI18n()
 const { org } = useOrg()
@@ -23,19 +24,14 @@ const editing = ref<EnvVar | null>(null)
 const moveOpen = ref(false)
 const moving = ref<EnvVar | null>(null)
 const pendingDelete = ref<EnvVar | null>(null)
+const loaded = ref(false)
+const search = ref('')
 
 const tabs = computed(() => ['all', 'org', 'teams', 'private'].map((v) => ({ value: v, label: t(`env.tab.${v}`) })))
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('env.name') },
-  { key: 'kind', label: t('env.type') },
-  { key: 'scope', label: t('env.scope') },
-  { key: 'hosts', label: t('env.hosts') },
-  { key: 'value', label: t('env.value') },
-  { key: 'actions', label: '' },
-])
 const rows = computed(() => {
   const scope = { all: null, org: 'org', teams: 'team', private: 'user' }[tab.value]
-  return scope ? vars.value.filter((v) => v.scope === scope) : vars.value
+  const q = search.value.trim().toLowerCase()
+  return vars.value.filter((v) => (!scope || v.scope === scope) && (!q || v.name.toLowerCase().includes(q)))
 })
 
 async function refresh() {
@@ -47,14 +43,13 @@ async function refresh() {
     if (id !== org.value?.id) return
     vars.value = res.vars
     writableScopes.value = res.writableScopes
+    loaded.value = true
   } catch (e) {
     if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
   }
 }
 
 const canMove = (v: EnvVar) => v.canEdit && writableScopes.value.some((s) => scopeKey(s) !== scopeKey(v))
-
-const copy = (v?: string) => navigator.clipboard.writeText(v ?? '')
 
 function openAdd() {
   editing.value = null
@@ -93,6 +88,7 @@ watch(
     error.value = ''
     vars.value = []
     writableScopes.value = []
+    loaded.value = false
     refresh()
   },
   { immediate: true },
@@ -100,42 +96,39 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.env') }}</h1>
-        <p>{{ t('env.subtitle') }}</p>
-      </div>
-      <Button v-if="writableScopes.length" variant="accent" @click="openAdd">{{ t('env.add') }}</Button>
-    </div>
+  <Page v-if="org" :icon="KeyRound" :title="t('nav.env')" :subtitle="t('env.subtitle')">
+    <template #actions>
+      <Button v-if="writableScopes.length" variant="accent" :icon="Plus" @click="openAdd">{{ t('env.add') }}</Button>
+    </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Tabs v-model="tab" :tabs="tabs" />
-    <Table :columns="columns" :rows="rows" row-key="id">
-      <template #cell-kind="{ row }"><Badge>{{ row.kind }}</Badge></template>
-      <template #cell-scope="{ row }">{{ scopeLabel(row, t) }}</template>
-      <template #cell-hosts="{ row }">
-        <span v-if="row.hosts.length" class="cell"><Badge v-for="h in row.hosts" :key="h">{{ h }}</Badge></span>
-        <span v-else>—</span>
-      </template>
-      <template #cell-value="{ row }">
-        <span v-if="row.kind === 'secret'">••••••</span>
-        <span v-else class="cell">
-          {{ row.value }}
-          <Button size="sm" :aria-label="t('env.copy')" @click="copy(row.value)"><Copy :size="14" /></Button>
-        </span>
-      </template>
-      <template #cell-actions="{ row }">
-        <span class="cell">
-          <Button v-if="row.canEdit" size="sm" @click="openEdit(row)">{{ t('env.edit') }}</Button>
-          <Button v-if="canMove(row)" size="sm" @click="openMove(row)">{{ t('env.move') }}</Button>
-          <Button v-if="row.canDelete" size="sm" variant="danger" @click="pendingDelete = row">{{ t('env.delete') }}</Button>
-        </span>
-      </template>
-      <template #empty>{{ t('env.empty') }}</template>
-    </Table>
-
     <EnvVarDialog v-model:open="formOpen" :org-id="org.id" :scopes="writableScopes" :editing="editing" @saved="refresh" @conflict="refresh" />
     <EnvMoveDialog v-model:open="moveOpen" :org-id="org.id" :scopes="writableScopes" :variable="moving" @saved="refresh" @conflict="refresh" />
+    <EmptyState v-if="loaded && !vars.length" :label="t('nav.env')" :title="t('env.empty')" :text="t('env.emptyText')" command="observatory var set API_URL --value https://api.example.com">
+      <Button v-if="writableScopes.length" variant="accent" :icon="Plus" @click="openAdd">{{ t('env.add') }}</Button>
+    </EmptyState>
+    <template v-else>
+      <FilterBar>
+        <Tabs v-model="tab" :tabs="tabs" variant="underline" />
+        <template #end>
+          <TextInput v-model="search" type="search" :placeholder="t('env.search')" :aria-label="t('env.search')" />
+        </template>
+      </FilterBar>
+      <ResourceList :count="rows.length" :empty="vars.length ? t('env.noMatch') : t('env.empty')">
+        <ResourceRow v-for="v in rows" :key="v.id" :title="v.name" :meta="v.hosts.length ? v.hosts.join(' · ') : undefined">
+          <template #tags>
+            <Tag :tone="v.kind === 'secret' ? 'warning' : 'default'">{{ v.kind }}</Tag>
+            <Tag>{{ scopeLabel(v, t) }}</Tag>
+          </template>
+          <span v-if="v.kind === 'secret'" class="mono">••••••</span>
+          <span v-else class="mono value">{{ v.value }}<CopyButton :text="v.value ?? ''" /></span>
+          <template #actions>
+            <Button v-if="v.canEdit" size="sm" variant="ghost" @click="openEdit(v)">{{ t('env.edit') }}</Button>
+            <Button v-if="canMove(v)" size="sm" variant="ghost" @click="openMove(v)">{{ t('env.move') }}</Button>
+            <Button v-if="v.canDelete" size="sm" variant="ghost" @click="pendingDelete = v">{{ t('env.delete') }}</Button>
+          </template>
+        </ResourceRow>
+      </ResourceList>
+    </template>
     <Dialog
       :open="!!pendingDelete"
       :title="t('env.deleteTitle')"
@@ -147,20 +140,15 @@ watch(
         <Button variant="danger" :disabled="busy" @click="remove">{{ t('env.delete') }}</Button>
       </template>
     </Dialog>
-  </template>
+  </Page>
 </template>
 
 <style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-.cell {
+.value {
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 </style>

@@ -20,7 +20,7 @@ const lit = computed(() => (props.percent === null ? 0 : Math.ceil((Math.min(Mat
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.7rem;
   color: var(--muted);
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { List, ListItem } from '@asterism-dev/lumen'
-import { BookOpen, Box, HardDrive, KeyRound, Laptop, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
+import { Box, Building2, HardDrive, KeyRound, Laptop, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -58,24 +58,32 @@ async function onCreated(org: Org) {
   switchOrg(org.id)
 }
 
-const navItems = computed(() => {
+const navGroups = computed(() => {
   const id = activeOrg.value?.id
   if (!id) return []
-  return [
-    { path: `/orgs/${id}/dashboard`, label: t('nav.dashboard'), icon: LayoutDashboard },
-    { path: `/orgs/${id}/nodes`, label: t('nav.nodes'), icon: Server },
-    { path: `/orgs/${id}/vms`, label: t('nav.vms'), icon: Box },
-    { path: `/orgs/${id}/disks`, label: t('nav.disks'), icon: HardDrive },
-    { path: `/orgs/${id}/networks`, label: t('nav.networks'), icon: Network },
-    { path: `/orgs/${id}/devices`, label: t('nav.devices'), icon: Laptop },
-    { path: `/orgs/${id}/env`, label: t('nav.env'), icon: KeyRound },
-    { path: `/orgs/${id}/integrations`, label: t('nav.integrations'), icon: Plug },
+  const groups = [
+    [
+      { path: `/orgs/${id}/dashboard`, label: t('nav.dashboard'), icon: LayoutDashboard },
+      { path: `/orgs/${id}/nodes`, label: t('nav.nodes'), icon: Server },
+      { path: `/orgs/${id}/vms`, label: t('nav.vms'), icon: Box },
+      { path: `/orgs/${id}/disks`, label: t('nav.disks'), icon: HardDrive },
+      { path: `/orgs/${id}/networks`, label: t('nav.networks'), icon: Network },
+    ],
+    [
+      { path: `/orgs/${id}/devices`, label: t('nav.devices'), icon: Laptop },
+      { path: `/orgs/${id}/env`, label: t('nav.env'), icon: KeyRound },
+      { path: `/orgs/${id}/integrations`, label: t('nav.integrations'), icon: Plug },
+    ],
   ]
+  const settings = orgTabs.value[0]
+  if (settings) groups.push([{ path: settings.path, label: t('nav.settings'), icon: Building2 }])
+  return groups
 })
+const navItems = computed(() => navGroups.value.flat())
+const under = (p: string) => route.path === p || route.path.startsWith(p + '/')
 
 const crumbs = computed<Crumb[]>(() => {
   const own = extra.value.path === route.path ? extra.value.crumbs : []
-  const under = (p: string) => route.path === p || route.path.startsWith(p + '/')
   if (route.path === '/profile') return [{ label: t('nav.profile') }]
   if (route.path.startsWith('/admin/')) {
     const tab = platformTabs.value.find((i) => under(i.path))
@@ -83,25 +91,30 @@ const crumbs = computed<Crumb[]>(() => {
   }
   if (!orgId.value || org.value?.id !== orgId.value) return []
   const out: Crumb[] = [{ label: org.value.name, to: `/orgs/${orgId.value}/dashboard` }]
-  const item = navItems.value.find((i) => under(i.path))
   const tab = orgTabs.value.find((i) => under(i.path))
-  if (item) out.push({ label: item.label, to: item.path })
-  else if (tab) out.push({ label: t('nav.orgSettings'), to: `/orgs/${orgId.value}/settings` }, { label: tab.label, to: tab.path })
+  const item = navItems.value.find((i) => under(i.path))
+  if (tab) out.push({ label: t('nav.orgSettings'), to: `/orgs/${orgId.value}/settings` }, { label: tab.label, to: tab.path })
+  else if (item) out.push({ label: item.label, to: item.path })
   return [...out, ...own]
 })
 
-const activePath = computed(() => navItems.value.find((i) => route.path === i.path || route.path.startsWith(i.path + '/'))?.path ?? route.path)
+const activePath = computed(() => {
+  if (orgTabs.value.some((tab) => under(tab.path))) return orgTabs.value[0]?.path ?? route.path
+  return navItems.value.find((i) => under(i.path))?.path ?? route.path
+})
 </script>
 
 <template>
   <div class="shell">
     <aside class="side">
       <div class="side__head">{{ t('app.name') }}</div>
-      <List :model-value="activePath" :aria-label="t('nav.label')" @update:model-value="(p) => p && router.push(p)">
-        <ListItem v-for="item in navItems" :key="item.path" :value="item.path">
-          <span class="nav-item"><component :is="item.icon" :size="16" :stroke-width="1.75" />{{ item.label }}</span>
-        </ListItem>
-      </List>
+      <nav :aria-label="t('nav.label')" class="side__nav">
+        <List v-for="(group, i) in navGroups" :key="i" :model-value="activePath" class="side__group" @update:model-value="(p) => p && router.push(p)">
+          <ListItem v-for="item in group" :key="item.path" :value="item.path">
+            <span class="nav-item"><component :is="item.icon" :size="16" :stroke-width="1.75" />{{ item.label }}</span>
+          </ListItem>
+        </List>
+      </nav>
       <div class="side__spacer" />
       <UserMenu @switch="switchOrg" @create="creating = true" />
     </aside>
@@ -114,9 +127,8 @@ const activePath = computed(() => navItems.value.find((i) => route.path === i.pa
             <span v-else :class="{ org: i === 0 && orgId, current: i === crumbs.length - 1 }" :aria-current="i === crumbs.length - 1 ? 'page' : undefined">{{ c.label }}</span>
           </template>
         </nav>
-        <a v-if="me?.docsURL" :href="me.docsURL" target="_blank" rel="noopener" class="docs"><BookOpen :size="16" :stroke-width="1.75" />{{ t('nav.docs') }}</a>
       </header>
-      <p v-if="orgError" role="alert">{{ orgError }}</p>
+      <p v-if="orgError" role="alert" class="org-error">{{ orgError }}</p>
       <slot />
     </main>
     <CreateOrgDialog v-model:open="creating" @created="onCreated" />
@@ -151,12 +163,21 @@ const activePath = computed(() => navItems.value.find((i) => route.path === i.pa
 }
 .topbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  margin: -16px -16px 16px;
-  padding: 12px 16px;
+  min-height: 52px;
+  padding: 0 var(--page-x);
   border-bottom: 1px solid var(--border);
+}
+.org-error {
+  margin: 16px var(--page-x) 0;
+}
+.side__nav {
+  display: grid;
+}
+.side__group + .side__group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 .crumbs {
   display: flex;
@@ -185,20 +206,9 @@ const activePath = computed(() => navItems.value.find((i) => route.path === i.pa
 .current {
   color: var(--text);
 }
-.docs {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  text-decoration: none;
-}
-.docs:hover {
-  color: var(--accent);
-}
 .content {
   flex: 1;
   min-width: 0;
-  padding: 16px;
   overflow: auto;
 }
 @media (max-width: 767.98px) {

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import { gb, type VmInfo } from '@/composables/nodes'
+import { Card, Section } from '@/ui'
 
 interface Sample {
   at: string
@@ -79,21 +80,18 @@ watch(
 </script>
 
 <template>
-  <section>
-    <div class="section-head">
-      <h2>{{ t('usage.window', { n: minutes || 10 }) }}</h2>
-      <span v-if="live">{{ t('usage.live') }}</span>
-    </div>
+  <Section :label="t('usage.window', { n: minutes || 10 })">
+    <template #actions><span v-if="live" class="live mono">{{ t('usage.live') }}</span></template>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-else-if="!last" class="muted">{{ t('usage.none') }}</p>
     <p v-else-if="!live" class="muted">{{ t('usage.stale') }}</p>
     <template v-if="last">
       <div class="cards">
-        <div v-for="c in cards" :key="c.key" class="card">
+        <Card v-for="c in cards" :key="c.key">
           <div class="card-head">
             <div>
-              <div class="mono">{{ c.label }}</div>
-              <div class="mono muted">{{ c.detail }}</div>
+              <div class="mono small">{{ c.label }}</div>
+              <div class="mono small muted">{{ c.detail }}</div>
             </div>
             <strong>{{ c.percent === null ? '–' : `${Math.round(c.percent)}%` }}</strong>
           </div>
@@ -101,49 +99,34 @@ watch(
             <line v-for="y in [25, 50, 75]" :key="y" x1="0" :x2="W" :y1="y" :y2="y" class="grid" />
             <polyline v-if="c.points" :points="c.points" fill="none" class="plot" vector-effect="non-scaling-stroke" />
           </svg>
-          <div class="axis mono muted">
+          <div class="axis mono small muted">
             <span>{{ t('usage.ago', { n: minutes || 10 }) }}</span>
             <span>{{ t('usage.now') }}</span>
           </div>
-        </div>
+        </Card>
       </div>
-      <p class="mono muted hint">{{ t('usage.diskHint') }}</p>
+      <p class="mono small muted">{{ t('usage.diskHint') }}</p>
     </template>
-  </section>
+  </Section>
 </template>
 
 <style scoped>
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.section-head h2,
-.section-head span {
-  margin: 0 0 10px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+.live {
   font-size: 0.7rem;
-  font-weight: normal;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--success);
 }
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px 8px;
-}
 .card-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 8px;
-  margin-bottom: 12px;
 }
 svg {
   display: block;
@@ -161,16 +144,11 @@ svg {
 .axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 6px;
 }
-.mono {
-  font-family: var(--font-mono, ui-monospace, monospace);
+.small {
   font-size: 0.7rem;
 }
-.muted {
-  color: var(--muted);
-}
-.hint {
-  margin-top: 10px;
+p {
+  margin: 0;
 }
 </style>

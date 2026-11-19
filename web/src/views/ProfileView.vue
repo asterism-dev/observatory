@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Table, Textarea, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, Textarea, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { Plus, User } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
+import { Card, DataTable, KeyValue, KeyValueList, Page, ResourceList, ResourceRow, Section, Tag } from '@/ui'
 
 interface Session {
   id: string
@@ -48,13 +50,6 @@ const adding = ref(false)
 const keyName = ref('')
 const keyValue = ref('')
 const keyError = ref('')
-
-const keyColumns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('profile.keyName') },
-  { key: 'fingerprint', label: t('profile.fingerprint') },
-  { key: 'createdAt', label: t('profile.added') },
-  { key: 'actions', label: '' },
-])
 
 const fmt = (v: string) => d(new Date(v), { dateStyle: 'short', timeStyle: 'short' })
 
@@ -149,70 +144,84 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>{{ me?.user.name || me?.user.email }}</h1>
-  <p>
-    {{ me?.user.email }}
-    <Badge v-if="me?.user.platformAdmin" tone="merged">{{ t('profile.admin') }}</Badge>
-  </p>
-  <p>
-    {{ t('profile.idpNote') }}
-    <a v-if="issuer" :href="issuer" target="_blank" rel="noopener">{{ t('profile.idpLink') }}</a>
-  </p>
+  <Page :icon="User" :title="t('nav.profile')" :subtitle="t('profile.subtitle')">
+    <Section :label="t('profile.account')">
+      <Card>
+        <KeyValueList>
+          <KeyValue :label="t('members.name')">{{ me?.user.name || '–' }}</KeyValue>
+          <KeyValue :label="t('members.email')">
+            {{ me?.user.email }}
+            <Tag v-if="me?.user.platformAdmin" strong>{{ t('profile.admin') }}</Tag>
+          </KeyValue>
+        </KeyValueList>
+        <p class="muted">
+          {{ t('profile.idpNote') }}
+          <a v-if="issuer" :href="issuer" target="_blank" rel="noopener">{{ t('profile.idpLink') }}</a>
+        </p>
+      </Card>
+    </Section>
 
-  <h2>{{ t('profile.sessions') }}</h2>
-  <p v-if="error" role="alert">{{ error }}</p>
-  <Table :columns="columns" :rows="sessions" row-key="id">
-    <template #cell-kind="{ row }">
-      <Badge>{{ row.kind }}</Badge>
-      <Badge v-if="row.current" tone="success">{{ t('profile.current') }}</Badge>
-    </template>
-    <template #cell-lastUsedAt="{ row }">{{ fmt(row.lastUsedAt) }}</template>
-    <template #cell-expiresAt="{ row }">{{ fmt(row.expiresAt) }}</template>
-    <template #cell-actions="{ row }">
-      <Button variant="danger" size="sm" @click="pending = row">{{ t('profile.revoke') }}</Button>
-    </template>
-  </Table>
+    <Section :label="t('profile.sessions')">
+      <p v-if="error" role="alert">{{ error }}</p>
+      <DataTable :columns="columns" :rows="sessions" row-key="id">
+        <template #cell-kind="{ row }">
+          <Tag>{{ row.kind }}</Tag>
+          <Tag v-if="row.current" tone="success">{{ t('profile.current') }}</Tag>
+        </template>
+        <template #cell-lastUsedAt="{ row }">{{ fmt(row.lastUsedAt) }}</template>
+        <template #cell-expiresAt="{ row }">{{ fmt(row.expiresAt) }}</template>
+        <template #cell-actions="{ row }">
+          <Button variant="danger" size="sm" @click="pending = row">{{ t('profile.revoke') }}</Button>
+        </template>
+      </DataTable>
+    </Section>
 
-  <Dialog
-    :open="!!pending"
-    :title="t('profile.revokeTitle')"
-    :description="pending?.current ? t('profile.revokeCurrent') : t('profile.revokeBody')"
-    @update:open="(o) => !o && !busy && (pending = null)"
-  >
-    <template #actions>
-      <Button :disabled="busy" @click="pending = null">{{ t('profile.cancel') }}</Button>
-      <Button variant="danger" :disabled="busy" @click="revoke">{{ t('profile.revoke') }}</Button>
-    </template>
-  </Dialog>
+    <Section :label="t('profile.sshKeys')">
+      <template #actions>
+        <Button variant="accent" size="sm" :icon="Plus" @click="openAdd">{{ t('profile.addKey') }}</Button>
+      </template>
+      <ResourceList :count="keys.length" :empty="t('profile.noKeys')">
+        <ResourceRow v-for="k in keys" :key="k.id" :title="k.name" :meta="k.fingerprint">
+          {{ t('profile.added') }} {{ fmt(k.createdAt) }}
+          <template #actions>
+            <Button variant="danger" size="sm" @click="keyPending = k">{{ t('profile.deleteKey') }}</Button>
+          </template>
+        </ResourceRow>
+      </ResourceList>
+    </Section>
 
-  <h2>{{ t('profile.sshKeys') }}</h2>
-  <p><Button variant="accent" size="sm" @click="openAdd">{{ t('profile.addKey') }}</Button></p>
-  <Table :columns="keyColumns" :rows="keys" row-key="id">
-    <template #cell-createdAt="{ row }">{{ fmt(row.createdAt) }}</template>
-    <template #cell-actions="{ row }">
-      <Button variant="danger" size="sm" @click="keyPending = row">{{ t('profile.deleteKey') }}</Button>
-    </template>
-  </Table>
+    <Dialog
+      :open="!!pending"
+      :title="t('profile.revokeTitle')"
+      :description="pending?.current ? t('profile.revokeCurrent') : t('profile.revokeBody')"
+      @update:open="(o) => !o && !busy && (pending = null)"
+    >
+      <template #actions>
+        <Button :disabled="busy" @click="pending = null">{{ t('profile.cancel') }}</Button>
+        <Button variant="danger" :disabled="busy" @click="revoke">{{ t('profile.revoke') }}</Button>
+      </template>
+    </Dialog>
 
-  <Dialog :open="adding" :title="t('profile.addKey')" @update:open="(o) => !busy && (adding = o)">
-    <TextInput v-model="keyName" :aria-label="t('profile.keyName')" :placeholder="t('profile.keyName')" />
-    <Textarea v-model="keyValue" spellcheck="false" :aria-label="t('profile.publicKey')" :placeholder="t('profile.publicKey')" />
-    <p v-if="keyError" role="alert">{{ keyError }}</p>
-    <template #actions>
-      <Button :disabled="busy" @click="adding = false">{{ t('profile.cancel') }}</Button>
-      <Button variant="accent" :disabled="busy || !keyName.trim() || !keyValue.trim()" @click="addKey">{{ t('profile.addKey') }}</Button>
-    </template>
-  </Dialog>
+    <Dialog :open="adding" :title="t('profile.addKey')" @update:open="(o) => !busy && (adding = o)">
+      <TextInput v-model="keyName" :aria-label="t('profile.keyName')" :placeholder="t('profile.keyName')" />
+      <Textarea v-model="keyValue" spellcheck="false" :aria-label="t('profile.publicKey')" :placeholder="t('profile.publicKey')" />
+      <p v-if="keyError" role="alert">{{ keyError }}</p>
+      <template #actions>
+        <Button :disabled="busy" @click="adding = false">{{ t('profile.cancel') }}</Button>
+        <Button variant="accent" :disabled="busy || !keyName.trim() || !keyValue.trim()" @click="addKey">{{ t('profile.addKey') }}</Button>
+      </template>
+    </Dialog>
 
-  <Dialog
-    :open="!!keyPending"
-    :title="t('profile.deleteKeyTitle')"
-    :description="t('profile.deleteKeyBody')"
-    @update:open="(o) => !o && !busy && (keyPending = null)"
-  >
-    <template #actions>
-      <Button :disabled="busy" @click="keyPending = null">{{ t('profile.cancel') }}</Button>
-      <Button variant="danger" :disabled="busy" @click="removeKey">{{ t('profile.deleteKey') }}</Button>
-    </template>
-  </Dialog>
+    <Dialog
+      :open="!!keyPending"
+      :title="t('profile.deleteKeyTitle')"
+      :description="t('profile.deleteKeyBody')"
+      @update:open="(o) => !o && !busy && (keyPending = null)"
+    >
+      <template #actions>
+        <Button :disabled="busy" @click="keyPending = null">{{ t('profile.cancel') }}</Button>
+        <Button variant="danger" :disabled="busy" @click="removeKey">{{ t('profile.deleteKey') }}</Button>
+      </template>
+    </Dialog>
+  </Page>
 </template>

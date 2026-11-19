@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
 import { useOrg } from '@/composables/useOrg'
+import { Card, Section } from '@/ui'
 
 interface Named {
   id: string
@@ -75,29 +76,22 @@ watch(
 <template>
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
-    <h2>{{ t('limits.org') }}</h2>
-    <LimitFields :model-value="orgLimits" disabled />
+    <Section :label="t('limits.org')">
+      <Card><LimitFields :model-value="orgLimits" disabled /></Card>
+    </Section>
 
     <template v-for="group in [{ key: 'teams', prefix: 'team', rows: teams }, { key: 'members', prefix: 'user', rows: members }]" :key="group.key">
-      <h2>{{ t(`limits.${group.key}`) }}</h2>
-      <section v-for="row in group.rows" :key="row.id" class="scope">
-        <h3>{{ row.name }}</h3>
-        <LimitFields v-model="row.limits" v-model:valid="row.valid" :disabled="!can('limit:set') || !!busy" />
-        <Button
-          v-if="can('limit:set')"
-          variant="accent"
-          :disabled="!!busy || !row.valid"
-          @click="save(`${group.prefix}:${row.id}`, row.limits)"
-        >
-          {{ t('org.save') }}
-        </Button>
-      </section>
+      <Section v-if="group.rows.length" :label="t(`limits.${group.key}`)">
+        <Card v-for="row in group.rows" :key="row.id">
+          <strong>{{ row.name }}</strong>
+          <LimitFields v-model="row.limits" v-model:valid="row.valid" :disabled="!can('limit:set') || !!busy" />
+          <p v-if="can('limit:set')">
+            <Button variant="accent" :disabled="!!busy || !row.valid" @click="save(`${group.prefix}:${row.id}`, row.limits)">
+              {{ t('org.save') }}
+            </Button>
+          </p>
+        </Card>
+      </Section>
     </template>
   </template>
 </template>
-
-<style scoped>
-.scope {
-  margin-bottom: 16px;
-}
-</style>

@@ -33,7 +33,10 @@
     "disks": "Disks",
     "integrations": "Integrationen",
     "docs": "Doku",
-    "breadcrumb": "Brotkrumen-Navigation"
+    "breadcrumb": "Brotkrumen-Navigation",
+    "settings": "Einstellungen",
+    "orgSettingsSubtitle": "Mitglieder, Teams, Rollen, Limits und Audit deiner Organisation.",
+    "platformSettingsSubtitle": "Organisationen, Benutzer und Audit der gesamten Plattform."
   },
   "theme": {
     "system": "System",
@@ -69,7 +72,10 @@
     "publicKey": "Öffentlicher Schlüssel",
     "deleteKey": "Löschen",
     "deleteKeyTitle": "SSH-Schlüssel löschen?",
-    "deleteKeyBody": "Neue VMs erhalten diesen Schlüssel nicht mehr; laufende VMs behalten ihn bis zum nächsten Start."
+    "deleteKeyBody": "Neue VMs erhalten diesen Schlüssel nicht mehr; laufende VMs behalten ihn bis zum nächsten Start.",
+    "subtitle": "Dein Konto, deine Sitzungen und SSH-Schlüssel.",
+    "account": "Konto",
+    "noKeys": "Noch keine SSH-Schlüssel."
   },
   "audit": {
     "actor": "Akteur",
@@ -94,7 +100,12 @@
     "name": "Name",
     "create": "Erstellen",
     "save": "Speichern",
-    "personalNote": "Deine persönliche Organisation kann nicht umbenannt werden."
+    "personalNote": "Deine persönliche Organisation kann nicht umbenannt werden.",
+    "identity": "Identität",
+    "identityHint": "Wie diese Organisation heißt und referenziert wird.",
+    "displayName": "Name der Organisation",
+    "id": "Organisations-ID",
+    "edit": "Bearbeiten"
   },
   "members": {
     "name": "Name",
@@ -124,7 +135,6 @@
     "name": "Name",
     "members": "Mitglieder",
     "create": "Team erstellen",
-    "open": "Öffnen",
     "empty": "Keine Teams",
     "admin": "Team-Admin",
     "promote": "Zum Admin machen",
@@ -135,7 +145,8 @@
     "delete": "Team löschen",
     "deleteTitle": "Team löschen?",
     "deleteBody": "{name} und seine Rollenzuweisungen werden entfernt.",
-    "leave": "Team verlassen"
+    "leave": "Team verlassen",
+    "memberCount": "{n} Mitglied | {n} Mitglieder"
   },
   "roles": {
     "create": "Rolle erstellen",
@@ -204,7 +215,6 @@
     "delete": "Löschen",
     "deleteTitle": "Variable löschen",
     "deleteBody": "{name} löschen? Das kann nicht rückgängig gemacht werden.",
-    "copy": "Wert kopieren",
     "empty": "Noch keine Variablen.",
     "tab": {
       "all": "Alle",
@@ -219,7 +229,10 @@
     "restartNote": "Bereits laufende Programme in VMs vertrauen dem neuen Host erst nach einem Neustart.",
     "unbindBody": "VMs erhalten den echten Wert bei ihrem nächsten Start.",
     "unbindConfirm": "Lösen und speichern",
-    "hostsTooMany": "Zu viele Hosts (max. 10)"
+    "hostsTooMany": "Zu viele Hosts (max. 10)",
+    "search": "Variablen suchen…",
+    "noMatch": "Keine Variable passt zu den Filtern.",
+    "emptyText": "Füge Variablen und Secrets hinzu, die in deine VMs injiziert werden."
   },
   "integrations": {
     "subtitle": "Verbinde GitHub, Claude und Linear, damit deine VMs sie nutzen können.",
@@ -261,7 +274,8 @@
     "okExpires": "ok · läuft in {n} Tagen ab",
     "expired": "abgelaufen",
     "empty": "Noch keine Integrationen.",
-    "vmLine": "Integrationen"
+    "vmLine": "Integrationen",
+    "emptyText": "Verbinde eine Integration, damit deine VMs sie nutzen können. Standardmäßig bekommen VMs nur einen Platzhalter und der Proxy setzt das Token ein."
   },
   "nodes": {
     "subtitle": "Maschinen, auf denen deine VMs laufen.",
@@ -421,7 +435,10 @@
     "copy": "Kopieren",
     "qr": "QR-Code der WireGuard-Konfiguration",
     "copyFailed": "Kopieren fehlgeschlagen.",
-    "qrFailed": "Der QR-Code konnte nicht erzeugt werden; nutze die Textkonfiguration."
+    "qrFailed": "Der QR-Code konnte nicht erzeugt werden; nutze die Textkonfiguration.",
+    "search": "Geräte suchen…",
+    "noMatch": "Kein Gerät passt zur Suche.",
+    "emptyText": "Füge ein WireGuard-Gerät hinzu, um deine VMs von deinem Laptop oder Handy aus zu erreichen."
   },
   "networks": {
     "subtitle": "Private Netzwerke, die deine VMs verbinden.",
@@ -451,7 +468,8 @@
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
     "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Netzwerkänderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
-    "restart": "Speichern und neu starten"
+    "restart": "Speichern und neu starten",
+    "emptyText": "Erstelle ein privates Netzwerk, damit sich deine VMs gegenseitig erreichen."
   },
   "vmDisks": {
     "section": "Disks",
@@ -515,7 +533,10 @@
     "releaseBody": "Freigabe von {name} von der VM erzwingen? Nicht geschriebene Daten der VM können verloren gehen.",
     "delete": "Löschen",
     "deleteTitle": "Disk löschen",
-    "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
+    "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren.",
+    "search": "Disks suchen…",
+    "noMatch": "Keine Disk passt zu den Filtern.",
+    "emptyText": "Erstelle eine persistente Disk und hänge sie an eine VM an. Ihre Daten bleiben auch ohne die VM erhalten."
   },
   "usage": {
     "cpu": "CPU",
@@ -539,9 +560,6 @@
     "includeMemory": "Arbeitsspeicher einschließen (laufende Prozesse)",
     "memory": "Arbeitsspeicher",
     "disks": "Disks",
-    "size": "Größe",
-    "yes": "ja",
-    "no": "nein",
     "empty": "Noch keine Snapshots.",
     "states": {
       "creating": "wird erstellt",
@@ -565,7 +583,8 @@
   "dashboard": {
     "guide": {
       "title": "Erste Schritte",
-      "hide": "Ausblenden"
+      "hide": "Ausblenden",
+      "label": "Einrichtung"
     },
     "step": {
       "node": "Node hinzufügen",
@@ -586,7 +605,11 @@
       "connected": "verbunden",
       "total": "gesamt"
     },
-    "loadFailed": "Konnte nicht geladen werden"
+    "loadFailed": "Konnte nicht geladen werden",
+    "subtitle": "Deine Organisation auf einen Blick.",
+    "overview": "Übersicht",
+    "yourVms": "Deine VMs",
+    "noOwnVms": "Du hast noch keine eigenen VMs."
   },
   "open": {
     "title": "{name} öffnen",
@@ -594,11 +617,15 @@
     "cli": "CLI",
     "cliHint": "Öffnet eine Shell oder den Desktop aus deinem Terminal",
     "desktopHint": "Für den Desktop brauchst du xpra auf deinem Rechner.",
-    "copied": "Kopiert",
     "editors": "Editoren",
     "overSsh": "Über SSH, als",
     "mobile": "Mobil",
     "scan": "Mit dem Handy scannen",
     "scanHint": "Öffnet {name} in einer SSH-App auf deinem Handy. Das Handy braucht ein eigenes WireGuard-Device unter {devices}; im Code steckt nichts Geheimes."
+  },
+  "ui": {
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "copyFailed": "Kopieren fehlgeschlagen"
   }
 }

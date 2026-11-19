@@ -1,0 +1,24 @@
+:root {
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --page-x: 40px;
+  --page-y: 28px;
+  --section-gap: 32px;
+}
+@media (max-width: 767.98px) {
+  :root {
+    --page-x: 16px;
+    --page-y: 16px;
+  }
+}
+.page-body {
+  display: grid;
+  gap: var(--section-gap);
+  align-content: start;
+  padding: var(--page-y) var(--page-x);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.muted {
+  color: var(--muted);
+}

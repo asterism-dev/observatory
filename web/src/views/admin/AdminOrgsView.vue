@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Badge, Table, type TableColumn } from '@asterism-dev/lumen'
+import { type TableColumn } from '@asterism-dev/lumen'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { DataTable, Tag } from '@/ui'
 
 interface OrgSummary {
   id: string
@@ -36,15 +37,15 @@ onMounted(async () => {
 
 <template>
   <p v-if="error" role="alert">{{ error }}</p>
-  <Table :columns="columns" :rows="orgs" row-key="id">
+  <DataTable :columns="columns" :rows="orgs" row-key="id">
     <template #cell-name="{ row }">
       <span class="cell">
         <a :href="`/admin/orgs/${row.id}`" @click.prevent="router.push(`/admin/orgs/${row.id}`)">{{ row.name }}</a>
-        <Badge v-if="row.personal">{{ t('admin.personal') }}</Badge>
+        <Tag v-if="row.personal">{{ t('admin.personal') }}</Tag>
       </span>
     </template>
     <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short' }) }}</template>
-  </Table>
+  </DataTable>
 </template>
 
 <style scoped>

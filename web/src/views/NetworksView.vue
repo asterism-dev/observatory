@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Button, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
-import { computed, ref, watch } from 'vue'
+import { Button, Dialog } from '@asterism-dev/lumen'
+import { Network as NetworkIcon, Plus } from '@lucide/vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import CreateNetworkDialog from '@/components/CreateNetworkDialog.vue'
 import { useOrg } from '@/composables/useOrg'
+import { EmptyState, Page, ResourceList, ResourceRow, Tag } from '@/ui'
 
 interface Network {
   id: string
@@ -23,13 +25,8 @@ const error = ref('')
 const addOpen = ref(false)
 const pendingDelete = ref<Network | null>(null)
 const busy = ref(false)
+const loaded = ref(false)
 
-const columns = computed<TableColumn[]>(() => [
-  { key: 'name', label: t('networks.name') },
-  { key: 'subnet', label: t('networks.subnet') },
-  { key: 'vmCount', label: t('networks.vmCount') },
-  { key: 'actions', label: '' },
-])
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
@@ -37,7 +34,9 @@ async function refresh() {
   const id = org.value.id
   try {
     const res = await api<Network[]>(`/api/orgs/${id}/networks`)
-    if (id === org.value?.id) networks.value = res
+    if (id !== org.value?.id) return
+    networks.value = res
+    loaded.value = true
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
   }
@@ -62,6 +61,7 @@ watch(
   () => {
     error.value = ''
     networks.value = []
+    loaded.value = false
     refresh()
   },
   { immediate: true },
@@ -69,29 +69,31 @@ watch(
 </script>
 
 <template>
-  <template v-if="org">
-    <div class="head">
-      <div>
-        <h1>{{ t('nav.networks') }}</h1>
-        <p>{{ t('networks.subtitle') }}</p>
-      </div>
-      <Button variant="accent" @click="addOpen = true">{{ t('networks.create') }}</Button>
-    </div>
+  <Page v-if="org" :icon="NetworkIcon" :title="t('nav.networks')" :subtitle="t('networks.subtitle')">
+    <template #actions>
+      <Button variant="accent" :icon="Plus" @click="addOpen = true">{{ t('networks.create') }}</Button>
+    </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <Table :columns="columns" :rows="networks" row-key="id">
-      <template #cell-actions="{ row }">
-        <Button
-          v-if="row.canDelete"
-          size="sm"
-          variant="danger"
-          :disabled="busy || row.vmCount > 0"
-          :title="row.vmCount > 0 ? t('networks.deleteBlocked') : undefined"
-          @click="pendingDelete = row"
-        >{{ t('networks.delete') }}</Button>
-        <small v-if="row.canDelete && row.vmCount > 0">{{ t('networks.deleteBlocked') }}</small>
-      </template>
-      <template #empty>{{ t('networks.empty') }}</template>
-    </Table>
+    <EmptyState v-if="loaded && !networks.length" :label="t('nav.networks')" :title="t('networks.empty')" :text="t('networks.emptyText')" command="observatory network create backend">
+      <Button variant="accent" :icon="Plus" @click="addOpen = true">{{ t('networks.create') }}</Button>
+    </EmptyState>
+    <ResourceList v-else :count="networks.length" :empty="t('networks.empty')">
+      <ResourceRow v-for="n in networks" :key="n.id" :title="n.name" :meta="n.subnet">
+        <template #tags>
+          <Tag>{{ n.vmCount }} {{ t('networks.vmCount') }}</Tag>
+        </template>
+        <small v-if="n.canDelete && n.vmCount > 0">{{ t('networks.deleteBlocked') }}</small>
+        <template v-if="n.canDelete" #actions>
+          <Button
+            size="sm"
+            variant="ghost"
+            :disabled="busy || n.vmCount > 0"
+            :title="n.vmCount > 0 ? t('networks.deleteBlocked') : undefined"
+            @click="pendingDelete = n"
+          >{{ t('networks.delete') }}</Button>
+        </template>
+      </ResourceRow>
+    </ResourceList>
     <CreateNetworkDialog v-model:open="addOpen" :org-id="org.id" @created="refresh" />
     <Dialog
       :open="!!pendingDelete"
@@ -104,14 +106,6 @@ watch(
         <Button variant="danger" :disabled="busy" @click="pendingDelete && remove(pendingDelete)">{{ t('networks.delete') }}</Button>
       </template>
     </Dialog>
-  </template>
+  </Page>
 </template>
 
-<style scoped>
-.head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-</style>

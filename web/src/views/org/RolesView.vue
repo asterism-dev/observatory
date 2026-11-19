@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Select, Table, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Dialog, Select, type TableColumn } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
 import { useOrg } from '@/composables/useOrg'
+import { Card, DataTable, Section, Tag } from '@/ui'
 
 interface Role {
   id?: string
@@ -122,41 +123,44 @@ watch(
 <template>
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
-    <Button v-if="can('role:write')" variant="accent" @click="router.push(`/orgs/${org.id}/roles/new`)">
-      {{ t('roles.create') }}
-    </Button>
-    <Table :columns="columns" :rows="roles" row-key="rid">
-      <template #cell-name="{ row }">
-        {{ row.name }} <Badge v-if="row.builtin">{{ t('roles.builtin') }}</Badge>
+    <Section :label="t('nav.roles')">
+      <template v-if="can('role:write')" #actions>
+        <Button variant="accent" @click="router.push(`/orgs/${org!.id}/roles/new`)">{{ t('roles.create') }}</Button>
       </template>
-      <template #cell-actions="{ row }">
-        <span class="cell">
-          <Button size="sm" @click="router.push(`/orgs/${org!.id}/roles/${row.rid}`)">
-            {{ row.builtin || !can('role:write') ? t('roles.view') : t('roles.edit') }}
-          </Button>
-          <Button v-if="!row.builtin && can('role:write')" variant="danger" size="sm" @click="pendingDelete = row">
-            {{ t('roles.delete') }}
-          </Button>
-        </span>
-      </template>
-    </Table>
+      <DataTable :columns="columns" :rows="roles" row-key="rid">
+        <template #cell-name="{ row }">
+          <span class="row">{{ row.name }} <Tag v-if="row.builtin">{{ t('roles.builtin') }}</Tag></span>
+        </template>
+        <template #cell-actions="{ row }">
+          <span class="row">
+            <Button size="sm" @click="router.push(`/orgs/${org!.id}/roles/${row.rid}`)">
+              {{ row.builtin || !can('role:write') ? t('roles.view') : t('roles.edit') }}
+            </Button>
+            <Button v-if="!row.builtin && can('role:write')" variant="danger" size="sm" @click="pendingDelete = row">
+              {{ t('roles.delete') }}
+            </Button>
+          </span>
+        </template>
+      </DataTable>
+    </Section>
 
-    <template v-if="can('role:bind')">
-      <h2>{{ t('roles.bindings') }}</h2>
-      <form class="row" @submit.prevent="bind">
-        <Select v-model="subject" :options="subjectOptions" :placeholder="t('roles.subject')" :aria-label="t('roles.subject')" />
-        <Select v-model="roleId" :options="roleOptions" :placeholder="t('members.role')" :aria-label="t('members.role')" />
-        <Button type="submit" variant="accent" :disabled="busy || !subject || !roleId">{{ t('roles.bind') }}</Button>
-      </form>
-      <Table :columns="bindingColumns" :rows="bindings" row-key="id">
+    <Section v-if="can('role:bind')" :label="t('roles.bindings')">
+      <Card>
+        <form class="row" @submit.prevent="bind">
+          <Select v-model="subject" :options="subjectOptions" :placeholder="t('roles.subject')" :aria-label="t('roles.subject')" />
+          <Select v-model="roleId" :options="roleOptions" :placeholder="t('members.role')" :aria-label="t('members.role')" />
+          <Button type="submit" variant="accent" :disabled="busy || !subject || !roleId">{{ t('roles.bind') }}</Button>
+        </form>
+      </Card>
+      <DataTable :columns="bindingColumns" :rows="bindings" row-key="id">
         <template #cell-subject="{ row }">{{ subjectNames[row.subject] ?? row.subject }}</template>
         <template #cell-roleId="{ row }">{{ custom.find((r) => r.id === row.roleId)?.name ?? row.roleId }}</template>
         <template #cell-actions="{ row }">
           <Button variant="danger" size="sm" :disabled="busy" @click="unbind(row)">{{ t('roles.unbind') }}</Button>
         </template>
         <template #empty>{{ t('roles.noBindings') }}</template>
-      </Table>
-    </template>
+      </DataTable>
+    </Section>
 
     <Dialog
       :open="!!pendingDelete"
@@ -176,11 +180,7 @@ watch(
 <style scoped>
 .row {
   display: flex;
-  gap: 8px;
-  margin: 12px 0;
-}
-.cell {
-  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
