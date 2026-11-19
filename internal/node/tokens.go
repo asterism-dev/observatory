@@ -55,6 +55,8 @@ func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {
 		select {
 		case slots <- struct{}{}:
 			go func() {
+				// The slot is free before the client sees the close, so a client that saw it can count on the slot.
+				defer c.Close()
 				defer func() { <-slots }()
 				serveToken(c, vmID, lookup)
 			}()
@@ -65,7 +67,6 @@ func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {
 }
 
 func serveToken(c net.Conn, vmID string, lookup TokenLookup) {
-	defer c.Close()
 	c.SetDeadline(time.Now().Add(tokenTimeout))
 	line, err := bufio.NewReader(io.LimitReader(c, maxTokenRequest+1)).ReadBytes('\n')
 	if err != nil && (err != io.EOF || len(line) == 0) {
@@ -95,6 +96,10 @@ func serveToken(c net.Conn, vmID string, lookup TokenLookup) {
 	}
 	b, _ := json.Marshal(reply)
 	c.Write(append(b, '\n'))
+	// Closing with unread input makes Linux reset the connection and drop the reply; half-close, then drain until the client hangs up.
+	if cw, ok := c.(interface{ CloseWrite() error }); ok && cw.CloseWrite() == nil {
+		io.Copy(io.Discard, io.LimitReader(c, maxTokenRequest))
+	}
 }
 
 // integrationToken looks up a VM's token from the hub's last push; the node keeps none across restarts.
