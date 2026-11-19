@@ -1,0 +1,3 @@
+DIGEST               SOURCE  RECIPE  SIZE       CREATED           TAGS
+sha256:aaaaaaaaaaaa  build   r3      150.0 MiB  1 h ago           latest
+sha256:bbbbbbbbbbbb  push    –       1.0 KiB    2026-11-18 09:00  v1

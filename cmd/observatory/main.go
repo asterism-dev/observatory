@@ -94,11 +94,15 @@ func commands() []command {
 		{"org create", "<name>", "create an org", cmdOrgCreate},
 		{"org rename", "<name>", "rename the current org", cmdOrgRename},
 		{"org audit", "[flags]", "show the org's audit log", cmdOrgAudit},
-	}, vmCommands(), connectCommands(), deviceCommands(), snapshotCommands(), diskCommands(), networkCommands(), varCommands(), integrationCommands(), nodeCommands(), orgCommands())
+	}, vmCommands(), connectCommands(), deviceCommands(), snapshotCommands(), diskCommands(), networkCommands(), varCommands(), integrationCommands(), imageCommands(), nodeCommands(), orgCommands())
 }
 
 func main() {
-	os.Exit(run(newCLI(context.Background()), os.Args[1:]))
+	c := newCLI(context.Background())
+	if isCredHelper(os.Args[0]) {
+		os.Exit(runCredHelper(c, os.Args[1:]))
+	}
+	os.Exit(run(c, os.Args[1:]))
 }
 
 func isHelpFlag(s string) bool { return s == "-h" || s == "-help" || s == "--help" }

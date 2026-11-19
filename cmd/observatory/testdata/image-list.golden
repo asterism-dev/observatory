@@ -1,0 +1,4 @@
+IMAGE                 VISIBILITY    RECIPE  LATEST               SIZE       LAST BUILD
+observatory/standard  platform      –       –                    –          –
+backend/app           team backend  r3      sha256:aaaaaaaaaaaa  150.0 MiB  succeeded
+me/tool               private       –       –                    –          –
