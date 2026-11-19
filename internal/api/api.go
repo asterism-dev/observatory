@@ -36,20 +36,21 @@ type api struct {
 	newer       func() string
 	firecracker string
 	manifests   ManifestDeleter
+	tags        *TagSync
 	builds      *builds.Scheduler
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
 // New takes a nil builds when the hub has no registry; builds are refused then.
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, b, docsURL, newer, firecracker)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, docsURL, newer, firecracker)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, builds: b}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)

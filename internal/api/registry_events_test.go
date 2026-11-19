@@ -18,14 +18,15 @@ import (
 
 const eventsSecret = "events-secret-events-secret-0123"
 
-func (e *env) eventsHandler(m RegistryManifests) http.Handler {
+func (e *env) eventsHandler(m *fakeManifests) http.Handler {
 	e.t.Helper()
+	e.api.tags = NewTagSync(e.store, m)
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	RegistryEndpoints(mux, e.store, e.z, Registry{PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Manifests: m, EventsSecret: eventsSecret})
+	RegistryEndpoints(mux, e.store, e.z, Registry{PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Manifests: m, Tags: e.api.tags, EventsSecret: eventsSecret})
 	return mux
 }
 
@@ -90,6 +91,7 @@ func TestPushEventCreatesVersionAndLatest(t *testing.T) {
 	if e.pushError(img) != "" {
 		t.Fatal("push error not cleared")
 	}
+	e.api.tags.wait()
 	if fm.tag(repo, "latest") != digestN(1) || fm.tag(repo, "v1") != digestN(1) {
 		t.Fatalf("registry tags %v", fm.tags)
 	}
@@ -131,7 +133,8 @@ func TestPushEventCreatesVersionAndLatest(t *testing.T) {
 	if len(fm.deleted) != 0 {
 		t.Fatalf("deleted %v", fm.deleted)
 	}
-	if fm.tag(repo, "latest") != digestN(2) {
+	e.api.tags.wait()
+	if fm.tag(repo, "latest") != digestN(2) || fm.tag(repo, "build-1") != "" {
 		t.Fatalf("registry latest %s, want %s", fm.tag(repo, "latest"), digestN(2))
 	}
 }
@@ -193,6 +196,10 @@ func TestPushEventRejectsArm64(t *testing.T) {
 		if _, err := e.store.ImageVersion(ctx, img, c.digest); err != store.ErrNotFound {
 			t.Fatalf("version recorded: %v", err)
 		}
+	}
+	e.api.tags.wait()
+	if got := fm.tag(repo, "latest"); got != old {
+		t.Fatalf("registry latest %s after the rejected push, want %s", got, old)
 	}
 	if d, _ := e.store.ResolveImageTag(ctx, img, "latest"); d != old {
 		t.Fatalf("latest moved to %s", d)

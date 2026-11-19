@@ -115,6 +115,7 @@ func run() error {
 		newer = ck.Newer
 	}
 	var manifests api.ManifestDeleter
+	var tags *api.TagSync
 	var sched *builds.Scheduler
 	if cfg.RegistryURL != "" {
 		iss, err := registry.LoadIssuer(cfg.RegistryKeyDir)
@@ -128,15 +129,16 @@ func run() error {
 		}
 		upstream, _ := url.Parse(cfg.RegistryURL)
 		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
-		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Builds: s, Manifests: client, EventsSecret: cfg.RegistryEventsSecret})
+		tags = api.NewTagSync(s, client)
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
 		manifests = client
 		f.PullImagesFrom(publicURL.Host, iss)
 		sched = newScheduler(ctx, s, f, cfg)
 		f.BootBuildersWith(sched.BootEnv)
-		api.BuildEndpoints(mux, s, sched, client)
+		api.BuildEndpoints(mux, s, sched, client, tags)
 		go sched.Run(ctx, 10*time.Second)
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, sched, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

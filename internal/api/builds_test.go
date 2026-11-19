@@ -45,9 +45,9 @@ func (e *env) withBuilds() *buildEnv {
 		e.t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	BuildEndpoints(mux, e.store, sched, m)
+	BuildEndpoints(mux, e.store, sched, m, e.api.tags)
 	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: &url.URL{Scheme: "http", Host: "registry.invalid"}, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"},
-		Issuer: iss, Builds: e.store, Manifests: m, EventsSecret: eventsSecret})
+		Issuer: iss, Builds: e.store, Manifests: m, Tags: e.api.tags, EventsSecret: eventsSecret})
 	return &buildEnv{env: e, sched: sched, agent: mux, manifests: m}
 }
 
@@ -519,6 +519,7 @@ func TestBuildResultLinksVersion(t *testing.T) {
 	if tags, _ := e.store.ImageTags(ctx, img); tags["latest"] != second {
 		t.Fatalf("latest after result: %v", tags)
 	}
+	e.api.tags.wait()
 	if got := e.manifests.tag(imageRepo(img), "latest"); got != second {
 		t.Fatalf("registry latest %s, want %s", got, second)
 	}

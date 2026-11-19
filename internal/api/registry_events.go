@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -18,34 +17,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// RegistryManifests inspects and removes manifests in the registry and mirrors the hub's tags into it.
+// RegistryManifests inspects and removes manifests in the registry.
 type RegistryManifests interface {
 	ManifestDeleter
-	TagMirror
 	Manifest(ctx context.Context, repo, digest string) (registry.Manifest, error)
-}
-
-// TagMirror points a registry tag at a digest, so pulls by tag (FROM <hub>/i/<id>:latest) see the hub's tags.
-type TagMirror interface {
-	PutTag(ctx context.Context, repo, tag, digest string) error
-}
-
-// mirrorTags copies every hub tag of image into the registry, logging failures for the next tag change to retry; deleted tags stay (no delete by tag).
-func mirrorTags(ctx context.Context, s *store.Store, m any, image uuid.UUID) {
-	tm, ok := m.(TagMirror)
-	if !ok {
-		return
-	}
-	tags, err := s.ImageTags(ctx, image)
-	if err != nil {
-		slog.Error("mirror image tags", "image", image, "err", err)
-		return
-	}
-	for tag, digest := range tags {
-		if err := tm.PutTag(ctx, imageRepo(image), tag, digest); err != nil {
-			slog.Error("mirror image tag", "image", image, "tag", tag, "err", err)
-		}
-	}
 }
 
 const maxEventsBody = 4 << 20
@@ -68,6 +43,7 @@ type registryEvent struct {
 type registryEvents struct {
 	store     *store.Store
 	manifests RegistryManifests
+	tags      *TagSync
 	secret    string
 }
 
@@ -159,7 +135,7 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 		return tx.SetImagePushError(ctx, img.ID, "")
 	})
 	if err == nil {
-		mirrorTags(ctx, h.store, h.manifests, img.ID)
+		h.tags.Kick(img.ID)
 	}
 	return err
 }
@@ -210,5 +186,10 @@ func (h *registryEvents) reject(ctx context.Context, img store.Image, repo, dige
 	if err := h.store.SetImagePushError(ctx, img.ID, msg); err != nil {
 		return err
 	}
-	return h.manifests.DeleteManifest(ctx, repo, digest)
+	if err := h.manifests.DeleteManifest(ctx, repo, digest); err != nil {
+		return err
+	}
+	// The rejected push may have moved one of the hub's tags in the registry.
+	h.tags.Kick(img.ID)
+	return nil
 }

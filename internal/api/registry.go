@@ -34,6 +34,7 @@ type Registry struct {
 	Issuer              registry.Issuer
 	Builds              BuildCredentials
 	Manifests           RegistryManifests
+	Tags                *TagSync
 	EventsSecret        string
 }
 
@@ -41,7 +42,7 @@ type Registry struct {
 func RegistryEndpoints(mux *http.ServeMux, s *store.Store, z *authz.Service, reg Registry) {
 	t := &registryTokens{store: s, z: z, reg: reg}
 	mux.HandleFunc("GET /v2/token", t.token)
-	ev := &registryEvents{store: s, manifests: reg.Manifests, secret: reg.EventsSecret}
+	ev := &registryEvents{store: s, manifests: reg.Manifests, tags: reg.Tags, secret: reg.EventsSecret}
 	mux.HandleFunc("POST /internal/registry/events", ev.serve)
 	mux.Handle("/v2/", registryProxy(reg.Upstream, reg.PublicURL.JoinPath("/v2/token").String()))
 }

@@ -25,9 +25,18 @@ type fakeManifests struct {
 	manifests map[string]registry.Manifest
 	tags      map[string]string // repo:tag -> digest, as mirrored by PutTag
 	putErr    error
+	block     chan struct{} // PutTag waits for it when set
+	started   chan struct{}
 }
 
 func (f *fakeManifests) PutTag(_ context.Context, repo, tag, digest string) error {
+	if f.block != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+		<-f.block
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.putErr != nil {
@@ -63,6 +72,7 @@ func (f *fakeManifests) DeleteManifest(_ context.Context, repo, digest string) e
 func (e *env) withManifests() *fakeManifests {
 	f := &fakeManifests{}
 	e.api.manifests = f
+	e.api.tags = NewTagSync(e.store, f)
 	return f
 }
 
@@ -517,6 +527,7 @@ func TestImageTagsAndVersions(t *testing.T) {
 	if rec := e.send("PUT", tags+"stable", tok, `{"digest":"`+d1+`"}`); rec.Code != 204 {
 		t.Fatalf("set tag: %d %s", rec.Code, rec.Body.String())
 	}
+	e.api.tags.wait()
 	if fm.tag(imageRepo(id), "stable") != d1 || fm.tag(imageRepo(id), "latest") != d2 {
 		t.Fatalf("registry tags %v", fm.tags)
 	}

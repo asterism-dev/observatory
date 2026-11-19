@@ -311,8 +311,8 @@ func (h *api) listBuilderVMs(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildEndpoints serves the build agent in builder VMs, which authenticates with its build secret.
-func BuildEndpoints(mux *http.ServeMux, s *store.Store, b *builds.Scheduler, manifests RegistryManifests) {
-	a := &buildAgent{store: s, builds: b, events: &registryEvents{store: s, manifests: manifests}}
+func BuildEndpoints(mux *http.ServeMux, s *store.Store, b *builds.Scheduler, manifests RegistryManifests, tags *TagSync) {
+	a := &buildAgent{store: s, builds: b, events: &registryEvents{store: s, manifests: manifests, tags: tags}}
 	mux.HandleFunc("GET /api/builds/{id}/context", a.context)
 	mux.HandleFunc("POST /api/builds/{id}/log", a.log)
 	mux.HandleFunc("POST /api/builds/{id}/result", a.result)
@@ -422,7 +422,7 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state == store.BuildSucceeded {
-		mirrorTags(r.Context(), a.store, a.events.manifests, b.ImageID)
+		a.events.tags.Kick(b.ImageID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

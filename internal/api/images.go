@@ -961,7 +961,7 @@ func (h *api) commitTag(w http.ResponseWriter, r *http.Request, img store.Image,
 	}) {
 		return
 	}
-	mirrorTags(r.Context(), h.store, h.manifests, img.ID)
+	h.tags.Kick(img.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
