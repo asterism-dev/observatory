@@ -16,7 +16,7 @@ const teams = ref<{ id: string; name: string }[]>([])
 const busy = ref(false)
 const error = ref('')
 
-const nameInvalid = computed(() => !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name.value))
+const nameInvalid = computed(() => !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name.value))
 const sizeInvalid = computed(() => sizeGB.value === null || !Number.isInteger(sizeGB.value) || sizeGB.value < 1 || sizeGB.value > 4096)
 const ownerOptions = computed(() => [
   { value: 'user', label: t('vms.ownerMe') },

@@ -78,6 +78,7 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 	for _, body := range []string{
 		vmBody("Bad", userOwner(), node),
 		vmBody("-x", userOwner(), node),
+		vmBody("x-", userOwner(), node),
 		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":0,"memoryMB":512,"diskGB":10}`,
 		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":33,"memoryMB":512,"diskGB":10}`,
 		`{"name":"a","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":1,"memoryMB":511,"diskGB":10}`,

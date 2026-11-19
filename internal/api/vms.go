@@ -18,7 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-var vmNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var vmNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type refJSON struct {
 	ID   uuid.UUID `json:"id"`

@@ -378,7 +378,7 @@
     "ownerTeam": "Team {name}",
     "hintUser": "The VM gets your SSH keys and variables.",
     "hintTeam": "The VM gets the team members' SSH keys and the team variables.",
-    "invalidName": "Lowercase letters, digits and hyphens; must start with a letter or digit; max 63 characters.",
+    "invalidName": "Lowercase letters, digits and hyphens; must start and end with a letter or digit; max 63 characters.",
     "invalidRange": "Between {min} and {max}.",
     "start": "Start",
     "shutdown": "Shut down",

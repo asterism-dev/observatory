@@ -378,7 +378,7 @@
     "ownerTeam": "Team {name}",
     "hintUser": "Die VM erhält deine SSH-Schlüssel und Variablen.",
     "hintTeam": "Die VM erhält die SSH-Schlüssel der Teammitglieder und die Team-Variablen.",
-    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit Buchstabe oder Ziffer beginnen; max. 63 Zeichen.",
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit Buchstabe oder Ziffer beginnen und enden; max. 63 Zeichen.",
     "invalidRange": "Zwischen {min} und {max}.",
     "start": "Starten",
     "shutdown": "Herunterfahren",
