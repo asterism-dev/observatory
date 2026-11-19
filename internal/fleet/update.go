@@ -21,6 +21,7 @@ import (
 var (
 	ErrUpdateRunning = errors.New("an update run is already active")
 	ErrNotUpdatable  = errors.New("node is not updatable")
+	ErrClosed        = errors.New("the hub is shutting down")
 )
 
 // UpdateRun.State is running, done, failed or cancelled.
@@ -65,6 +66,10 @@ func (f *Fleet) updatable(n store.Node) bool {
 func (f *Fleet) StartUpdate(_ context.Context, org, by uuid.UUID, nodes []store.Node) (UpdateRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Checked under f.mu, which Close holds while cancelling, so no run starts after Close began waiting.
+	if f.ctx.Err() != nil {
+		return UpdateRun{}, ErrClosed
+	}
 	if old := f.runs[org]; old != nil && old.State == "running" {
 		return UpdateRun{}, ErrUpdateRunning
 	}
@@ -184,12 +189,8 @@ func (f *Fleet) updateNode(n store.Node) string {
 		return "node offline"
 	}
 	sent := time.Now()
-	select {
-	case c.update <- struct{}{}:
-	case <-c.done:
-		return "node offline"
-	case <-ctx.Done():
-		return "hub shutting down"
+	if reason := f.sendUpdate(ctx, n.ID, c, t.back); reason != "" {
+		return reason
 	}
 	tick := time.NewTicker(t.poll)
 	defer tick.Stop()
@@ -215,7 +216,9 @@ func (f *Fleet) updateNode(n store.Node) string {
 				case errors.Is(err, store.ErrNotFound):
 					return "node deleted"
 				case err != nil:
-					slog.Error("node update: load node", "node", n.ID, "err", err)
+					if ctx.Err() == nil {
+						slog.Error("node update: load node", "node", n.ID, "err", err)
+					}
 				case cur.Version == version.Version:
 					backAt = time.Now()
 					continue
@@ -229,7 +232,9 @@ func (f *Fleet) updateNode(n store.Node) string {
 		waiting, lastErr, reason, err := f.vmsBack(ctx, n.ID, c, errSince, t.vmErrGrace)
 		switch {
 		case err != nil:
-			slog.Error("node update: load vms", "node", n.ID, "err", err)
+			if ctx.Err() == nil {
+				slog.Error("node update: load vms", "node", n.ID, "err", err)
+			}
 		case reason != "":
 			return reason
 		case waiting == "":
@@ -243,6 +248,30 @@ func (f *Fleet) updateNode(n store.Node) string {
 		}
 	}
 	return "hub shutting down"
+}
+
+// sendUpdate hands the request to the node's push loop, following reconnects; a stalled control stream fails it after limit.
+func (f *Fleet) sendUpdate(ctx context.Context, node uuid.UUID, c *conn, limit time.Duration) string {
+	timeout := time.NewTimer(limit)
+	defer timeout.Stop()
+	for {
+		select {
+		case c.update <- struct{}{}:
+			return ""
+		case <-c.done:
+			f.mu.Lock()
+			next := f.conns[node]
+			f.mu.Unlock()
+			if next == nil || next == c {
+				return "node offline"
+			}
+			c = next
+		case <-timeout.C:
+			return fmt.Sprintf("node did not take the update request within %s", limit)
+		case <-ctx.Done():
+			return "hub shutting down"
+		}
+	}
 }
 
 func wait(ctx context.Context, c <-chan time.Time) {

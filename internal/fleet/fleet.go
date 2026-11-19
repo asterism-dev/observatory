@@ -59,7 +59,9 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 
 // Close stops update runs and waits for them; they also stop when New's ctx ends.
 func (f *Fleet) Close() {
+	f.mu.Lock()
 	f.stop()
+	f.mu.Unlock()
 	f.updates.Wait()
 }
 

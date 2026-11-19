@@ -371,6 +371,38 @@ func TestUpdateFailsFastOnDeadConnection(t *testing.T) {
 	}
 }
 
+func TestUpdateFailsWhenRequestNotTaken(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.SetUpdateTimeouts(e.f, 100*time.Millisecond, 2*time.Second, 10*time.Millisecond)
+	fleet.AttachStalledConn(e.f, ns[0].ID, e.org.ID)
+	e.start(ns...)
+	if r := e.ended(); r.State != "failed" || !strings.Contains(r.Nodes[0].Reason, "did not take the update request") {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateRequestFollowsReconnect(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	end := fleet.AttachStalledConn(e.f, ns[0].ID, e.org.ID)
+	e.start(ns...)
+	waitFor(t, func() bool { return e.f.Updating(ns[0].ID) })
+	e.back(ns[0], oldVersion)
+	end()
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version)
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestStartUpdateAfterClose(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.f.Close()
+	if _, err := e.f.StartUpdate(context.Background(), e.org.ID, e.owner, []store.Node{ns[0].Node}); !errors.Is(err, fleet.ErrClosed) {
+		t.Fatalf("err %v", err)
+	}
+}
+
 func TestCloseStopsUpdateRun(t *testing.T) {
 	e, ns := updEnv(t, "n1")
 	e.start(ns...)
