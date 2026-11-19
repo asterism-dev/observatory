@@ -190,6 +190,12 @@ curl -fsSL http://hub.example:8090/node/install.sh | sudo sh -s -- --hub http://
 `--update` does everything the installer does except enrollment: it needs no token, refuses to run without
 `/etc/observatory-node/node.json`, and keeps that file and its credential. It takes no `--token` or `--memory-mb`.
 
+## Upgrading to the guest runtime
+
+Upgrade the hub first, then update all nodes from the hub. VMs created with the old runtime must be recreated: the
+update hibernates them as on any node restart, but they cannot be started or resumed again on the new runtime. Their
+data disks can be detached and attached to the new VM.
+
 ## Re-enroll
 
 Running the installer again is safe: it updates packages, Firecracker and the binary, and keeps `node.json` settings,

@@ -150,7 +150,7 @@ watch(
         <Meter :label="t('usage.cpu')" :percent="n.state === 'pending' ? null : pct(n.usedCPUs, n.cpus)" />
         <Meter :label="t('usage.mem')" :percent="n.state === 'pending' ? null : pct(n.usedMemoryMB, n.memoryMB)" />
         <span class="mono image">
-{{ imageLine(n.image, t, locale) }}
+          {{ imageLine(n.image, t, locale) }}
         </span>
         <template v-if="can('node:update') && selectableIds.length" #actions>
           <Checkbox
