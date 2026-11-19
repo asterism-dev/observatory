@@ -220,7 +220,7 @@ func (a *Agent) connect(ctx context.Context) error {
 		case m.Type == "underlay" && m.Underlay != nil:
 			go a.startChassis(ctx, *m.Underlay)
 		case m.Type == "update":
-			// The installer touches networking, so a failure may only be reportable on a later connection.
+			// The installer may drop the connection; a failure reported while disconnected is lost and the hub falls back to its timeout.
 			go a.runUpdate(ctx, func(m proto.Message) error {
 				a.mu.Lock()
 				send := a.send
