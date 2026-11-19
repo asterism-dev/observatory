@@ -238,7 +238,9 @@ Destructive commands (`vm delete`, `snapshot restore`, `snapshot delete`, `disk 
 3. **SSH:** `observatory ssh dev` runs `ssh dev@dev.internal` as your system `ssh`, so `~/.ssh/config`,
    `known_hosts` and agent forwarding work as usual. Arguments after `--` go to `ssh`, e.g.
    `observatory ssh dev -- uptime`. A stopped, paused or hibernated VM is refused with a hint to start it; a suspended
-   VM wakes on the first packet. Without a device in the org the CLI warns but still runs `ssh`.
+   VM wakes on the first packet. Without a device in the org the CLI warns but still runs `ssh`. For files, use
+   `sftp dev@dev.internal` or `scp` directly, or VS Code / Zed remote access to `dev@dev.internal`; SFTP works in
+   every image ([guest.md](guest.md#own-images)).
 4. **Desktop:** `observatory desktop dev` runs `vmm-desktop start` over SSH and then `xpra attach
    ssh://dev@dev.internal/100`. The xpra 6 client is looked up in `PATH`, then
    `/Applications/Xpra.app/Contents/MacOS/Xpra`; install it as in [guest.md](guest.md#installing-the-xpra-client).

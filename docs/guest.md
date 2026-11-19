@@ -108,8 +108,12 @@ and try it locally with `docker build` and `docker run`. What the platform does:
 - **Nothing is required inside:** no SSH server, systemd, shell, Python or cloud-init. The init runs the image in its
   own PID and mount namespace and serves SSH, the agent and the integrations from outside it.
 - **Login:** always `dev`. If the image has a user with uid 1000 (`ubuntu`, `node`), the init renames it to `dev`.
-  The shell comes from `/etc/passwd`, else `/bin/sh`; without one SSH offers only port forwarding. `USER` and `EXPOSE`
-  of the image are ignored.
+  The shell comes from `/etc/passwd`, else `/bin/sh`; without one SSH offers only port forwarding and SFTP. `USER` and
+  `EXPOSE` of the image are ignored.
+- **SFTP:** the init's SSH server serves the `sftp` subsystem itself, so `sftp dev@<vm>.internal`, `scp` (OpenSSH 9+
+  uses SFTP) and the remote file access of VS Code or Zed work in every image, also without a shell or `sftp-server`.
+  It runs inside the image as `dev`, so the usual file permissions apply. Legacy `scp -O` needs a shell and `scp` in
+  the image.
 - **Services:** an image with systemd runs it as init and `CMD` is ignored; otherwise `ENTRYPOINT` and `CMD` run as a
   supervised service as root and restart when they exit (log in `/var/log/observatory/cmd.log`).
 - **Platform files:** the helpers (`vmm-token`, `git-credential-vmm`, `gh`, `vmm-desktop`, `agent-browser`) are in
