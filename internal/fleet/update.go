@@ -47,7 +47,7 @@ type updateRun struct {
 	cancelled bool
 }
 
-type updateTimeouts struct{ back, vms, poll time.Duration }
+type updateTimeouts struct{ back, vms, vmErrGrace, poll time.Duration }
 
 func (f *Fleet) Updatable(n store.Node) bool {
 	f.mu.Lock()
@@ -182,6 +182,7 @@ func (f *Fleet) updateNode(n store.Node) string {
 	tick := time.NewTicker(t.poll)
 	defer tick.Stop()
 	var backAt time.Time
+	errSince := map[string]time.Time{}
 	for ; ; <-tick.C {
 		f.mu.Lock()
 		report, failed := f.updateErrs[n.ID]
@@ -213,7 +214,7 @@ func (f *Fleet) updateNode(n store.Node) string {
 			}
 			continue
 		}
-		waiting, reason, err := f.vmsBack(ctx, n.ID, c)
+		waiting, lastErr, reason, err := f.vmsBack(ctx, n.ID, c, errSince, t.vmErrGrace)
 		switch {
 		case err != nil:
 			slog.Error("node update: load vms", "node", n.ID, "err", err)
@@ -223,13 +224,16 @@ func (f *Fleet) updateNode(n store.Node) string {
 			return ""
 		}
 		if time.Since(backAt) > t.vms {
+			if lastErr != "" {
+				return fmt.Sprintf("timed out after %s waiting for vm %s (last error: %s)", t.vms, waiting, lastErr)
+			}
 			return fmt.Sprintf("timed out after %s waiting for vm %s", t.vms, waiting)
 		}
 	}
 }
 
-// vmsBack names a VM not yet settled on c, or the failure of one that reported an error there; a VM counts only once c saw its status.
-func (f *Fleet) vmsBack(ctx context.Context, node uuid.UUID, c *conn) (waiting, failure string, _ error) {
+// vmsBack names a VM not yet settled on c and the latest VM error, or the failure of a VM in error on c for longer than grace; a VM counts only once c saw its status.
+func (f *Fleet) vmsBack(ctx context.Context, node uuid.UUID, c *conn, errSince map[string]time.Time, grace time.Duration) (waiting, lastErr, failure string, _ error) {
 	// seen before the VMs: an ID seen here had its new state written before the query below.
 	f.mu.Lock()
 	var seen map[string]bool
@@ -242,19 +246,30 @@ func (f *Fleet) vmsBack(ctx context.Context, node uuid.UUID, c *conn) (waiting, 
 	}
 	vms, err := f.store.VMsOnNode(ctx, node)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	for _, v := range vms {
+		id := v.ID.String()
+		if !seen[id] || v.State != proto.StateError {
+			delete(errSince, id)
+		}
 		switch {
-		case !seen[v.ID.String()]:
+		case !seen[id]:
 			waiting = cmp.Or(waiting, v.Name)
 		case v.State == proto.StateError:
-			return "", fmt.Sprintf("vm %s: %s", v.Name, v.Error), nil
+			// Disk-attached VMs error while the underlay comes up after a restart, then retry.
+			lastErr = fmt.Sprintf("vm %s: %s", v.Name, v.Error)
+			if errSince[id].IsZero() {
+				errSince[id] = time.Now()
+			} else if time.Since(errSince[id]) > grace {
+				return "", lastErr, lastErr, nil
+			}
+			waiting = cmp.Or(waiting, v.Name)
 		case !settled(v.Power, v.State):
 			waiting = cmp.Or(waiting, v.Name)
 		}
 	}
-	return waiting, "", nil
+	return waiting, lastErr, "", nil
 }
 
 func settled(p proto.Power, s proto.VMState) bool {

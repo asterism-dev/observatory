@@ -26,3 +26,5 @@ func Seen(f *Fleet, node, vm uuid.UUID) bool {
 	c := f.conns[node]
 	return c != nil && c.seen[vm.String()]
 }
+
+func SetVMErrorGrace(f *Fleet, d time.Duration) { f.updateTimeouts.vmErrGrace = d }

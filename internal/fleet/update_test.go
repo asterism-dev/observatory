@@ -215,6 +215,7 @@ func TestUpdateWaitsForVMStatusesAfterReconnect(t *testing.T) {
 // A status landing between vmsBack's two reads must not let the VM's stale stored state count.
 func TestUpdateJudgesOnlyStatesWrittenOnNewConnection(t *testing.T) {
 	e, ns := updEnv(t, "n1")
+	fleet.SetVMErrorGrace(e.f, 50*time.Millisecond)
 	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
 	if err := e.s.SetVMStatus(context.Background(), ns[0].ID, running(v)); err != nil {
 		t.Fatal(err)
@@ -268,12 +269,43 @@ func TestUpdateFailsOnEmptyReport(t *testing.T) {
 
 func TestUpdateFailsOnVMError(t *testing.T) {
 	e, ns := updEnv(t, "n1")
+	fleet.SetVMErrorGrace(e.f, 50*time.Millisecond)
 	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
 	e.start(ns...)
 	ns[0].conn.awaitUpdate()
 	e.back(ns[0], version.Version, proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "boom"})
 	r := e.ended()
-	if r.State != "failed" || !strings.Contains(r.Nodes[0].Reason, "web") || !strings.Contains(r.Nodes[0].Reason, "boom") {
+	if r.State != "failed" || r.Nodes[0].Reason != "vm web: boom" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+// VMs with disks report errors while the underlay comes up after a restart, then recover.
+func TestUpdateToleratesTransientVMError(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.SetVMErrorGrace(e.f, time.Second)
+	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version, proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "storage not ready"})
+	time.Sleep(100 * time.Millisecond)
+	if r := e.run(); r.State != "running" {
+		t.Fatalf("run %+v within the error grace", r)
+	}
+	ns[0].conn.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning}})
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateTimeoutNamesLastVMError(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.SetUpdateTimeouts(e.f, 2*time.Second, 50*time.Millisecond, 10*time.Millisecond)
+	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version, proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "storage unreachable"})
+	if r := e.ended(); r.State != "failed" || !strings.Contains(r.Nodes[0].Reason, "timed out") || !strings.Contains(r.Nodes[0].Reason, "storage unreachable") {
 		t.Fatalf("run %+v", r)
 	}
 }
