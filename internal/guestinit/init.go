@@ -39,6 +39,20 @@ func runSubcommand(args []string) int {
 	return 2
 }
 
+type bootStep struct {
+	name string
+	run  func() error
+}
+
+// runSteps logs a failing step and goes on: once the image root is in place, a guest with a broken step is still reachable, while PID 1 exiting panics the kernel.
+func runSteps(steps []bootStep) {
+	for _, s := range steps {
+		if err := s.run(); err != nil {
+			fmt.Fprintf(os.Stderr, "init: %s: %v\n", s.name, err)
+		}
+	}
+}
+
 func runInit() int {
 	if err := Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "init:", err)

@@ -2,6 +2,7 @@ package guestinit
 
 import (
 	"bytes"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -77,5 +78,16 @@ func TestHasMount(t *testing.T) {
 		if got := hasMount(strings.NewReader(switchedMountinfo), path); got != want {
 			t.Errorf("hasMount(%q) = %v, want %v", path, got, want)
 		}
+	}
+}
+
+func TestRunStepsRunsEveryStepDespiteFailures(t *testing.T) {
+	var ran []string
+	step := func(name string, err error) bootStep {
+		return bootStep{name, func() error { ran = append(ran, name); return err }}
+	}
+	runSteps([]bootStep{step("a", errors.New("boom")), step("b", nil), step("c", errors.New("boom"))})
+	if !slices.Equal(ran, []string{"a", "b", "c"}) {
+		t.Fatalf("ran %v", ran)
 	}
 }

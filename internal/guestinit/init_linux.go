@@ -21,10 +21,9 @@ const rootDevice = "/dev/vda"
 
 // Run is PID 1: it boots the guest, then blocks until the kernel asks for poweroff or reboot.
 func Run() error {
-	// Registered first so a signal during boot is not lost.
-	// With ctrl-alt-del off the kernel delivers it to PID 1 as SIGINT instead of rebooting hard.
+	// Registered first so a signal during boot is not lost; with ctrl-alt-del off the kernel sends PID 1 SIGINT instead of rebooting hard.
 	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_CAD_OFF); err != nil {
-		return fmt.Errorf("disable ctrl-alt-del: %w", err)
+		fmt.Fprintln(os.Stderr, "init: disable ctrl-alt-del:", err)
 	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGHUP)
@@ -44,7 +43,7 @@ func Run() error {
 		return err
 	}
 	if err := growFS(rootDevice, newRoot); err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, "init: grow root filesystem:", err)
 	}
 	if err := switchRoot(newRoot); err != nil {
 		return err
@@ -53,38 +52,22 @@ func Run() error {
 	// Kept open: StartImage detaches this /proc, and shutdown still needs our mountinfo.
 	proc, err := os.Open("/proc")
 	if err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, "init: open /proc:", err)
 	}
 	agent := newAgent(root)
 	go func() { fmt.Fprintln(os.Stderr, "init: agent:", agent.listen()) }()
-	// Tasks 6-10 add their steps here, in boot order, each taking root and seed.
-	if err := root.EnsureDev(); err != nil {
-		return err
-	}
-	// Failures below leave a reachable or at least debuggable guest, so they are logged rather than fatal.
-	if err := root.WriteHostname(seed.Hostname, seed.InstanceID); err != nil {
-		fmt.Fprintln(os.Stderr, "init: hostname:", err)
-	}
-	if err := syscall.Sethostname([]byte(seed.Hostname)); err != nil {
-		fmt.Fprintln(os.Stderr, "init: hostname:", err)
-	}
-	if err := ConfigureNICs(seed.NICs); err != nil {
-		fmt.Fprintln(os.Stderr, "init: network:", err)
-	}
-	if err := root.WriteResolv(seed.NICs); err != nil {
-		fmt.Fprintln(os.Stderr, "init: resolv.conf:", err)
-	}
-	hostKeys, err := root.HostKeys(false)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: host keys:", err)
-	}
-	if err := MountDisks(root, seed.Disks); err != nil {
-		fmt.Fprintln(os.Stderr, "init: disks:", err)
-	}
-	// A guest without the CAs still runs; only hosts bound to the egress proxy fail TLS.
-	if _, err := root.InstallCAs(seed.EgressCAs); err != nil {
-		fmt.Fprintln(os.Stderr, "init: egress CAs:", err)
-	}
+	var hostKeys []ssh.Signer
+	runSteps([]bootStep{
+		{"dev", root.EnsureDev},
+		{"hostname", func() error { return root.WriteHostname(seed.Hostname, seed.InstanceID) }},
+		{"sethostname", func() error { return syscall.Sethostname([]byte(seed.Hostname)) }},
+		{"network", func() error { return ConfigureNICs(seed.NICs) }},
+		{"resolv.conf", func() error { return root.WriteResolv(seed.NICs) }},
+		{"host keys", func() (err error) { hostKeys, err = root.HostKeys(false); return err }},
+		{"disks", func() error { return MountDisks(root, seed.Disks) }},
+		// A guest without the CAs still runs; only hosts bound to the egress proxy fail TLS.
+		{"egress CAs", func() error { _, err := root.InstallCAs(seed.EgressCAs); return err }},
+	})
 	agent.setSeedKeys(seed.SSHKeys)
 	env := agent.applyEnv(seed)
 
