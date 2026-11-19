@@ -143,7 +143,8 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `image recipe pull <ref> <dir>` | download the current revision; prints its `--ref` flags |
 | `image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...` | upload a directory as the next revision; scope `org`, `private` or `team:<team>` |
 | `image build <ref> [--follow]` | build the current recipe; `--follow` streams the log |
-| `image builds <ref>` / `image log <build-id> [--follow]` | builds of an image; a build's log |
+| `image auto <ref> [--schedule off\|daily\|weekly] [--on-base-change=true\|false]` | automatic rebuilds on a schedule or when a base image changes; without flags shows the settings |
+| `image builds <ref>` / `image log <build-id> [--follow]` | builds of an image (automatic ones marked); a build's log |
 | `image cancel <build-id>` | cancel a queued or running build |
 | `image login` | set docker's credential helper for the hub registry |
 | `image push <ref>[:tag] <local-image>` | tag and push a local image with `docker` (tag defaults to `latest`) |
