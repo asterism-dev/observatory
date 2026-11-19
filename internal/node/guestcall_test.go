@@ -75,3 +75,16 @@ func TestCallGuestProtocol(t *testing.T) {
 		t.Fatal("expected an error for a non-OK handshake")
 	}
 }
+
+func TestCallGuestTrust(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	uds, got := fakeVsock(t, "OK 1\n", `{"ok":true}`+"\n")
+	if err := CallGuest(ctx, uds, GuestRequest{Op: "trust", Certs: map[string]string{"id": "pem"}}); err != nil {
+		t.Fatal(err)
+	}
+	<-got
+	if l := <-got; l != `{"op":"trust","certs":{"id":"pem"}}`+"\n" {
+		t.Fatalf("request = %q", l)
+	}
+}

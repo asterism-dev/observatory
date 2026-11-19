@@ -551,6 +551,10 @@ func (i *instance) GuestResume(ctx context.Context) error {
 	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
 }
 
+func (i *instance) GuestTrust(ctx context.Context, cas map[string]string) error {
+	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "trust", Certs: cas})
+}
+
 func (i *instance) Flush() error {
 	for _, dev := range i.nbdDevs {
 		if err := linuxvm.FlushNBD(dev); err != nil {

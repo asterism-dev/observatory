@@ -37,6 +37,7 @@ type VMSpec struct {
 type Boot struct {
 	SSHPublicKeys []string          `json:"sshPublicKeys"`
 	Env           map[string]string `json:"env"`
+	EgressCAs     map[string]string `json:"egressCAs,omitempty"`
 }
 
 type DiskAttachment struct {
@@ -137,6 +138,8 @@ type DesiredVM struct {
 	Fork               *Fork         `json:"fork,omitempty"`
 	AutoSuspendMinutes int           `json:"autoSuspendMinutes,omitempty"`
 	WakeSeq            uint64        `json:"wakeSeq,omitempty"`
+	// Egress goes only to the VM's node and lives only in its memory.
+	Egress *Egress `json:"egress,omitempty"`
 }
 
 type Register struct {
@@ -253,3 +256,32 @@ func ValidEndpoint(s string) bool {
 	n, err := strconv.Atoi(port)
 	return err == nil && n >= 1 && n <= 65535
 }
+
+type EgressCA struct {
+	ID      string `json:"id"`
+	CertPEM string `json:"certPem"`
+	KeyPEM  string `json:"keyPem"`
+}
+
+func (EgressCA) String() string   { return "EgressCA{redacted}" }
+func (EgressCA) GoString() string { return "EgressCA{redacted}" }
+
+type HostBoundSecret struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Placeholder string   `json:"placeholder"`
+	Value       string   `json:"value"`
+	Hosts       []string `json:"hosts"`
+	Headers     []string `json:"headers,omitempty"`
+}
+
+func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
+func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }
+
+type Egress struct {
+	CAs     []EgressCA        `json:"cas"`
+	Secrets []HostBoundSecret `json:"secrets"`
+}
+
+func (Egress) String() string   { return "Egress{redacted}" }
+func (Egress) GoString() string { return "Egress{redacted}" }

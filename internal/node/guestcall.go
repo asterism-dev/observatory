@@ -21,6 +21,8 @@ type GuestRequest struct {
 	Time    int64    `json:"time,omitempty"` // unix ns
 	MACs    []string `json:"macs,omitempty"`
 	Entropy []byte   `json:"entropy,omitempty"`
+	// Certs are the public egress CA certs by id the guest trusts; never keys.
+	Certs map[string]string `json:"certs,omitempty"`
 }
 
 // CallGuest sends req to the guest agent through Firecracker's vsock uds and waits for its reply.

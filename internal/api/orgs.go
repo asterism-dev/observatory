@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -97,6 +98,9 @@ var storeErrorStatus = []struct {
 	{store.ErrOwnsResources, http.StatusConflict},
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
+	{store.ErrHostsNeedSecret, http.StatusBadRequest},
+	{store.ErrValueTooShort, http.StatusBadRequest},
+	{egress.ErrInvalidHost, http.StatusBadRequest},
 	{store.ErrRestartRequired, http.StatusConflict},
 	{store.ErrShapeChanged, http.StatusConflict},
 	{store.ErrInvalidSize, http.StatusBadRequest},
@@ -134,7 +138,7 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 			if errors.Is(err, se.err) {
 				msg := se.err.Error()
 				// These name the caller's own missing permission or bad input, which they need to fix the request.
-				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet {
+				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet || se.err == egress.ErrInvalidHost {
 					msg = err.Error()
 				}
 				if errors.Is(err, errDiskMissing) {

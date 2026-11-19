@@ -31,6 +31,8 @@ type VMFile struct {
 	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
+	// Egress holds host-bound values and CA keys: memory only, refreshed with Boot.
+	Egress *proto.Egress `json:"-"`
 }
 
 const (

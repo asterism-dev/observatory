@@ -1166,3 +1166,246 @@ func TestDisconnectFailsSnapshotWaitingForCopies(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func (e *env) privateVar(org, user uuid.UUID, name, value string, hosts ...string) store.EnvVar {
+	e.t.Helper()
+	ctx := context.Background()
+	v, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: org, Kind: store.EnvSecret, Scope: store.EnvScopeUser, OwnerID: &user, Name: name, Hosts: hosts, CreatedBy: e.owner, UpdatedBy: e.owner}, value)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		e.t.Fatal(err)
+	}
+	return v
+}
+
+const ghValue = "ghp_0123456789abcdef"
+
+func TestDesiredEgressPlaceholder(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	d := e.connect(cred).desired().Desired[0]
+	if ph := d.Boot.Env["GH_TOKEN"]; !strings.HasPrefix(ph, "obsph_") {
+		t.Fatalf("env GH_TOKEN = %q", ph)
+	}
+	if d.Egress == nil || len(d.Egress.Secrets) != 1 || d.Egress.Secrets[0].Value != ghValue || d.Egress.Secrets[0].Placeholder != d.Boot.Env["GH_TOKEN"] {
+		t.Fatalf("egress = %+v", d.Egress)
+	}
+	if len(d.Egress.CAs) != 1 || !strings.Contains(d.Egress.CAs[0].KeyPEM, "PRIVATE KEY") {
+		t.Fatalf("cas = %d", len(d.Egress.CAs))
+	}
+	if ca := d.Egress.CAs[0]; len(d.Boot.EgressCAs) != 1 || d.Boot.EgressCAs[ca.ID] != ca.CertPEM {
+		t.Fatalf("boot cas = %v", d.Boot.EgressCAs)
+	}
+	b, err := json.Marshal(d.Boot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); strings.Contains(s, ghValue) || strings.Contains(s, "PRIVATE KEY") {
+		t.Fatalf("boot leaks: %s", s)
+	}
+	if s := fmt.Sprintf("%v %+v %#v", d, d, d); strings.Contains(s, ghValue) || strings.Contains(s, "PRIVATE KEY") {
+		t.Fatalf("formatted desired leaks: %s", s)
+	}
+}
+
+func TestDesiredNoEgressWithoutBound(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "PLAIN", ghValue)
+
+	d := e.connect(cred).desired().Desired[0]
+	if d.Egress != nil || len(d.Boot.EgressCAs) != 0 || d.Boot.Env["PLAIN"] != ghValue {
+		t.Fatalf("egress = %+v, boot cas = %v, env = %v", d.Egress, d.Boot.EgressCAs, d.Boot.Env)
+	}
+}
+
+func TestDesiredTeamVMNoPrivateBound(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
+		t.Fatal(err)
+	}
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+
+	d := e.connect(cred).desired().Desired[0]
+	if _, ok := d.Boot.Env["GH_TOKEN"]; ok || d.Egress != nil {
+		t.Fatalf("team VM env = %v, egress = %+v", d.Boot.Env, d.Egress)
+	}
+}
+
+func TestDesiredOtherOrgNoValues(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	nA, credA := e.node(e.org.ID, "a")
+	e.vm(e.org.ID, nA.ID, "vm-a", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nB, credB := e.node(orgB.ID, "b")
+	e.vm(orgB.ID, nB.ID, "vm-b", &e.owner, nil)
+
+	placeholder := e.connect(credA).desired().Desired[0].Boot.Env["GH_TOKEN"]
+	if placeholder == "" {
+		t.Fatal("no placeholder for org A")
+	}
+	b, err := json.Marshal(e.connect(credB).desired())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{ghValue, placeholder, "PRIVATE KEY"} {
+		if strings.Contains(string(b), s) {
+			t.Errorf("org B desired contains %q", s)
+		}
+	}
+}
+
+func TestValueChangePushesSameGeneration(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	v := e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	node := e.connect(cred)
+	first := node.desired().Desired[0]
+	newValue := "ghp_fedcba9876543210"
+	if err := e.s.UpdateEnvVar(ctx, v, v, &newValue); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	second := node.desired().Desired[0]
+	if second.Egress == nil || second.Egress.Secrets[0].Value != newValue || second.Generation != first.Generation {
+		t.Fatalf("generation %d → %d, egress %+v", first.Generation, second.Generation, second.Egress)
+	}
+	if second.Boot.Env["GH_TOKEN"] != first.Boot.Env["GH_TOKEN"] {
+		t.Fatal("placeholder changed with the value")
+	}
+}
+
+func TestSweepEgressCAsNotifies(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	node := e.connect(cred)
+	if cas := node.desired().Desired[0].Egress.CAs; len(cas) != 1 {
+		t.Fatalf("cas = %d", len(cas))
+	}
+	if _, err := e.pool.Exec(context.Background(), "UPDATE vm_egress_cas SET not_after = now() + interval '10 days' WHERE vm_id = $1", v.ID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.f.SweepEgressCAs(ctx, 10*time.Millisecond)
+	if cas := node.desired().Desired[0].Egress.CAs; len(cas) != 2 {
+		t.Fatalf("cas after sweep = %d", len(cas))
+	}
+}
+
+func TestUnbindDropsEgressCAs(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	vm := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	v := e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	node := e.connect(cred)
+	node.desired()
+	unbound := v
+	unbound.Hosts = nil
+	if err := e.s.UpdateEnvVar(ctx, v, unbound, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	if d := node.desired().Desired[0]; d.Egress != nil || d.Boot.Env["GH_TOKEN"] != ghValue {
+		t.Fatalf("egress = %+v, env = %v", d.Egress, d.Boot.Env)
+	}
+	var rows int
+	if err := e.pool.QueryRow(ctx, "SELECT count(*) FROM vm_egress_cas WHERE vm_id = $1", vm.ID).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("ca rows = %d, %v", rows, err)
+	}
+}
+
+func hostRange(from, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("h%d.test", from+i)
+	}
+	return out
+}
+
+func TestDesiredEgressCAOverManySecrets(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "A_TOKEN", ghValue, hostRange(0, 6)...)
+	e.privateVar(e.org.ID, e.owner, "B_TOKEN", ghValue, hostRange(6, 6)...)
+
+	d := e.connect(cred).desired().Desired[0]
+	if d.Egress == nil || len(d.Egress.CAs) != 1 {
+		t.Fatalf("egress = %+v", d.Egress)
+	}
+	block, _ := pem.Decode([]byte(d.Egress.CAs[0].CertPEM))
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hostRange(0, 12)
+	slices.Sort(want)
+	if got := slices.Sorted(slices.Values(c.PermittedDNSDomains)); !slices.Equal(got, want) {
+		t.Fatalf("permitted = %v", got)
+	}
+}
+
+func TestDesiredEgressTooManyHostsKeepsVM(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	for i := range 11 {
+		e.privateVar(e.org.ID, e.owner, fmt.Sprintf("T%d", i), ghValue, hostRange(i*10, 10)...)
+	}
+	d := desiredVM(t, e.connect(cred).desired(), v.ID)
+	if d == nil || d.Egress != nil || len(d.Boot.EgressCAs) != 0 {
+		t.Fatalf("desired = %+v", d)
+	}
+}
+
+func TestDesiredEgressFailureKeepsOtherVMs(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	broken := e.vm(e.org.ID, n.ID, "broken", &e.owner, nil)
+	ok := e.vm(e.org.ID, n.ID, "ok", &e.owner, nil)
+	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
+
+	node := e.connect(cred)
+	node.desired()
+	if _, err := e.pool.Exec(context.Background(), "UPDATE vm_egress_cas SET key_ciphertext = 'garbage' WHERE vm_id = $1", broken.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	m := node.desired()
+	if d := desiredVM(t, m, broken.ID); d == nil || d.Egress != nil {
+		t.Fatalf("broken VM = %+v", d)
+	}
+	if d := desiredVM(t, m, ok.ID); d == nil || d.Egress == nil {
+		t.Fatalf("ok VM = %+v", d)
+	}
+}

@@ -3,6 +3,7 @@ package proto
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -69,6 +70,15 @@ func TestStorageJSON(t *testing.T) {
 		b, err := json.Marshal(c.in)
 		if err != nil || string(b) != c.want {
 			t.Errorf("got %s, %v\nwant %s", b, err, c.want)
+		}
+	}
+}
+
+func TestHostBoundSecretRedacted(t *testing.T) {
+	s := HostBoundSecret{ID: "i", Name: "N", Placeholder: "obsph_x", Value: "super-secret-value", Hosts: []string{"a.test"}}
+	for _, got := range []string{fmt.Sprintf("%v", s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s), fmt.Sprintf("%v", &s), fmt.Sprintf("%+v", []HostBoundSecret{s})} {
+		if strings.Contains(got, "super-secret-value") {
+			t.Fatalf("value printed: %s", got)
 		}
 	}
 }

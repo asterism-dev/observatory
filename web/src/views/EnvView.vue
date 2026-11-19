@@ -29,6 +29,7 @@ const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: t('env.name') },
   { key: 'kind', label: t('env.type') },
   { key: 'scope', label: t('env.scope') },
+  { key: 'hosts', label: t('env.hosts') },
   { key: 'value', label: t('env.value') },
   { key: 'actions', label: '' },
 ])
@@ -112,6 +113,10 @@ watch(
     <Table :columns="columns" :rows="rows" row-key="id">
       <template #cell-kind="{ row }"><Badge>{{ row.kind }}</Badge></template>
       <template #cell-scope="{ row }">{{ scopeLabel(row, t) }}</template>
+      <template #cell-hosts="{ row }">
+        <span v-if="row.hosts.length" class="cell"><Badge v-for="h in row.hosts" :key="h">{{ h }}</Badge></span>
+        <span v-else>—</span>
+      </template>
       <template #cell-value="{ row }">
         <span v-if="row.kind === 'secret'">••••••</span>
         <span v-else class="cell">
@@ -154,6 +159,7 @@ watch(
 }
 .cell {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }

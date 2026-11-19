@@ -211,7 +211,15 @@
       "org": "Org",
       "teams": "Teams",
       "private": "Privat"
-    }
+    },
+    "hosts": "Hosts",
+    "hostsPlaceholder": "Ein Host pro Zeile, z. B. api.github.com",
+    "hostsHint": "An Hosts binden (VMs erhalten einen Platzhalter; der Wert wird nur per HTTPS an diese Hosts gesendet)",
+    "hostInvalid": "Ungültiger Host: \"{host}\" (bis zu 10 exakte DNS-Namen, kein Wildcard, keine IP, kein Port)",
+    "restartNote": "Bereits laufende Programme in VMs vertrauen dem neuen Host erst nach einem Neustart.",
+    "unbindBody": "VMs erhalten den echten Wert bei ihrem nächsten Start.",
+    "unbindConfirm": "Lösen und speichern",
+    "hostsTooMany": "Zu viele Hosts (max. 10)"
   },
   "nodes": {
     "subtitle": "Maschinen, auf denen deine VMs laufen.",
@@ -305,7 +313,11 @@
       "suspended": "Schläft, wacht bei Verkehr auf",
       "error": "Fehler",
       "unknown": "Unbekannt"
-    }
+    },
+    "egress": "Egress",
+    "egressSecrets": "{n} an Hosts gebundene Secrets",
+    "egressCa": "CA läuft ab am {date}",
+    "egressRestart": "Langlaufende Programme neu starten, damit sie neuen Hosts vertrauen."
   },
   "devices": {
     "subtitle": "WireGuard-Geräte, die dich mit deinen VMs verbinden.",

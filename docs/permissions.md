@@ -126,8 +126,14 @@ reaches you through the team, unless you are an owner.
 Variables (plain or secret) live in three scopes: the org (`org/env`), a team (`org/team-env/<team>`) and
 each member's private scope (`org/user-env/<user>`).
 
-- `env:list` lists names and metadata; `env:set` and `env:delete` manage variables; `env:use` lets a
-  subject's workloads receive the values. There is no action that reads a secret value back.
+- `env:list` lists names and metadata, including the hosts a secret is bound to; `env:set` and `env:delete`
+  manage variables; `env:use` lets a subject's workloads receive the values. There is no action that reads a secret
+  value back.
+- Binding a secret to hosts, changing its hosts and unbinding it (which delivers the real value at the VMs' next
+  boot) need `env:set` on the variable's scope, like changing the value. Placeholders are never returned
+  ([egress.md](egress.md)).
+- `vm:read` on a VM shows its Egress line: the host names and the number of the owner's secrets bound for it, never
+  the secrets' names, values or placeholders. Org admins therefore see which hosts a member's VM has secrets for.
 - Team members get `env:list` and `env:use` on their team's scope; the team subject itself gets `env:use`
   on `org/env` and its own scope. Team admins also get `env:set` and `env:delete` on their team.
 - A private scope is reachable only by its own user, who holds all four actions on it; no built-in role,

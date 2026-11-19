@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -475,5 +479,207 @@ func TestResolveEnv(t *testing.T) {
 
 	if _, err := s.ResolveEnv(ctx, e, org.ID, "vm:"+uuid.NewString()); err == nil {
 		t.Fatal("vm owner accepted")
+	}
+}
+
+func boundVar(org store.Org, user uuid.UUID, scope store.EnvScope, owner *uuid.UUID, name string, hosts ...string) store.EnvVar {
+	v := envVar(org, user, store.EnvSecret, scope, owner, name)
+	v.Hosts = hosts
+	return v
+}
+
+func placeholderOf(t *testing.T, pool *pgxpool.Pool, id uuid.UUID) (p string) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), "SELECT coalesce(placeholder, '') FROM env_vars WHERE id = $1", id).Scan(&p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestEnvHostsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	hosts := []string{"api.github.com", "github.com"}
+	v := mustCreateEnv(t, s, boundVar(org, u.User.ID, store.EnvScopeOrg, nil, "GH", hosts...), "0123456789abcdef")
+	if got := mustEnvVar(t, s, org.ID, v.ID); !slices.Equal(got.Hosts, hosts) {
+		t.Fatalf("hosts %v", got.Hosts)
+	}
+	list, err := s.EnvVars(ctx, org.ID)
+	if err != nil || len(list) != 1 || !slices.Equal(list[0].Hosts, hosts) {
+		t.Fatalf("list %v %v", list, err)
+	}
+}
+
+func TestEnvHostsOnlySecret(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(testKey(1))
+	u := login(t, s, "env")
+	org := mustCreateOrg(t, s, "E", u.User.ID)
+	bad := envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "P")
+	bad.Hosts = []string{"a.test"}
+	if _, err := s.CreateEnvVar(ctx, bad, "0123456789abcdef"); !errors.Is(err, store.ErrHostsNeedSecret) {
+		t.Fatalf("got %v", err)
+	}
+	mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "Q"), "x")
+	if _, err := pool.Exec(ctx, "UPDATE env_vars SET hosts = '{a.test}' WHERE kind = 'env'"); err == nil {
+		t.Fatal("check did not reject hosts on an env variable")
+	}
+}
+
+func TestEnvHostsValueTooShort(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	uid := u.User.ID
+	if _, err := s.CreateEnvVar(ctx, boundVar(org, uid, store.EnvScopeOrg, nil, "A", "a.test"), "12345678901"); !errors.Is(err, store.ErrValueTooShort) {
+		t.Fatalf("got %v", err)
+	}
+	old := mustCreateEnv(t, s, envVar(org, uid, store.EnvSecret, store.EnvScopeOrg, nil, "B"), "12345678")
+	v := old
+	v.Hosts = []string{"a.test"}
+	if err := s.UpdateEnvVar(ctx, old, v, nil); !errors.Is(err, store.ErrValueTooShort) {
+		t.Fatalf("got %v", err)
+	}
+	short := "short"
+	if err := s.UpdateEnvVar(ctx, old, v, &short); !errors.Is(err, store.ErrValueTooShort) {
+		t.Fatalf("got %v", err)
+	}
+	long := "0123456789abcdef"
+	if err := s.UpdateEnvVar(ctx, old, v, &long); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlaceholderStable(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(testKey(1))
+	u := login(t, s, "env")
+	org := mustCreateOrg(t, s, "E", u.User.ID)
+	uid := u.User.ID
+	team, err := s.CreateTeam(ctx, org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const val = "0123456789abcdef"
+	v := mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeOrg, nil, "A", "a.test"), val)
+	p1 := placeholderOf(t, pool, v.ID)
+	if !strings.HasPrefix(p1, "obsph_") {
+		t.Fatalf("placeholder %q", p1)
+	}
+	same := func(step string) {
+		t.Helper()
+		if got := placeholderOf(t, pool, v.ID); got != p1 {
+			t.Fatalf("%s: placeholder %q, want %q", step, got, p1)
+		}
+	}
+	update := func(mod func(*store.EnvVar), value *string) {
+		t.Helper()
+		old := mustEnvVar(t, s, org.ID, v.ID)
+		n := old
+		mod(&n)
+		if err := s.UpdateEnvVar(ctx, old, n, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nv := val + "2"
+	update(func(*store.EnvVar) {}, &nv)
+	same("value")
+	update(func(n *store.EnvVar) { n.Name = "B" }, nil)
+	same("rename")
+	old := mustEnvVar(t, s, org.ID, v.ID)
+	moved := old
+	moved.Scope, moved.OwnerID = store.EnvScopeTeam, &team.ID
+	if err := s.MoveEnvVar(ctx, old, moved); err != nil {
+		t.Fatal(err)
+	}
+	same("move")
+	update(func(n *store.EnvVar) { n.Hosts = nil }, nil)
+	same("unbind")
+	if h := mustEnvVar(t, s, org.ID, v.ID).Hosts; h != nil {
+		t.Fatalf("hosts %v", h)
+	}
+	update(func(n *store.EnvVar) { n.Hosts = []string{"b.test"} }, nil)
+	same("rebind")
+	w := mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeOrg, nil, "C", "c.test"), val)
+	if p2 := placeholderOf(t, pool, w.ID); p2 == p1 || p2 == "" {
+		t.Fatalf("second placeholder %q", p2)
+	}
+}
+
+func TestResolveVMEnvBound(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(testKey(1))
+	u := login(t, s, "env")
+	org := mustCreateOrg(t, s, "E", u.User.ID)
+	uid := u.User.ID
+	team, err := s.CreateTeam(ctx, org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const val = "0123456789abcdef"
+	hosts := []string{"api.github.com", "github.com"}
+	gh := mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeOrg, nil, "GH_TOKEN", hosts...), val)
+	mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeUser, &uid, "MINE", "m.test"), val+"m")
+	policy, err := s.PolicySnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := authz.New(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1 := placeholderOf(t, pool, gh.ID)
+
+	env, bound, err := s.ResolveVMEnv(ctx, e, org.ID, authz.TeamSubject(team.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 1 || env["GH_TOKEN"] != p1 {
+		t.Fatalf("env %v", env)
+	}
+	if len(bound) != 1 || bound[0].ID != gh.ID.String() || bound[0].Name != "GH_TOKEN" || bound[0].Placeholder != p1 ||
+		bound[0].Value != val || !slices.Equal(bound[0].Hosts, hosts) || bound[0].Headers != nil {
+		t.Fatalf("bound %+v", bound)
+	}
+
+	env, bound, err = s.ResolveVMEnv(ctx, e, org.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env) != 2 || len(bound) != 2 || bound[0].Name != "GH_TOKEN" || bound[1].Name != "MINE" {
+		t.Fatalf("env %v bound %+v", env, bound)
+	}
+
+	mustCreateEnv(t, s, envVar(org, uid, store.EnvSecret, store.EnvScopeUser, &uid, "GH_TOKEN"), "private-real")
+	env, bound, err = s.ResolveVMEnv(ctx, e, org.ID, authz.UserSubject(uid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["GH_TOKEN"] != "private-real" || len(bound) != 1 || bound[0].Name != "MINE" {
+		t.Fatalf("env %v bound %+v", env, bound)
+	}
+
+	plain, err := s.ResolveEnv(ctx, e, org.ID, authz.TeamSubject(team.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range plain {
+		if strings.Contains(v, val) {
+			t.Fatalf("ResolveEnv leaked the bound value in %s", k)
+		}
+	}
+}
+
+func TestEnvHostsNormalized(t *testing.T) {
+	ctx := context.Background()
+	s, u, org, _ := newEnvStore(t)
+	v := mustCreateEnv(t, s, boundVar(org, u.User.ID, store.EnvScopeOrg, nil, "A", " B.test", "a.test", "A.test"), "0123456789abcdef")
+	if got := mustEnvVar(t, s, org.ID, v.ID); !slices.Equal(got.Hosts, []string{"a.test", "b.test"}) {
+		t.Fatalf("hosts %v", got.Hosts)
+	}
+	if _, err := s.CreateEnvVar(ctx, boundVar(org, u.User.ID, store.EnvScopeOrg, nil, "B", "*.test"), "0123456789abcdef"); !errors.Is(err, egress.ErrInvalidHost) {
+		t.Fatalf("got %v", err)
 	}
 }

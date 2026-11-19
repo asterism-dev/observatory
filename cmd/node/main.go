@@ -24,6 +24,9 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "egress" {
+		os.Exit(egressMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	configPath := flag.String("config", filepath.Join(home, ".observatory-node", "node.json"), "path to node config")
 	flag.Parse()
 
@@ -32,6 +35,10 @@ func main() {
 		log.Fatal(err)
 	}
 	provider, err := newProvider(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	egressHost, err := newEgress(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -61,7 +68,7 @@ func main() {
 		HubURL: cfg.Hub.URL, Credential: cfg.Hub.Credential, NodeID: cfg.NodeID, VMsDir: cfg.Paths.VMs,
 		CPUs: cfg.Capacity.CPUs, MemoryMB: cfg.Capacity.MemoryMB, Provider: provider,
 		Config: public, Machine: node.MachineInfo(),
-		Version: version.Version,
+		Version: version.Version, Egress: egressHost,
 	}
 	log.Printf("node %s (%s): provider %s, %d CPUs, %d MB", cfg.NodeID, version.Version, provider.Name(), cfg.Capacity.CPUs, cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {

@@ -1517,6 +1517,30 @@ func TestUnpauseReloadsSeedFirst(t *testing.T) {
 	}
 }
 
+func TestPausedCAChangeReachesSeedOnUnpause(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	p.mu.Lock()
+	p.events = nil
+	p.mu.Unlock()
+	boot := &proto.Boot{EgressCAs: map[string]string{"ca1": "pem"}}
+	d := dv("a", "a", proto.PowerPaused, 3)
+	d.Boot = boot
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StatePaused, 3)
+	d = dv("a", "a", proto.PowerRunning, 4)
+	d.Boot = boot
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 4)
+	want := []string{"reseed:a", "reseed-keys:", "reseed-cas:ca1", "reload-seed", "resume"}
+	if got := p.gotEvents(); !slices.Equal(got, want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+}
+
 func TestPausedRestoreCallsGuestResumeOnUnpause(t *testing.T) {
 	a, p := newReconcileAgent(t)
 	f := cachedVM("a", "a")

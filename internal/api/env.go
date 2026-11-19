@@ -4,12 +4,14 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -34,6 +36,9 @@ func envObject(scope store.EnvScope, owner *uuid.UUID) string {
 func envAudit(r *http.Request, action string, v store.EnvVar) store.AuditEntry {
 	e := auditEntry(r, &v.OrgID, action, envObject(v.Scope, v.OwnerID), store.ResultAllowed)
 	e.Details = map[string]any{"name": v.Name, "kind": v.Kind, "scope": v.Scope, "ownerId": v.OwnerID}
+	if len(v.Hosts) > 0 {
+		e.Details["hosts"] = v.Hosts
+	}
 	return e
 }
 
@@ -78,6 +83,7 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		TeamID    *uuid.UUID     `json:"teamId,omitempty"`
 		TeamName  string         `json:"teamName,omitempty"`
 		Value     *string        `json:"value,omitempty"`
+		Hosts     []string       `json:"hosts"`
 		UpdatedAt time.Time      `json:"updatedAt"`
 		UpdatedBy userRef        `json:"updatedBy"`
 		CanEdit   bool           `json:"canEdit"`
@@ -100,7 +106,7 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		if !e.Allowed(sub, m.Org.ID, obj, "env:list") {
 			continue
 		}
-		j := varJSON{ID: v.ID, Name: v.Name, Kind: v.Kind, Scope: v.Scope, UpdatedAt: v.UpdatedAt,
+		j := varJSON{ID: v.ID, Name: v.Name, Kind: v.Kind, Scope: v.Scope, Hosts: append([]string{}, v.Hosts...), UpdatedAt: v.UpdatedAt,
 			UpdatedBy: userRef{v.UpdatedBy, userNames[v.UpdatedBy]},
 			CanEdit:   e.Allowed(sub, m.Org.ID, obj, store.ActionEnvSet),
 			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionEnvDelete)}
@@ -191,8 +197,14 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 		Kind        store.EnvKind
 		Scope       store.EnvScope
 		TeamID      *uuid.UUID
+		Hosts       []string
 	}
 	if !readJSON(w, r, &body) {
+		return
+	}
+	hosts, err := egress.NormalizeHosts(body.Hosts)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	switch {
@@ -211,7 +223,7 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	v := store.EnvVar{OrgID: m.Org.ID, Kind: body.Kind, Scope: body.Scope, OwnerID: owner, Name: body.Name, CreatedBy: p.User.ID}
+	v := store.EnvVar{OrgID: m.Org.ID, Kind: body.Kind, Scope: body.Scope, OwnerID: owner, Name: body.Name, Hosts: hosts, CreatedBy: p.User.ID}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
 		if v, err = tx.CreateEnvVar(r.Context(), v, body.Value); err != nil {
@@ -236,9 +248,18 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name, Value *string
 		Kind        *store.EnvKind
+		Hosts       *[]string
 	}
 	if !readJSON(w, r, &body) {
 		return
+	}
+	if body.Hosts != nil {
+		hosts, err := egress.NormalizeHosts(*body.Hosts)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		v.Hosts = hosts
 	}
 	if body.Name != nil {
 		if !validEnvName(*body.Name) {
@@ -271,6 +292,9 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 		}
 		e := envAudit(r, store.ActionEnvSet, v)
 		e.Details["created"] = false
+		if body.Hosts != nil {
+			e.Details["hosts"] = append([]string{}, v.Hosts...)
+		}
 		return tx.Audit(r.Context(), e)
 	}) {
 		return
@@ -325,4 +349,48 @@ func (h *api) deleteEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) vmEgress(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, "vm:read")
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	owner := ""
+	switch {
+	case v.UserID != nil:
+		owner = authz.UserSubject(*v.UserID)
+	case v.TeamID != nil:
+		owner = authz.TeamSubject(*v.TeamID)
+	}
+	_, bound, err := h.store.ResolveVMEnv(ctx, h.z.Enforcer(), v.OrgID, owner)
+	if err != nil {
+		serverError(w, "vm egress env", err)
+		return
+	}
+	cas, err := h.store.EgressCAInfos(ctx, v.ID, time.Now())
+	if err != nil {
+		serverError(w, "vm egress cas", err)
+		return
+	}
+	hostSet := map[string]bool{}
+	for _, b := range bound {
+		for _, host := range b.Hosts {
+			hostSet[host] = true
+		}
+	}
+	hosts := make([]string, 0, len(hostSet))
+	for host := range hostSet {
+		hosts = append(hosts, host)
+	}
+	slices.Sort(hosts)
+	// The oldest CA is the one a long-running guest process may still hold.
+	var notAfter *time.Time
+	trustChanged := false
+	if len(cas) > 0 {
+		notAfter = &cas[0].NotAfter
+		trustChanged = slices.ContainsFunc(hosts, func(host string) bool { return !slices.Contains(cas[0].Hosts, host) })
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"secrets": len(bound), "hosts": hosts, "caNotAfter": notAfter, "trustChanged": trustChanged})
 }

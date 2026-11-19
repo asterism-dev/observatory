@@ -38,6 +38,8 @@ type Instance interface {
 	SaveState(dir string) error
 	// GuestResume tells the guest agent it was resumed, so it sets its clock and re-reads its seed.
 	GuestResume(ctx context.Context) error
+	// GuestTrust makes the running guest trust exactly cas (CA id → cert PEM).
+	GuestTrust(ctx context.Context, cas map[string]string) error
 	// ReloadSeed makes the VM read the seed Reseed last wrote, so a paused guest resumes with the current keys and variables.
 	ReloadSeed() error
 	CPUTicks() (uint64, error)

@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 # Vsock agent for the node; requests never carry keys or variables (the seed does), so never log request values.
+# Also run as "vmm-agent.py install-cas <file>" by vmm-boot.sh.
 import base64
 import concurrent.futures
 import fcntl
@@ -10,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -23,6 +25,12 @@ NETPLAN_GENERATE = "/usr/libexec/netplan/generate"
 RNDRESEEDCRNG = 0x5207
 MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,62})")
+CA_DIR = "/usr/local/share/ca-certificates"
+CA_ID = re.compile(r"[0-9a-f-]{36}")
+CA_PEM = re.compile(r"(-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?)+")
+MAX_CA = 16 << 10
+UPDATE_CA = os.environ.get("VMM_UPDATE_CA", "" if ROOT else "update-ca-certificates")
+CA_PENDING = ROOT + "/etc/vmm/ca-update-pending"
 
 lock = threading.Lock()
 slots = threading.BoundedSemaphore(4)
@@ -159,6 +167,11 @@ def takeoff(req):
             grown = pool.submit(grow_root)
             run("sh", seed + "/vmm-disks.sh", env=dict(os.environ, VMM_AGENT="1"))
             grown.result()
+        # Like vmm-boot.sh: a guest without the CAs still runs, only bound hosts fail TLS.
+        try:
+            install_cas(seed_cas(seed + "/vmm-egress-cas"))
+        except Exception as e:
+            print("install egress cas: %s" % e, file=sys.stderr)
     finally:
         umount_seed()
 
@@ -210,13 +223,59 @@ def new_host_keys():
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def install_cas(certs, force=False):
+    # Only public CA certs may land in the trust store: a key or any other PEM block is refused.
+    if not isinstance(certs, dict) or not all(
+            isinstance(i, str) and CA_ID.fullmatch(i) and isinstance(p, str) and len(p) <= MAX_CA and CA_PEM.fullmatch(p)
+            for i, p in certs.items()):
+        raise ValueError("bad certs")
+    d = ROOT + CA_DIR
+    os.makedirs(d, exist_ok=True)
+    changed = removed = False
+    for i, pem in certs.items():
+        path = "%s/observatory-egress-%s.crt" % (d, i)
+        try:
+            with open(path) as f:
+                if f.read() == pem:
+                    continue
+        except FileNotFoundError:
+            pass
+        write(path, pem)
+        changed = True
+    for path in glob.glob(d + "/observatory-egress-*.crt"):
+        if os.path.basename(path)[len("observatory-egress-"):-len(".crt")] not in certs:
+            os.remove(path)
+            changed = removed = True
+    # A failed update leaves the files in place, so only the marker tells the next call to update again.
+    pending = os.path.exists(CA_PENDING)
+    if (changed or force or pending) and UPDATE_CA:
+        os.makedirs(os.path.dirname(CA_PENDING), exist_ok=True)
+        write(CA_PENDING, "")
+        # Without additions it neither drops the stale hash link nor rehashes, and OpenSSL stops at the first missing hash link.
+        run(UPDATE_CA, *(["--fresh"] if removed or force or pending else []))
+        os.remove(CA_PENDING)
+    return changed
+
+
+def seed_cas(path):
+    try:
+        with open(path) as f:
+            return json.load(f) or {}
+    except FileNotFoundError:
+        return {}
+
+
+def trust(req):
+    install_cas(req["certs"], force=True)
+
+
 def ping(req):
     if not ROOT:
         # Exits non-zero when cloud-init finished with errors; the guest is up either way.
         subprocess.run(["cloud-init", "status", "--wait"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-OPS = {"ping": ping, "resume": resume, "takeoff": takeoff}
+OPS = {"ping": ping, "resume": resume, "takeoff": takeoff, "trust": trust}
 
 
 def parse(line):
@@ -230,7 +289,7 @@ def parse(line):
         raise ValueError("bad macs")
     if not isinstance(entropy, str) or len(entropy) > 1024:
         raise ValueError("bad entropy")
-    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True)}
+    return {"op": raw["op"], "time": t, "macs": macs, "entropy": base64.b64decode(entropy, validate=True), "certs": raw.get("certs", {})}
 
 
 def handle(conn):
@@ -289,4 +348,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["install-cas"]:
+        install_cas(seed_cas(sys.argv[2]))
+    else:
+        main()

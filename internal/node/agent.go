@@ -55,6 +55,8 @@ type Agent struct {
 	ChassisCSR                         string // OVN client cert request, sent in Register
 	OVNKeyFile                         string
 	Version                            string
+	// Egress runs the per-VM egress proxies; nil runs none.
+	Egress EgressHost
 
 	diskRefresh  time.Duration // zero means defaultDiskRefresh
 	metricsEvery time.Duration // zero means the package default
@@ -77,6 +79,12 @@ type Agent struct {
 	// dying holds removed entries whose instance may still run; their disks stay in use until it exits.
 	dying    map[*vmEntry]bool
 	snapJobs map[snapKey]*snapshotJob
+
+	// egressMu guards the proxies and the count of running processes per VM; taken after a.mu, never before it.
+	egressMu    sync.Mutex
+	egress      map[string]*egressSup
+	egressUsers map[string]int
+	egressWarn  sync.Once
 }
 
 type vmEntry struct {
@@ -100,6 +108,7 @@ type vmEntry struct {
 	idleStop, wake context.CancelFunc
 	woken          bool
 	wakeDone       chan struct{} // closed once a cancelled WaitWake has removed its taps
+	trustMu        sync.Mutex    // serializes egress CA trust calls to the guest
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -356,7 +365,7 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	if reason == nil {
 		// A same-generation push (new keys or variables) may have arrived while preparing.
 		a.mu.Lock()
-		f.Boot = e.file.Boot
+		f.Boot, f.Egress = e.file.Boot, e.file.Egress
 		a.mu.Unlock()
 		var err error
 		if inst, note, err = a.start(ctx, e, f, dir); err != nil {
@@ -436,6 +445,15 @@ func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
 
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
 func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
+	if testHookBeforeEgressUp != nil {
+		testHookBeforeEgressUp()
+	}
+	a.egressUp(e)
+	defer func() {
+		if err != nil {
+			a.egressDown(f.Spec.ID)
+		}
+	}()
 	if f.Hibernated {
 		// Cleared first: once resumed, the guest writes to its disks, and a crash must then cold-boot.
 		if err := a.clearHibernated(e); err != nil {
@@ -743,6 +761,7 @@ func (a *Agent) watch(ctx context.Context, e *vmEntry, id string, inst Instance,
 		}
 	}
 	<-inst.Done()
+	a.egressDown(id)
 	a.mu.Lock()
 	f := e.file
 	if e.idleStop != nil {
@@ -840,6 +859,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 			inst.Kill()
 		}
 		<-inst.Done()
+		a.egressDown(f.Spec.ID)
 		return nil, "", nil
 	}
 	return inst, note, nil
@@ -920,6 +940,7 @@ func (a *Agent) stopAll() {
 		kills.Wait()
 		<-done
 	}
+	a.haltAllEgress()
 	a.chassisMu.Lock()
 	a.chassisStopping = true
 	a.chassisMu.Unlock()

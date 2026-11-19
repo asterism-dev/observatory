@@ -126,7 +126,7 @@ $SUDO tee /etc/systemd/system/observatory-node.service >/dev/null <<'UNIT'
 [Unit]
 Description=Observatory node
 Wants=network-online.target
-After=network-online.target openvswitch-switch.service ovn-controller.service docker.service
+After=network-online.target openvswitch-switch.service ovn-controller.service docker.service nftables.service
 
 [Service]
 ExecStartPre=-/bin/sh -c 'iptables -L DOCKER-USER -n >/dev/null 2>&1 || exit 0; iptables -C DOCKER-USER -i vmm0 -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i vmm0 -j ACCEPT; iptables -C DOCKER-USER -o vmm0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -o vmm0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT'
@@ -136,6 +136,9 @@ RestartSec=5
 # Only the node gets SIGTERM; it hibernates the VMs (Firecracker children in this cgroup) before exiting.
 KillMode=mixed
 TimeoutStopSec=300
+# Host-bound secrets live only in the memory of the node and its egress proxies: never swapped, never in a core dump.
+MemorySwapMax=0
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target

@@ -5,6 +5,9 @@ set -u
 seed=$1
 root=${VMM_ROOT:-}
 umask 022
+# Constant, so a VM's first egress CA needs no restart of anything already reading them.
+bundle=/etc/ssl/certs/ca-certificates.crt
+trust_vars='SSL_CERT_FILE NODE_EXTRA_CA_CERTS REQUESTS_CA_BUNDLE CURL_CA_BUNDLE'
 mkdir -p "$root/etc/vmm" "$root/etc/ssh/sshd_config.d" "$root/etc/profile.d"
 
 cp "$seed/vmm-authorized-keys" "$root/etc/vmm/authorized_keys.new" &&
@@ -15,14 +18,16 @@ printf 'Match User ubuntu\n\tAuthorizedKeysFile .ssh/authorized_keys /etc/vmm/au
 echo 'if [ -r /etc/vmm/env.sh ]; then . /etc/vmm/env.sh; fi' >"$root/etc/profile.d/vmm-env.sh"
 
 : >"$root/etc/vmm/env.sh"
-python3 - "$seed/vmm-env" "$root" <<'PY'
+python3 - "$seed/vmm-env" "$root" "$bundle" "$trust_vars" <<'PY'
 import json, os, re, sys
 
 src, root = sys.argv[1], sys.argv[2]
 with open(src, encoding="utf-8") as f:
     env = json.load(f) or {}
 # A name that is not a shell identifier would inject code into env.sh.
-names = sorted(n for n, v in env.items() if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) and "\0" not in v)
+names = [n for n, v in env.items() if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) and "\0" not in v]
+env = {**{n: sys.argv[3] for n in sys.argv[4].split()}, **{n: env[n] for n in names}}
+names = sorted(env)
 
 
 def write(path, text):
@@ -63,6 +68,16 @@ if block:
 write(path, "".join(keep))
 PY
 
+python3 "$seed/vmm-agent.py" install-cas "$seed/vmm-egress-cas"
+reexec=
+mkdir -p "$root/etc/systemd/system.conf.d" "$root/etc/systemd/user.conf.d"
+for f in "$root/etc/systemd/system.conf.d/50-vmm-trust.conf" "$root/etc/systemd/user.conf.d/50-vmm-trust.conf"; do
+	printf '[Manager]\nDefaultEnvironment=' >"$f.new"
+	for n in $trust_vars; do printf '%s=%s ' "$n" "$bundle"; done >>"$f.new"
+	echo >>"$f.new"
+	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod 644 "$f.new" && mv "$f.new" "$f" && reexec=1; fi
+done
+
 changed=
 mkdir -p "$root/usr/local/lib/vmm" "$root/etc/systemd/system"
 cp "$seed/vmm-agent.py" "$root/usr/local/lib/vmm/vmm-agent.py.new"
@@ -74,7 +89,12 @@ done
 # A running sshd reads its config only on start or reload.
 if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	systemctl try-reload-or-restart ssh.service >/dev/null 2>&1
-	[ -n "$changed" ] && systemctl daemon-reload >/dev/null 2>&1
+	# Only a re-executed manager reads DefaultEnvironment again; it reloads the units as well.
+	if [ -n "$reexec" ]; then
+		systemctl daemon-reexec >/dev/null 2>&1
+	elif [ -n "$changed" ]; then
+		systemctl daemon-reload >/dev/null 2>&1
+	fi
 	# enable reloads systemd, which costs a fast-booted VM half a second.
 	systemctl is-enabled -q vmm-agent.service || systemctl enable vmm-agent.service >/dev/null 2>&1
 	# --no-block: at boot this runs inside cloud-init, which the unit is ordered after; under the agent (VMM_AGENT) a restart would kill its own request.

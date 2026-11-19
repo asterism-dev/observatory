@@ -87,6 +87,7 @@ func run() error {
 		return err
 	}
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
+	go f.SweepEgressCAs(ctx, time.Hour)
 	api.NodeEndpoints(mux, s, f)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
