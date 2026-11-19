@@ -27,6 +27,8 @@ while [ $# -gt 0 ]; do
 		shift 2
 		;;
 	--token-stdin)
+		# Under curl | sh the script itself is stdin: reading the token would swallow the rest of the script.
+		[ -f "$0" ] || die "--token-stdin needs the script as a file: curl -fsSLO HUB/node/install.sh, then sudo sh install.sh ... --token-stdin"
 		IFS= read -r TOKEN || true
 		shift
 		;;
