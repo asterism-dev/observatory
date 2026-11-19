@@ -199,3 +199,42 @@ func TestImagePushShellsOutToDocker(t *testing.T) {
 	}
 	mustRun(t, c, errb, 2, "image", "push", "observatory/standard", "local:dev")
 }
+
+func TestImageUpdateSendsOnlyGivenFields(t *testing.T) {
+	h, c, _, errb := imageHub(t)
+	h.on("PATCH /api/orgs/o1/images/i-app", 200, imgApp)
+	mustRun(t, c, errb, 0, "image", "update", "app", "--description", "")
+	mustRun(t, c, errb, 0, "image", "update", "app", "--name", "web")
+	calls := h.calls("PATCH /api/orgs/o1/images/i-app")
+	if calls[0].Body != `{"description":""}` || calls[1].Body != `{"name":"web"}` {
+		t.Errorf("bodies %s %s", calls[0].Body, calls[1].Body)
+	}
+	mustRun(t, c, errb, 2, "image", "update", "app")
+}
+
+func TestImageCancel(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("GET /api/orgs/o1/images/i-app/builds", 200, `[{"id":"b9","imageId":"i-app","revision":3,"state":"running"}]`)
+	h.on("GET /api/orgs/o1/images/i-tool/builds", 200, `[]`)
+	h.on("POST /api/orgs/o1/images/i-app/builds/b9/cancel", 200, `{"id":"b9","state":"cancelled"}`)
+	mustRun(t, c, errb, 0, "image", "cancel", "b9")
+	if len(h.calls("POST /api/orgs/o1/images/i-app/builds/b9/cancel")) != 1 || !strings.Contains(out(), "Build b9 cancelled.") {
+		t.Errorf("stdout %s", out())
+	}
+}
+
+func TestImageTagAndVersionDelete(t *testing.T) {
+	h, c, _, errb := imageHub(t)
+	digest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	h.on("DELETE /api/orgs/o1/images/i-app/tags/v1", 204, "")
+	h.on("DELETE /api/orgs/o1/images/i-app/versions/"+digest, 204, "")
+	mustRun(t, c, errb, 0, "image", "tag", "delete", "app", "v1")
+	mustRun(t, c, errb, 2, "image", "versions", "delete", "app", digest)
+	if n := len(h.calls("DELETE /api/orgs/o1/images/i-app/versions/" + digest)); n != 0 {
+		t.Fatalf("deleted without confirmation: %d", n)
+	}
+	mustRun(t, c, errb, 0, "image", "versions", "delete", "app", digest, "-y")
+	if len(h.calls("DELETE /api/orgs/o1/images/i-app/tags/v1")) != 1 || len(h.calls("DELETE /api/orgs/o1/images/i-app/versions/"+digest)) != 1 {
+		t.Error("delete calls missing")
+	}
+}

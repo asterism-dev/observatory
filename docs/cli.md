@@ -137,15 +137,18 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 |---|---|
 | `image list` / `image show <ref>` | images you can see; one image with tags and builds |
 | `image create <name> [--scope S] [--team T] [--description D]` | create an image (private unless `--scope`/`--team`) |
+| `image update <ref> [--name N] [--description D]` | rename an image or change its description |
 | `image delete <ref>` | delete an image and its versions (confirms) |
 | `image visibility <ref> --scope private\|team\|org [--team T]` | change who sees the image; widening deletes its versions (confirms) |
 | `image recipe pull <ref> <dir>` | download the current revision; prints its `--ref` flags |
 | `image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...` | upload a directory as the next revision; scope `org`, `private` or `team:<team>` |
 | `image build <ref> [--follow]` | build the current recipe; `--follow` streams the log |
 | `image builds <ref>` / `image log <build-id> [--follow]` | builds of an image; a build's log |
+| `image cancel <build-id>` | cancel a queued or running build |
 | `image login` | set docker's credential helper for the hub registry |
 | `image push <ref>[:tag] <local-image>` | tag and push a local image with `docker` (tag defaults to `latest`) |
-| `image tag <ref> <tag> <digest>` / `image versions <ref>` | point a tag at a version; list versions |
+| `image tag <ref> <tag> <digest>` / `image tag delete <ref> <tag>` | point a tag at a version; remove a tag (`latest` cannot be set or removed by hand) |
+| `image versions <ref>` / `image versions delete <ref> <digest>` | list versions; delete a version and its tags (confirms) |
 | `image default set <org\|user\|team:T> <ref>` / `image default show <level>` / `image default clear <level>` | default image of a level |
 | `image builders` | running builder VMs of the org (admins) |
 
@@ -218,7 +221,7 @@ until the timeout. `vm restart` always waits for `stopped` between stop and star
 ## Confirmation
 
 Destructive commands (`vm delete`, `snapshot restore`, `snapshot delete`, `disk delete`, `disk release`,
-`network delete`, `image delete`, `image visibility` (when it deletes versions), `device delete`, `ssh-key delete`,
+`network delete`, `image delete`, `image versions delete`, `image visibility` (when it deletes versions), `device delete`, `ssh-key delete`,
 `var delete`, `integration disconnect`, `node token` (enrolled node), `node delete`, `team delete`, `team remove`,
 `member remove`, `invite revoke`, `role delete`, `binding delete`, `session revoke`) ask
 `[y/N]` on a terminal. `--yes` skips the question; without a terminal and without `--yes` they make no request and exit

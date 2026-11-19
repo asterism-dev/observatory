@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -61,6 +62,7 @@ func imageCommands() []command {
 		{"image list", "", "list images", cmdImageList},
 		{"image show", "<ref>", "show an image", cmdImageShow},
 		{"image create", "<name> [--scope S] [--team T] [--description D]", "create an image", cmdImageCreate},
+		{"image update", "<ref> [--name N] [--description D]", "rename an image or change its description", cmdImageUpdate},
 		{"image delete", "<ref>", "delete an image and its versions", cmdImageDelete},
 		{"image visibility", "<ref> --scope private|team|org [--team T]", "change who can see an image", cmdImageVisibility},
 		{"image recipe pull", "<ref> <dir>", "download the recipe into a directory", cmdRecipePull},
@@ -68,10 +70,13 @@ func imageCommands() []command {
 		{"image build", "<ref> [--follow]", "build the current recipe", cmdImageBuild},
 		{"image builds", "<ref>", "list the builds of an image", cmdImageBuilds},
 		{"image log", "<build-id> [--follow]", "show a build log", cmdImageLog},
+		{"image cancel", "<build-id>", "cancel a queued or running build", cmdImageCancel},
 		{"image push", "<ref>[:tag] <local-image>", "push a local docker image as a version", cmdImagePush},
 		{"image login", "", "let docker authenticate against the hub registry", cmdImageLogin},
 		{"image tag", "<ref> <tag> <digest>", "point a tag at a version", cmdImageTag},
+		{"image tag delete", "<ref> <tag>", "remove a tag", cmdImageTagDelete},
 		{"image versions", "<ref>", "list the versions of an image", cmdImageVersions},
+		{"image versions delete", "<ref> <digest>", "delete a version and its tags", cmdImageVersionDelete},
 		{"image default set", "<org|user|team:T> <ref>", "set the default image for a level", cmdDefaultSet},
 		{"image default show", "<org|user|team:T>", "show the default image for a level", cmdDefaultShow},
 		{"image default clear", "<org|user|team:T>", "clear the default image of a level", cmdDefaultClear},
@@ -243,6 +248,44 @@ func cmdImageCreate(c *cli, args []string) error {
 		return err
 	}
 	return c.done(raw, "Image %s created.", pos[0])
+}
+
+func cmdImageUpdate(c *cli, args []string) error {
+	fs := c.flags("image update")
+	name := fs.String("name", "", "new name")
+	desc := fs.String("description", "", "new description")
+	pos, err := c.parse(fs, args, 1, 1)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Name        *string `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
+	}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "name":
+			body.Name = name
+		case "description":
+			body.Description = desc
+		}
+	})
+	if body.Name == nil && body.Description == nil {
+		return usagef("pass --name or --description")
+	}
+	img, _, _, err := c.findImage(pos[0])
+	if err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "")
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := c.call(http.MethodPatch, path, body, &raw); err != nil {
+		return err
+	}
+	return c.done(raw, "Image %s updated.", img.Ref)
 }
 
 func cmdImageDelete(c *cli, args []string) error {
@@ -646,6 +689,67 @@ func cmdImageLog(c *cli, args []string) error {
 	}
 	_, err = io.WriteString(c.stdout, cleanLog(string(b)))
 	return err
+}
+
+func cmdImageCancel(c *cli, args []string) error {
+	pos, err := c.parse(c.flags("image cancel"), args, 1, 1)
+	if err != nil {
+		return err
+	}
+	img, err := c.imageOfBuild(pos[0])
+	if err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "/builds/"+url.PathEscape(pos[0])+"/cancel")
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := c.call(http.MethodPost, path, nil, &raw); err != nil {
+		return err
+	}
+	return c.done(raw, "Build %s cancelled.", pos[0])
+}
+
+func cmdImageTagDelete(c *cli, args []string) error {
+	pos, err := c.parse(c.flags("image tag delete"), args, 2, 2)
+	if err != nil {
+		return err
+	}
+	img, _, _, err := c.findImage(pos[0])
+	if err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "/tags/"+url.PathEscape(pos[1]))
+	if err != nil {
+		return err
+	}
+	if err := c.call(http.MethodDelete, path, nil, nil); err != nil {
+		return err
+	}
+	return c.done(nil, "Tag %s of %s removed.", pos[1], img.Ref)
+}
+
+func cmdImageVersionDelete(c *cli, args []string) error {
+	pos, err := c.parse(c.flags("image versions delete"), args, 2, 2)
+	if err != nil {
+		return err
+	}
+	img, _, _, err := c.findImage(pos[0])
+	if err != nil {
+		return err
+	}
+	if err := c.confirm(fmt.Sprintf("Delete version %s of %s with its tags?", pos[1], img.Ref)); err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "/versions/"+url.PathEscape(pos[1]))
+	if err != nil {
+		return err
+	}
+	if err := c.call(http.MethodDelete, path, nil, nil); err != nil {
+		return err
+	}
+	return c.done(nil, "Version %s of %s deleted.", shortDigest(pos[1]), img.Ref)
 }
 
 func cmdImageTag(c *cli, args []string) error {
