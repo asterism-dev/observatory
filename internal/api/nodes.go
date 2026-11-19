@@ -17,23 +17,27 @@ import (
 )
 
 type nodeJSON struct {
-	ID           uuid.UUID          `json:"id"`
-	Name         string             `json:"name"`
-	State        string             `json:"state"`
-	Version      string             `json:"version"`
-	Outdated     bool               `json:"outdated"`
-	CPUs         int                `json:"cpus"`
-	MemoryMB     int                `json:"memoryMB"`
-	Machine      any                `json:"machine"`
-	LastSeen     *time.Time         `json:"lastSeen"`
-	VMCount      int                `json:"vmCount"`
-	UsedCPUs     int                `json:"usedCPUs"`
-	UsedMemoryMB int                `json:"usedMemoryMB"`
-	CanUpdate    bool               `json:"canUpdate"`
-	CanDelete    bool               `json:"canDelete"`
-	Underlay     *underlayJSON      `json:"underlay"`
-	Quarantined  bool               `json:"quarantined"`
-	Image        *proto.ImageStatus `json:"image"`
+	ID               uuid.UUID          `json:"id"`
+	Name             string             `json:"name"`
+	State            string             `json:"state"`
+	Version          string             `json:"version"`
+	Outdated         bool               `json:"outdated"`
+	CPUs             int                `json:"cpus"`
+	MemoryMB         int                `json:"memoryMB"`
+	Machine          any                `json:"machine"`
+	LastSeen         *time.Time         `json:"lastSeen"`
+	VMCount          int                `json:"vmCount"`
+	UsedCPUs         int                `json:"usedCPUs"`
+	UsedMemoryMB     int                `json:"usedMemoryMB"`
+	CanUpdate        bool               `json:"canUpdate"`
+	CanDelete        bool               `json:"canDelete"`
+	Underlay         *underlayJSON      `json:"underlay"`
+	Quarantined      bool               `json:"quarantined"`
+	Image            *proto.ImageStatus `json:"image"`
+	Hypervisor       *proto.Hypervisor  `json:"hypervisor"`
+	Updatable        bool               `json:"updatable"`
+	Updating         bool               `json:"updating"`
+	UpdatePausesOnly bool               `json:"updatePausesOnly"`
 }
 
 type underlayJSON struct {
@@ -53,7 +57,8 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		return nodeJSON{}, err
 	}
 	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, Outdated: version.Older(n.Version, version.Version), CPUs: n.CPUs, MemoryMB: n.MemoryMB,
-		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image}
+		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image, Hypervisor: n.Hypervisor,
+		Updatable: h.fleet.Updatable(n), Updating: h.fleet.Updating(n.ID), UpdatePausesOnly: n.Hypervisor != nil && n.Hypervisor.Version == h.firecracker}
 	if len(n.Machine) > 0 {
 		j.Machine = n.Machine
 	}

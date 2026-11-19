@@ -61,6 +61,13 @@ func TestAgentRegistersProvider(t *testing.T) {
 	}
 }
 
+func TestAgentRegistersHypervisor(t *testing.T) {
+	env := startEnv(t, nil)
+	if got := env.hub.registers()[0].Hypervisor; got == nil || *got != (proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}) {
+		t.Fatalf("hypervisor = %+v", got)
+	}
+}
+
 func TestAgentCreateReachesRunning(t *testing.T) {
 	env := startEnv(t, nil)
 	vm := env.hub.create("dev")

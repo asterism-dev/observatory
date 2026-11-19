@@ -38,12 +38,13 @@ type Node struct {
 	CreatedBy   uuid.UUID
 	CreatedAt   time.Time
 	Image       *proto.ImageStatus
+	Hypervisor  *proto.Hypervisor
 }
 
-const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, image"
+const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, image, hypervisor"
 
 func scanNode(row pgx.Row) (n Node, err error) {
-	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt, &n.Image)
+	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt, &n.Image, &n.Hypervisor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -146,10 +147,11 @@ func (s *Store) RegenerateNodeCredential(ctx context.Context, org, id uuid.UUID)
 	return token, nil
 }
 
-func (s *Store) UpdateNodeInfo(ctx context.Context, id uuid.UUID, cpus, memoryMB int, machine json.RawMessage, version string) error {
+// UpdateNodeInfo stores what the node registered with; a nil hypervisor clears it.
+func (s *Store) UpdateNodeInfo(ctx context.Context, id uuid.UUID, cpus, memoryMB int, machine json.RawMessage, version string, hv *proto.Hypervisor) error {
 	tag, err := s.q.Exec(ctx, `
-		UPDATE nodes SET cpus = $2, memory_mb = $3, machine = $4, version = $5, last_seen = now() WHERE id = $1`,
-		id, cpus, memoryMB, machine, version)
+		UPDATE nodes SET cpus = $2, memory_mb = $3, machine = $4, version = $5, hypervisor = $6, last_seen = now() WHERE id = $1`,
+		id, cpus, memoryMB, machine, version, hv)
 	if err != nil {
 		return err
 	}

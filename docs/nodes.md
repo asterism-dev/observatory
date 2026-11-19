@@ -162,6 +162,44 @@ Firecracker cannot open it. The socket goes away with the jail, not when its lis
 - The node journal gets one line per request: VM id, kind, result (`token vm=<id> kind=github result=ok`), never the
   token.
 
+## Updating
+
+A node whose version is older than the hub's shows as outdated. An org admin updates it from the hub: one node from
+its page, or several as a rolling update, one node after the other. The hub sends the node an update; the node
+downloads the hub's installer and runs `install.sh --update` in its own systemd unit
+(`observatory-node-update`). The node keeps its credential and `node.json`, stays enrolled and never goes through
+the offline phase of a re-enroll. When the installer fails before it restarts the service, the old node keeps
+running and reports the update as failed to the hub, right after it reconnects if the connection was down; the next
+update retries.
+
+The hub gives a node 15 minutes to come back on the hub's version and 10 more for its VMs to settle. A timeout only
+fails the node in the hub: the installer may still be running and finish later, so check
+`journalctl -u observatory-node-update` on the node. The next update follows a still-running installer unit instead of
+starting a second one.
+
+What happens to the VMs depends on the Firecracker version (the node reports it as `hypervisor`):
+
+- **Same Firecracker version:** the service restart hibernates the VMs and resumes them afterwards
+  ([vm-lifecycle.md](vm-lifecycle.md#node-restart)); they pause briefly and keep their memory.
+- **Different Firecracker version:** memory states would not load in the new version, so the installer leaves the
+  marker `/etc/observatory-node/shutdown-vms` and the restart shuts the VMs down cleanly instead. They then cold-boot
+  back to their power state and lose their memory. The marker is removed when the update fails before the restart,
+  and by the new node at start.
+
+The update dialog's "pause" assumes the hibernated memory fits on the node's disk; otherwise VMs are stopped as on
+any node restart. A hub-driven update runs the hub's `install.sh` as root on the node, so serve the hub over https in
+production ([deploy.md](deploy.md#serving-modes)).
+
+Nodes on releases before hub updates existed do not report a hypervisor and cannot be updated from the hub. Update
+them once by hand; later updates work from the hub. On the node host:
+
+```sh
+curl -fsSL http://hub.example:8090/node/install.sh | sudo sh -s -- --hub http://hub.example:8090 --update
+```
+
+`--update` does everything the installer does except enrollment: it needs no token, refuses to run without
+`/etc/observatory-node/node.json`, and keeps that file and its credential. It takes no `--token` or `--memory-mb`.
+
 ## Re-enroll
 
 Running the installer again is safe: it updates packages, Firecracker and the binary, and keeps `node.json` settings,

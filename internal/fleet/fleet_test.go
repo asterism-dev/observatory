@@ -80,6 +80,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.Close)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
 	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
@@ -187,7 +188,10 @@ func (e *env) register(cred string, reg proto.Register) *fakeNode {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	reg.NodeID, reg.Hostname, reg.CPUs, reg.MemoryMB, reg.Version = "whatever", "h", 4, 4096, "v1"
+	reg.NodeID, reg.Hostname, reg.CPUs, reg.MemoryMB = "whatever", "h", 4, 4096
+	if reg.Version == "" {
+		reg.Version = "v1"
+	}
 	n.send(proto.Message{Type: "register", Register: &reg})
 	return n
 }
@@ -931,6 +935,7 @@ func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.Close)
 	e.f = f
 	e.srv = httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(e.srv.Close)

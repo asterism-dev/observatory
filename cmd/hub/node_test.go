@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -51,5 +52,55 @@ func TestInstallTokenStdinRefusesPipedScript(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "--token-stdin needs the script as a file") {
 		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestInstallUpdateRefusesToken(t *testing.T) {
+	cmd := exec.Command("sh", "-s", "--", "--hub", "http://x", "--update", "--token", "t")
+	cmd.Stdin = bytes.NewReader(installScript)
+	out, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 2 {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestInstallUpdateRefusesTokenStdin(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(script, installScript, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", script, "--hub", "http://x", "--update", "--token-stdin")
+	out, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 2 {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestInstallUpdateNeedsEnrolledNode(t *testing.T) {
+	if _, err := os.Stat("/etc/observatory-node"); err == nil {
+		t.Skip("/etc/observatory-node exists on this machine")
+	}
+	cmd := exec.Command("sh", "-s", "--", "--hub", "http://x", "--update")
+	cmd.Stdin = bytes.NewReader(installScript)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "--update needs an enrolled node") {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestFirecrackerVersion(t *testing.T) {
+	script, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := regexp.MustCompile(`FIRECRACKER_VERSION=(v[0-9.]+)\n`).FindSubmatch(script)
+	if want == nil {
+		t.Fatal("install.sh has no FIRECRACKER_VERSION")
+	}
+	if got := firecrackerVersion(string(installScript)); got != string(want[1]) {
+		t.Fatalf("got %q, want %q", got, want[1])
+	}
+	if got := firecrackerVersion("echo hi"); got != "" {
+		t.Fatalf("no version: got %q", got)
 	}
 }

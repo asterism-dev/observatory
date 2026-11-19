@@ -138,6 +138,7 @@ type fakeProvider struct {
 	block         chan struct{} // when set, StartChassis waits for it to close
 	inflight      atomic.Int32
 	maxInflight   atomic.Int32
+	hvChanged     atomic.Bool
 	events        []string
 	failDisks     bool
 	failReseed    bool
@@ -213,6 +214,12 @@ func newFakeProvider() *fakeProvider {
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
+
+func (p *fakeProvider) HypervisorChanged() bool { return p.hvChanged.Load() }
+
+func (p *fakeProvider) Hypervisor() proto.Hypervisor {
+	return proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}
+}
 
 func (p *fakeProvider) Prepare(_ context.Context, f VMFile, dir string) error {
 	p.mu.Lock()

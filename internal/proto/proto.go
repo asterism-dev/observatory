@@ -165,6 +165,17 @@ type Register struct {
 	AppliedSeq uint64          `json:"appliedSeq,omitempty"` // seq of the last desired list the node fully reconciled
 	Version    string          `json:"version,omitempty"`
 	Image      *ImageStatus    `json:"image,omitempty"`
+	Hypervisor *Hypervisor     `json:"hypervisor,omitempty"`
+}
+
+type Hypervisor struct {
+	Type    string `json:"type"`
+	Version string `json:"version"`
+}
+
+// UpdateReport (type "update") tells the hub an update attempt failed; the node restarts on success.
+type UpdateReport struct {
+	Error string `json:"error,omitempty"`
 }
 
 const (
@@ -220,12 +231,13 @@ type Message struct {
 	Status   *VMStatus `json:"status,omitempty"`
 	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
-	Desired    []DesiredVM  `json:"desired,omitempty"`
-	DisksInUse []string     `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
-	Seq        uint64       `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
-	AppliedSeq uint64       `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Metrics    []VMMetrics  `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
-	Image      *ImageStatus `json:"image,omitempty"`      // type "image": the guest image changed state
+	Desired    []DesiredVM   `json:"desired,omitempty"`
+	DisksInUse []string      `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
+	Seq        uint64        `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
+	AppliedSeq uint64        `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
+	Metrics    []VMMetrics   `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
+	Image      *ImageStatus  `json:"image,omitempty"`      // type "image": the guest image changed state
+	Update     *UpdateReport `json:"update,omitempty"`     // type "update": an update attempt failed
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

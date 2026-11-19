@@ -9,11 +9,22 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"time"
 )
 
 //go:embed install.sh
 var installScript []byte
+
+var firecrackerVersionRE = regexp.MustCompile(`(?m)^FIRECRACKER_VERSION=(\S+)$`)
+
+// firecrackerVersion is the Firecracker version the installer installs, "" if the script names none.
+func firecrackerVersion(script string) string {
+	if m := firecrackerVersionRE.FindStringSubmatch(script); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // nodeAssets serves the installer and the node binary; the binary is optional so a hub without one still starts.
 func nodeAssets(mux *http.ServeMux, binaryPath string) {

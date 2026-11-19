@@ -55,8 +55,13 @@ type Agent struct {
 	ChassisCSR                         string // OVN client cert request, sent in Register
 	OVNKeyFile                         string
 	Version                            string
+	Updater                            Updater
+	ShutdownMarker                     string
 	// Egress runs the per-VM egress proxies; nil runs none.
 	Egress EgressHost
+
+	updating     atomic.Bool
+	unsentUpdate *proto.UpdateReport // guarded by mu
 
 	diskRefresh  time.Duration // zero means defaultDiskRefresh
 	metricsEvery time.Duration // zero means the package default
@@ -117,6 +122,7 @@ type vmEntry struct {
 func (a *Agent) Run(ctx context.Context) error {
 	a.vms = map[string]*vmEntry{}
 	a.imageChanged = make(chan struct{})
+	a.removeShutdownMarker()
 	if ts, ok := a.Provider.(TokenServer); ok {
 		ts.SetTokenLookup(a.integrationToken)
 	}
@@ -187,6 +193,9 @@ func (a *Agent) connect(ctx context.Context) error {
 	err = send(proto.Message{Type: "register", Register: a.registerMsg()})
 	if err == nil {
 		a.send = send
+		if a.unsentUpdate != nil && send(proto.Message{Type: "update", Update: a.unsentUpdate}) == nil {
+			a.unsentUpdate = nil
+		}
 	}
 	a.mu.Unlock()
 	if err != nil {
@@ -214,6 +223,17 @@ func (a *Agent) connect(ctx context.Context) error {
 			a.reconcile(ctx, m.Seq, m.Desired)
 		case m.Type == "underlay" && m.Underlay != nil:
 			go a.startChassis(ctx, *m.Underlay)
+		case m.Type == "update":
+			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
+			a.runUpdate(ctx, func(m proto.Message) error {
+				a.mu.Lock()
+				defer a.mu.Unlock()
+				if a.send != nil && a.send(m) == nil {
+					return nil
+				}
+				a.unsentUpdate = m.Update
+				return errors.New("not connected, sending after the next register")
+			})
 		}
 	}
 }
@@ -253,6 +273,10 @@ func (a *Agent) registerMsg() *proto.Register {
 	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
 		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version, Image: a.image}
 	reg.Hostname, _ = os.Hostname()
+	if h, ok := a.Provider.(interface{ Hypervisor() proto.Hypervisor }); ok {
+		hv := h.Hypervisor()
+		reg.Hypervisor = &hv
+	}
 	for _, e := range a.vms {
 		st := e.status
 		st.Disks = a.disks(e.file)
@@ -958,7 +982,15 @@ func (a *Agent) stopAll() {
 	}
 	a.mu.Unlock()
 	a.releaseSnapshots()
-	fits := a.hibernateFits(entries)
+	var fits map[*vmEntry]bool
+	hv, ok := a.Provider.(interface{ HypervisorChanged() bool })
+	if _, err := os.Stat(a.ShutdownMarker); err == nil {
+		log.Printf("%s present: stopping VMs instead of hibernating", a.ShutdownMarker)
+	} else if ok && hv.HypervisorChanged() {
+		log.Printf("hypervisor changed since start: stopping VMs instead of hibernating")
+	} else {
+		fits = a.hibernateFits(entries)
+	}
 	var expired atomic.Bool
 	kill := func(id string, e *vmEntry, inst Instance) {
 		e.stopRequested.Store(true)

@@ -23,28 +23,29 @@ import (
 )
 
 type api struct {
-	store     *store.Store
-	z         *authz.Service
-	publicURL *url.URL
-	docsURL   string
-	fleet     *fleet.Fleet
-	network   *network.Hub
-	disks     *disks.Hub
-	ig        Integrations
-	signIns   *integrations.SignIns[signIn]
-	newer     func() string
+	store       *store.Store
+	z           *authz.Service
+	publicURL   *url.URL
+	docsURL     string
+	fleet       *fleet.Fleet
+	network     *network.Hub
+	disks       *disks.Hub
+	ig          Integrations
+	signIns     *integrations.SignIns[signIn]
+	newer       func() string
+	firecracker string
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL, newer)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string, firecracker string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, docsURL, newer, firecracker)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -104,6 +105,9 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PATCH /api/orgs/{org}/nodes/{id}", h.renameNode)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes/{id}/credential", h.regenerateNodeCredential)
 	mux.HandleFunc("DELETE /api/orgs/{org}/nodes/{id}", h.deleteNode)
+	mux.HandleFunc("POST /api/orgs/{org}/node-updates", h.startNodeUpdate)
+	mux.HandleFunc("GET /api/orgs/{org}/node-updates/current", h.currentNodeUpdate)
+	mux.HandleFunc("POST /api/orgs/{org}/node-updates/current/cancel", h.cancelNodeUpdate)
 	mux.HandleFunc("GET /api/orgs/{org}/devices", h.listDevices)
 	mux.HandleFunc("POST /api/orgs/{org}/devices", h.createDevice)
 	mux.HandleFunc("DELETE /api/orgs/{org}/devices/{id}", h.deleteDevice)

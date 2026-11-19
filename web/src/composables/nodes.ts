@@ -4,6 +4,10 @@ export interface NodeInfo {
   state: 'pending' | 'online' | 'offline'
   version: string
   outdated: boolean
+  hypervisor: { type: string; version: string } | null
+  updatable: boolean
+  updating: boolean
+  updatePausesOnly: boolean
   cpus: number
   memoryMB: number
   machine: Record<string, unknown> | null
@@ -24,6 +28,15 @@ export interface NodeInfo {
     error?: string
     retryAt?: string
   } | null
+}
+
+export interface UpdateRun {
+  id: string
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  startedBy: string
+  startedAt: string
+  endedAt: string | null
+  nodes: { id: string; name: string; status: 'pending' | 'updating' | 'done' | 'failed' | 'skipped'; reason: string }[]
 }
 
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const

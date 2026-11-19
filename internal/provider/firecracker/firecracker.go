@@ -61,16 +61,46 @@ func New(c node.Config) (*Provider, error) {
 		return nil, err
 	}
 	p := &Provider{VMsDir: c.Paths.VMs, ImagesDir: c.Paths.Images, ImageURL: s.ImageURL, custom: s.ImageURL != "", image: img, fastBoot: s.FastBoot == nil || *s.FastBoot}
-	out, err := exec.Command("firecracker", "--version").Output()
-	if err != nil {
-		return nil, fmt.Errorf("firecracker --version: %w", err)
+	if p.fcVersion, err = installedFirecracker(); err != nil {
+		return nil, err
 	}
-	p.fcVersion, _, _ = strings.Cut(string(out), "\n")
 	p.removeUnfinishedTemplates()
 	return p, nil
 }
 
 func (p *Provider) Name() string { return "firecracker" }
+
+var (
+	firecrackerVersionCmd = func(ctx context.Context) ([]byte, error) {
+		return exec.CommandContext(ctx, "firecracker", "--version").Output()
+	}
+	versionTimeout = 5 * time.Second
+)
+
+func installedFirecracker() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+	defer cancel()
+	out, err := firecrackerVersionCmd(ctx)
+	if err != nil {
+		return "", fmt.Errorf("firecracker --version: %w", err)
+	}
+	v, _, _ := strings.Cut(string(out), "\n")
+	return v, nil
+}
+
+// HypervisorChanged reports whether the installed Firecracker differs from the one running VMs, whose memory states it could not resume.
+func (p *Provider) HypervisorChanged() bool {
+	v, err := installedFirecracker()
+	if err != nil {
+		log.Printf("hypervisor check: %v", err)
+		return false
+	}
+	return v != p.fcVersion
+}
+
+func (p *Provider) Hypervisor() proto.Hypervisor {
+	return proto.Hypervisor{Type: "firecracker", Version: strings.TrimPrefix(p.fcVersion, "Firecracker ")}
+}
 
 // stockBase is the custom image, or else the pinned cloud image guest images are built from.
 func (p *Provider) stockBase() (string, error) {
