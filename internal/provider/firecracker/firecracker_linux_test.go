@@ -38,9 +38,15 @@ func testProvider(t *testing.T) *Provider {
 // testProviderWith adds settings (JSON object members) to the firecracker config section.
 func testProviderWith(t *testing.T, settings string) *Provider {
 	t.Helper()
-	img, gb := os.Getenv("VMM_TEST_IMAGE"), os.Getenv("VMM_TEST_GUESTBOOT")
+	return testProviderImage(t, "VMM_TEST_IMAGE", settings)
+}
+
+// testProviderImage boots the ext4 disk named by the environment variable imageVar.
+func testProviderImage(t *testing.T, imageVar, settings string) *Provider {
+	t.Helper()
+	img, gb := os.Getenv(imageVar), os.Getenv("VMM_TEST_GUESTBOOT")
 	if img == "" || gb == "" || os.Geteuid() != 0 {
-		t.Skip("needs root, VMM_TEST_IMAGE and VMM_TEST_GUESTBOOT")
+		t.Skip("needs root, " + imageVar + " and VMM_TEST_GUESTBOOT")
 	}
 	base := t.TempDir()
 	// The node refuses a guestboot of another version, and test binaries are "dev".
