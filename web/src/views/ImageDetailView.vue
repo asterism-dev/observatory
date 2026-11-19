@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, Select, Tabs, Textarea, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import { Button, Checkbox, Dialog, Select, Tabs, Textarea, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { Hammer, Layers, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -53,6 +53,8 @@ const busy = ref(false)
 const name = ref('')
 const description = ref('')
 const scope = ref('')
+const autoSchedule = ref('off')
+const autoOnBaseChange = ref(false)
 const confirmWiden = ref('')
 const confirmDelete = ref(false)
 const tagFor = ref<ImageVersion | null>(null)
@@ -66,6 +68,8 @@ const person = (id: string) => people.value[id] ?? (id === me.value?.user.id ? m
 
 const selectedBuild = computed(() => builds.value.find((b) => b.id === buildId.value) ?? null)
 const scopes = computed(() => imageScopes(teams.value))
+const autoOptions = computed(() => ['off', 'daily', 'weekly'].map((v) => ({ value: v, label: t(`images.autoSchedules.${v}`) })))
+const autoChanged = computed(() => !!image.value && (autoSchedule.value !== (image.value.autoSchedule || 'off') || autoOnBaseChange.value !== image.value.autoOnBaseChange))
 const scopeOptions = computed(() => scopes.value.map((s) => ({ value: scopeKey(s), label: scopeLabel(s, t) })))
 const buildColumns = computed<TableColumn[]>(() => [
   { key: 'state', label: t('images.state') },
@@ -122,6 +126,8 @@ function resetSettings() {
   name.value = image.value.name
   description.value = image.value.description
   scope.value = scopeKey(imageScope(image.value))
+  autoSchedule.value = image.value.autoSchedule || 'off'
+  autoOnBaseChange.value = image.value.autoOnBaseChange
 }
 
 async function run(fn: () => Promise<unknown>) {
@@ -150,6 +156,12 @@ const cancelBuild = (b: Build) => run(() => api(`${base()}/builds/${b.id}/cancel
 const saveGeneral = () =>
   run(async () => {
     image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify({ name: name.value, description: description.value.trim() }) })
+  })
+
+const saveAuto = () =>
+  run(async () => {
+    const body = { autoSchedule: autoSchedule.value === 'off' ? '' : autoSchedule.value, autoOnBaseChange: autoOnBaseChange.value }
+    image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify(body) })
   })
 
 async function saveScope(confirmDeleteVersions = false) {
@@ -222,12 +234,14 @@ watch(
         <template #tags>
           <Tag>{{ scopeLabel(imageScope(image), t) }}</Tag>
           <Tag v-if="image.lastBuildState" :tone="buildTones[image.lastBuildState as keyof typeof buildTones]">{{ t(`images.states.${image.lastBuildState}`) }}</Tag>
+          <Tag v-if="image.autoError" tone="warning" :title="image.autoError">{{ t('images.autoFailedTag') }}</Tag>
         </template>
         <Button v-if="image.canBuild" variant="accent" :icon="Hammer" :disabled="busy || image.recipeRevision === null" @click="startBuild">{{ t('images.build') }}</Button>
       </PageHeader>
       <div class="page-body">
         <p v-if="error" role="alert">{{ error }}</p>
         <p v-if="image.pushError" role="alert">{{ t('images.pushErrorBody', { error: image.pushError }) }}</p>
+        <p v-if="image.autoError" role="alert">{{ t('images.autoErrorBody', { error: image.autoError }) }}</p>
         <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
         <RecipeEditor v-if="tab === 'recipe'" :org-id="org.id" :image="image" :base="base()" @saved="load" />
@@ -248,7 +262,9 @@ watch(
             <DataTable :columns="buildColumns" :rows="builds" row-key="id" :row-clickable="() => true" hover="clickable" @row-click="(b: Build) => openBuild(b.id)">
               <template #cell-state="{ row }"><Tag :tone="buildTones[row.state as Build['state']]" :title="row.error || undefined">{{ t(`images.states.${row.state}`) }}</Tag></template>
               <template #cell-revision="{ row }">r{{ row.revision }}</template>
-              <template #cell-startedBy="{ row }">{{ person(row.startedBy) }}</template>
+              <template #cell-startedBy="{ row }">
+                <span class="tags">{{ person(row.startedBy) }}<Tag v-if="row.automatic">{{ t('images.automatic') }}</Tag></span>
+              </template>
               <template #cell-queuedAt="{ row }">{{ fmt(row.queuedAt) }}</template>
               <template #cell-duration="{ row }">{{ buildDuration(row as Build) || '–' }}</template>
               <template #cell-digest="{ row }"><span class="mono">{{ row.digest ? shortDigest(row.digest) : '–' }}</span></template>
@@ -323,6 +339,20 @@ watch(
               <p class="tags">
                 <Select v-model="scope" :options="scopeOptions" :disabled="!image.canEdit || busy" :aria-label="t('images.visibility')" />
                 <Button v-if="image.canEdit" :disabled="busy || scope === scopeKey(imageScope(image))" @click="saveScope()">{{ t('env.save') }}</Button>
+              </p>
+            </Card>
+          </Section>
+          <Section :label="t('images.autoTitle')" :description="t('images.autoHint')">
+            <Card>
+              <label>
+                {{ t('images.autoSchedule') }}
+                <Select v-model="autoSchedule" :options="autoOptions" :disabled="!image.canEdit || !image.canBuild || busy" :aria-label="t('images.autoSchedule')" />
+              </label>
+              <Checkbox v-model="autoOnBaseChange" :disabled="!image.canEdit || !image.canBuild || busy">{{ t('images.autoOnBaseChange') }}</Checkbox>
+              <span v-if="image.recipeRevision === null" class="muted">{{ t('images.autoNoRecipe') }}</span>
+              <span v-else-if="image.autoLastAt" class="muted">{{ t('images.autoLast', { at: fmt(image.autoLastAt) }) }}</span>
+              <p v-if="image.canEdit && image.canBuild">
+                <Button variant="accent" :disabled="busy || !autoChanged" @click="saveAuto">{{ t('env.save') }}</Button>
               </p>
             </Card>
           </Section>

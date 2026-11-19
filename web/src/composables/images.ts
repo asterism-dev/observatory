@@ -21,6 +21,10 @@ export interface Image {
   createdAt: string
   canEdit: boolean
   canBuild: boolean
+  autoSchedule: '' | 'daily' | 'weekly'
+  autoOnBaseChange: boolean
+  autoError: string
+  autoLastAt: string | null
 }
 
 export interface RecipeRef {
@@ -48,6 +52,7 @@ export interface Build {
   revision: number
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   startedBy: string
+  automatic: boolean
   queuedAt: string
   startedAt: string | null
   finishedAt: string | null
