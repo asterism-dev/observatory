@@ -87,6 +87,11 @@ cannot read it.
 - `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub. They arrive at
   `/internal/registry/events`, which the `tls` profile's Caddy answers with 404 from outside; behind your own proxy,
   block `/internal/*` as well.
+- `OBSERVATORY_REGISTRY_URL` (the compose file sets `http://registry:5000`), `OBSERVATORY_REGISTRY_KEY_DIR` and
+  `OBSERVATORY_REGISTRY_CERT_DIR` turn the registry on; without a URL the hub has no images. The events secret must be
+  at least 32 characters.
+- `OBSERVATORY_BUILDER_IMAGE` overrides the builder image repository and `OBSERVATORY_BUILDER_HUB_URL` the hub URL
+  builder VMs use (default: the public URL); set the latter when VMs cannot reach the public URL.
 
 ## Image registry
 
@@ -96,6 +101,10 @@ into an image version or deletes it (not linux/amd64, over the org's storage lim
 The hub's token key lives in the volume `registry-keys`, its certificate (all the registry mounts) in `registry-certs`,
 the images in `registry-data`. Only tagged pushes count: a push by digest alone (`…/i/<id>@sha256:…`) becomes no
 version, and its layers do not count towards the storage limit.
+
+The registry notifies the hub in memory only: a push whose notification the hub has not yet received when the registry
+restarts is lost (the layers stay until garbage collection, push again). Docker clients need the hub over https;
+nodes and builder VMs may use the plain internal URL. See [images.md](images.md) for using it.
 
 Deleting versions or images removes their manifests; the disk space comes back with garbage collection, which the hub
 does not run. Garbage collection must not run next to a push, so stop the registry for it, daily from the host's crontab

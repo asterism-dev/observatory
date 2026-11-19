@@ -89,7 +89,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | Command | Does |
 |---|---|
 | `vm list` / `vm show <vm>` | list; show incl. disks, networks, auto-suspend, image |
-| `vm create <name> [--node N] [--team T] [--cpus 2] [--memory 4G] [--disk 20] [--wait]` | create a VM (node defaults to the org's only node) |
+| `vm create <name> [--node N] [--team T] [--image REF] [--cpus 2] [--memory 4G] [--disk 20] [--wait]` | create a VM (node defaults to the org's only node; image defaults to the owner's [default image](images.md#default-image)) |
 | `vm start\|resume\|pause\|hibernate <vm> [--wait]` | power actions |
 | `vm stop <vm> [--force] [--wait]` | graceful shutdown; `--force` powers off |
 | `vm restart <vm> [--force] [--wait]` | stop, wait for `stopped`, start |
@@ -129,6 +129,26 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `integration mode <kind> proxy\|vm [--scope S] [--team T]` | change how the token reaches VMs |
 | `integration disconnect <kind> [--scope S] [--team T]` | disconnect (confirms) |
 
+### Images
+
+See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or qualified (`me/`, `<team>/`, `org/`).
+
+| Command | Does |
+|---|---|
+| `image list` / `image show <ref>` | images you can see; one image with tags and builds |
+| `image create <name> [--scope S] [--team T] [--description D]` | create an image (private unless `--scope`/`--team`) |
+| `image delete <ref>` | delete an image and its versions (confirms) |
+| `image visibility <ref> --scope private\|team\|org [--team T]` | change who sees the image; widening deletes its versions (confirms) |
+| `image recipe pull <ref> <dir>` | download the current revision; prints its `--ref` flags |
+| `image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...` | upload a directory as the next revision; scope `org`, `private` or `team:<team>` |
+| `image build <ref> [--follow]` | build the current recipe; `--follow` streams the log |
+| `image builds <ref>` / `image log <build-id> [--follow]` | builds of an image; a build's log |
+| `image login` | set docker's credential helper for the hub registry |
+| `image push <ref>[:tag] <local-image>` | tag and push a local image with `docker` (tag defaults to `latest`) |
+| `image tag <ref> <tag> <digest>` / `image versions <ref>` | point a tag at a version; list versions |
+| `image default set <org\|user\|team:T> <ref>` / `image default show <level>` / `image default clear <level>` | default image of a level |
+| `image builders` | running builder VMs of the org (admins) |
+
 ### Nodes, teams, members and roles
 
 | Command | Does |
@@ -144,7 +164,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `role list` / `role show <role>` / `role catalog` | roles, their rules, and the permissions a rule can name |
 | `role create --file F` / `role update <role> --file F` / `role delete <role>` | rules as JSON, same shape as the API |
 | `binding list` / `binding add <subject> <role>` / `binding delete <id>` | subject `user:<member>` or `team:<team>` (name, email or ID) |
-| `limit show` | resource limits of the org, teams and members |
+| `limit show` | resource limits of the org, teams and members (`images` is the image storage) |
 | `limit set <team:T\|user:M> [--vcpu N] [--ram MB] [--disk GB] [--vms N] [--snapshots N]` | `none` clears a value; org limits are set by a platform admin in the web UI |
 | `session list` / `session revoke <id>` | revoke confirms |
 
@@ -198,7 +218,7 @@ until the timeout. `vm restart` always waits for `stopped` between stop and star
 ## Confirmation
 
 Destructive commands (`vm delete`, `snapshot restore`, `snapshot delete`, `disk delete`, `disk release`,
-`network delete`, `device delete`, `ssh-key delete`, `var delete`, `integration disconnect`, `node token` (enrolled
+`network delete`, `image delete`, `image visibility` (when it deletes versions), `device delete`, `ssh-key delete`, `var delete`, `integration disconnect`, `node token` (enrolled
 node), `node delete`,
 `team delete`, `team remove`, `member remove`, `invite revoke`, `role delete`, `binding delete`, `session revoke`) ask
 `[y/N]` on a terminal. `--yes` skips the question; without a terminal and without `--yes` they make no request and exit
