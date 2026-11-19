@@ -46,14 +46,14 @@ type imageJSON struct {
 }
 
 type buildJSON struct {
-	ID       string    `json:"id"`
-	ImageID  string    `json:"imageId"`
-	Revision int       `json:"revision"`
+	ID        string    `json:"id"`
+	ImageID   string    `json:"imageId"`
+	Revision  int       `json:"revision"`
 	State     string    `json:"state"`
 	Automatic bool      `json:"automatic"`
 	QueuedAt  time.Time `json:"queuedAt"`
-	Digest   string    `json:"digest"`
-	Error    string    `json:"error"`
+	Digest    string    `json:"digest"`
+	Error     string    `json:"error"`
 }
 
 type recipeRefBody struct {
