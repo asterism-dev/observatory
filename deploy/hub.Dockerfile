@@ -1,19 +1,19 @@
-FROM node:22.23.5 AS web
+FROM --platform=$BUILDPLATFORM node:22.23.5 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web ./
 RUN npm run build
 
-FROM golang:1.27.1 AS build
-ARG VERSION=dev
+FROM --platform=$BUILDPLATFORM golang:1.27.1 AS build
+ARG VERSION=dev TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist web/dist
 RUN ldflags="-X github.com/asterism-dev/observatory/internal/version.Version=$VERSION" \
-    && CGO_ENABLED=0 go build -ldflags "$ldflags" -o /hub ./cmd/hub \
+    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "$ldflags" -o /hub ./cmd/hub \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o /observatory-node ./cmd/node
 
 FROM debian:trixie-slim

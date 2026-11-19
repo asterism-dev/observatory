@@ -1,11 +1,11 @@
-FROM golang:1.27.1 AS build
-ARG VERSION=dev
+FROM --platform=$BUILDPLATFORM golang:1.27.1 AS build
+ARG VERSION=dev TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/gateway cmd/gateway
 COPY internal internal
-RUN CGO_ENABLED=0 go build -ldflags "-X github.com/asterism-dev/observatory/internal/version.Version=$VERSION" -o /gateway ./cmd/gateway
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "-X github.com/asterism-dev/observatory/internal/version.Version=$VERSION" -o /gateway ./cmd/gateway
 
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
