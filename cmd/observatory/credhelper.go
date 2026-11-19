@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,7 +114,11 @@ func pathHas(pathEnv, dir string) bool {
 
 // setCredHelper keeps every other key of docker's config as it is.
 func setCredHelper(cfgPath, host string) error {
-	cfg := map[string]json.RawMessage{}
+	// Writing through a symlinked config keeps the link (e.g. into a dotfiles repo).
+	if p, err := filepath.EvalSymlinks(cfgPath); err == nil {
+		cfgPath = p
+	}
+	var cfg map[string]json.RawMessage
 	mode := os.FileMode(0o600)
 	b, err := os.ReadFile(cfgPath)
 	switch {
@@ -121,18 +126,26 @@ func setCredHelper(cfgPath, host string) error {
 	case err != nil:
 		return err
 	default:
-		if err := json.Unmarshal(b, &cfg); err != nil {
-			return fmt.Errorf("%s is not valid JSON: %w", cfgPath, err)
+		if len(bytes.TrimSpace(b)) > 0 {
+			if err := json.Unmarshal(b, &cfg); err != nil {
+				return fmt.Errorf("%s is not valid JSON: %w", cfgPath, err)
+			}
 		}
 		if st, err := os.Stat(cfgPath); err == nil {
 			mode = st.Mode().Perm()
 		}
 	}
-	helpers := map[string]json.RawMessage{}
+	if cfg == nil {
+		cfg = map[string]json.RawMessage{}
+	}
+	var helpers map[string]json.RawMessage
 	if raw, ok := cfg["credHelpers"]; ok {
 		if err := json.Unmarshal(raw, &helpers); err != nil {
 			return fmt.Errorf("credHelpers in %s is not an object: %w", cfgPath, err)
 		}
+	}
+	if helpers == nil {
+		helpers = map[string]json.RawMessage{}
 	}
 	helpers[host] = json.RawMessage(`"observatory"`)
 	cfg["credHelpers"], _ = json.Marshal(helpers)
@@ -143,7 +156,27 @@ func setCredHelper(cfgPath, host string) error {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(cfgPath, append(out, '\n'), mode)
+	return writeFileAtomic(cfgPath, append(out, '\n'), mode)
+}
+
+// writeFileAtomic replaces path in one rename, so a crash never leaves docker a truncated config.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // linkCredHelper links the CLI binary as the helper next to itself, or in ~/.local/bin when that directory is not writable.
@@ -172,14 +205,24 @@ func (c *cli) linkCredHelper() (string, error) {
 	return "", errors.Join(errs...)
 }
 
+// replaceSymlink only ever replaces a symlink, never a file someone put at link.
 func replaceSymlink(target, link string) error {
-	if cur, err := os.Readlink(link); err == nil && cur == target {
-		return nil
+	st, err := os.Lstat(link)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case st.Mode()&fs.ModeSymlink == 0:
+		return fmt.Errorf("%s exists and is not a symlink; remove it to link the credential helper", link)
+	default:
+		if cur, err := os.Readlink(link); err == nil && cur == target {
+			return nil
+		}
+		if err := os.Remove(link); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-		return err
-	}
-	if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return os.Symlink(target, link)

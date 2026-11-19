@@ -129,3 +129,72 @@ func TestImageLoginFallsBackToLocalBin(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestSetCredHelperOddConfigs(t *testing.T) {
+	for _, in := range []string{"", "  \n", "null", `{"credHelpers":null,"x":1}`} {
+		cfgPath := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(cfgPath, []byte(in), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := setCredHelper(cfgPath, "hub.test"); err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		var cfg struct{ CredHelpers map[string]string }
+		b, _ := os.ReadFile(cfgPath)
+		if err := json.Unmarshal(b, &cfg); err != nil || cfg.CredHelpers["hub.test"] != "observatory" {
+			t.Errorf("%q: config %s %v", in, b, err)
+		}
+		if st, _ := os.Stat(cfgPath); st.Mode().Perm() != 0o640 {
+			t.Errorf("%q: mode %v", in, st.Mode())
+		}
+		if entries, _ := os.ReadDir(filepath.Dir(cfgPath)); len(entries) != 1 {
+			t.Errorf("%q: leftover files %v", in, entries)
+		}
+	}
+}
+
+func TestSetCredHelperKeepsSymlinkedConfig(t *testing.T) {
+	dir := t.TempDir()
+	real, cfgPath := filepath.Join(dir, "real.json"), filepath.Join(dir, "config.json")
+	if err := os.WriteFile(real, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCredHelper(cfgPath, "hub.test"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Lstat(cfgPath); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink replaced: %v %v", st, err)
+	}
+	if b, _ := os.ReadFile(real); !strings.Contains(string(b), "hub.test") {
+		t.Errorf("real config %s", b)
+	}
+}
+
+func TestReplaceSymlinkRefusesRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, credHelperName)
+	if err := os.WriteFile(link, []byte("mine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceSymlink("/bin/observatory", link); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		t.Fatalf("err = %v", err)
+	}
+	if b, _ := os.ReadFile(link); string(b) != "mine" {
+		t.Errorf("file replaced: %q", b)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/old", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceSymlink("/bin/observatory", link); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.Readlink(link); got != "/bin/observatory" {
+		t.Errorf("link -> %s", got)
+	}
+}
