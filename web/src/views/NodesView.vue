@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n'
 import { api, ApiError } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
 import UpdateNodesDialog from '@/components/UpdateNodesDialog.vue'
-import { runSummary, selectable } from '@/composables/nodeUpdates'
+import { bannerRun, runSummary, selectable } from '@/composables/nodeUpdates'
 import { gb, imageLine, stateTones, type NodeInfo, type UpdateRun } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
@@ -24,6 +24,7 @@ const updateOpen = ref(false)
 const run = ref<UpdateRun | null>(null)
 const selected = ref<string[]>([])
 const cancelling = ref(false)
+const seenRunning = new Set<string>()
 
 const runActive = computed(() => run.value?.state === 'running')
 const selectableIds = computed(() => nodes.value.filter((n) => selectable(n, runActive.value)).map((n) => n.id))
@@ -60,7 +61,9 @@ async function refreshRun() {
   const id = org.value.id
   try {
     const res = await api<UpdateRun>(`/api/orgs/${id}/node-updates/current`)
-    if (id === org.value?.id) run.value = res
+    if (id !== org.value?.id) return
+    if (res.state === 'running') seenRunning.add(res.id)
+    run.value = bannerRun(res, seenRunning)
   } catch (e) {
     if (id !== org.value?.id) return
     if (e instanceof ApiError && e.status === 404) run.value = null
@@ -91,6 +94,7 @@ watch(
     error.value = ''
     nodes.value = []
     run.value = null
+    seenRunning.clear()
     selected.value = []
     reload()
   },
@@ -109,7 +113,9 @@ watch(
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="run && summary" class="banner" role="status">
       <template v-if="run.state === 'running'">{{ t('nodes.update.running', summary) }}</template>
-      <template v-else-if="run.state === 'failed' && failed">{{ t('nodes.update.failed', { name: failed.name, reason: failed.reason }) }}</template>
+      <template v-else-if="run.state === 'failed'">
+        {{ failed ? t('nodes.update.failed', { name: failed.name, reason: failed.reason }) : t('nodes.update.failedGeneric') }}
+      </template>
       <template v-else>{{ t(`nodes.update.${run.state === 'cancelled' ? 'cancelled' : 'done'}`) }}</template>
       <Button v-if="run.state === 'running' && can('node:update')" :disabled="cancelling" @click="cancelRun">{{ t('nodes.update.cancel') }}</Button>
     </p>

@@ -358,7 +358,8 @@
       "cancelled": "Update abgebrochen.",
       "failed": "Update fehlgeschlagen: {name}: {reason}",
       "selectAll": "Alle aktualisierbaren Nodes auswählen",
-      "select": "{name} auswählen"
+      "select": "{name} auswählen",
+      "failedGeneric": "Update fehlgeschlagen."
     }
   },
   "vms": {

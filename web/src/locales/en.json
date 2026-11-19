@@ -358,7 +358,8 @@
       "cancelled": "Update cancelled.",
       "failed": "Update failed: {name}: {reason}",
       "selectAll": "Select all updatable nodes",
-      "select": "Select {name}"
+      "select": "Select {name}",
+      "failedGeneric": "Update failed."
     }
   },
   "vms": {
