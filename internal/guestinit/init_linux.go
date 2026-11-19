@@ -40,9 +40,11 @@ func Run() error {
 	if err := growRoot(rootDevice); err != nil {
 		return err
 	}
-	// Tasks 4-10 add their steps here, in boot order, each taking root and seed.
+	// Tasks 5-10 add their steps here, in boot order, each taking root and seed.
 	_ = seed
-	_ = root
+	if err := root.EnsureDev(); err != nil {
+		return err
+	}
 
 	announceReady()
 
