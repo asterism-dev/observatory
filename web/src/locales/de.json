@@ -5,7 +5,8 @@
   "release": {
     "available": "Version {latest} ist verfügbar (läuft: {current}).",
     "notes": "Release Notes",
-    "dismiss": "Ausblenden"
+    "dismiss": "Ausblenden",
+    "update": "Update auf {latest}"
   },
   "login": {
     "intro": "Melde dich an, um fortzufahren.",
