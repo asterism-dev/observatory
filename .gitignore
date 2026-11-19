@@ -1,6 +1,10 @@
 !docs/superpowers/
 docs/superpowers/plans/
+deploy/idp/.bootstrap/
+# Left behind in clones from before the move to deploy/idp; holds an admin token.
 deploy/dev/zitadel/.bootstrap/
+deploy/idp/.env
+deploy/.env
 deploy/dev/hub.env
 bin/
 web/node_modules/

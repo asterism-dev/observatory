@@ -1,0 +1,105 @@
+name: observatory-hub
+
+services:
+  hub:
+    build:
+      context: ..
+      dockerfile: deploy/hub.Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    # Repeats the required values from .env so a missing one stops `up` instead of leaving the hub in a restart loop.
+    environment:
+      OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
+      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
+      OBSERVATORY_OIDC_ISSUER: ${OBSERVATORY_OIDC_ISSUER:?set OBSERVATORY_OIDC_ISSUER in deploy/.env}
+      OBSERVATORY_OIDC_WEB_CLIENT_ID: ${OBSERVATORY_OIDC_WEB_CLIENT_ID:?set OBSERVATORY_OIDC_WEB_CLIENT_ID in deploy/.env}
+      OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
+      OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
+    ports:
+      - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: observatory
+      POSTGRES_DB: observatory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U observatory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  # Loads the kernel modules the gateway needs; built-in modules make modprobe fail harmlessly.
+  modules:
+    image: alpine:3.22
+    privileged: true
+    volumes:
+      - /lib/modules:/lib/modules:ro
+    command: ["sh", "-c", "modprobe -a openvswitch wireguard || true"]
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/gateway.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      modules:
+        condition: service_completed_successfully
+      hub:
+        condition: service_started
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      HUB_URL: http://hub:8090
+      OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
+    ports:
+      - "51820:51820/udp"
+      - "51821:51821/udp"
+    volumes:
+      - ovn:/var/lib/ovn
+      - ovs:/etc/openvswitch
+  # Shares the gateway's network namespace so exports listen on the underlay address only, nothing published on the host.
+  storage:
+    build:
+      context: ..
+      dockerfile: deploy/storage.Dockerfile
+    restart: unless-stopped
+    network_mode: service:gateway
+    depends_on: [gateway]
+    environment:
+      HUB_URL: http://hub:8090
+      OBSERVATORY_STORAGE_TOKEN: ${OBSERVATORY_STORAGE_TOKEN:?set OBSERVATORY_STORAGE_TOKEN in deploy/.env}
+    volumes:
+      - disks:/disks
+    tmpfs: [/run/storage]
+  caddy:
+    image: caddy:2.11.9
+    profiles: [tls]
+    restart: unless-stopped
+    depends_on: [hub]
+    environment:
+      OBSERVATORY_DOMAIN: ${OBSERVATORY_DOMAIN:-}
+      OBSERVATORY_TLS: ${OBSERVATORY_TLS:-acme}
+    # An empty domain would reach Caddy as a cryptic Caddyfile error.
+    command: ["sh", "-c", "[ -n \"$$OBSERVATORY_DOMAIN\" ] || { echo 'set OBSERVATORY_DOMAIN in deploy/.env for the tls profile' >&2; exit 1; }; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  postgres-data:
+  ovn:
+  ovs:
+  disks:
+  caddy-data:
+  caddy-config:

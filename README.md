@@ -8,12 +8,14 @@ Postgres, serves a Vue web app embedded in the Go binary, and ships a small CLI
 It needs an external OIDC identity provider for login; see
 [docs/idp.md](docs/idp.md) for requirements and client setup.
 
+To run it on a server with Docker Compose, see [docs/deploy.md](docs/deploy.md).
+
 ## Development
 
 Needs Go, Node 22, Docker and `jq`.
 
 ```sh
-make dev-up idp-up idp-bootstrap   # Postgres, dev Zitadel, deploy/dev/hub.env
+make dev-up idp-up idp-bootstrap   # Postgres, Zitadel (deploy/idp), deploy/dev/hub.env
 make run                           # hub on :8090
 npm --prefix web ci                # first time only
 npm --prefix web run dev           # Vite on :5173, proxies /api and /auth
