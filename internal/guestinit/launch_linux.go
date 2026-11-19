@@ -29,20 +29,18 @@ const (
 	imageStopTimeout = 30 * time.Second
 )
 
-// Image is the image's PID 1, running in its own PID and cgroup namespace, chrooted into the root.
+// Image is the image's PID 1, running in its own PID and cgroup namespace.
 type Image struct {
-	PID  int
-	root string
-	stop syscall.Signal
-	cmd  *exec.Cmd
-	done chan struct{}
+	PID        int
+	pidfd      int
+	execCgroup int
+	stop       syscall.Signal
+	cmd        *exec.Cmd
+	done       chan struct{}
 }
 
-// StartImage binds the platform directory and /dev into the root, then starts systemd or the nsinit shim as the namespace's PID 1.
+// StartImage starts systemd or the nsinit shim as the PID 1 of a new PID namespace on the switched root.
 func StartImage(r Root, img proto.ImageConfig, env map[string]string) (*Image, error) {
-	if err := r.bindPlatform(); err != nil {
-		return nil, err
-	}
 	if err := r.mountRun(); err != nil {
 		return nil, err
 	}
@@ -50,7 +48,7 @@ func StartImage(r Root, img proto.ImageConfig, env map[string]string) (*Image, e
 		return nil, err
 	}
 	cmd := &exec.Cmd{Dir: "/", Stdout: os.Stdout, Stderr: os.Stderr}
-	i := &Image{root: r.Path, cmd: cmd, done: make(chan struct{})}
+	i := &Image{cmd: cmd, done: make(chan struct{})}
 	if init := r.systemd(); init != "" {
 		cmd.Path, cmd.Args = init, []string{init}
 		cmd.Env = []string{"container=observatory", "PATH=" + env["PATH"]}
@@ -67,8 +65,13 @@ func StartImage(r Root, img proto.ImageConfig, env map[string]string) (*Image, e
 		return nil, err
 	}
 	defer cg.Close()
+	if i.execCgroup, err = unix.Open(filepath.Join(cgroupRoot, "exec"), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0); err != nil {
+		return nil, err
+	}
+	if err := hideInitMounts(); err != nil {
+		return nil, err
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Chroot:      r.Path,
 		Cloneflags:  syscall.CLONE_NEWPID | syscall.CLONE_NEWCGROUP,
 		UseCgroupFD: true,
 		CgroupFD:    int(cg.Fd()),
@@ -77,6 +80,11 @@ func StartImage(r Root, img proto.ImageConfig, env map[string]string) (*Image, e
 		return nil, fmt.Errorf("start image: %w", err)
 	}
 	i.PID = cmd.Process.Pid
+	if i.pidfd, err = unix.PidfdOpen(i.PID, 0); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("pidfd of the image: %w", err)
+	}
 	go func() {
 		_ = cmd.Wait()
 		close(i.done)
@@ -107,7 +115,7 @@ func (i *Image) Stop(timeout time.Duration) {
 	}
 }
 
-// Exec starts cmd inside the image: its PID namespace, chrooted into the root, in the exec cgroup.
+// Exec starts cmd inside the image: its PID namespace, in the exec cgroup.
 func (i *Image) Exec(cmd *exec.Cmd) error {
 	errc := make(chan error, 1)
 	go func() {
@@ -119,26 +127,15 @@ func (i *Image) Exec(cmd *exec.Cmd) error {
 }
 
 func (i *Image) startIn(cmd *exec.Cmd) error {
-	ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/pid", i.PID))
-	if err != nil {
-		return err
-	}
-	defer ns.Close()
-	if err := unix.Setns(int(ns.Fd()), unix.CLONE_NEWPID); err != nil {
+	if err := unix.Setns(i.pidfd, unix.CLONE_NEWPID); err != nil {
 		return fmt.Errorf("enter image pid namespace: %w", err)
 	}
 	// The cgroup namespace is not joined: cloning into /exec from inside it fails with ENOENT.
-	cg, err := os.Open(filepath.Join(cgroupRoot, "exec"))
-	if err != nil {
-		return err
-	}
-	defer cg.Close()
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	cmd.SysProcAttr.Chroot = i.root
 	cmd.SysProcAttr.UseCgroupFD = true
-	cmd.SysProcAttr.CgroupFD = int(cg.Fd())
+	cmd.SysProcAttr.CgroupFD = i.execCgroup
 	if cmd.Dir == "" {
 		cmd.Dir = "/"
 	}
@@ -156,26 +153,12 @@ func (r Root) systemd() string {
 	return ""
 }
 
-// bindPlatform mounts /.observatory read-only into the image and gives it the init's /dev.
-func (r Root) bindPlatform() error {
-	if _, err := os.Stat(platformDir); err == nil {
-		target := r.join(platformDir)
-		if err := os.MkdirAll(target, 0o755); err != nil {
-			return err
+// hideInitMounts detaches the init's /proc and /sys so the image mounts its own: theirs show only its PID and cgroup namespace.
+func hideInitMounts() error {
+	for _, m := range []string{"/proc", "/sys"} {
+		if err := syscall.Unmount(m, syscall.MNT_DETACH); err != nil {
+			return fmt.Errorf("detach %s: %w", m, err)
 		}
-		if err := syscall.Mount(platformDir, target, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-			return fmt.Errorf("bind %s: %w", platformDir, err)
-		}
-		if err := syscall.Mount("", target, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
-			return fmt.Errorf("remount %s read-only: %w", platformDir, err)
-		}
-	}
-	dev := r.join("dev")
-	if err := os.MkdirAll(dev, 0o755); err != nil {
-		return err
-	}
-	if err := syscall.Mount("/dev", dev, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("bind /dev: %w", err)
 	}
 	return nil
 }

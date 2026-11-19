@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -39,11 +40,19 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	root, err := mountRoot(rootDevice)
-	if err != nil {
+	if err := mountRoot(rootDevice); err != nil {
 		return err
 	}
-	if err := growFS(rootDevice, root.Path); err != nil {
+	if err := growFS(rootDevice, newRoot); err != nil {
+		return err
+	}
+	if err := switchRoot(newRoot); err != nil {
+		return err
+	}
+	root := Root{Path: "/"}
+	// Kept open: StartImage detaches this /proc, and shutdown still needs our mountinfo.
+	proc, err := os.Open("/proc")
+	if err != nil {
 		return err
 	}
 	agent := newAgent(root)
@@ -98,9 +107,9 @@ func Run() error {
 	// The kernel signals PID 1 only for ctrl-alt-del (SIGINT); the image's own poweroff/restart reaches us as its exit status.
 	select {
 	case sig := <-sigs:
-		shutdown(img, shutdownFor(sig.(syscall.Signal)))
+		shutdown(img, proc, shutdownFor(sig.(syscall.Signal)))
 	case <-imageDone:
-		shutdown(img, img.shutdownCmd())
+		shutdown(img, proc, img.shutdownCmd())
 	}
 	return nil
 }
@@ -185,13 +194,16 @@ func shutdownFor(sig syscall.Signal) int {
 	return syscall.LINUX_REBOOT_CMD_POWER_OFF
 }
 
-// shutdown stops the image, unmounts /newroot and powers off or reboots; it only returns on failure.
-func shutdown(img *Image, cmd int) {
+// shutdown stops the image, unmounts all but "/", remounts it read-only and powers off or reboots; it only returns on failure.
+func shutdown(img *Image, proc *os.File, cmd int) {
 	if img != nil {
 		img.Stop(imageStopTimeout)
 	}
-	if err := unmountRoot(); err != nil {
+	if err := unmountAll(proc); err != nil {
 		fmt.Fprintln(os.Stderr, "init:", err)
+	}
+	if err := syscall.Mount("", "/", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
+		fmt.Fprintln(os.Stderr, "init: remount / read-only:", err)
 	}
 	syscall.Sync()
 	if err := syscall.Reboot(cmd); err != nil {
@@ -199,14 +211,18 @@ func shutdown(img *Image, cmd int) {
 	}
 }
 
-func unmountRoot() error {
-	f, err := os.Open("/proc/self/mountinfo")
+func unmountAll(proc *os.File) error {
+	fd, err := unix.Openat(int(proc.Fd()), "self/mountinfo", unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return err
+		return fmt.Errorf("mountinfo: %w", err)
 	}
+	f := os.NewFile(uintptr(fd), "mountinfo")
 	defer f.Close()
 	var errs []error
-	for _, m := range mountsBelow(f, "/newroot") {
+	for _, m := range mountsBelow(f, "/") {
+		if m == "/" {
+			continue
+		}
 		err := syscall.Unmount(m, 0)
 		if errors.Is(err, syscall.EBUSY) {
 			err = syscall.Unmount(m, syscall.MNT_DETACH)

@@ -18,7 +18,7 @@ func mountsBelow(mountinfo io.Reader, prefix string) []string {
 			continue
 		}
 		p := unescapeMountPath(fields[4])
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+		if p == prefix || strings.HasPrefix(p, strings.TrimSuffix(prefix, "/")+"/") {
 			out = append(out, p)
 		}
 	}

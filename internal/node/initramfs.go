@@ -35,7 +35,7 @@ func BuildInitramfs(guestbootDir, out string) error {
 		}
 		return err
 	}
-	for _, d := range []string{"bin", "dev", ".observatory", ".observatory/bin"} {
+	for _, d := range []string{"dev", ".observatory", ".observatory/bin", ".observatory/libexec"} {
 		add(d, syscall.S_IFDIR|0o755, nil, [2]uint32{})
 	}
 	// The kernel opens the console for /init before anything mounts devtmpfs.
@@ -47,8 +47,9 @@ func BuildInitramfs(guestbootDir, out string) error {
 	for _, t := range guestTools {
 		add(".observatory/bin/"+t, syscall.S_IFLNK|0o777, []byte("observatory-init"), [2]uint32{})
 	}
+	// Under /.observatory, the only initramfs path the init still reaches after switching into the image's root.
 	for _, t := range []string{"mke2fs", "resize2fs"} {
-		if err := file("bin/"+t, t); err != nil {
+		if err := file(".observatory/libexec/"+t, t); err != nil {
 			return err
 		}
 	}

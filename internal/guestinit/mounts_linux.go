@@ -30,15 +30,53 @@ func mountBase() error {
 	return nil
 }
 
-func mountRoot(dev string) (Root, error) {
-	root := Root{Path: "/newroot"}
-	if err := os.MkdirAll(root.Path, 0o755); err != nil {
-		return root, err
+// newRoot is where the image's disk is mounted until switchRoot makes it "/".
+const newRoot = "/newroot"
+
+func mountRoot(dev string) error {
+	if err := os.MkdirAll(newRoot, 0o755); err != nil {
+		return err
 	}
-	if err := syscall.Mount(dev, root.Path, "ext4", 0, ""); err != nil {
-		return root, fmt.Errorf("mount %s: %w", dev, err)
+	if err := syscall.Mount(dev, newRoot, "ext4", 0, ""); err != nil {
+		return fmt.Errorf("mount %s: %w", dev, err)
 	}
-	return root, nil
+	return nil
+}
+
+type mountOp struct {
+	source, target string
+	flags          uintptr
+}
+
+// switchRootOps are the mounts that make root the real root of the mount namespace, as switch_root does.
+func switchRootOps(root string) []mountOp {
+	return []mountOp{
+		{platformDir, root + platformDir, syscall.MS_BIND | syscall.MS_REC},
+		{"", root + platformDir, syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY},
+		{"/dev", root + "/dev", syscall.MS_MOVE},
+		{"/proc", root + "/proc", syscall.MS_MOVE},
+		{"/sys", root + "/sys", syscall.MS_MOVE},
+		{root, "/", syscall.MS_MOVE},
+	}
+}
+
+// switchRoot moves root onto "/" and enters it; the kernel refuses user namespaces to anything still chrooted below the initramfs.
+func switchRoot(root string) error {
+	if err := os.Chdir(root); err != nil {
+		return err
+	}
+	for _, op := range switchRootOps(root) {
+		if err := os.MkdirAll(op.target, 0o755); err != nil {
+			return err
+		}
+		if err := syscall.Mount(op.source, op.target, "", op.flags, ""); err != nil {
+			return fmt.Errorf("mount %s on %s: %w", op.source, op.target, err)
+		}
+	}
+	if err := syscall.Chroot("."); err != nil {
+		return fmt.Errorf("chroot: %w", err)
+	}
+	return os.Chdir("/")
 }
 
 // ext4IocResizeFS is EXT4_IOC_RESIZE_FS, _IOW('f', 16, __u64).

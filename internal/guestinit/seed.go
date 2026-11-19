@@ -23,7 +23,7 @@ var (
 	envNameRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
-// Root is the directory all of the init's file writes go through: /newroot in the VM.
+// Root is the directory all of the init's file writes go through: "/" in the VM once the init has switched into the image's root.
 type Root struct{ Path string }
 
 // ReadSeed reads and sanitizes the seed document from the seed ISO on dev.

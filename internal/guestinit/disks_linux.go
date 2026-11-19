@@ -13,8 +13,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-// mke2fs is the initramfs's; a var so tests can use the host's.
-var mke2fs = "/bin/mke2fs"
+// mke2fs is the initramfs's, reachable through the platform bind after the root switch; a var so tests can use the host's.
+var mke2fs = platformDir + "/libexec/mke2fs"
 
 // MountDisks formats blank attached disks, mounts each at its path in r and grows its filesystem.
 func MountDisks(r Root, disks []proto.GuestDisk) error {

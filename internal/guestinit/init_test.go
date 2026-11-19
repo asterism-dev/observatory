@@ -49,25 +49,32 @@ func TestToolVersionFlagReachesTool(t *testing.T) {
 	}
 }
 
-func TestMountsBelowDeepestFirst(t *testing.T) {
-	info := `22 1 253:0 / /newroot rw - ext4 /dev/vda rw
-23 22 0:5 / /newroot/dev rw - devtmpfs devtmpfs rw
-24 23 0:6 / /newroot/dev/pts rw - devpts devpts rw
-25 22 253:16 / /newroot/data\040disk rw - ext4 /dev/vdc rw
-26 1 253:1 / /newroot2 rw - ext4 /dev/vdd rw
-27 1 0:3 / /proc rw - proc proc rw
+// switchedMountinfo is the init's mountinfo after the root switch: the image disk is "/".
+const switchedMountinfo = `22 1 253:0 / / rw - ext4 /dev/vda rw
+23 22 0:5 / /dev rw - devtmpfs devtmpfs rw
+24 23 0:6 / /dev/pts rw - devpts devpts rw
+25 22 253:16 / /data\040disk rw - ext4 /dev/vdc rw
+26 22 253:1 / /data\040disk2 rw - ext4 /dev/vdd rw
+27 22 0:3 / /proc rw - proc proc rw
+28 22 0:7 / /run rw - tmpfs tmpfs rw
+29 28 0:8 / /run/user/1 rw - tmpfs tmpfs rw
 `
-	got := mountsBelow(strings.NewReader(info), "/newroot")
-	want := []string{"/newroot/data disk", "/newroot/dev/pts", "/newroot/dev", "/newroot"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("got %q, want %q", got, want)
+
+func TestMountsBelowDeepestFirst(t *testing.T) {
+	for prefix, want := range map[string][]string{
+		"/data disk": {"/data disk"},
+		"/dev":       {"/dev/pts", "/dev"},
+		"/":          {"/data disk2", "/run/user/1", "/data disk", "/dev/pts", "/proc", "/dev", "/run", "/"},
+	} {
+		if got := mountsBelow(strings.NewReader(switchedMountinfo), prefix); !slices.Equal(got, want) {
+			t.Errorf("mountsBelow(%q) = %q, want %q", prefix, got, want)
+		}
 	}
 }
 
 func TestHasMount(t *testing.T) {
-	const info = "36 1 8:1 / /newroot rw - ext4 /dev/vda rw\n40 36 0:5 / /newroot/run rw - tmpfs tmpfs rw\n41 36 0:6 / /newroot/run/user/1 rw - tmpfs tmpfs rw\n"
-	for path, want := range map[string]bool{"/newroot/run": true, "/newroot/run/user": false, "/newroot/dev": false} {
-		if got := hasMount(strings.NewReader(info), path); got != want {
+	for path, want := range map[string]bool{"/run": true, "/run/user": false, "/tmp": false} {
+		if got := hasMount(strings.NewReader(switchedMountinfo), path); got != want {
 			t.Errorf("hasMount(%q) = %v, want %v", path, got, want)
 		}
 	}

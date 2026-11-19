@@ -62,12 +62,12 @@ func TestBuildInitramfsLayout(t *testing.T) {
 	exe := func(data string) cpioEntry { return cpioEntry{mode: syscall.S_IFREG | 0o755, data: data} }
 	dir := cpioEntry{mode: syscall.S_IFDIR | 0o755}
 	want := map[string]cpioEntry{
-		"bin": dir, "dev": dir, ".observatory": dir, ".observatory/bin": dir,
+		"dev": dir, ".observatory": dir, ".observatory/bin": dir, ".observatory/libexec": dir,
 		"dev/console":                       {mode: syscall.S_IFCHR | 0o600, rdevMajor: 5, rdevMinor: 1},
 		"init":                              link(".observatory/bin/observatory-init"),
 		".observatory/bin/observatory-init": exe("observatory-init bytes"),
-		"bin/mke2fs":                        exe("mke2fs bytes"),
-		"bin/resize2fs":                     exe("resize2fs bytes"),
+		".observatory/libexec/mke2fs":       exe("mke2fs bytes"),
+		".observatory/libexec/resize2fs":    exe("resize2fs bytes"),
 	}
 	for _, tool := range []string{"vmm-token", "git-credential-vmm", "gh", "agent-browser", "vmm-desktop"} {
 		want[".observatory/bin/"+tool] = link("observatory-init")

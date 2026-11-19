@@ -2,6 +2,7 @@ package guestinit
 
 import (
 	"os/exec"
+	"slices"
 	"syscall"
 	"testing"
 )
@@ -26,5 +27,19 @@ func TestImageShutdownCmd(t *testing.T) {
 		if got := (&Image{cmd: cmd}).shutdownCmd(); got != want {
 			t.Errorf("%s: %#x, want %#x", script, got, want)
 		}
+	}
+}
+
+func TestSwitchRootOps(t *testing.T) {
+	want := []mountOp{
+		{"/.observatory", "/newroot/.observatory", syscall.MS_BIND | syscall.MS_REC},
+		{"", "/newroot/.observatory", syscall.MS_BIND | syscall.MS_REMOUNT | syscall.MS_RDONLY},
+		{"/dev", "/newroot/dev", syscall.MS_MOVE},
+		{"/proc", "/newroot/proc", syscall.MS_MOVE},
+		{"/sys", "/newroot/sys", syscall.MS_MOVE},
+		{"/newroot", "/", syscall.MS_MOVE},
+	}
+	if got := switchRootOps("/newroot"); !slices.Equal(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
 	}
 }
