@@ -135,6 +135,10 @@ const activePath = computed(() => {
       </nav>
       <div class="side__spacer" />
       <UserMenu @switch="switchOrg" @create="creating = true" />
+      <div v-if="me?.version" class="side__version">
+        {{ t('app.name') }} {{ me.version }}
+        <a v-if="me.user.platformAdmin && me.latestVersion" :href="releaseURL(me.latestVersion)" target="_blank" rel="noopener">· {{ t('release.update', { latest: me.latestVersion }) }}</a>
+      </div>
     </aside>
     <main class="content">
       <header class="topbar">
@@ -179,6 +183,11 @@ const activePath = computed(() => {
 }
 .side__spacer {
   flex: 1;
+}
+.side__version {
+  padding: 0 8px;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 .nav-item {
   display: flex;
