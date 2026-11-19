@@ -359,7 +359,7 @@ watch(
               <span v-if="image.recipeRevision === null" class="muted">{{ t('images.autoNoRecipe') }}</span>
               <span v-else-if="image.autoLastAt" class="muted">{{ t('images.autoLast', { at: fmt(image.autoLastAt) }) }}</span>
               <template v-if="image.autoNeedsApproval">
-                <span role="alert">{{ t('images.autoApproveHint', { n: image.recipeRevision }) }}</span>
+                <span role="status">{{ t('images.autoApproveHint', { n: image.recipeRevision }) }}</span>
                 <p v-if="image.canEdit && image.canBuild">
                   <Button :disabled="busy" @click="approveRevision">{{ t('images.autoApprove', { n: image.recipeRevision }) }}</Button>
                 </p>

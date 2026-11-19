@@ -642,6 +642,9 @@ func cmdImageAuto(c *cli, args []string) error {
 	wasOff := img.AutoSchedule == "" && !img.AutoOnBaseChange
 	turnsOn := body.AutoSchedule != nil && *body.AutoSchedule != "" || body.AutoOnBaseChange != nil && *body.AutoOnBaseChange
 	// Turning automation on approves the revision shown here; a later one would need its own approval.
+	if *approve && img.RecipeRevision == nil {
+		return usagef("image %s has no recipe", img.Ref)
+	}
 	if *approve || wasOff && turnsOn {
 		body.ApproveRevision = img.RecipeRevision
 	}

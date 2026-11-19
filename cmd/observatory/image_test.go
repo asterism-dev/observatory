@@ -230,6 +230,10 @@ func TestImageAuto(t *testing.T) {
 		t.Errorf("stdout %s", out())
 	}
 	mustRun(t, c, errb, 2, "image", "auto", "app", "--schedule", "hourly")
+	mustRun(t, c, errb, 2, "image", "auto", "tool", "--approve")
+	if !strings.Contains(errb(), "image me/tool has no recipe") {
+		t.Errorf("stderr %s", errb())
+	}
 	before := len(out())
 	mustRun(t, c, errb, 0, "image", "show", "app")
 	golden(t, "image-show-auto.golden", out()[before:])

@@ -236,9 +236,11 @@ func (s *Store) UpdateImage(ctx context.Context, v Image) (Image, error) {
 	return out, err
 }
 
-// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as.
+// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as, keeping an approval only if it was by's.
 func (s *Store) SetImageAuto(ctx context.Context, image uuid.UUID, schedule string, onBaseChange bool, by uuid.UUID) error {
-	_, err := s.q.Exec(ctx, "UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_error = '' WHERE id = $1",
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_error = '',
+		auto_revision = CASE WHEN auto_by IS NOT DISTINCT FROM $4 THEN auto_revision END,
+		auto_approved_at = CASE WHEN auto_by IS NOT DISTINCT FROM $4 THEN auto_approved_at END WHERE id = $1`,
 		image, schedule, onBaseChange, by)
 	return err
 }

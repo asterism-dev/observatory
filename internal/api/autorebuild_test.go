@@ -465,3 +465,52 @@ func TestTrimError(t *testing.T) {
 		t.Fatalf("not trimmed: %d", len([]rune(got)))
 	}
 }
+
+func TestAutoApprovalIsPersonal(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.addMember(org, carol, store.RoleAdmin)
+	e.node(org)
+	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
+	img := e.recipeImage(aliceTok, org, "basis", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly","approveRevision":1}`)
+	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"image:build"},{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
+	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+	}
+	e.setAuto(aliceTok, org, img, `{"approveRevision":2}`)
+
+	// Alice's own settings change keeps her approval.
+	e.setAuto(aliceTok, org, img, `{"autoOnBaseChange":true}`)
+	var shown imageJSON
+	decode(t, e.do("GET", imagePath(org, img), aliceTok), &shown)
+	if shown.AutoNeedsApproval || shown.AutoRevision == nil || *shown.AutoRevision != 2 {
+		t.Fatalf("own change dropped the approval: %+v", shown)
+	}
+
+	// Carol's settings change does not inherit it.
+	e.setAuto(carolTok, org, img, `{"autoSchedule":"daily"}`)
+	decode(t, e.do("GET", imagePath(org, img), carolTok), &shown)
+	if !shown.AutoNeedsApproval || shown.AutoRevision != nil {
+		t.Fatalf("carol inherited alice's approval: %+v", shown)
+	}
+	if i := e.image(img); i.AutoBy == nil || *i.AutoBy != carol.ID || i.AutoApprovedAt != nil {
+		t.Fatalf("image: %+v", i)
+	}
+	e.autoTick()
+	if bs := e.builds(img); len(bs) != 1 || bs[0].State != store.BuildFailed || !strings.Contains(bs[0].Error, "recipe revision 2 by bob") {
+		t.Fatalf("builds: %+v", bs)
+	}
+
+	// Carol approves herself; a settings change carrying the approval re-approves as the saver.
+	e.setAuto(carolTok, org, img, `{"autoSchedule":"daily","approveRevision":2}`)
+	e.autoTick()
+	if bs := e.builds(img); len(bs) != 2 || bs[0].State != store.BuildQueued || bs[0].StartedBy != carol.ID {
+		t.Fatalf("after carol's approval: %+v", bs)
+	}
+}
