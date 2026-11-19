@@ -12,6 +12,7 @@ import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import {
   buildActive,
   buildDuration,
+  autoSettingsBody,
   buildTones,
   formatBytes,
   imageScope,
@@ -160,8 +161,14 @@ const saveGeneral = () =>
 
 const saveAuto = () =>
   run(async () => {
-    const body = { autoSchedule: autoSchedule.value === 'off' ? '' : autoSchedule.value, autoOnBaseChange: autoOnBaseChange.value }
+    if (!image.value) return
+    const body = autoSettingsBody(image.value, autoSchedule.value, autoOnBaseChange.value)
     image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify(body) })
+  })
+
+const approveRevision = () =>
+  run(async () => {
+    image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify({ approveRevision: image.value?.recipeRevision }) })
   })
 
 async function saveScope(confirmDeleteVersions = false) {
@@ -351,6 +358,12 @@ watch(
               <Checkbox v-model="autoOnBaseChange" :disabled="!image.canEdit || !image.canBuild || busy">{{ t('images.autoOnBaseChange') }}</Checkbox>
               <span v-if="image.recipeRevision === null" class="muted">{{ t('images.autoNoRecipe') }}</span>
               <span v-else-if="image.autoLastAt" class="muted">{{ t('images.autoLast', { at: fmt(image.autoLastAt) }) }}</span>
+              <template v-if="image.autoNeedsApproval">
+                <span role="alert">{{ t('images.autoApproveHint', { n: image.recipeRevision }) }}</span>
+                <p v-if="image.canEdit && image.canBuild">
+                  <Button :disabled="busy" @click="approveRevision">{{ t('images.autoApprove', { n: image.recipeRevision }) }}</Button>
+                </p>
+              </template>
               <p v-if="image.canEdit && image.canBuild">
                 <Button variant="accent" :disabled="busy || !autoChanged" @click="saveAuto">{{ t('env.save') }}</Button>
               </p>

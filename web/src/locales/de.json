@@ -684,6 +684,8 @@
     "autoLast": "Letzter automatischer Build: {at}",
     "autoFailedTag": "automatischer Build fehlgeschlagen",
     "autoErrorBody": "Automatischer Build fehlgeschlagen: {error}",
+    "autoApprove": "Revision {n} für automatische Builds freigeben",
+    "autoApproveHint": "Revision {n} hat jemand anderes gespeichert als die Person, in deren Namen automatische Builds laufen. Sofern ihr Autor das Image nicht bauen und seine Referenzen nicht nutzen darf, bauen automatische Builds sie erst nach Prüfung und Freigabe; wer freigibt, wird zur Person, in deren Namen sie laufen.",
     "lastBuild": "Letzter Build",
     "image": "Image",
     "pick": "Image wählen",

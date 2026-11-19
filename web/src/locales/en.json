@@ -684,6 +684,8 @@
     "autoLast": "Last automatic rebuild: {at}",
     "autoFailedTag": "automatic rebuild failed",
     "autoErrorBody": "Automatic rebuild failed: {error}",
+    "autoApprove": "Approve revision {n} for automatic builds",
+    "autoApproveHint": "Revision {n} was saved by someone other than the person automatic builds run as. Unless its author may build the image and use its references, automatic builds skip it until someone reviews and approves it; approving makes you the person they run as.",
     "lastBuild": "Last build",
     "image": "Image",
     "pick": "Choose an image",

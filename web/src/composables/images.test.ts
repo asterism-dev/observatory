@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { appendCapped, buildDuration, defaultSourceLabel, refLabel } from './images.ts'
+import { appendCapped, autoSettingsBody, buildDuration, defaultSourceLabel, refLabel } from './images.ts'
 
 const teams = { t1: 'backend' }
 
@@ -50,4 +50,14 @@ test('appendCapped keeps whole trailing lines within the cap and marks truncatio
 
 test('appendCapped keeps the raw tail when it has no line break', () => {
   assert.deepEqual(appendCapped({ text: '', truncated: false }, 'abcdefghijkl', 5), { text: 'hijkl', truncated: true })
+})
+
+test('autoSettingsBody approves the shown revision only when turning automation on', () => {
+  const off = { autoSchedule: '' as const, autoOnBaseChange: false, recipeRevision: 4 }
+  assert.deepEqual(autoSettingsBody(off, 'weekly', false), { autoSchedule: 'weekly', autoOnBaseChange: false, approveRevision: 4 })
+  assert.deepEqual(autoSettingsBody(off, 'off', true), { autoSchedule: '', autoOnBaseChange: true, approveRevision: 4 })
+  assert.deepEqual(autoSettingsBody(off, 'off', false), { autoSchedule: '', autoOnBaseChange: false })
+  const on = { autoSchedule: 'daily' as const, autoOnBaseChange: false, recipeRevision: 5 }
+  assert.deepEqual(autoSettingsBody(on, 'weekly', true), { autoSchedule: 'weekly', autoOnBaseChange: true })
+  assert.deepEqual(autoSettingsBody({ ...off, recipeRevision: null }, 'daily', false), { autoSchedule: 'daily', autoOnBaseChange: false })
 })
