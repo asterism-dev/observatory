@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -49,24 +50,29 @@ type updateRun struct {
 type updateTimeouts struct{ back, vms, poll time.Duration }
 
 func (f *Fleet) Updatable(n store.Node) bool {
-	return f.Online(n.ID) && version.Older(n.Version, version.Version) && n.Hypervisor != nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.updatable(n)
+}
+
+// updatable needs f.mu held.
+func (f *Fleet) updatable(n store.Node) bool {
+	return f.conns[n.ID] != nil && version.Older(n.Version, version.Version) && n.Hypervisor != nil
 }
 
 // StartUpdate updates nodes one at a time in list order; the run outlives ctx and ends only on its own or by CancelUpdate.
 func (f *Fleet) StartUpdate(_ context.Context, org, by uuid.UUID, nodes []store.Node) (UpdateRun, error) {
-	for _, n := range nodes {
-		if n.OrgID != org || !f.Updatable(n) {
-			return UpdateRun{}, ErrNotUpdatable
-		}
-	}
-	r := &updateRun{UpdateRun: UpdateRun{ID: uuid.New(), Org: org, StartedBy: by, State: "running", StartedAt: time.Now()}}
-	for _, n := range nodes {
-		r.Nodes = append(r.Nodes, UpdateNode{ID: n.ID, Status: "pending"})
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if old := f.runs[org]; old != nil && old.State == "running" {
 		return UpdateRun{}, ErrUpdateRunning
+	}
+	r := &updateRun{UpdateRun: UpdateRun{ID: uuid.New(), Org: org, StartedBy: by, State: "running", StartedAt: time.Now()}}
+	for _, n := range nodes {
+		if n.OrgID != org || !f.updatable(n) {
+			return UpdateRun{}, ErrNotUpdatable
+		}
+		r.Nodes = append(r.Nodes, UpdateNode{ID: n.ID, Status: "pending"})
 	}
 	f.runs[org] = r
 	go f.runUpdate(r, nodes)
@@ -224,19 +230,23 @@ func (f *Fleet) updateNode(n store.Node) string {
 
 // vmsBack names a VM not yet settled on c, or the failure of one that reported an error there; a VM counts only once c saw its status.
 func (f *Fleet) vmsBack(ctx context.Context, node uuid.UUID, c *conn) (waiting, failure string, _ error) {
+	// seen before the VMs: an ID seen here had its new state written before the query below.
+	f.mu.Lock()
+	var seen map[string]bool
+	if c != nil {
+		seen = maps.Clone(c.seen)
+	}
+	f.mu.Unlock()
+	if f.betweenVMReads != nil {
+		f.betweenVMReads()
+	}
 	vms, err := f.store.VMsOnNode(ctx, node)
 	if err != nil {
 		return "", "", err
 	}
-	f.mu.Lock()
-	seen := make([]bool, len(vms))
-	for i, v := range vms {
-		seen[i] = c != nil && c.seen[v.ID.String()]
-	}
-	f.mu.Unlock()
-	for i, v := range vms {
+	for _, v := range vms {
 		switch {
-		case !seen[i]:
+		case !seen[v.ID.String()]:
 			waiting = cmp.Or(waiting, v.Name)
 		case v.State == proto.StateError:
 			return "", fmt.Sprintf("vm %s: %s", v.Name, v.Error), nil

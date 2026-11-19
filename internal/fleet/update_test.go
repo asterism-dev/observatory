@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,6 +212,31 @@ func TestUpdateWaitsForVMStatusesAfterReconnect(t *testing.T) {
 	}
 }
 
+// A status landing between vmsBack's two reads must not let the VM's stale stored state count.
+func TestUpdateJudgesOnlyStatesWrittenOnNewConnection(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
+	if err := e.s.SetVMStatus(context.Background(), ns[0].ID, running(v)); err != nil {
+		t.Fatal(err)
+	}
+	conns := make(chan *fakeNode, 1)
+	var once sync.Once
+	fleet.SetBetweenVMReads(e.f, func() {
+		once.Do(func() {
+			(<-conns).send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "boom"}})
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !fleet.Seen(e.f, ns[0].ID, v.ID); time.Sleep(5 * time.Millisecond) {
+			}
+		})
+	})
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version)
+	conns <- ns[0].conn
+	if r := e.ended(); r.State != "failed" || !strings.Contains(r.Nodes[0].Reason, "boom") {
+		t.Fatalf("run %+v", r)
+	}
+}
+
 func TestUpdateFailsOnReport(t *testing.T) {
 	e, ns := updEnv(t, "n1", "n2")
 	e.start(ns...)
@@ -334,7 +360,9 @@ func TestStartUpdateRejects(t *testing.T) {
 	}
 
 	e.start(ns[0])
-	if _, err := e.f.StartUpdate(ctx, e.org.ID, e.owner, []store.Node{ns[1].Node}); !errors.Is(err, fleet.ErrUpdateRunning) {
-		t.Fatalf("err %v", err)
+	for _, n := range []store.Node{ns[1].Node, e.storedNode(plain.ID)} {
+		if _, err := e.f.StartUpdate(ctx, e.org.ID, e.owner, []store.Node{n}); !errors.Is(err, fleet.ErrUpdateRunning) {
+			t.Errorf("%s during a run: err %v", n.Name, err)
+		}
 	}
 }

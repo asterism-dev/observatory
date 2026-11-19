@@ -38,6 +38,7 @@ type Fleet struct {
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
 	updateTimeouts updateTimeouts
+	betweenVMReads func() // test hook in vmsBack
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
