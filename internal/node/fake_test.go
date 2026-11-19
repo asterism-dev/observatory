@@ -62,10 +62,11 @@ func (i *fakeInstance) Kill() error {
 		i.p.record("kill-guest")
 		return nil
 	}
-	i.once.Do(func() { i.killed.Store(true); close(i.done) })
+	// Recorded before done closes: done wakes the agent, whose teardown events must come after.
 	if i.p != nil {
 		i.p.record("kill-guest")
 	}
+	i.once.Do(func() { i.killed.Store(true); close(i.done) })
 	return nil
 }
 
