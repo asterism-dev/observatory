@@ -15,7 +15,7 @@ die() {
 }
 say() { echo "==> $*"; }
 
-HUB='' TOKEN='' MEMORY_MB='' UPDATE='' done=installed
+HUB='' TOKEN='' MEMORY_MB='' UPDATE='' result=installed
 while [ $# -gt 0 ]; do
 	case $1 in
 	--hub | --token | --memory-mb)
@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
 		shift
 		;;
 	--update)
-		UPDATE=1 done=updated
+		UPDATE=1 result=updated
 		shift
 		;;
 	*) usage ;;
@@ -183,7 +183,7 @@ node_journal() {
 i=0
 while [ $i -lt 30 ]; do
 	if node_journal -o cat | grep -q "connected to hub"; then
-		say "node $done; it appears on the hub as online"
+		say "node $result; it appears on the hub as online"
 		exit 0
 	fi
 	i=$((i + 1))
