@@ -43,6 +43,9 @@ func StartImage(r Root, img proto.ImageConfig, env map[string]string) (*Image, e
 	if err := r.bindPlatform(); err != nil {
 		return nil, err
 	}
+	if err := r.mountRun(); err != nil {
+		return nil, err
+	}
 	if err := setupCgroups(); err != nil {
 		return nil, err
 	}
@@ -173,6 +176,27 @@ func (r Root) bindPlatform() error {
 	}
 	if err := syscall.Mount("/dev", dev, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
 		return fmt.Errorf("bind /dev: %w", err)
+	}
+	return nil
+}
+
+// mountRun gives the image a tmpfs /run of ours, as systemd would otherwise mount its own over the platform sockets.
+func (r Root) mountRun() error {
+	run := r.join("run")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		return err
+	}
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	mounted := hasMount(f, run)
+	f.Close()
+	if mounted {
+		return nil
+	}
+	if err := syscall.Mount("tmpfs", run, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755"); err != nil {
+		return fmt.Errorf("mount %s: %w", run, err)
 	}
 	return nil
 }

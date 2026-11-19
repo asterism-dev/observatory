@@ -27,6 +27,10 @@ func mountsBelow(mountinfo io.Reader, prefix string) []string {
 	return out
 }
 
+func hasMount(mountinfo io.Reader, path string) bool {
+	return slices.Contains(mountsBelow(mountinfo, path), path)
+}
+
 // unescapeMountPath decodes the octal escapes (\040 for a space) the kernel writes into mountinfo.
 func unescapeMountPath(s string) string {
 	var b strings.Builder

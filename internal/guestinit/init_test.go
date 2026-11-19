@@ -51,3 +51,12 @@ func TestMountsBelowDeepestFirst(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestHasMount(t *testing.T) {
+	const info = "36 1 8:1 / /newroot rw - ext4 /dev/vda rw\n40 36 0:5 / /newroot/run rw - tmpfs tmpfs rw\n41 36 0:6 / /newroot/run/user/1 rw - tmpfs tmpfs rw\n"
+	for path, want := range map[string]bool{"/newroot/run": true, "/newroot/run/user": false, "/newroot/dev": false} {
+		if got := hasMount(strings.NewReader(info), path); got != want {
+			t.Errorf("hasMount(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
