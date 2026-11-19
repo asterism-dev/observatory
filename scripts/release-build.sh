@@ -23,5 +23,6 @@ for os in linux darwin; do
 done
 # Nodes run Firecracker, which needs linux/amd64.
 build observatory-node ./cmd/node linux amd64
+build observatory-init ./cmd/init linux amd64
 
 (cd "$out" && sha256sum ./*.tar.gz | sed 's| \./| |' > SHA256SUMS)

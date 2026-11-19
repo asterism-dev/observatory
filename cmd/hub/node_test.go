@@ -26,7 +26,7 @@ func TestNodeAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	nodeAssets(mux, bin)
+	nodeAssets(mux, bin, "")
 	sum := sha256.Sum256([]byte("binary"))
 	if rec := get(mux, "/node/SHA256SUMS"); rec.Body.String() != hex.EncodeToString(sum[:])+"  observatory-node\n" {
 		t.Fatalf("sums: %q", rec.Body.String())
@@ -40,9 +40,35 @@ func TestNodeAssets(t *testing.T) {
 
 	missing := http.NewServeMux()
 	missing.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("spa")) }))
-	nodeAssets(missing, filepath.Join(t.TempDir(), "absent"))
+	nodeAssets(missing, filepath.Join(t.TempDir(), "absent"), "")
 	if get(missing, "/node/observatory-node").Code != 404 || get(missing, "/node/SHA256SUMS").Code != 404 || get(missing, "/node/install.sh").Code != 200 {
 		t.Fatal("missing binary handling")
+	}
+}
+
+func TestNodeAssetsServesGuestboot(t *testing.T) {
+	dir := t.TempDir()
+	bin, tarball := filepath.Join(dir, "node"), filepath.Join(dir, "guestboot.tar")
+	for path, content := range map[string]string{bin: "binary", tarball: "tarball"} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	nodeAssets(mux, bin, tarball)
+	if rec := get(mux, "/node/guestboot.tar"); rec.Body.String() != "tarball" {
+		t.Fatalf("guestboot.tar: %q", rec.Body.String())
+	}
+	binSum, tarSum := sha256.Sum256([]byte("binary")), sha256.Sum256([]byte("tarball"))
+	want := hex.EncodeToString(binSum[:]) + "  observatory-node\n" + hex.EncodeToString(tarSum[:]) + "  guestboot.tar\n"
+	if rec := get(mux, "/node/SHA256SUMS"); rec.Body.String() != want {
+		t.Fatalf("sums: %q", rec.Body.String())
+	}
+
+	noTar := http.NewServeMux()
+	nodeAssets(noTar, bin, filepath.Join(dir, "absent.tar"))
+	if get(noTar, "/node/guestboot.tar").Code != 404 || strings.Contains(get(noTar, "/node/SHA256SUMS").Body.String(), "guestboot.tar") {
+		t.Fatal("missing guestboot handling")
 	}
 }
 
