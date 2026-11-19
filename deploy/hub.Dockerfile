@@ -1,4 +1,4 @@
-FROM node:22 AS web
+FROM node:22.23.5 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci

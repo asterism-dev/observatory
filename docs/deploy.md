@@ -8,18 +8,19 @@ Zitadel stack in `deploy/idp/`.
 
 - A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch` and `wireguard`
   modules (the stack loads them).
-- Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices).
+- Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices);
+  with the bundled login service also TCP 8080.
 
 ## Steps
 
 ```sh
-# 1. Optional: the bundled login service. Set ZITADEL_DOMAIN and its secrets in deploy/idp/.env first.
-cp deploy/idp/.env.example deploy/idp/.env && $EDITOR deploy/idp/.env
+# 1. Optional: the bundled login service. Edit deploy/idp/.env first (see below).
+cp deploy/idp/.env.example deploy/idp/.env
 docker compose -f deploy/idp/compose.yaml --env-file deploy/idp/.env up -d --wait
 ZITADEL_URL=http://<idp host>:8080 sh deploy/idp/bootstrap.sh --print <hub public URL>
 
 # 2. Configure the hub: paste the three printed OIDC lines, generate the secrets as the comments say.
-cp deploy/.env.example deploy/.env && $EDITOR deploy/.env
+cp deploy/.env.example deploy/.env    # then edit it
 
 # 3. Start it, either plain HTTP on OBSERVATORY_HTTP_PORT …
 docker compose -f deploy/compose.yaml up -d --build
@@ -28,8 +29,17 @@ docker compose -f deploy/compose.yaml --profile tls up -d --build
 ```
 
 The bundled Zitadel serves plain HTTP; its `.env.example` holds insecure defaults that must change before the host is
-reachable from a network. `bootstrap.sh` needs `curl` and `jq` and reads the admin token Zitadel writes to
-`deploy/idp/.bootstrap/`. The first user to log in to the hub becomes platform admin.
+reachable from a network: `ZITADEL_DOMAIN` (the host name browsers use), `ZITADEL_MASTERKEY` (exactly 32 characters,
+`openssl rand -hex 16`), `LOGIN_SESSION_COOKIE_SECRET` (`openssl rand -base64 32`) and `POSTGRES_ADMIN_PASSWORD`
+together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL_URL` for `bootstrap.sh` is
+`http://<ZITADEL_DOMAIN>:8080` and becomes the hub's issuer. `bootstrap.sh` needs `curl` and `jq`, reads the admin
+token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
+
+After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub restarts,
+`docker compose -f deploy/compose.yaml logs hub` (a short token or a malformed key stops it there).
+
+The first user to log in to the hub becomes platform admin: log in right after the first start, and turn off
+self-registration in the login service (or keep it unreachable) until then.
 
 ## Serving modes
 
@@ -39,7 +49,9 @@ reachable from a network. `bootstrap.sh` needs `curl` and `jq` and reads the adm
 | `--profile tls up` | `OBSERVATORY_TLS=acme`, `OBSERVATORY_DOMAIN`, `OBSERVATORY_PUBLIC_URL=https://<domain>` | public certificate; the domain must resolve to the host and 80/443 must be reachable |
 | `--profile tls up` | `OBSERVATORY_TLS=internal`, same domain and URL | certificate from Caddy's own CA, no public DNS needed |
 
-Behind your own proxy, forward to port 8090 and keep websockets (`/api/nodes/connect`) working.
+With the `tls` profile set `OBSERVATORY_HTTP_PORT=127.0.0.1:8090`: Docker's published ports bypass host firewalls
+such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090 and
+keep websockets (`/api/nodes/connect`) working.
 
 ## Trusting the internal CA
 

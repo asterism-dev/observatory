@@ -5,6 +5,7 @@ dir=$(cd "$(dirname "$0")" && pwd)
 hub_env="$dir/../dev/hub.env"
 pat_file="$dir/.bootstrap/admin.pat"
 api=${ZITADEL_URL:-http://localhost:8080}
+api=${api%/}
 
 # Without arguments: dev setup, writes deploy/dev/hub.env. With --print <hub URL>: registers that hub and prints its OIDC values.
 hub_url=''

@@ -7,8 +7,14 @@ services:
       dockerfile: deploy/hub.Dockerfile
     restart: unless-stopped
     env_file: .env
+    # Repeats the required values from .env so a missing one stops `up` instead of leaving the hub in a restart loop.
     environment:
       OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
+      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
+      OBSERVATORY_OIDC_ISSUER: ${OBSERVATORY_OIDC_ISSUER:?set OBSERVATORY_OIDC_ISSUER in deploy/.env}
+      OBSERVATORY_OIDC_WEB_CLIENT_ID: ${OBSERVATORY_OIDC_WEB_CLIENT_ID:?set OBSERVATORY_OIDC_WEB_CLIENT_ID in deploy/.env}
+      OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
+      OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     depends_on:
