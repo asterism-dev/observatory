@@ -50,7 +50,7 @@ func TestCallGuestProtocol(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	uds, got := fakeVsock(t, "OK 1073741824\n", `{"ok":true}`+"\n")
-	if err := CallGuest(ctx, uds, GuestRequest{Op: "resume", Time: 5}); err != nil {
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "resume", Time: 5}); err != nil {
 		t.Fatal(err)
 	}
 	if l := <-got; l != "CONNECT 1050\n" {
@@ -61,18 +61,28 @@ func TestCallGuestProtocol(t *testing.T) {
 	}
 
 	uds, _ = fakeVsock(t, "OK 1\n", `{"ok":false,"error":"boom"}`+"\n")
-	if err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil || !strings.Contains(err.Error(), "boom") {
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v, want boom", err)
 	}
 
 	uds, _ = fakeVsock(t, "", "")
-	if err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
 		t.Fatal("expected an error without OK")
 	}
 
 	uds, _ = fakeVsock(t, "FAILURE\n", "")
-	if err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
 		t.Fatal("expected an error for a non-OK handshake")
+	}
+}
+
+func TestCallGuestVersion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	uds, _ := fakeVsock(t, "OK 1\n", `{"ok":true,"version":"v1"}`+"\n")
+	reply, err := CallGuest(ctx, uds, GuestRequest{Op: "ping"})
+	if err != nil || reply.Version != "v1" {
+		t.Fatalf("reply = %+v, %v", reply, err)
 	}
 }
 
@@ -80,7 +90,7 @@ func TestCallGuestTrust(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	uds, got := fakeVsock(t, "OK 1\n", `{"ok":true}`+"\n")
-	if err := CallGuest(ctx, uds, GuestRequest{Op: "trust", Certs: map[string]string{"id": "pem"}}); err != nil {
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "trust", Certs: map[string]string{"id": "pem"}}); err != nil {
 		t.Fatal(err)
 	}
 	<-got

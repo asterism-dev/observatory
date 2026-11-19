@@ -352,7 +352,7 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 		}
 		rand.Read(req.Entropy)
 	}
-	err := node.CallGuest(ctx, filepath.Join(jailRoot(dir), vsockPath), req)
+	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(dir), vsockPath), req)
 	if err != nil && !from.Takeoff {
 		// The guest runs where it was, only with a stale clock and seed; that beats discarding its memory.
 		log.Printf("vm %s: guest agent: %v", f.Spec.ID, err)
@@ -616,11 +616,13 @@ func (i *instance) ReloadSeed() error {
 }
 
 func (i *instance) GuestResume(ctx context.Context) error {
-	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
+	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
+	return err
 }
 
 func (i *instance) GuestTrust(ctx context.Context, cas map[string]string) error {
-	return node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "trust", Certs: cas})
+	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "trust", Certs: cas})
+	return err
 }
 
 func (i *instance) Flush() error {

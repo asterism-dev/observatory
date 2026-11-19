@@ -45,6 +45,8 @@ func Run() error {
 	if err := growRoot(rootDevice); err != nil {
 		return err
 	}
+	agent := newAgent(root)
+	go func() { fmt.Fprintln(os.Stderr, "init: agent:", agent.listen()) }()
 	// Tasks 6-10 add their steps here, in boot order, each taking root and seed.
 	if err := root.EnsureDev(); err != nil {
 		return err
@@ -73,20 +75,16 @@ func Run() error {
 	if _, err := root.InstallCAs(seed.EgressCAs); err != nil {
 		fmt.Fprintln(os.Stderr, "init: egress CAs:", err)
 	}
-	env, err := root.WriteEnv(seed.Env, seed.Image.Env)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: environment:", err)
-	}
-	if env == nil {
-		env = map[string]string{"PATH": platformBin + ":" + defaultPath}
-	}
+	agent.setSeedKeys(seed.SSHKeys)
+	env := agent.applyEnv(seed)
 
 	// Without the image the guest still serves SSH port forwarding and the agent, so a failed start is not fatal.
 	img, err := StartImage(root, seed.Image, env)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init: image:", err)
 	}
-	startSSH(root, seed.SSHKeys, hostKeys, img, env)
+	agent.SSH = startSSH(root, agent, hostKeys, img)
+	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 
 	var imageDone <-chan struct{}
@@ -103,14 +101,14 @@ func Run() error {
 	return nil
 }
 
-func startSSH(root Root, seedKeys []string, hostKeys []ssh.Signer, img *Image, env map[string]string) {
+func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHServer {
 	l, err := net.Listen("tcp", ":22")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init: ssh:", err)
-		return
+		return nil
 	}
 	srv := &SSHServer{
-		Keys:     func() []ssh.PublicKey { return root.AuthorizedKeys(seedKeys) },
+		Keys:     func() []ssh.PublicKey { return root.AuthorizedKeys(agent.SeedKeys()) },
 		HostKeys: hostKeys,
 		Spawn: func(cmd *exec.Cmd) error {
 			if img == nil {
@@ -118,7 +116,7 @@ func startSSH(root Root, seedKeys []string, hostKeys []ssh.Signer, img *Image, e
 			}
 			return img.Exec(cmd)
 		},
-		Env: func() map[string]string { return env },
+		Env: agent.Env,
 		Shell: func() string {
 			if sh := root.DevShell(); sh != "/bin/false" {
 				return sh
@@ -130,6 +128,7 @@ func startSSH(root Root, seedKeys []string, hostKeys []ssh.Signer, img *Image, e
 	go func() {
 		fmt.Fprintln(os.Stderr, "init: ssh:", srv.Serve(l))
 	}()
+	return srv
 }
 
 // announceReadyWhenAddressed writes the ready marker once the primary NIC has an IPv4 address, giving up after 300 s like /run/vmm-ready.sh did.

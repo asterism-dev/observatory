@@ -80,7 +80,7 @@ func (p *Provider) buildTemplate(ctx context.Context, key, base string, f node.V
 func waitAgent(ctx context.Context, dir string, inst node.Instance) error {
 	for {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		err := node.CallGuest(cctx, filepath.Join(jailRoot(dir), vsockPath), node.GuestRequest{Op: "ping"})
+		_, err := node.CallGuest(cctx, filepath.Join(jailRoot(dir), vsockPath), node.GuestRequest{Op: "ping"})
 		cancel()
 		if err == nil {
 			return nil

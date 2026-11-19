@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -28,6 +29,25 @@ type SSHServer struct {
 	Shell    func() string
 	// Root is the image root as the init sees it, for etc/group and agent sockets under tmp.
 	Root Root
+
+	hostKeysMu sync.RWMutex
+}
+
+// SetHostKeys replaces the host keys for connections accepted from now on.
+func (s *SSHServer) SetHostKeys(keys []ssh.Signer) {
+	s.hostKeysMu.Lock()
+	s.HostKeys = keys
+	s.hostKeysMu.Unlock()
+}
+
+func (s *SSHServer) serverConfig() *ssh.ServerConfig {
+	cfg := &ssh.ServerConfig{PublicKeyCallback: s.authorize}
+	s.hostKeysMu.RLock()
+	defer s.hostKeysMu.RUnlock()
+	for _, k := range s.HostKeys {
+		cfg.AddHostKey(k)
+	}
+	return cfg
 }
 
 // AuthorizedKeys returns the seed keys plus the keys in dev's own authorized_keys; keys with options are skipped because they are not enforced.
@@ -63,16 +83,12 @@ func (r Root) readAuthorizedKeys() []byte {
 
 // Serve accepts connections until l fails.
 func (s *SSHServer) Serve(l net.Listener) error {
-	cfg := &ssh.ServerConfig{PublicKeyCallback: s.authorize}
-	for _, k := range s.HostKeys {
-		cfg.AddHostKey(k)
-	}
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			return err
 		}
-		go s.serveConn(c, cfg)
+		go s.serveConn(c, s.serverConfig())
 	}
 }
 
