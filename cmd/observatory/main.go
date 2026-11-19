@@ -134,13 +134,13 @@ func run(c *cli, args []string) int {
 		c.cfgDir = dir
 		c.cfg, err = loadConfig(dir)
 	}
-	// A corrupt config must not block logging in again, which overwrites it.
-	if err != nil && cmd.path != "login" && cmd.path != "help" && cmd.path != "version" {
+	// A corrupt config must not block logging in again, which overwrites it, nor updating the CLI.
+	if err != nil && cmd.path != "login" && cmd.path != "help" && cmd.path != "version" && cmd.path != "update" {
 		fmt.Fprintf(c.stderr, "observatory: %v\n", err)
 		return 1
 	}
 	err = cmd.fn(c, rest)
-	if cmd.path != "update" && cmd.path != "version" && cmd.path != "help" {
+	if err == nil && cmd.path != "update" && cmd.path != "version" && cmd.path != "help" {
 		c.updateHint()
 	}
 	if errors.Is(err, flag.ErrHelp) {

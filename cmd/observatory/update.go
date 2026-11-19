@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/version"
 )
+
+// maxDownload bounds what a release download may read into memory; tarballs are a few MB.
+var maxDownload int64 = 200 << 20
 
 const (
 	downloadURL      = "https://github.com/asterism-dev/observatory/releases/download"
@@ -48,7 +52,7 @@ func (c *cli) updateHint() {
 		// Written on failure too, so an outage costs one request a day.
 		uc = updateCheck{CheckedAt: c.now(), Latest: latest}
 		if b, err := json.Marshal(uc); err == nil && os.MkdirAll(c.cfgDir, 0o700) == nil {
-			_ = os.WriteFile(path, b, 0o600)
+			_ = replaceFile(path, b, 0o600)
 		}
 	}
 	if version.Older(version.Version, uc.Latest) {
@@ -78,7 +82,7 @@ func cmdUpdate(c *cli, args []string) error {
 	}
 	want, err := checksumFor(sums, file)
 	if err != nil {
-		return err
+		return fmt.Errorf("no release build for %s/%s in %s", runtime.GOOS, runtime.GOARCH, latest)
 	}
 	tgz, err := c.download(latest + "/" + file)
 	if err != nil {
@@ -98,8 +102,10 @@ func cmdUpdate(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := replaceFile(exe, bin); err != nil {
+	if err := replaceFile(exe, bin, 0o755); errors.Is(err, fs.ErrPermission) {
 		return fmt.Errorf("cannot replace %s: %w (try sudo observatory update)", exe, err)
+	} else if err != nil {
+		return fmt.Errorf("cannot replace %s: %w", exe, err)
 	}
 	fmt.Fprintf(c.stdout, "updated %s → %s\n", version.Version, latest)
 	return nil
@@ -121,7 +127,11 @@ func (c *cli) download(path string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download %s: %s", path, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownload+1))
+	if err == nil && int64(len(b)) > maxDownload {
+		err = fmt.Errorf("download %s: larger than %d bytes", path, maxDownload)
+	}
+	return b, err
 }
 
 func checksumFor(sums []byte, file string) (string, error) {
@@ -154,8 +164,8 @@ func extractBinary(tgz []byte, name string) ([]byte, error) {
 	}
 }
 
-// replaceFile writes next to path and renames over it, so a failure leaves the old binary intact.
-func replaceFile(path string, b []byte) error {
+// replaceFile writes next to path and renames over it, so a failure or a concurrent reader never sees a partial file.
+func replaceFile(path string, b []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".observatory-*")
 	if err != nil {
 		return err
@@ -166,7 +176,7 @@ func replaceFile(path string, b []byte) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Chmod(tmp, 0o755)
+		err = os.Chmod(tmp, mode)
 	}
 	if err == nil {
 		err = os.Rename(tmp, path)

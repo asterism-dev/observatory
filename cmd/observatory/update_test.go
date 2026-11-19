@@ -187,13 +187,18 @@ func TestUpdateHintCorruptCache(t *testing.T) {
 func TestUpdateHintCachedWithoutConfigDir(t *testing.T) {
 	setVersion(t, "v0.3.0")
 	h := newFakeHub(t)
-	c, _, _ := newTestCLI(t, h)
+	meOneOrg(h)
+	c, _, stderr := newTestCLI(t, h)
 	releaseCLI(t, h, c, "v0.4.0", goodSums)
 	if err := os.RemoveAll(c.cfgDir); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("OBSERVATORY_HUB", h.URL)
+	t.Setenv("OBSERVATORY_TOKEN", "tok-test")
 	for range 2 {
-		run(c, []string{"whoami"})
+		if code := run(c, []string{"whoami"}); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
 	}
 	if n := len(h.calls("GET /latest")); n != 1 {
 		t.Fatalf("release checks: %d, want 1 (cached)", n)
@@ -218,6 +223,84 @@ func TestUpdateReadOnlyDir(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), exe) || !strings.Contains(stderr.String(), "sudo") {
 		t.Fatalf("stderr %q", stderr)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatalf("binary replaced: %q", b)
+	}
+}
+
+func TestUpdateHintSkippedOnFailedCommand(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	h.on("GET /api/me", 500, `{"error":"boom"}`)
+	c, _, stderr := newTestCLI(t, h)
+	releaseCLI(t, h, c, "v0.4.0", goodSums)
+	if code := run(c, []string{"whoami"}); code == 0 {
+		t.Fatal("want failure")
+	}
+	if strings.Contains(stderr.String(), "is available") {
+		t.Fatalf("hint after a failed command: %q", stderr)
+	}
+}
+
+func TestUpdateNoSudoHintForOtherErrors(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	c, _, stderr := newTestCLI(t, h)
+	releaseCLI(t, h, c, "v0.4.0", goodSums)
+	// Renaming a file over a non-empty directory fails, but not with a permission error.
+	exe := filepath.Join(t.TempDir(), "observatory")
+	if err := os.MkdirAll(filepath.Join(exe, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c.executable = func() (string, error) { return exe, nil }
+	if code := run(c, []string{"update"}); code == 0 {
+		t.Fatal("want failure")
+	}
+	if strings.Contains(stderr.String(), "sudo") {
+		t.Fatalf("sudo suggested for a non-permission error: %q", stderr)
+	}
+}
+
+func TestUpdateNoBuildForPlatform(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	c, _, stderr := newTestCLI(t, h)
+	releaseCLI(t, h, c, "v0.4.0", func(string, []byte) string { return "" })
+	if code := run(c, []string{"update"}); code == 0 {
+		t.Fatal("want failure")
+	}
+	if want := fmt.Sprintf("no release build for %s/%s", runtime.GOOS, runtime.GOARCH); !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr %q, want %q", stderr, want)
+	}
+}
+
+func TestUpdateWithCorruptConfig(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	c, _, stderr := newTestCLI(t, h)
+	exe := releaseCLI(t, h, c, "v0.4.0", goodSums)
+	if err := os.WriteFile(filepath.Join(c.cfgDir, "config.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(c, []string{"update"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "new" {
+		t.Fatalf("binary %q", b)
+	}
+}
+
+func TestUpdateDownloadTooLarge(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	old := maxDownload
+	maxDownload = 8
+	t.Cleanup(func() { maxDownload = old })
+	h := newFakeHub(t)
+	c, _, stderr := newTestCLI(t, h)
+	exe := releaseCLI(t, h, c, "v0.4.0", goodSums)
+	if code := run(c, []string{"update"}); code == 0 || !strings.Contains(stderr.String(), "larger than") {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if b, _ := os.ReadFile(exe); string(b) != "old" {
 		t.Fatalf("binary replaced: %q", b)
