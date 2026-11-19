@@ -96,7 +96,7 @@ function pathError(r: { mountPath: string }) {
 
 // A new disk gets the VM's owner; for another user's VM it would be the caller's and could not be attached.
 const canCreate = computed(() => props.vm.owner.kind === 'team' || props.vm.owner.id === me.value?.user.id)
-const newNameInvalid = computed(() => !/^[a-z][a-z0-9-]{0,30}$/.test(newName.value))
+const newNameInvalid = computed(() => !/^[a-z]([a-z0-9-]{0,29}[a-z0-9])?$/.test(newName.value))
 const newSizeInvalid = computed(() => newSizeGB.value === null || !Number.isInteger(newSizeGB.value) || newSizeGB.value < 1 || newSizeGB.value > 4096)
 
 async function createDisk() {
