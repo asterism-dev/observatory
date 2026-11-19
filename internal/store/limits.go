@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -31,6 +32,36 @@ func (l Limits) exceeds(org Limits) bool {
 		}
 	}
 	return false
+}
+
+var limitNames = [6][2]string{{"vCPU", ""}, {"RAM", " MB"}, {"disk", " GB"}, {"VM count", ""}, {"snapshot count", ""}, {"image storage", " GB"}}
+
+// LimitError names the limit an operation would cross; it matches ErrLimitExceeded.
+type LimitError struct {
+	Scope      string // "org", else the owner's
+	Name, Unit string
+	Limit, Got int
+}
+
+func (e *LimitError) Error() string {
+	owner := "the org's"
+	if e.Scope != ScopeOrg {
+		owner = "the owner's"
+	}
+	return fmt.Sprintf("%s %s limit of %d%s would be exceeded (%d%s)", owner, e.Name, e.Limit, e.Unit, e.Got, e.Unit)
+}
+
+func (e *LimitError) Is(target error) bool { return target == ErrLimitExceeded }
+
+// exceeded returns the first dimension in which l is above max, else nil.
+func (l Limits) exceeded(scope string, max Limits) error {
+	m := max.fields()
+	for i, v := range l.fields() {
+		if v != nil && m[i] != nil && *v > *m[i] {
+			return &LimitError{Scope: scope, Name: limitNames[i][0], Unit: limitNames[i][1], Limit: *m[i], Got: *v}
+		}
+	}
+	return nil
 }
 
 // Limits returns the stored rows by scope; scopes without a row are absent (all unlimited).

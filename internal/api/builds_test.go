@@ -346,6 +346,22 @@ func TestOrphanBuilderVMDeleted(t *testing.T) {
 	}
 }
 
+func TestBuildFailsNamingTheLimit(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	thirty := 30
+	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{DiskGB: &thirty}); err != nil {
+		t.Fatal(err)
+	}
+	e.node(org)
+	id := e.startBuild(aliceTok, org, e.recipeImage(aliceTok, org, "tools", ""))
+	e.tick()
+	if b := e.build(id); b.State != store.BuildFailed || !strings.Contains(b.Error, "the org's disk limit of 30 GB would be exceeded (40 GB)") {
+		t.Fatalf("build: %+v", b)
+	}
+}
+
 func TestBuildLogFollowSSE(t *testing.T) {
 	old := logPollInterval
 	logPollInterval = 10 * time.Millisecond

@@ -208,7 +208,7 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 	}
 	switch {
 	case errors.Is(err, store.ErrLimitExceeded):
-		return s.fail(ctx, b.ID, fmt.Sprintf("the builder VM (%d vCPU, %d MB, %d GB) would exceed the limits", builderCPUs, builderMemoryMB, builderDiskGB))
+		return s.fail(ctx, b.ID, fmt.Sprintf("the builder VM (%d vCPU, %d MB RAM, %d GB disk) counts against the VM limits: %v", builderCPUs, builderMemoryMB, builderDiskGB, err))
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrNotEnrolled):
 		return s.fail(ctx, b.ID, "the builder VM could not be created: "+err.Error())
 	case errors.Is(err, store.ErrConflict):

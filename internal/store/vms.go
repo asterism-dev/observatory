@@ -134,8 +134,8 @@ func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID
 		if err != nil {
 			return err
 		}
-		if used.plus(add).exceeds(l) {
-			return ErrLimitExceeded
+		if err := used.plus(add).exceeded(c.scope, l); err != nil {
+			return err
 		}
 	}
 	return nil
