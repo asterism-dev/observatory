@@ -86,7 +86,7 @@ AllowedIPs = <org slice>, 10.192.0.1/32
 PersistentKeepalive = 25
 ```
 
-Import it with `wg-quick up <file>` or the WireGuard app, then `ssh ubuntu@<vm>.internal`. Owners see and delete
+Import it with `wg-quick up <file>` or the WireGuard app, then `ssh dev@<vm>.internal`. Owners see and delete
 their own devices; org admins see and delete every device of the org but never get a config. Removing a member from
 the org deletes their devices in it; deleting a device cuts its traffic within one gateway poll.
 

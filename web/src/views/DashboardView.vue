@@ -92,7 +92,7 @@ watch(
 const steps = computed(() => (input.value ? guideSteps(input.value) : []))
 const showGuide = computed(() => !hidden.value && steps.value.some((s) => !s.done))
 const target = computed(() => (input.value ? sshTarget(input.value) : null))
-const sshCommand = computed(() => `ssh ubuntu@${target.value}.internal`)
+const sshCommand = computed(() => `ssh dev@${target.value}.internal`)
 const summary = computed(() => (input.value ? tiles(input.value) : {}))
 const hasAnything = computed(() => {
   const i = input.value

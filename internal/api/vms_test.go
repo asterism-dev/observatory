@@ -311,9 +311,9 @@ func TestPausePermission(t *testing.T) {
 func TestValidateVMDisks(t *testing.T) {
 	disk := func(path string) store.VMDisk { return store.VMDisk{DiskID: uuid.New(), MountPath: path} }
 	for path, ok := range map[string]bool{
-		"/data": true, "/home/ubuntu/work": true, "/var/data": true, "/var/lib/foo": true,
-		"/": false, "/data/": false, "/a/../b": false, "/etc": false, "/etc/x": false, "/home/ubuntu": false,
-		"/home/ubuntu/.ssh/k": false, "/var": false, "/var/lib/cloud/x": false, "data": false, "": false, "/a b": false,
+		"/data": true, "/home/dev/work": true, "/var/data": true, "/var/lib/foo": true,
+		"/": false, "/data/": false, "/a/../b": false, "/etc": false, "/etc/x": false, "/home/dev": false,
+		"/home/dev/.ssh/k": false, "/var": false, "/var/lib/cloud/x": false, "data": false, "": false, "/a b": false,
 	} {
 		if err := validateVMDisks([]store.VMDisk{disk(path)}); (err == nil) != ok {
 			t.Errorf("%q: %v", path, err)
@@ -604,26 +604,45 @@ func TestVMJSONImage(t *testing.T) {
 	}
 }
 
-func TestVMJSONStockImage(t *testing.T) {
+func TestVMJSONLegacyRuntime(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	node := e.enrolledNode(tok, org, "n1")
 	vm := e.createVM(tok, org, vmBody("a", userOwner(), node))
-	nodeID, _ := uuid.Parse(node)
-	stock := func() bool {
-		var got struct{ StockImage bool }
+	legacy := func() bool {
+		var got struct{ LegacyRuntime bool }
 		decode(t, e.do("GET", vmsPath(org)+"/"+vm.ID, tok), &got)
-		return got.StockImage
+		return got.LegacyRuntime
 	}
-	if stock() {
-		t.Fatal("stock before the VM ever ran")
+	if legacy() {
+		t.Fatal("new VM reported as legacy")
 	}
-	if err := e.store.SetVMStatus(context.Background(), nodeID, proto.VMStatus{ID: vm.ID, State: proto.StateRunning}); err != nil {
+	if _, err := e.pool.Exec(context.Background(), "UPDATE vms SET legacy_runtime = true WHERE id = $1", vm.ID); err != nil {
 		t.Fatal(err)
 	}
-	if !stock() {
-		t.Fatal("not stock after running without a guest image")
+	if !legacy() {
+		t.Fatal("legacy flag not reported")
+	}
+}
+
+func TestStartLegacyVMConflict(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	vm := e.createVM(tok, org, vmBody("a", userOwner(), node))
+	if _, err := e.pool.Exec(context.Background(), "UPDATE vms SET legacy_runtime = true WHERE id = $1", vm.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"start", "resume"} {
+		rec := e.send("POST", vmsPath(org)+"/"+vm.ID+"/"+action, tok, "")
+		if rec.Code != 409 || !strings.Contains(rec.Body.String(), "created with the old guest runtime; recreate this VM") {
+			t.Fatalf("%s: %d %s", action, rec.Code, rec.Body)
+		}
+	}
+	if rec := e.send("POST", vmsPath(org)+"/"+vm.ID+"/stop", tok, ""); rec.Code != 200 {
+		t.Fatalf("stop: %d", rec.Code)
 	}
 }
 

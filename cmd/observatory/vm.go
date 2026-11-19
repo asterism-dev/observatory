@@ -35,7 +35,7 @@ type vmJSON struct {
 	MemoryMB           int       `json:"memoryMB"`
 	DiskGB             int       `json:"diskGB"`
 	AutoSuspendMinutes int       `json:"autoSuspendMinutes"`
-	StockImage         bool      `json:"stockImage"`
+	LegacyRuntime      bool      `json:"legacyRuntime"`
 	CreatedAt          time.Time `json:"createdAt"`
 	Disks              []struct {
 		ID        string `json:"id"`
@@ -163,7 +163,11 @@ func cmdVMListCmd(c *cli, args []string) error {
 	}
 	rows := make([][]string, len(l.VMs))
 	for i, v := range l.VMs {
-		rows[i] = []string{v.Name, v.State, c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name), v.Node.Name, v.size(), orDash(v.IP)}
+		state := v.State
+		if v.LegacyRuntime {
+			state += " (recreate)"
+		}
+		rows[i] = []string{v.Name, state, c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name), v.Node.Name, v.size(), orDash(v.IP)}
 	}
 	return c.emit(raw, []string{"name", "state", "owner", "node", "size", "ip"}, rows)
 }
@@ -210,10 +214,11 @@ func cmdVMShow(c *cli, args []string) error {
 	if v.AutoSuspendMinutes > 0 {
 		suspend = fmt.Sprintf("%d min", v.AutoSuspendMinutes)
 	}
-	if v.StockImage {
-		image = "stock"
-	} else if v.Image != "" {
+	if v.Image != "" {
 		image = v.Image
+	}
+	if v.LegacyRuntime {
+		state += " - old guest runtime, recreate this VM"
 	}
 	return c.emitKV(raw, [][2]string{
 		{"name", v.Name}, {"state", state}, {"owner", c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name)}, {"node", v.Node.Name},

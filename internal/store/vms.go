@@ -18,6 +18,7 @@ var (
 	ErrOwnsResources = errors.New("owns VMs or disks")
 	ErrNotEnrolled   = errors.New("node not enrolled")
 	ErrNotRunning    = errors.New("VM is not running")
+	ErrLegacyRuntime = errors.New("created with the old guest runtime; recreate this VM")
 )
 
 type VM struct {
@@ -39,13 +40,14 @@ type VM struct {
 	WakeSeq            uint64
 	Image              string
 	RestoreState       string
+	LegacyRuntime      bool
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -175,18 +177,24 @@ func (s *Store) VMsOnNode(ctx context.Context, node uuid.UUID) ([]VM, error) {
 	return collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE node_id = $1 ORDER BY name", node))
 }
 
-// SetVMPower refuses to pause or hibernate a stopped VM with ErrNotRunning.
+// SetVMPower refuses to pause or hibernate a stopped VM with ErrNotRunning, and to start a legacy-runtime VM with ErrLegacyRuntime.
 func (s *Store) SetVMPower(ctx context.Context, org, id uuid.UUID, p proto.Power, m proto.StopMode) (VM, error) {
 	v, err := scanVM(s.q.QueryRow(ctx, `
 		UPDATE vms SET power = $3, stop_mode = nullif($4, ''), generation = generation + 1,
 			wake_seq = wake_seq + CASE WHEN $3 = 'running' AND state = 'suspended' THEN 1 ELSE 0 END
-		WHERE id = $1 AND org_id = $2 AND NOT ($3 IN ('paused', 'hibernated') AND power = 'stopped')
+		WHERE id = $1 AND org_id = $2 AND NOT ($3 IN ('paused', 'hibernated') AND power = 'stopped') AND NOT ($3 = 'running' AND legacy_runtime)
 		RETURNING `+vmColumns, id, org, p, m))
-	if errors.Is(err, ErrNotFound) && (p == proto.PowerPaused || p == proto.PowerHibernated) {
-		if _, err := s.VM(ctx, org, id); err != nil {
-			return VM{}, err
+	if errors.Is(err, ErrNotFound) {
+		cur, verr := s.VM(ctx, org, id)
+		if verr != nil {
+			return VM{}, verr
 		}
-		return VM{}, ErrNotRunning
+		if p == proto.PowerRunning && cur.LegacyRuntime {
+			return VM{}, ErrLegacyRuntime
+		}
+		if p == proto.PowerPaused || p == proto.PowerHibernated {
+			return VM{}, ErrNotRunning
+		}
 	}
 	return v, err
 }

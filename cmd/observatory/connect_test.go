@@ -51,7 +51,7 @@ func TestSSHExecArgs(t *testing.T) {
 	if code := run(c, []string{"ssh", "dev", "--user", "root", "--", "-L", "8080:localhost:8080", "uptime"}); code != 0 {
 		t.Fatal(code)
 	}
-	want := [][]string{{"ssh", "ubuntu@dev.internal"}, {"ssh", "root@dev.internal", "-L", "8080:localhost:8080", "uptime"}}
+	want := [][]string{{"ssh", "dev@dev.internal"}, {"ssh", "root@dev.internal", "-L", "8080:localhost:8080", "uptime"}}
 	for i, w := range want {
 		if !reflect.DeepEqual((*execs)[i].argv, w) {
 			t.Errorf("argv %v, want %v", (*execs)[i].argv, w)
@@ -95,8 +95,8 @@ func TestDesktopRunsThenAttaches(t *testing.T) {
 	if code := run(c, []string{"desktop", "dev"}); code != 0 {
 		t.Fatal(code)
 	}
-	if !reflect.DeepEqual((*runs)[0].argv, []string{"ssh", "ubuntu@dev.internal", "vmm-desktop", "start"}) ||
-		!reflect.DeepEqual((*execs)[0].argv, []string{"/bin/xpra", "attach", "ssh://ubuntu@dev.internal/100"}) {
+	if !reflect.DeepEqual((*runs)[0].argv, []string{"ssh", "dev@dev.internal", "vmm-desktop", "start"}) ||
+		!reflect.DeepEqual((*execs)[0].argv, []string{"/bin/xpra", "attach", "ssh://dev@dev.internal/100"}) {
 		t.Errorf("runs %v execs %v", *runs, *execs)
 	}
 

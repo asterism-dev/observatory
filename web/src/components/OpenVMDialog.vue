@@ -15,8 +15,8 @@ const { t } = useI18n()
 const host = computed(() => props.vm?.dnsName ?? '')
 const commands = computed(() => (props.vm ? [`observatory ssh ${props.vm.name}`, `observatory desktop ${props.vm.name}`] : []))
 const editors = computed(() => [
-  { name: 'VS Code', icon: Code, href: `vscode://vscode-remote/ssh-remote+ubuntu@${host.value}/home/ubuntu` },
-  { name: 'Zed', icon: Zap, href: `zed://ssh/ubuntu@${host.value}/home/ubuntu` },
+  { name: 'VS Code', icon: Code, href: `vscode://vscode-remote/ssh-remote+dev@${host.value}/home/dev` },
+  { name: 'Zed', icon: Zap, href: `zed://ssh/dev@${host.value}/home/dev` },
 ])
 const qr = ref('')
 watch(
@@ -25,7 +25,7 @@ watch(
     qr.value = ''
     if (!open.value || !host.value) return
     const want = host.value
-    const svg = await QRCode.toString(`ssh://ubuntu@${want}`, { type: 'svg', margin: 1 }).catch(() => '')
+    const svg = await QRCode.toString(`ssh://dev@${want}`, { type: 'svg', margin: 1 }).catch(() => '')
     if (want === host.value) qr.value = svg
   },
   { immediate: true },

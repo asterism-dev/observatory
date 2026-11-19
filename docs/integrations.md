@@ -99,23 +99,24 @@ hub memory for 10 minutes and is bound to you and the org; after a hub restart, 
 
 ## In the guest
 
-`vmm-boot.sh` installs these static files at every boot, resume and takeoff; none of them contains a token. The guest
-user is `ubuntu`.
+The init writes these files at every boot, resume and takeoff; none of them contains a token. The guest
+user is `dev`. The helpers are the init binary under other names and live in `/.observatory/bin`, a read-only
+directory that comes first in `PATH`, so they work in images without a shell.
 
 | File | Does |
 |---|---|
-| `/usr/local/bin/vmm-token <kind>` | Asks the node's token service; prints the placeholder (proxy) or the token (`vm`). Exit 0 printed, 3 not connected, 4 unavailable (also timeout, socket error, a token with characters outside `[A-Za-z0-9._~+/=_-]`, which keeps newlines out of git's credential protocol). |
-| `/usr/local/bin/git-credential-vmm` | git credential helper: answers `get` for `https://github.com` only, as `x-access-token`. |
+| `vmm-token <kind>` | Asks the node's token service; prints the placeholder (proxy) or the token (`vm`). Exit 0 printed, 3 not connected, 4 unavailable (also timeout, socket error, a token with characters outside `[A-Za-z0-9._~+/=_-]`, which keeps newlines out of git's credential protocol). |
+| `git-credential-vmm` | git credential helper: answers `get` for `https://github.com` only, as `x-access-token`. |
 | `/etc/vmm/gitconfig` | `helper = vmm` for `https://github.com`; `insteadOf` turns `git@github.com:` and `ssh://git@github.com/` into HTTPS. |
 | `/etc/gitconfig` | Gets an `[include]` of `/etc/vmm/gitconfig` while GitHub is connected; the sync removes only that include. |
-| `/usr/local/bin/gh` | Wrapper: sets `GH_TOKEN` from `vmm-token github` and runs `/usr/bin/gh`, unless `GH_TOKEN` or `GITHUB_TOKEN` is set or `gh auth login` stored a `github.com` login. Overwritten at every boot; a `gh` of your own belongs in `/usr/bin/gh` or earlier in `PATH`. |
+| `gh` | Wrapper: sets `GH_TOKEN` from `vmm-token github` and runs the image's own `gh`, unless `GH_TOKEN` or `GITHUB_TOKEN` is set or `gh auth login` stored a `github.com` login. The platform directory is read-only. |
 | `~/.claude/.credentials.json` | `{"claudeAiOauth":{"accessToken":…,"refreshToken":null,"expiresAt":null,"scopes":["user:inference"]}}`, mode 0600. With no expiry Claude Code never tries to refresh. Written even before Claude Code is installed. |
 | Linear MCP | `claude mcp add --transport http --scope user linear https://mcp.linear.app/mcp --header "Authorization: Bearer <token>"`, once `claude` exists. |
 | `/etc/profile.d/vmm-linear.sh` | Exports `LINEAR_API_KEY` from `vmm-token linear` in login shells. |
-| `vmm-integrations.timer` / `.service` | The sync: 30 s after boot, then every 5 minutes; also started by `vmm-boot.sh` (boot, resume) and the guest agent's `takeoff` (fork), so a woken or forked VM is current at once. In proxy mode the content is stable and the sync is a no-op after the first run. |
+| The sync | Runs inside the init: after boot, then every 5 minutes; also on resume and on `takeoff` (fork), so a woken or forked VM is current at once. In proxy mode the content is stable and the sync is a no-op after the first run. |
 
-The sync runs as root for `/etc/gitconfig` and as `ubuntu` (`runuser`) for everything in the home directory, so a
-planted link never gets root access. Its bookkeeping (hashes, never tokens) is in `/var/lib/vmm/ubuntu/`.
+The sync runs as root for `/etc/gitconfig` and as `dev` for everything in the home directory, so a
+planted link never gets root access. Its bookkeeping holds hashes, never tokens.
 
 **Token service:** the guest connects over vsock to the host (CID 2, port 1051); Firecracker maps that to the socket
 `v.sock_1051` inside the VM's jail, so the socket a request arrives on is the VM's identity
@@ -182,7 +183,7 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
 - **Linear token on argv and in `~/.claude.json`:** `claude mcp add --header` puts the header (the placeholder in proxy
   mode, the key in `vm` mode) into the guest user's `~/.claude.json` and, for the second the call runs, on its argv. A
   `headersHelper` that calls `vmm-token` would avoid both; not done yet.
-- **Finding `claude`:** the sync looks in the service's `PATH` and `~/.local/bin`. The guest image's
+- **Finding `claude`:** the sync looks in the service's `PATH` and `~/.local/bin`. The standard image's
   `/usr/local/bin/claude` is found; a Claude Code installed through nvm or an npm global prefix elsewhere is not, so
   the Linear MCP entry is not added for it.
 - **Hub crash during a Claude refresh** can require signing in again: the provider rotates the refresh token when it
@@ -203,9 +204,9 @@ Agents test with dummy tokens only. These checks need real tokens and are run by
 2. Connect all three in your private scope, proxy mode: GitHub and Linear by pasting, Claude with "Sign in". The page
    shows your GitHub login and Linear email.
 3. Create a fresh user VM and, from a device, run
-   `scripts/integrations-check.sh ubuntu@<vm>.internal <you>/<private-repo>`. Every line must be `PASS`, including the
-   leak check (Claude Code and `gh` come with the guest image ([guest.md](guest.md)); a VM on a node with a custom
-   `imageURL` needs them installed by hand).
+   `scripts/integrations-check.sh dev@<vm>.internal <you>/<private-repo>`. Every line must be `PASS`, including the
+   leak check (Claude Code and `gh` come with the standard image ([guest.md](guest.md)); another image needs them
+   installed).
 4. After 9 hours (the first access token has expired and been refreshed by the hub), run `claude -p "say ok"` in the
    VM again.
 5. Switch each integration to "Inside the VM", wait 5 minutes, rerun the script (the `vmm-token` lines report `vm`,

@@ -329,12 +329,9 @@
     "image": {
       "ready": "ready",
       "readyAt": "ready (built {time})",
-      "building": "building",
-      "buildingFor": "building for {time}",
+      "pulling": "Pulling image",
       "failed": "failed: {error}",
-      "failedRetry": "failed: {error} (next try {time})",
-      "fallback": "new VMs use {version} meanwhile",
-      "custom": "custom image ({key})"
+      "failedRetry": "failed: {error} (next try {time})"
     },
     "allocated": "Allocation",
     "machine": "Machine",
@@ -420,7 +417,7 @@
     "egressCa": "CA expires {date}",
     "egressRestart": "Restart long-running programs to trust new hosts.",
     "image": "Image",
-    "imageStock": "stock",
+    "legacyRuntime": "Old runtime – recreate",
     "desktop": "Desktop",
     "desktopInstall": "How to install xpra",
     "memoryHint": "Desktop and browser want 4 GB RAM or more",

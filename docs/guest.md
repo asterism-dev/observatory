@@ -1,21 +1,25 @@
 # Guest image, desktop and browser
 
-Every VM boots a guest image that its node builds from a pinned Ubuntu cloud image and a pinned list of tools, so a
-fresh VM is a ready workplace for a person and their coding agents: `claude`, `codex`, `gh`, Docker, Node, Python and
-`uv` work without setup, the [integrations](integrations.md) find them, a context file tells agents how the platform
-works, and an on-demand desktop shows a browser the agent drives.
+Every VM boots an OCI image on the platform's own kernel and init. The standard image is a Dockerfile in this
+repository, built by the release pipeline from a pinned Ubuntu base and a pinned list of tools, so a fresh VM is a
+ready workplace for a person and their coding agents: `claude`, `codex`, `gh`, Docker, Node, Python and `uv` work
+without setup, the [integrations](integrations.md) find them, a context file tells agents how the platform works, and
+an on-demand desktop shows a browser the agent drives. Nothing has to be inside an image: the init brings SSH, the
+agent, the integrations and the egress CA.
 
 ```
-ssh ubuntu@dev.internal vmm-desktop start && xpra attach ssh://ubuntu@dev.internal/100
+ssh dev@dev.internal vmm-desktop start && xpra attach ssh://dev@dev.internal/100
 ```
+
+You log in as `dev` (uid 1000, home `/home/dev`, passwordless `sudo` if the image has it). Root cannot log in over SSH.
 
 ## Contents
 
 | Tool | Version | Source | Installed at |
 |---|---|---|---|
-| Ubuntu 24.04 cloud image | `release-20261017` | cloud-images.ubuntu.com, SHA-256 | base |
+| Ubuntu 24.04 | pinned by digest | Docker Hub | base |
 | Ubuntu packages: git, curl, jq, ripgrep, build-essential, unzip, xterm, python3 (3.12) + venv, Xvfb, Chrome's libraries | snapshot `20261117T000000Z` | Ubuntu archive via `snapshot.ubuntu.com` | `/usr/bin` |
-| `gh` | 2.105.0 | GitHub release tarball, SHA-256 | `/usr/bin/gh` (behind the `/usr/local/bin/gh` wrapper) |
+| `gh` | 2.105.0 | GitHub release tarball, SHA-256 | `/usr/bin/gh` (behind the `gh` wrapper in `/.observatory/bin`) |
 | Docker Engine, CLI, containerd, buildx, compose | 29.10.0, 2.4.2, 0.39.0, 5.8.0 | Docker apt repository, key fingerprint + exact versions | `/usr/bin` |
 | xpra (server, client, codecs, X11) | 6.5.5 | xpra.org apt repository, key fingerprint + exact versions | `/usr/bin` |
 | Node.js (LTS) | 26.13.1 | nodejs.org tarball, SHA-256 | `/usr/local` |
@@ -23,74 +27,54 @@ ssh ubuntu@dev.internal vmm-desktop start && xpra attach ssh://ubuntu@dev.intern
 | Codex | 0.170.0 | GitHub release `x86_64-unknown-linux-musl`, SHA-256 | `/usr/local/bin/codex` |
 | `uv`, `uvx` | 0.13.9 | GitHub release tarball, SHA-256 | `/usr/local/bin` |
 | Chrome for Testing | 158.0.8127.36 | Google's CfT `linux64` zip, SHA-256 | `/opt/vmm/chrome/chrome` |
-| `agent-browser` | 0.43.0 | npm, `npm ci` from a lockfile (sha512 per package) | `/opt/vmm/agent-browser` (wrapper in `/usr/local/bin`) |
+| `agent-browser` | 0.43.0 | npm, `npm ci` from a lockfile (sha512 per package) | `/opt/vmm/agent-browser` (wrapper in `/.observatory/bin`) |
 
-The source of truth is `internal/node/guestimage/manifest.json`; this table follows it. The image also contains:
+The source of truth is `deploy/guest.Dockerfile`; this table follows it. The image also contains:
 
 - `/usr/local/etc/npmrc` with `prefix=${HOME}/.local`: `npm i -g` works without sudo and lands in `~/.local/bin`,
-  which Ubuntu's `~/.profile` puts first in `PATH`, so your own installs win over the image's.
+  which Ubuntu's `~/.profile` puts first in `PATH` (after the platform helpers), so your own installs win over the image's.
 - `DISABLE_AUTOUPDATER=1` in `/etc/environment`: Claude Code does not try to update its root-owned binary.
   `claude install` puts a version of your own into `~/.local/bin`.
-- `/etc/docker/daemon.json` and the Docker settings below; the user `ubuntu` is in the `docker` group.
-- An AppArmor profile that lets `/opt/vmm/chrome/chrome` use user namespaces for its sandbox.
-- `/etc/observatory/image` with the image version.
+- `/etc/docker/daemon.json` and the Docker settings below; the user `dev` (the init renames the base image's `ubuntu`, uid 1000) is in the `docker` group.
 
-Nothing in the image holds a secret, key, token or user file: the build VM gets none, and the build removes SSH host
-keys, the machine id and cloud-init's state.
+Nothing in the image holds a secret, key, token or user file; the init writes them into a VM at boot.
 
 ## Version
 
-The image version is `<release>-<hash>`, e.g. `2026.11.1-3946cd5c`. `release` comes from the manifest; `hash` is the
-first 8 hex digits of a SHA-256 over the build files (`manifest.json`, `vmm-image-build.sh`, `docker-daemon.json` and
-the `agent-browser` `package.json` and `package-lock.json`, by name, each with its length) followed by the base
-image's SHA-256. Any change to a pin, the build script or the Docker config makes a new version; nodes running the
-new binary build it on their own.
+The image is `ghcr.io/asterism-dev/observatory-guest`, tagged with the release version and `latest`; a node pulls the
+tag of its own version (`latest` for an unreleased build). The VM page and `observatory vm show` show the reference
+and digest a VM was created from (`ref@sha256:…`). Any change to a pin in the Dockerfile ships with the next release.
 
-## Build on the node
+## Pull on the node
 
-At start the node checks for `images/guest-<version>.raw`. If it is missing (and `imageURL` is not set in
-`node.json`), the node builds it in the background in a throwaway Firecracker VM: 2 vCPUs, half the node's free RAM
-(at most 4 GiB, at least 1.5 GiB), a NAT NIC, no management NIC, no keys, variables, integrations or egress proxy. The
-build script downloads every artifact into a tmpfs, checks it against the manifest, installs, checks each tool's
-`--version`, cleans up and writes `/etc/observatory/image` last. The node keeps the disk only if the guest powered
-off and that file holds the expected version. Details, disk space and failures: [nodes.md](nodes.md#guest-image).
-The image file is sparse with 10 GiB apparent size; about 5–5.7 GiB of it is allocated, although the guest's `df`
-shows about 3.7 GiB used. Firecracker has no discard, so blocks freed during the build stay allocated in the file.
+At start the node pulls the image for `linux/amd64`, flattens its layers into `images/<digest>.raw` (an ext4 file
+without a partition table) and keeps layers by digest. There is no build VM. Details and failures:
+[nodes.md](nodes.md#guest-image).
 
-- The node page shows `Guest image <version> · building for 3 min`, then `ready` with the build time, or `failed`
-  with the error and the next retry (30 minutes later).
-- VMs created while the image builds use the previous guest image if the node has one. On a node without any (its
-  first build) they stay `starting` with "preparing guest image" and start once it is ready. They never fall back to
-  the stock image.
-- The VM page shows the image a VM was created from: "stock" for VMs created before guest images, "–" for VMs that
-  have not started yet and for VMs on a node with a custom image (`imageURL`).
+- The node page shows `Guest image <ref> · pulling image`, then `ready`, or `failed` with the error and the next retry.
+- New VMs wait in `starting` with "preparing guest image" until the image is ready.
 
 ## Updates
 
-- A tool bump is a change to the manifest. A node running the new binary builds the new version in the background and
-  gives it to new VMs once it is ready; until then, and while a failed build waits for its retry, new VMs get the
-  previous image (the node page says "new VMs use <previous> meanwhile").
+- A tool bump is a change to `deploy/guest.Dockerfile`. A node on the new release pulls the new image and gives it to
+  new VMs once it is ready.
 - **Existing VMs are not changed**: a VM's root disk is its own, the image is only its starting point. Update tools in
   a VM with apt or by installing into `~/.local/bin`, or create a new VM.
-- Templates are keyed by the image file, so the first VM of each size after a bump cold-boots and builds a new
+- Templates are keyed by the image digest, so the first VM of each size after a bump cold-boots and builds a new
   template; old templates age out.
-- The node keeps the current and the previous image and deletes older ones.
-- The context file, `vmm-desktop` and the `agent-browser` wrapper come with the node (seed), not with the image: they
-  update in every VM at its next boot or resume.
+- The context file, `vmm-desktop`, `agent-browser` and the other helpers come with the init, not with the image: a VM
+  gets new ones at its next cold boot.
 
 ### Bump checklist
 
 Research each pin from its upstream source, never from a mirror or a guess, and note source and date in the PR:
 
-- [ ] **Base:** newest `https://cloud-images.ubuntu.com/releases/noble/release-<serial>/ubuntu-24.04-server-cloudimg-amd64.img`;
-  SHA-256 from that directory's `SHA256SUMS`, verified with `gpg --verify SHA256SUMS.gpg SHA256SUMS` against Ubuntu's
-  cloud image signing key.
-- [ ] **`aptSnapshot`:** a recent `YYYYMMDDTHHMMSSZ`;
+- [ ] **Base:** the `ubuntu:24.04` digest from Docker Hub.
+- [ ] **`APT_SNAPSHOT`:** a recent `YYYYMMDDTHHMMSSZ`;
   `curl -fsI https://snapshot.ubuntu.com/ubuntu/<stamp>/dists/noble/InRelease` returns 200.
 - [ ] **Docker:** key fingerprint of `https://download.docker.com/linux/ubuntu/gpg` (`gpg --show-keys`, cross-checked
   with Docker's install docs); `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`,
-  `docker-compose-plugin` versions from `apt-cache madison` in an `ubuntu:24.04` container with that repository;
-  `check-config` = moby's `contrib/check-config.sh` at the `docker-v<engine version>` tag, with its SHA-256.
+  `docker-compose-plugin` versions from `apt-cache madison` in an `ubuntu:24.04` container with that repository.
 - [ ] **xpra:** key and fingerprint from xpra's Linux download page (`https://xpra.org/xpra.asc`, cross-checked), all
   `xpra*` packages at one exact version from `apt-cache madison`.
 - [ ] **gh:** newest `cli/cli` release, `gh_<v>_linux_amd64.tar.gz`, SHA-256 from the release's checksums file,
@@ -108,12 +92,31 @@ Research each pin from its upstream source, never from a mirror or a guess, and 
   publishes no checksum: download it, `sha256sum` it and pin that (trust on first pin), ideally comparing downloads
   from two networks.
 - [ ] **`agent-browser`:** `npm view agent-browser version`; exact version in
-  `internal/node/guestimage/agent-browser/package.json`, then `npm install --package-lock-only` for the lockfile. Check
-  that the wrapper's `AGENT_BROWSER_*` names and value flags (`vmm-browser.py`) still match the new version.
+  `deploy/guest/agent-browser/package.json`, then `npm install --package-lock-only` for the lockfile. Check that the
+  wrapper's `AGENT_BROWSER_*` names and value flags still match the new version.
 - [ ] **Ubuntu packages:** for a new Chrome, run `ldd chrome | grep 'not found'` in a noble container and compare with
   CfT's `deb.deps`.
-- [ ] Bump `release` (`YYYY.MM.N`), run `go test ./internal/node/guestimage/`, build the image on a test node and
-  check the tools in a new VM.
+- [ ] Build the image (`docker build -f deploy/guest.Dockerfile .`), run it on a test node and check the tools in a
+  new VM.
+
+## Own images
+
+Any `linux/amd64` OCI image boots as a VM; set it per node with `"firecracker": {"guestImage": "<ref>"}` in `node.json`
+([nodes.md](nodes.md#guest-image)). Build and try it locally with `docker build` and `docker run`. What the platform does:
+
+- **Nothing is required inside:** no SSH server, systemd, shell, Python or cloud-init. The init runs the image in its
+  own PID and mount namespace and serves SSH, the agent and the integrations from outside it.
+- **Login:** always `dev`. If the image has a user with uid 1000 (`ubuntu`, `node`), the init renames it to `dev`.
+  The shell comes from `/etc/passwd`, else `/bin/sh`; without one SSH offers only port forwarding. `USER` and `EXPOSE`
+  of the image are ignored.
+- **Services:** an image with systemd runs it as init and `CMD` is ignored; otherwise `ENTRYPOINT` and `CMD` run as a
+  supervised service as root and restart when they exit (log in `/var/log/observatory/cmd.log`).
+- **Platform files:** the helpers (`vmm-token`, `git-credential-vmm`, `gh`, `vmm-desktop`, `agent-browser`) are in
+  `/.observatory/bin`, read-only and first in `PATH`; the context file is
+  `/usr/local/share/observatory/AGENTS.md`. The `gh` wrapper runs the image's `gh` if there is one.
+- **Desktop and browser** work only if the image has xpra (and Chrome for `agent-browser`); otherwise the commands say
+  so and exit non-zero.
+- **Root disk:** the image grown to the VM's size; a VM cannot be smaller than its image.
 
 ## Docker
 
@@ -131,30 +134,28 @@ Research each pin from its upstream source, never from a mirror or a guess, and 
 
 ## Desktop
 
-`vmm-desktop` runs an xpra server in seamless mode on display `:100` as `ubuntu`: each window appears as a window on
+`vmm-desktop` runs an xpra server in seamless mode on display `:100` as `dev`: each window appears as a window on
 your laptop.
 
 ```
-ssh ubuntu@<vm>.internal vmm-desktop start && xpra attach ssh://ubuntu@<vm>.internal/100
+ssh dev@<vm>.internal vmm-desktop start && xpra attach ssh://dev@<vm>.internal/100
 ```
 
 `observatory desktop <vm>` does both steps ([cli.md](cli.md#connecting)).
 
 - **No network listener:** xpra listens only on Unix sockets in `/run/user/1000/xpra/` and `~/.xpra/` (sockets 0600,
-  `ubuntu` only); the X server has no TCP or abstract socket and requires an X authority
-  (`/home/ubuntu/.Xauthority`). `xpra attach ssh://…` logs in over SSH and talks to that socket, so access is
+  `dev` only); the X server has no TCP or abstract socket and requires an X authority
+  (`/home/dev/.Xauthority`). `xpra attach ssh://…` logs in over SSH and talks to that socket, so access is
   exactly SSH access: a device of yours over WireGuard, the VM's connect check and your SSH key. Root in the VM, and
   so a container started with a bind mount of `/run/user/1000`, can reach the socket too (the `docker` group is
   root-equivalent).
-- **Commands** (as `ubuntu`, not with sudo): `vmm-desktop start` (waits up to 5 s until the desktop answers),
+- **Commands** (as `dev`, not with sudo): `vmm-desktop start` (waits up to 5 s until the desktop answers),
   `vmm-desktop stop`, `vmm-desktop status` (`active`, or `inactive` after a stop).
   `DISPLAY=:100 <app> &` shows any other window, e.g. `xterm`.
-- **Units:** `vmm-desktop.service` and `vmm-desktop-idle.timer` are systemd user units of `ubuntu` in
-  `/etc/systemd/user/`, not enabled; the node turns on linger for `ubuntu`, so they run without a login.
-  Logs: `journalctl --user -u vmm-desktop`.
-- **Idle stop:** a user timer checks every minute and stops the desktop after 30 minutes with no client attached and
-  no window open. An open browser keeps it running. To change the time, add a drop-in, e.g.
-  `systemctl --user edit vmm-desktop-idle.service` with `[Service]` and `Environment=VMM_DESKTOP_IDLE_MINUTES=120`.
+- **Process:** the init starts and stops xpra itself, on demand, as `dev` inside the image; there are no systemd units
+  to enable.
+- **Idle stop:** the init checks every minute and stops the desktop after 30 minutes with no client attached and no
+  window open. An open browser keeps it running.
 - **Lifecycle:** hibernate and resume keep the desktop and its windows; an attached client loses its SSH connection
   and attaches again. A fork or a template boot (takeoff) stops the desktop.
 - **Clipboard** is on; audio, printing, file transfer and notifications are off. There is no HTML viewer yet.
@@ -173,7 +174,7 @@ The SSH part uses your usual SSH client and keys; options go into `~/.ssh/config
 
 ## Browser
 
-`agent-browser` in the VM is a wrapper (`/usr/local/bin/agent-browser`) around the pinned
+`agent-browser` in the VM is a wrapper (`/.observatory/bin/agent-browser`) around the pinned
 `/opt/vmm/agent-browser/bin/agent-browser`. It starts the desktop if needed and runs Chrome for Testing headed on
 `:100`, so you can watch and take over:
 
@@ -192,22 +193,22 @@ agent-browser click @e1
 - **Loopback only:** the wrapper refuses `--cdp` endpoints, `connect` targets and `--remote-debugging-address` values
   that are not loopback. DevTools never listens on a network interface, but it is a loopback TCP port: any process
   in the VM can reach it, other UIDs and host-network containers included. The VM is single-user, so this is
-  `ubuntu`'s own browser to drive; do not run untrusted code as another user in a VM with a logged-in browser.
+  `dev`'s own browser to drive; do not run untrusted code as another user in a VM with a logged-in browser.
 - **Your settings win:** `AGENT_BROWSER_*` variables you set (e.g. `AGENT_BROWSER_HEADED=0`,
-  `AGENT_BROWSER_PROFILE`) override the wrapper's defaults. The wrapper is rewritten at every boot; a different
-  `agent-browser` belongs in `~/.local/bin`, which comes first in `PATH` (`npm i -g agent-browser@<v>` puts it there).
-- Run it as `ubuntu`; `sudo agent-browser` and `sudo vmm-desktop` refuse.
+  `AGENT_BROWSER_PROFILE`) override the wrapper's defaults. The wrapper is part of the read-only platform directory;
+  call a different `agent-browser` by its path.
+- Run it as `dev`; `sudo agent-browser` and `sudo vmm-desktop` refuse.
 
 ## Context file
 
 Agents in the VM get a short description of the platform: what the VM is, variables, placeholders (`obsph_…`) and the
 egress proxy, `vmm-token`, what not to touch, lifecycle (suspend, forks), desktop and browser, Docker, disks and
-limits. It is `internal/node/guest/AGENTS.md` (at most 8 KiB), shipped with the node and installed at every boot,
+limits. It is `internal/node/guestcontext/AGENTS.md` (at most 8 KiB), shipped with the init and written at every boot,
 resume and takeoff:
 
 | Path | For |
 |---|---|
-| `/usr/local/share/vmm/AGENTS.md` | the file itself (0644) |
+| `/usr/local/share/observatory/AGENTS.md` | the file itself (0644) |
 | `/etc/claude-code/CLAUDE.md` | Claude Code's managed memory, a link to the file above; read in addition to your `~/.claude/CLAUDE.md`. A file or link an admin put there is kept. |
 | `~/.codex/AGENTS.md` | Codex; written by the integrations sync only if missing or still the one it wrote; your own file is never touched. |
 
@@ -225,6 +226,6 @@ resume and takeoff:
   Chrome several hundred MB more; in a 1 GB VM the kernel's OOM killer ends the desktop once a viewer is attached
   and a few pages are open.
 - **Root disk:** at least 10 GB (the image's files take about 3.7 GB of it).
-- **Existing VMs** keep the tools they were created with; VMs created before guest images have none of them.
-- **Images per node:** nodes build their own images; two nodes' images of one version are equivalent, not
-  bit-identical.
+- **Existing VMs** keep the tools they were created with.
+- **Old runtime:** VMs created before the Go init are marked "Old runtime – recreate" and cannot be started again
+  ([nodes.md](nodes.md#guest-image)).

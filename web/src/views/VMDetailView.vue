@@ -150,6 +150,7 @@ watch(
         <template #tags>
           <Tag :tone="vmTones[vm.state]">{{ t(`vms.states.${vm.state}`) }}</Tag>
           <Tag strong>{{ vm.node.name }}</Tag>
+          <Tag v-if="vm.legacyRuntime" tone="warning">{{ t('vms.legacyRuntime') }}</Tag>
         </template>
         <template #actions>
           <Button variant="accent" :icon="ArrowUpRight" @click="openOpen = true">{{ t('nodes.open') }}</Button>
@@ -168,9 +169,9 @@ watch(
         <Section :label="t('vms.connect')">
           <Card>
             <template v-if="vm.dnsName">
-              <CommandBox :command="`ssh ubuntu@${vm.dnsName}`" />
+              <CommandBox :command="`ssh dev@${vm.dnsName}`" />
               <template v-if="vm.image">
-                <CommandBox :command="`xpra attach ssh://ubuntu@${vm.dnsName}/100`" />
+                <CommandBox :command="`xpra attach ssh://dev@${vm.dnsName}/100`" />
                 <small class="muted">
                   {{ t('vms.desktop') }} ·
                   <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
@@ -186,7 +187,7 @@ watch(
               <KeyValueList>
                 <KeyValue :label="t('vms.owner')">{{ vm.owner.name }}</KeyValue>
                 <KeyValue :label="t('vms.node')"><router-link :to="`/orgs/${org.id}/nodes/${vm.node.id}`">{{ vm.node.name }}</router-link></KeyValue>
-                <KeyValue :label="t('vms.image')">{{ vm.image || (vm.stockImage ? t('vms.imageStock') : '–') }}</KeyValue>
+                <KeyValue :label="t('vms.image')">{{ vm.image || '–' }}</KeyValue>
                 <KeyValue v-if="integrations.length" :label="t('integrations.vmLine')">{{ integrations.map(integrationLine).join(', ') }}</KeyValue>
                 <KeyValue :label="t('vms.created')">{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</KeyValue>
               </KeyValueList>

@@ -167,8 +167,7 @@ watch(
                   <span v-if="node.outdated" class="muted"> · {{ t('nodes.outdatedHint', { hub: me?.version }) }}</span>
                 </KeyValue>
                 <KeyValue :label="t('nodes.guestImage')">
-                  <i18n-t v-if="node.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
-                  <template v-else>{{ imageLine(node.image, t, locale) }}</template>
+                  {{ imageLine(node.image, t, locale) }}
                 </KeyValue>
                 <KeyValue :label="t('nodes.lastSeen')">{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</KeyValue>
                 <template v-if="node.underlay">
