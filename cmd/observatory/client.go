@@ -31,6 +31,7 @@ var errNotLoggedIn = &exitError{3, "not logged in, run observatory login"}
 type apiError struct {
 	Status int
 	Msg    string
+	Code   string
 }
 
 func (e *apiError) Error() string {
@@ -123,11 +124,11 @@ func (c *cli) do(method, path, bearer string, body, into any) error {
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		var e struct{ Error string }
+		var e struct{ Error, Code string }
 		if json.Unmarshal(b, &e) != nil || e.Error == "" {
 			e.Error = strings.TrimSpace(string(b[:min(len(b), 512)]))
 		}
-		return &apiError{resp.StatusCode, e.Error}
+		return &apiError{resp.StatusCode, e.Error, e.Code}
 	}
 	if into == nil || len(bytes.TrimSpace(b)) == 0 {
 		return nil

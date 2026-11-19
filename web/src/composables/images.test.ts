@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { buildDuration, defaultSourceLabel, refLabel } from './images.ts'
+import { appendCapped, buildDuration, defaultSourceLabel, refLabel } from './images.ts'
 
 const teams = { t1: 'backend' }
 
@@ -36,4 +36,18 @@ test('defaultSourceLabel translates each cascade source', () => {
   for (const s of ['explicit', 'user-default', 'team-default', 'org-default', 'platform']) {
     assert.equal(defaultSourceLabel(s, t), `<images.source.${s}>`)
   }
+})
+
+test('appendCapped appends below the cap', () => {
+  assert.deepEqual(appendCapped({ text: 'a\n', truncated: false }, 'b\n', 10), { text: 'a\nb\n', truncated: false })
+})
+
+test('appendCapped keeps whole trailing lines within the cap and marks truncation', () => {
+  const got = appendCapped({ text: 'line1\nline2\n', truncated: false }, 'line3\n', 10)
+  assert.deepEqual(got, { text: 'line3\n', truncated: true })
+  assert.equal(appendCapped(got, 'x\n', 10).truncated, true)
+})
+
+test('appendCapped keeps the raw tail when it has no line break', () => {
+  assert.deepEqual(appendCapped({ text: '', truncated: false }, 'abcdefghijkl', 5), { text: 'hijkl', truncated: true })
 })

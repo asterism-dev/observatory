@@ -771,6 +771,8 @@
       "team-default": "Team-Standard",
       "org-default": "Org-Standard",
       "platform": "Plattform-Image"
-    }
+    },
+    "logTruncated": "— gekürzt, lade das vollständige Log herunter —",
+    "logStreamFailed": "Das Live-Log konnte nicht geladen werden. Lade die Seite neu oder das Log herunter."
   }
 }

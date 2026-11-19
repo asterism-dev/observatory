@@ -323,6 +323,10 @@ func TestWidenVisibilityNeedsConfirm(t *testing.T) {
 	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "widening visibility deletes 2 versions") {
 		t.Fatalf("unconfirmed: %d %s", rec.Code, rec.Body.String())
 	}
+	var conflict struct{ Code string }
+	if decode(t, rec, &conflict); conflict.Code != "widen_deletes_versions" {
+		t.Fatalf("conflict code: %s", rec.Body.String())
+	}
 	if rec := e.send("PATCH", imagePath(org, id), bobTok, body+`,"confirmDeleteVersions":true}`); rec.Code != 200 {
 		t.Fatalf("confirmed: %d %s", rec.Code, rec.Body.String())
 	}

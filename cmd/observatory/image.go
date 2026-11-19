@@ -295,7 +295,7 @@ func cmdImageVisibility(c *cli, args []string) error {
 	var raw json.RawMessage
 	err = c.call(http.MethodPatch, path, body, &raw)
 	var ae *apiError
-	if errors.As(err, &ae) && ae.Status == http.StatusConflict && strings.HasPrefix(ae.Msg, "widening visibility deletes") {
+	if errors.As(err, &ae) && ae.Status == http.StatusConflict && ae.Code == "widen_deletes_versions" {
 		if err := c.confirm(ae.Msg + ". Continue?"); err != nil {
 			return err
 		}
@@ -329,11 +329,11 @@ func (c *cli) rawCall(hc *http.Client, method, path string, hdr map[string]strin
 	if resp.StatusCode/100 != 2 {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		var e struct{ Error string }
+		var e struct{ Error, Code string }
 		if json.Unmarshal(b, &e) != nil || e.Error == "" {
 			e.Error = strings.TrimSpace(string(b))
 		}
-		return nil, &apiError{resp.StatusCode, e.Error}
+		return nil, &apiError{resp.StatusCode, e.Error, e.Code}
 	}
 	return resp, nil
 }

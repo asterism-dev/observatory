@@ -129,6 +129,11 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		return nil
 	})
 	if err != nil {
+		var ce codedError
+		if errors.As(err, &ce) {
+			writeJSON(w, ce.status, map[string]string{"error": ce.msg, "code": ce.code})
+			return false
+		}
 		var he httpError
 		if errors.As(err, &he) {
 			writeError(w, he.status, he.msg)

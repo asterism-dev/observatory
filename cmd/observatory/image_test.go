@@ -95,7 +95,7 @@ func TestImageVisibilityConfirmsVersionDeletion(t *testing.T) {
 	h.onFunc("PATCH /api/orgs/o1/images/i-app", func(w http.ResponseWriter, r *http.Request) {
 		n++
 		if n == 1 {
-			http.Error(w, `{"error":"widening visibility deletes 2 versions"}`, http.StatusConflict)
+			http.Error(w, `{"error":"widening visibility deletes 2 versions","code":"widen_deletes_versions"}`, http.StatusConflict)
 			return
 		}
 		io.WriteString(w, imgApp)

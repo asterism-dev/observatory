@@ -49,6 +49,14 @@ type httpError struct {
 
 func (e httpError) Error() string { return e.msg }
 
+// codedError adds a machine-readable code clients act on without matching the message.
+type codedError struct {
+	httpError
+	code string
+}
+
+const codeWidenDeletesVersions = "widen_deletes_versions"
+
 var errRecipeChanged = httpError{http.StatusConflict, "the recipe changed since your base revision, reload it"}
 
 func imageObject(scope store.EnvScope, owner *uuid.UUID) string {
@@ -423,7 +431,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			if len(vs) > 0 && !body.ConfirmDeleteVersions {
-				return httpError{http.StatusConflict, fmt.Sprintf("widening visibility deletes %d versions", len(vs))}
+				return codedError{httpError{http.StatusConflict, fmt.Sprintf("widening visibility deletes %d versions", len(vs))}, codeWidenDeletesVersions}
 			}
 			if err := tx.DeleteImageVersions(ctx, old.ID); err != nil {
 				return err

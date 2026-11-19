@@ -161,7 +161,7 @@ async function saveScope(confirmDeleteVersions = false) {
     image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify({ ...scopeRef(target), confirmDeleteVersions }) })
     confirmWiden.value = ''
   } catch (e) {
-    if (e instanceof ApiError && e.status === 409 && !confirmDeleteVersions) confirmWiden.value = e.message
+    if (e instanceof ApiError && e.code === 'widen_deletes_versions' && !confirmDeleteVersions) confirmWiden.value = e.message
     else {
       error.value = message(e)
       confirmWiden.value = ''

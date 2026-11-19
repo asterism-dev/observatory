@@ -771,6 +771,8 @@
       "team-default": "team default",
       "org-default": "org default",
       "platform": "platform image"
-    }
+    },
+    "logTruncated": "— truncated, download for the full log —",
+    "logStreamFailed": "The live log could not be loaded. Reload the page or download the log."
   }
 }

@@ -3,25 +3,45 @@ import { Download } from '@lucide/vue'
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { buildActive, type Build } from '@/composables/images'
+import { appendCapped, buildActive, type Build, type LogView } from '@/composables/images'
 
 const props = defineProps<{ base: string; build: Build }>()
 const emit = defineEmits<{ ended: [] }>()
 
 const { t } = useI18n()
-const text = ref('')
+const empty: LogView = { text: '', truncated: false }
+const log = ref<LogView>(empty)
 const error = ref('')
 const pre = ref<HTMLElement | null>(null)
 const following = ref(false)
 let source: EventSource | null = null
+let pending = ''
+let timer = 0
 
 const atBottom = () => !pre.value || pre.value.scrollHeight - pre.value.scrollTop - pre.value.clientHeight < 24
 
-async function append(line: string) {
+// Lines are batched so a fast build re-renders and measures the log a few times a second, not once per line.
+async function flush() {
+  window.clearTimeout(timer)
+  timer = 0
+  if (!pending) return
   const stick = atBottom()
-  text.value += line + '\n'
+  log.value = appendCapped(log.value, pending)
+  pending = ''
   await nextTick()
   if (stick && pre.value) pre.value.scrollTop = pre.value.scrollHeight
+}
+
+function append(line: string) {
+  pending += line + '\n'
+  if (!timer) timer = window.setTimeout(flush, 100)
+}
+
+function reset() {
+  window.clearTimeout(timer)
+  timer = 0
+  pending = ''
+  log.value = empty
 }
 
 function stop() {
@@ -32,14 +52,14 @@ function stop() {
 
 async function load() {
   stop()
-  text.value = ''
+  reset()
   error.value = ''
   const url = `${props.base}/builds/${props.build.id}/log`
   if (!buildActive(props.build)) {
     try {
       const res = await fetch(url)
       if (!res.ok) throw new Error(res.statusText)
-      text.value = await res.text()
+      log.value = appendCapped(empty, await res.text())
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }
@@ -48,16 +68,27 @@ async function load() {
   following.value = true
   source = new EventSource(`${url}?follow=1`)
   // A reconnect replays the log from the start.
-  source.onopen = () => (text.value = '')
+  source.onopen = reset
   source.onmessage = (e) => append(e.data)
+  // While CONNECTING the browser retries by itself; CLOSED means the hub refused the stream.
+  source.onerror = () => {
+    if (source?.readyState !== EventSource.CLOSED) return
+    stop()
+    flush()
+    error.value = t('images.logStreamFailed')
+  }
   source.addEventListener('end', () => {
     stop()
+    flush()
     emit('ended')
   })
 }
 
 watch(() => props.build.id, load, { immediate: true })
-onBeforeUnmount(stop)
+onBeforeUnmount(() => {
+  stop()
+  window.clearTimeout(timer)
+})
 </script>
 
 <template>
@@ -68,7 +99,7 @@ onBeforeUnmount(stop)
       <slot />
     </div>
     <p v-if="error" role="alert">{{ error }}</p>
-    <pre ref="pre">{{ text || (following ? t('images.logWaiting') : t('images.logEmpty')) }}</pre>
+    <pre ref="pre"><span v-if="log.truncated" class="muted">{{ t('images.logTruncated') }}{{ '\n' }}</span>{{ log.text || (following ? t('images.logWaiting') : t('images.logEmpty')) }}</pre>
   </div>
 </template>
 

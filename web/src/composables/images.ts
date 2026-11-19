@@ -89,6 +89,22 @@ export function buildDuration(b: Pick<Build, 'startedAt' | 'finishedAt'>, now = 
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+export const LOG_CAP = 2 << 20
+
+export interface LogView {
+  text: string
+  truncated: boolean
+}
+
+// Keeps the last cap characters, cut at a line start, so huge logs stay renderable.
+export function appendCapped(log: LogView, chunk: string, cap = LOG_CAP): LogView {
+  const text = log.text + chunk
+  if (text.length <= cap) return { text, truncated: log.truncated }
+  const tail = text.slice(-cap)
+  const nl = tail.indexOf('\n')
+  return { text: nl >= 0 && nl < tail.length - 1 ? tail.slice(nl + 1) : tail, truncated: true }
+}
+
 export const defaultSourceLabel = (source: string, t: Translate) => t(`images.source.${source}`)
 
 export function formatBytes(n: number) {
