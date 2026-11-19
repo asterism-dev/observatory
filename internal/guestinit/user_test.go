@@ -130,7 +130,7 @@ func TestEnsureDevSudoersOnlyWithSudo(t *testing.T) {
 	}
 }
 
-func TestEnsureDevKeepsUID1000Group(t *testing.T) {
+func TestEnsureDevRenamesGID1000Group(t *testing.T) {
 	r := Root{t.TempDir()}
 	put(t, r, "etc/passwd", "node:x:1000:1000::/home/node:/bin/bash\n", 0o644)
 	put(t, r, "etc/group", "node:x:1000:\n", 0o644)
@@ -159,5 +159,66 @@ func TestDevShellFollowsSymlinksInsideRoot(t *testing.T) {
 	}
 	if got := r.DevShell(); got != "/bin/sh" {
 		t.Fatalf("shell = %q", got)
+	}
+}
+
+func TestEnsureDevLeavesNonHomeDirs(t *testing.T) {
+	for _, home := range []string{"/app", "/"} {
+		r := Root{t.TempDir()}
+		put(t, r, "etc/passwd", "app:x:1000:1000::"+home+":/bin/sh\n", 0o644)
+		put(t, r, "app/x", "", 0o644)
+		ensure(t, r)
+		if !exists(r, "app/x") || !exists(r, "home/dev") {
+			t.Fatalf("home %s: app dir must stay, home/dev created", home)
+		}
+	}
+}
+
+func TestEnsureDevMovesConflictingDev(t *testing.T) {
+	r := Root{t.TempDir()}
+	put(t, r, "etc/passwd", "dev:x:500:500::/home/dev:/bin/sh\nubuntu:x:1000:1000::/home/ubuntu:/bin/sh\n", 0o644)
+	put(t, r, "etc/group", "dev:x:500:dev\nstaff:x:50:dev,ubuntu\nubuntu:x:1000:\n", 0o644)
+	put(t, r, "etc/shadow", "dev:$6$a:1:::::\nubuntu:$6$b:1:::::\n", 0o640)
+	ensure(t, r)
+	if got := get(t, r, "etc/passwd"); !strings.Contains(got, "dev-500:x:500:") || !strings.Contains(got, "dev:x:1000:1000:") {
+		t.Fatalf("passwd = %q", got)
+	}
+	if got := get(t, r, "etc/group"); !strings.Contains(got, "dev-500:x:500:dev-500\n") || !strings.Contains(got, "staff:x:50:dev-500,dev\n") || !strings.Contains(got, "dev:x:1000:\n") {
+		t.Fatalf("group = %q", got)
+	}
+	if got := get(t, r, "etc/shadow"); !strings.Contains(got, "dev-500:$6$a:") || !strings.Contains(got, "dev:$6$b:") {
+		t.Fatalf("shadow = %q", got)
+	}
+}
+
+func TestEnsureDevMovesConflictingDevGroup(t *testing.T) {
+	r := Root{t.TempDir()}
+	put(t, r, "etc/passwd", "dev:x:1000:1000::/home/dev:/bin/sh\n", 0o644)
+	put(t, r, "etc/group", "dev:x:700:\nnode:x:1000:\n", 0o644)
+	ensure(t, r)
+	if got := get(t, r, "etc/group"); got != "dev-700:x:700:\ndev:x:1000:\n" {
+		t.Fatalf("group = %q", got)
+	}
+}
+
+func TestEnsureDevForcesGID1000(t *testing.T) {
+	r := Root{t.TempDir()}
+	put(t, r, "etc/passwd", "u:x:1000:100::/home/u:/bin/sh\n", 0o644)
+	put(t, r, "bin/sh", "", 0o755)
+	ensure(t, r)
+	if got := get(t, r, "etc/passwd"); got != "dev:x:1000:1000::/home/dev:/bin/sh\n" {
+		t.Fatalf("passwd = %q", got)
+	}
+}
+
+func TestDevShellRejectsNologinAndFalse(t *testing.T) {
+	for _, sh := range []string{"/usr/sbin/nologin", "/bin/false"} {
+		r := Root{t.TempDir()}
+		put(t, r, "etc/passwd", "u:x:1000:1000::/home/u:"+sh+"\n", 0o644)
+		put(t, r, strings.TrimPrefix(sh, "/"), "", 0o755)
+		put(t, r, "bin/sh", "", 0o755)
+		if got := r.DevShell(); got != "/bin/sh" {
+			t.Fatalf("%s: shell = %q", sh, got)
+		}
 	}
 }

@@ -18,14 +18,14 @@ const (
 
 // EnsureDev makes uid 1000 the login user "dev", renaming an existing account instead of adding a second one.
 func (r Root) EnsureDev() error {
-	oldName, oldHome, err := r.editPasswd()
+	oldName, oldHome, movedDev, err := r.editPasswd()
 	if err != nil {
 		return err
 	}
-	if err := r.editGroup(oldName); err != nil {
+	if err := r.editGroup(oldName, movedDev); err != nil {
 		return err
 	}
-	if err := r.editShadow(oldName); err != nil {
+	if err := r.editShadow(oldName, movedDev); err != nil {
 		return err
 	}
 	if err := r.ensureHome(oldHome); err != nil {
@@ -43,13 +43,18 @@ func (r Root) EnsureDev() error {
 
 // DevShell is the account's current shell if usable in the image, else /bin/sh, else /bin/false.
 func (r Root) DevShell() string {
-	if fields, ok := r.devPasswdFields(); ok && r.executable(fields[6]) {
+	if fields, ok := r.devPasswdFields(); ok && usableShell(fields[6]) && r.executable(fields[6]) {
 		return fields[6]
 	}
 	if r.executable("/bin/sh") {
 		return "/bin/sh"
 	}
 	return "/bin/false"
+}
+
+func usableShell(p string) bool {
+	base := filepath.Base(p)
+	return base != "nologin" && base != "false"
 }
 
 func (r Root) join(rel string) string { return filepath.Join(r.Path, rel) }
@@ -92,13 +97,13 @@ func (r Root) executable(p string) bool {
 	return false
 }
 
-// editPasswd returns the previous name and home of the uid 1000 account ("" if there was none).
-func (r Root) editPasswd() (oldName, oldHome string, err error) {
+// editPasswd returns the old name and home of uid 1000 and the new name of a conflicting "dev" account, "" if none.
+func (r Root) editPasswd() (oldName, oldHome, movedDev string, err error) {
 	shell := r.DevShell()
 	path := r.join("etc/passwd")
 	lines, err := readLines(path)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	found := false
 	for i, line := range lines {
@@ -108,20 +113,22 @@ func (r Root) editPasswd() (oldName, oldHome string, err error) {
 		}
 		if f[2] == "1000" {
 			oldName, oldHome = f[0], f[5]
-			f[0], f[5], f[6] = devName, devHome, shell
+			f[0], f[3], f[5], f[6] = devName, "1000", devHome, shell
 			lines[i] = strings.Join(f, ":")
 			found = true
 		} else if f[0] == devName {
-			return "", "", fmt.Errorf("account %q exists with uid %s", devName, f[2])
+			movedDev = devName + "-" + f[2]
+			f[0] = movedDev
+			lines[i] = strings.Join(f, ":")
 		}
 	}
 	if !found {
 		lines = append(lines, fmt.Sprintf("dev:x:%d:%d::%s:%s", devID, devID, devHome, shell))
 	}
-	return oldName, oldHome, writeLines(path, lines, 0o644)
+	return oldName, oldHome, movedDev, writeLines(path, lines, 0o644)
 }
 
-func (r Root) editGroup(oldName string) error {
+func (r Root) editGroup(oldName, movedDev string) error {
 	path := r.join("etc/group")
 	lines, err := readLines(path)
 	if err != nil {
@@ -137,17 +144,18 @@ func (r Root) editGroup(oldName string) error {
 			f[0] = devName
 			found = true
 		} else if f[0] == devName {
-			return fmt.Errorf("group %q exists with gid %s", devName, f[2])
+			f[0] = devName + "-" + f[2]
 		}
-		if oldName != "" && oldName != devName {
-			members := strings.Split(f[3], ",")
-			for j, m := range members {
-				if m == oldName {
-					members[j] = devName
-				}
+		members := strings.Split(f[3], ",")
+		for j, m := range members {
+			switch {
+			case movedDev != "" && m == devName:
+				members[j] = movedDev
+			case oldName != "" && m == oldName:
+				members[j] = devName
 			}
-			f[3] = strings.Join(members, ",")
 		}
+		f[3] = strings.Join(members, ",")
 		lines[i] = strings.Join(f, ":")
 	}
 	if !found {
@@ -156,7 +164,7 @@ func (r Root) editGroup(oldName string) error {
 	return writeLines(path, lines, 0o644)
 }
 
-func (r Root) editShadow(oldName string) error {
+func (r Root) editShadow(oldName, movedDev string) error {
 	path := r.join("etc/shadow")
 	lines, err := readLines(path)
 	if err != nil {
@@ -165,7 +173,11 @@ func (r Root) editShadow(oldName string) error {
 	found := false
 	for i, line := range lines {
 		name, rest, ok := strings.Cut(line, ":")
-		if ok && (name == devName || (oldName != "" && name == oldName)) {
+		switch {
+		case !ok:
+		case name == devName && movedDev != "":
+			lines[i] = movedDev + ":" + rest
+		case name == devName || (oldName != "" && name == oldName):
 			lines[i] = devName + ":" + rest
 			found = true
 		}
@@ -178,8 +190,9 @@ func (r Root) editShadow(oldName string) error {
 
 func (r Root) ensureHome(oldHome string) error {
 	home := r.join(devHome)
-	if oldHome != "" && filepath.Clean(oldHome) != devHome {
-		old := r.join(oldHome)
+	cleanOld := filepath.Clean(oldHome)
+	if oldHome != "" && cleanOld != devHome && strings.HasPrefix(cleanOld, "/home/") {
+		old := r.join(cleanOld)
 		_, errOld := os.Lstat(old)
 		_, errNew := os.Lstat(home)
 		if errOld == nil && errors.Is(errNew, fs.ErrNotExist) {
