@@ -81,7 +81,7 @@ func runEnroll(args []string, home string) error {
 	fs := flag.NewFlagSet("enroll", flag.ExitOnError)
 	var o node.InitOptions
 	fs.StringVar(&o.Path, "config", filepath.Join(home, ".observatory-node", "node.json"), "path to node config")
-	fs.StringVar(&o.HubURL, "hub", "", "hub address, http://host:port")
+	fs.StringVar(&o.HubURL, "hub", "", "hub address, http(s)://host[:port]")
 	tokenStdin := fs.Bool("token-stdin", false, "read the enrollment token from stdin")
 	fs.IntVar(&o.MemoryMB, "memory-mb", 0, "memory offered to VMs")
 	fs.Parse(args)

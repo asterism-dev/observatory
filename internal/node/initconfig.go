@@ -82,8 +82,8 @@ func CheckEnrollMemory(path string, memoryMB int) error {
 // connectURL turns the hub's http(s)://host:port into the node's websocket URL.
 func connectURL(hub string) (string, error) {
 	u, err := url.Parse(hub)
-	if err != nil || u.Host == "" || u.Port() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", fmt.Errorf("hub %q: want http://host:port", hub)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("hub %q: want http(s)://host[:port]", hub)
 	}
 	scheme := "ws"
 	if u.Scheme == "https" {

@@ -74,10 +74,23 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 }
 
 func TestInitConfigRejectsBadHub(t *testing.T) {
-	for _, hub := range []string{"ftp://x:1", "http://x", "x:8080", ""} {
+	for _, hub := range []string{"ftp://x:1", "http://", "x:8080", ""} {
 		o := InitOptions{Path: filepath.Join(t.TempDir(), "n.json"), HubURL: hub, Credential: "t", NodeID: "n"}
 		if err := InitConfig(o, "a", "b"); err == nil {
 			t.Errorf("%q accepted", hub)
+		}
+	}
+}
+
+func TestConnectURLDefaultPorts(t *testing.T) {
+	for hub, want := range map[string]string{
+		"https://hub.test":  "wss://hub.test/api/nodes/connect",
+		"https://hub.test/": "wss://hub.test/api/nodes/connect",
+		"http://h:8090":     "ws://h:8090/api/nodes/connect",
+		"http://10.0.0.1":   "ws://10.0.0.1/api/nodes/connect",
+	} {
+		if got, err := connectURL(hub); err != nil || got != want {
+			t.Errorf("%s → %q, %v; want %q", hub, got, err, want)
 		}
 	}
 }
