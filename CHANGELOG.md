@@ -1,3 +1,9 @@
+## v0.9.0 (2026-11-19)
+
+### Feat
+
+- **init**: sftp in the guest ssh server (#28)
+
 ## v0.8.1 (2026-11-19)
 
 ### Fix
