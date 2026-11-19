@@ -22,6 +22,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
@@ -112,7 +113,17 @@ func run() error {
 		go ck.Run(ctx, 6*time.Hour)
 		newer = ck.Newer
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, nil, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
+	var manifests api.ManifestDeleter
+	if cfg.RegistryURL != "" {
+		iss, err := registry.LoadIssuer(cfg.RegistryKeyDir)
+		if err != nil {
+			return err
+		}
+		upstream, _ := url.Parse(cfg.RegistryURL)
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss})
+		manifests = registry.Client{URL: cfg.RegistryURL, Issuer: iss}
+	}
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

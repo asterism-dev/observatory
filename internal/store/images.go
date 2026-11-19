@@ -134,6 +134,11 @@ func (s *Store) Image(ctx context.Context, org, id uuid.UUID) (Image, error) {
 	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE (org_id = $1 OR platform) AND id = $2", org, id))
 }
 
+// ImageByID finds an org image without knowing its org, for registry repositories that only carry the id.
+func (s *Store) ImageByID(ctx context.Context, id uuid.UUID) (Image, error) {
+	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE id = $1 AND NOT platform", id))
+}
+
 // LockImage locks the org's image row for the rest of the transaction.
 func (s *Store) LockImage(ctx context.Context, org, id uuid.UUID) (Image, error) {
 	return scanImage(s.q.QueryRow(ctx, "SELECT "+imageCols+" FROM images WHERE org_id = $1 AND id = $2 FOR UPDATE", org, id))

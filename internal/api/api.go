@@ -54,6 +54,7 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("GET /api/me/ssh-keys", h.listSSHKeys)
 	mux.HandleFunc("POST /api/me/ssh-keys", h.addSSHKey)
 	mux.HandleFunc("DELETE /api/me/ssh-keys/{id}", h.deleteSSHKey)
+	mux.HandleFunc("POST /api/registry/credentials", h.createRegistryCredential)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
 	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
 	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)

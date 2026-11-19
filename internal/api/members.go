@@ -139,7 +139,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
-		if private, err = privateImageVersions(r.Context(), tx, m.Org.ID, target); err != nil {
+		if private, err = ownedImageVersions(r.Context(), tx, m.Org.ID, store.EnvScopeUser, target); err != nil {
 			return err
 		}
 		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {

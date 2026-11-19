@@ -488,14 +488,15 @@ func (h *api) deleteManifests(ctx context.Context, image uuid.UUID, digests []st
 	}
 }
 
-func privateImageVersions(ctx context.Context, s *store.Store, org, user uuid.UUID) (map[uuid.UUID][]string, error) {
+// ownedImageVersions lists the version digests per image owned by a team or user, before their rows cascade away.
+func ownedImageVersions(ctx context.Context, s *store.Store, org uuid.UUID, scope store.EnvScope, owner uuid.UUID) (map[uuid.UUID][]string, error) {
 	list, err := s.ListImages(ctx, org)
 	if err != nil {
 		return nil, err
 	}
 	out := map[uuid.UUID][]string{}
 	for _, img := range list {
-		if img.Scope != store.EnvScopeUser || *img.OwnerID != user {
+		if img.Scope != scope || *img.OwnerID != owner {
 			continue
 		}
 		vs, err := s.ImageVersions(ctx, img.ID)

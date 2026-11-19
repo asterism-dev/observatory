@@ -580,3 +580,23 @@ func TestRemoveMemberDeletesPrivateImages(t *testing.T) {
 		t.Fatalf("manifests: %v", m.deleted)
 	}
 }
+
+func TestDeleteTeamDeletesImageManifests(t *testing.T) {
+	e := newEnv(t)
+	m := e.withManifests()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	team := e.createTeam(aliceTok, org, "core")
+	id := e.createImage(aliceTok, org, `{"name":"tools","scope":"team","teamId":"`+team.String()+`"}`)
+	d := e.addVersion(id, 1, "latest")
+	e.addVersion(e.createImage(aliceTok, org, `{"name":"kept","scope":"org"}`), 2)
+	if rec := e.do("DELETE", teamPath(org, team), aliceTok); rec.Code != 204 {
+		t.Fatalf("delete team: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := e.store.Image(context.Background(), org, id); err != store.ErrNotFound {
+		t.Fatalf("team image kept: %v", err)
+	}
+	if len(m.deleted) != 1 || m.deleted[0] != "i/"+id.String()+"@"+d {
+		t.Fatalf("manifests: %v", m.deleted)
+	}
+}
