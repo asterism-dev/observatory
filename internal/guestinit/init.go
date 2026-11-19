@@ -32,8 +32,15 @@ func notImplemented(name string) func([]string) int {
 
 // runSubcommand serves the internal commands of the binary under its own name, such as the image's nsinit shim.
 func runSubcommand(args []string) int {
-	if len(args) > 0 && args[0] == "nsinit" {
-		return runNsinit(args[1:])
+	if len(args) > 0 {
+		switch args[0] {
+		case "nsinit":
+			return runNsinit(args[1:])
+		case "write-private":
+			return writePrivateMain(args[1:])
+		case "remove-private":
+			return removePrivateMain(args[1:])
+		}
 	}
 	fmt.Fprintln(os.Stderr, "usage: observatory-init nsinit [-dir DIR] [-stop-signal SIG] -- ARGV...")
 	return 2

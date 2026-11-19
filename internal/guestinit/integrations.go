@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -267,9 +268,9 @@ func (r Root) syncDev(ctx context.Context, startIn func(*exec.Cmd) error, env ma
 		name string
 		run  func() error
 	}{
-		{"claude credentials", func() error { return r.syncClaude(state) }},
+		{"claude credentials", func() error { return r.syncClaude(ctx, startIn, env, state) }},
 		{"linear mcp", func() error { return r.syncLinear(ctx, startIn, env, state) }},
-		{"codex agents", func() error { return r.syncCodex(state) }},
+		{"codex agents", func() error { return r.syncCodex(ctx, startIn, env, state) }},
 	} {
 		if err := part.run(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", part.name, err))
@@ -298,8 +299,46 @@ func mapsEqual(a, b syncState) bool {
 	return true
 }
 
-// devPrivateFile writes through a fresh O_EXCL|O_NOFOLLOW file owned by dev, as root must never follow a link the user planted.
-func devPrivateFile(path string, data []byte, mode os.FileMode) error {
+// runDevHelper runs `observatory-init <args>` in the image as dev, with content on stdin and no output kept, so a token never reaches argv or a log.
+func runDevHelper(ctx context.Context, startIn func(*exec.Cmd) error, env map[string]string, stdin string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, claudeCLITimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, platformBin+"/observatory-init", args...)
+	cmd.Env = append(envList(env), "HOME="+devHome)
+	cmd.Dir = "/"
+	cmd.Stdin = strings.NewReader(stdin)
+	if err := startIn(cmd); err != nil {
+		return err
+	}
+	return cmd.Wait()
+}
+
+// writePrivateMain is `observatory-init write-private <path> <octal mode>`: it runs as dev, so links dev planted lead nowhere dev could not already write.
+func writePrivateMain(args []string) int {
+	var mode uint64
+	var err error
+	if len(args) == 2 {
+		mode, err = strconv.ParseUint(args[1], 8, 32)
+	}
+	if len(args) != 2 || err != nil {
+		fmt.Fprintln(os.Stderr, "usage: observatory-init write-private <path> <octal mode>")
+		return 2
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err == nil {
+		err = writePrivate(args[0], data, os.FileMode(mode))
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "write-private:", err)
+		return 1
+	}
+	return 0
+}
+
+func writePrivate(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
 	tmp := path + ".observatory-new"
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -309,11 +348,6 @@ func devPrivateFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	err = f.Chmod(mode)
-	if err == nil {
-		if cerr := f.Chown(devID, devID); cerr != nil && !(errors.Is(cerr, os.ErrPermission) && os.Geteuid() != 0) {
-			err = cerr
-		}
-	}
 	if err == nil {
 		_, err = f.Write(data)
 	}
@@ -329,19 +363,17 @@ func devPrivateFile(path string, data []byte, mode os.FileMode) error {
 	return err
 }
 
-// devDir makes a dev-owned 0700 directory directly in dev's home, refusing a planted link.
-func (r Root) devDir(rel string) (string, error) {
-	dir := r.join(filepath.Join(devHome, rel))
-	if fi, err := os.Lstat(dir); err == nil && !fi.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", rel)
+// removePrivateMain is `observatory-init remove-private <path>`, run as dev for the same reason.
+func removePrivateMain(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: observatory-init remove-private <path>")
+		return 2
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+	if err := os.Remove(args[0]); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "remove-private:", err)
+		return 1
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return "", err
-	}
-	return dir, chown(dir, devID, devID)
+	return 0
 }
 
 // readNoFollow returns the file's content; a link or a FIFO is reported as an error rather than followed or waited on.
@@ -374,7 +406,7 @@ func credFileHash(path string) string {
 	return digest(*doc.Claude.AccessToken)
 }
 
-func (r Root) syncClaude(state syncState) error {
+func (r Root) syncClaude(ctx context.Context, startIn func(*exec.Cmd) error, env map[string]string, state syncState) error {
 	tok, code := Token("claude")
 	if code == tokenUnavailable {
 		return nil
@@ -385,7 +417,7 @@ func (r Root) syncClaude(state syncState) error {
 	if code == tokenNotConnected {
 		var err error
 		if ours {
-			err = os.Remove(path)
+			err = runDevHelper(ctx, startIn, env, "", "remove-private", devHome+"/.claude/.credentials.json")
 		}
 		delete(state, "claude")
 		return err
@@ -395,12 +427,8 @@ func (r Root) syncClaude(state syncState) error {
 		return nil
 	}
 	if current != digest(tok) {
-		dir, err := r.devDir(".claude")
-		if err != nil {
-			return err
-		}
 		cred := `{"claudeAiOauth":{"accessToken":` + jsonString(tok) + `,"refreshToken":null,"expiresAt":null,"scopes":["user:inference"]}}`
-		if err := devPrivateFile(filepath.Join(dir, ".credentials.json"), []byte(cred), 0o600); err != nil {
+		if err := runDevHelper(ctx, startIn, env, cred, "write-private", devHome+"/.claude/.credentials.json", "600"); err != nil {
 			return err
 		}
 	}
@@ -478,7 +506,7 @@ func (r Root) syncLinear(ctx context.Context, startIn func(*exec.Cmd) error, env
 	return nil
 }
 
-func (r Root) syncCodex(state syncState) error {
+func (r Root) syncCodex(ctx context.Context, startIn func(*exec.Cmd) error, env map[string]string, state syncState) error {
 	src, err := os.ReadFile(r.join(contextRel))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -500,11 +528,7 @@ func (r Root) syncCodex(state syncState) error {
 		return nil
 	}
 	if current != digest(text) {
-		dir, err := r.devDir(".codex")
-		if err != nil {
-			return err
-		}
-		if err := devPrivateFile(filepath.Join(dir, "AGENTS.md"), src, 0o644); err != nil {
+		if err := runDevHelper(ctx, startIn, env, text, "write-private", devHome+"/.codex/AGENTS.md", "644"); err != nil {
 			return err
 		}
 	}

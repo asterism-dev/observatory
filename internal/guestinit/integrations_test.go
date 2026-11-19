@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -393,6 +396,15 @@ type userGuest struct {
 	log, flag           string
 	env                 map[string]string
 	startIn             func(*exec.Cmd) error
+	started             []startedCmd
+}
+
+// startedCmd is what the sync handed to startIn.
+type startedCmd struct {
+	args           []string
+	stdin          string
+	stdout, stderr any
+	cred           *syscall.Credential
 }
 
 func newUserGuest(t *testing.T, answers *tokenAnswers) *userGuest {
@@ -405,9 +417,31 @@ func newUserGuest(t *testing.T, answers *tokenAnswers) *userGuest {
 	g.log, g.flag = filepath.Join(aux, "argv"), filepath.Join(aux, "own-entry")
 	g.claude = filepath.Join(g.home, ".local/bin/claude")
 	g.env = map[string]string{"PATH": "/usr/bin:/bin"}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	g.startIn = func(cmd *exec.Cmd) error {
-		cmd.Path = root.join(cmd.Path)
+		rec := startedCmd{args: slices.Clone(cmd.Args), stdout: cmd.Stdout, stderr: cmd.Stderr}
+		if cmd.SysProcAttr != nil {
+			rec.cred = cmd.SysProcAttr.Credential
+		}
+		if cmd.Stdin != nil {
+			b, _ := io.ReadAll(cmd.Stdin)
+			rec.stdin = string(b)
+			cmd.Stdin = strings.NewReader(rec.stdin)
+		}
+		g.started = append(g.started, rec)
+		cmd.SysProcAttr = nil
 		cmd.Dir = g.home
+		if filepath.Base(cmd.Path) == "observatory-init" {
+			// The tool runs from this test binary, on host paths.
+			cmd.Args = append([]string{self, "-test.run=^TestHelperProcess$", "--", "observatory-init", cmd.Args[1], root.join(cmd.Args[2])}, cmd.Args[3:]...)
+			cmd.Path = self
+			cmd.Env = append(cmd.Env, "GUESTINIT_HELPER=1")
+		} else {
+			cmd.Path = root.join(cmd.Path)
+		}
 		return cmd.Start()
 	}
 	return g
@@ -543,15 +577,34 @@ func TestIntegrationsClaudeUnavailableKeepsFile(t *testing.T) {
 	}
 }
 
-func TestIntegrationsClaudeLinkNotFollowed(t *testing.T) {
+func TestIntegrationsHomeWritesGoThroughDevHelper(t *testing.T) {
+	g := newUserGuest(t, newAnswers(map[string]string{"claude": okAnswer(dummyClaude)}))
+	g.sync()
+	if len(g.started) != 1 {
+		t.Fatalf("started %d commands", len(g.started))
+	}
+	c := g.started[0]
+	if c.cred != nil {
+		t.Fatalf("the test's startIn saw a credential %+v; Run's sets uid 1000", c.cred)
+	}
+	if c.stdin != credsFile(dummyClaude) || strings.Contains(strings.Join(c.args, " "), dummyClaude) {
+		t.Fatalf("token not via stdin only: args %q stdin %q", c.args, c.stdin)
+	}
+	if c.stdout != nil || c.stderr != nil {
+		t.Fatalf("output attached: %v %v", c.stdout, c.stderr)
+	}
+}
+
+func TestIntegrationsHomeNeverWrittenByRoot(t *testing.T) {
 	g := newUserGuest(t, newAnswers(map[string]string{"claude": okAnswer(dummyClaude)}))
 	outside := t.TempDir()
 	os.Symlink(outside, filepath.Join(g.home, ".claude"))
+	g.startIn = func(*exec.Cmd) error { return errors.New("no image") }
 	if _, err := g.trySync(); err == nil {
-		t.Fatal("a linked ~/.claude was written through")
+		t.Fatal("no error without the image")
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
-		t.Fatalf("wrote through the link: %v", entries)
+		t.Fatalf("root wrote through the link: %v", entries)
 	}
 }
 
@@ -571,6 +624,11 @@ func TestIntegrationsLinearMCPAddRemove(t *testing.T) {
 		}
 	}
 	check("ok", get, add(dummyLinear))
+	for _, c := range g.started {
+		if c.stdout != nil || c.stderr != nil {
+			t.Fatalf("claude has output attached: %q", c.args)
+		}
+	}
 	check("same token")
 	answers.set("linear", okAnswer(dummyLinear2))
 	check("new token", remove, add(dummyLinear2))

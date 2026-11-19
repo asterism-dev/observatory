@@ -85,8 +85,9 @@ func Run() error {
 		fmt.Fprintln(os.Stderr, "init: image:", err)
 	}
 	agent.SetSSH(startSSH(root, agent, hostKeys, img))
-	agent.SetReady()
+	// Before SetReady: takeoff reads agent.Sync, and none is served until ready.
 	startIntegrations(root, agent, img)
+	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 
 	var imageDone <-chan struct{}
