@@ -40,15 +40,17 @@ type Scheduler struct {
 	builderErr error
 	notify     func(org uuid.UUID)
 	online     func(node uuid.UUID) bool
+	vmDeleted  func(vm uuid.UUID)
 	kick       chan struct{}
 
 	Now func() time.Time
 }
 
 // New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it.
-func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool) *Scheduler {
+// vmDeleted runs for every builder VM the scheduler deletes, to drop what the hub keeps about it in memory.
+func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool, vmDeleted func(vm uuid.UUID)) *Scheduler {
 	return &Scheduler{store: s, hubURL: strings.TrimRight(hubURL, "/"), builder: builder, builderErr: builderErr,
-		notify: notify, online: online, kick: make(chan struct{}, 1), Now: time.Now}
+		notify: notify, online: online, vmDeleted: vmDeleted, kick: make(chan struct{}, 1), Now: time.Now}
 }
 
 // BuilderTag is the builder image tag released with this hub.
@@ -123,6 +125,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		if err := s.store.DeleteVM(ctx, v.OrgID, v.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
+		s.vmDeleted(v.ID)
 		s.notify(v.OrgID)
 	}
 	active, err := s.store.ActiveBuilds(ctx)
@@ -277,6 +280,7 @@ func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg
 		return nil
 	})
 	if err == nil && org != uuid.Nil {
+		s.vmDeleted(*b.VMID)
 		s.notify(org)
 	}
 	return b, err
