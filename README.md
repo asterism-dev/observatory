@@ -41,9 +41,10 @@ than `localhost` in `OBSERVATORY_PUBLIC_URL` then. [docs/network.md](docs/networ
 gateway, devices, networks and the isolation model; [docs/disks.md](docs/disks.md) covers disks and the storage server.
 
 For images, start the registry (`make registry-up`; `registry-down` stops it, `registry-gc` collects garbage). It
-appends `OBSERVATORY_REGISTRY_URL`, `OBSERVATORY_REGISTRY_KEY_DIR` and `OBSERVATORY_REGISTRY_EVENTS_SECRET` to
+appends `OBSERVATORY_REGISTRY_URL`, `OBSERVATORY_REGISTRY_KEY_DIR`, `OBSERVATORY_REGISTRY_CERT_DIR` and
+`OBSERVATORY_REGISTRY_EVENTS_SECRET` to
 `deploy/dev/hub.env` if missing, listens on `localhost:55000` and reports pushes to the hub at `HUB_URL`. It restarts
-until the hub has written its token certificate to `deploy/dev/registry-keys`. The registry integration test runs
+until the hub has written its token certificate to `deploy/dev/registry-certs`. The registry integration test runs
 against it: `HUB_URL=http://host.docker.internal:55090 make registry-up`, then with `deploy/dev/hub.env` sourced
 `OBSERVATORY_TEST_REGISTRY_URL=http://localhost:55000 go test ./internal/api -run TestRegistryPushRoundTrip`.
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -57,7 +58,7 @@ func (h *registryEvents) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, ev := range env.Events {
-		// Untagged pushes are the children of an index; the index itself arrives tagged.
+		// ponytail: untagged pushes (index children, digest-only pushes) are skipped; digest-only blobs stay uncounted until a usage reconciliation, and they need the push right.
 		if ev.Action != "push" || !manifestMediaTypes[ev.Target.MediaType] || ev.Target.Tag == "" {
 			continue
 		}
@@ -94,8 +95,10 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 	}
 	v := store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush}
 	for _, l := range m.Layers {
-		v.Layers = append(v.Layers, store.ImageLayer{Digest: l.Digest, Size: l.Size})
 		v.SizeBytes += l.Size
+	}
+	for _, l := range m.Blobs {
+		v.Layers = append(v.Layers, store.ImageLayer{Digest: l.Digest, Size: l.Size})
 	}
 	_, err = h.store.ImageVersion(ctx, img.ID, digest)
 	if errors.Is(err, store.ErrNotFound) {
@@ -110,15 +113,19 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 	if err := h.attribute(ctx, &v, ev.Actor.Name); err != nil {
 		return err
 	}
+	tags := []string{ev.Target.Tag, latestTag}
+	if v.BuildID != nil {
+		// latest moves when the build reports success, not when its push lands.
+		tags = slices.DeleteFunc(tags, func(t string) bool { return t == latestTag })
+	}
 	return h.store.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.AddImageVersion(ctx, v); err != nil {
 			return err
 		}
-		if err := tx.SetImageTag(ctx, img.ID, ev.Target.Tag, digest); err != nil {
-			return err
-		}
-		if err := tx.SetImageTag(ctx, img.ID, latestTag, digest); err != nil {
-			return err
+		for _, tag := range tags {
+			if err := tx.SetImageTag(ctx, img.ID, tag, digest); err != nil {
+				return err
+			}
 		}
 		return tx.SetImagePushError(ctx, img.ID, "")
 	})
@@ -167,8 +174,8 @@ func (h *registryEvents) attribute(ctx context.Context, v *store.ImageVersion, a
 }
 
 func (h *registryEvents) reject(ctx context.Context, img store.Image, repo, digest, msg string) error {
-	if err := h.manifests.DeleteManifest(ctx, repo, digest); err != nil {
+	if err := h.store.SetImagePushError(ctx, img.ID, msg); err != nil {
 		return err
 	}
-	return h.store.SetImagePushError(ctx, img.ID, msg)
+	return h.manifests.DeleteManifest(ctx, repo, digest)
 }

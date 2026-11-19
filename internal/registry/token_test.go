@@ -72,7 +72,14 @@ func TestTokenSignatureVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := parse(t, dir, tok)
+	certDir := t.TempDir()
+	if err := again.WriteCert(certDir); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(certDir); len(entries) != 1 {
+		t.Fatalf("cert dir holds %v", entries)
+	}
+	c := parse(t, certDir, tok)
 	if c.Subject != "user:u1" || len(c.Access) != 1 || c.Access[0].Name != "i/x" || !slices.Equal(c.Access[0].Actions, []string{"pull", "push"}) {
 		t.Fatalf("claims: %+v", c)
 	}
@@ -113,6 +120,8 @@ func TestClientManifestAndDelete(t *testing.T) {
 			_, _ = w.Write([]byte(`{"os":"linux","architecture":"arm64","variant":"v8"}`))
 		case "GET /v2/i/x/manifests/sha256:m64":
 			_, _ = w.Write([]byte(`{"config":{"digest":"sha256:c64"},"layers":[{"digest":"sha256:l2","size":9}]}`))
+		case "GET /v2/i/x/manifests/sha256:att":
+			_, _ = w.Write([]byte(`{"config":{"digest":"sha256:ca"},"layers":[{"digest":"sha256:la","size":3}]}`))
 		case "GET /v2/i/x/blobs/sha256:c64":
 			_, _ = w.Write([]byte(`{"os":"linux","architecture":"amd64"}`))
 		case "GET /v2/i/x/manifests/sha256:idx":
@@ -132,10 +141,11 @@ func TestClientManifestAndDelete(t *testing.T) {
 	cl := Client{URL: srv.URL + "/", Issuer: iss}
 	ctx := context.Background()
 	m, err := cl.Manifest(ctx, "i/x", "sha256:m")
-	if err != nil || m.Platform != "linux/arm64/v8" || len(m.Layers) != 1 || m.Layers[0] != (Layer{"sha256:l1", 7}) {
+	if err != nil || m.Platform != "linux/arm64/v8" || len(m.Layers) != 1 || m.Layers[0] != (Layer{"sha256:l1", 7}) || !slices.Equal(m.Blobs, m.Layers) {
 		t.Fatalf("manifest %+v %v", m, err)
 	}
-	if m, err := cl.Manifest(ctx, "i/x", "sha256:idx"); err != nil || m.Platform != "linux/amd64" || len(m.Layers) != 1 || m.Layers[0] != (Layer{"sha256:l2", 9}) {
+	if m, err := cl.Manifest(ctx, "i/x", "sha256:idx"); err != nil || m.Platform != "linux/amd64" || !slices.Equal(m.Layers, []Layer{{"sha256:l2", 9}}) ||
+		!slices.Equal(m.Blobs, []Layer{{"sha256:l1", 7}, {"sha256:l2", 9}}) {
 		t.Fatalf("index %+v %v", m, err)
 	}
 	if m, err := cl.Manifest(ctx, "i/x", "sha256:idxarm"); err != nil || m.Platform != "linux/arm64/v8, unknown/unknown" || m.Layers != nil {

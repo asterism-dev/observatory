@@ -65,6 +65,9 @@ func TestRegistryPushRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := iss.WriteCert(os.Getenv("OBSERVATORY_REGISTRY_CERT_DIR")); err != nil {
+		t.Fatal(err)
+	}
 	upstream, _ := url.Parse(regURL)
 	mux := http.NewServeMux()
 	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: upstream, PublicURL: &url.URL{Scheme: "http", Host: testHubAddr}, Issuer: iss,
@@ -101,8 +104,9 @@ func TestRegistryPushRoundTrip(t *testing.T) {
 		t.Fatalf("latest %s", tag)
 	}
 
+	armChild := platformImage(t, "arm64")
 	idx := mutate.AppendManifests(empty.Index,
-		mutate.IndexAddendum{Add: platformImage(t, "arm64"), Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}}},
+		mutate.IndexAddendum{Add: armChild, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}}},
 		mutate.IndexAddendum{Add: amd64, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}})
 	if err := remote.WriteIndex(mustRef(t, repo+":multi"), idx, auth); err != nil {
 		t.Fatal(err)
@@ -113,6 +117,12 @@ func TestRegistryPushRoundTrip(t *testing.T) {
 	layers, _ := amd64.Layers()
 	if size, _ := layers[0].Size(); v.Source != store.VersionFromPush || v.SizeBytes != size {
 		t.Fatalf("index version %+v", v)
+	}
+	armLayers, _ := armChild.Layers()
+	amdSize, _ := layers[0].Size()
+	armSize, _ := armLayers[0].Size()
+	if used, _ := e.store.OrgImageUsage(ctx, org); used != amdSize+armSize {
+		t.Fatalf("usage %d, want both children %d", used, amdSize+armSize)
 	}
 
 	arm := platformImage(t, "arm64")

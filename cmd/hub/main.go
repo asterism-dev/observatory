@@ -119,6 +119,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		if cfg.RegistryCertDir != "" {
+			if err := iss.WriteCert(cfg.RegistryCertDir); err != nil {
+				return err
+			}
+		}
 		upstream, _ := url.Parse(cfg.RegistryURL)
 		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
 		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Manifests: client, EventsSecret: cfg.RegistryEventsSecret})

@@ -105,6 +105,11 @@ func LoadIssuer(dir string) (Issuer, error) {
 	return newIssuer(key, cert), nil
 }
 
+// WriteCert puts token.crt into dir, so the registry can mount it without seeing the key.
+func (i Issuer) WriteCert(dir string) error {
+	return os.WriteFile(filepath.Join(dir, "token.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: i.CertChain[0].Raw}), 0o644)
+}
+
 func newIssuer(key *ecdsa.PrivateKey, cert *x509.Certificate) Issuer {
 	return Issuer{Key: key, CertChain: []*x509.Certificate{cert}, Service: Service, Issuer: IssuerName}
 }

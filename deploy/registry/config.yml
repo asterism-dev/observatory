@@ -1,6 +1,8 @@
 # Compose sets the token realm and the hub's notification endpoint (REGISTRY_AUTH_TOKEN_REALM, REGISTRY_NOTIFICATIONS_ENDPOINTS).
 version: 0.1
 log:
+  # At info the registry logs the notification headers, which carry the events secret.
+  level: warn
   fields:
     service: registry
 storage:

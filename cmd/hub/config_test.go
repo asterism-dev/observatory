@@ -56,7 +56,8 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("registry without events secret: %v", err)
 	}
 	env["OBSERVATORY_REGISTRY_EVENTS_SECRET"] = strings.Repeat("e", 32)
-	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.RegistryURL != "http://registry:5000" || cfg.RegistryKeyDir != "/keys" || cfg.RegistryEventsSecret != strings.Repeat("e", 32) {
+	env["OBSERVATORY_REGISTRY_CERT_DIR"] = "/certs"
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.RegistryURL != "http://registry:5000" || cfg.RegistryKeyDir != "/keys" || cfg.RegistryEventsSecret != strings.Repeat("e", 32) || cfg.RegistryCertDir != "/certs" {
 		t.Fatalf("registry: %+v %v", cfg, err)
 	}
 	env["OBSERVATORY_REGISTRY_URL"] = "registry:5000"

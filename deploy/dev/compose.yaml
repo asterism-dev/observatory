@@ -39,7 +39,7 @@ services:
     volumes:
       - ../registry/config.yml:/etc/distribution/config.yml:ro
       - registry-data:/var/lib/registry
-      - ./registry-keys:/keys:ro
+      - ./registry-certs:/keys:ro
   registry-gc:
     image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
     profiles: [maintenance]

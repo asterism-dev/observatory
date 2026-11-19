@@ -44,7 +44,7 @@ func pushEvent(t *testing.T, h http.Handler, secret, repo, digest, tag, actor st
 }
 
 func amd64Manifest(layers ...registry.Layer) registry.Manifest {
-	return registry.Manifest{Platform: "linux/amd64", Layers: layers}
+	return registry.Manifest{Platform: "linux/amd64", Layers: layers, Blobs: layers}
 }
 
 func (e *env) pushError(id uuid.UUID) string {
@@ -109,8 +109,16 @@ func TestPushEventCreatesVersionAndLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	fm.manifests[digestN(3)] = amd64Manifest()
-	if code := pushEvent(t, h, eventsSecret, repo, digestN(3), "latest", "build:"+b.ID.String()); code != 200 {
+	fm.manifests[digestN(4)] = amd64Manifest()
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(3), "build-1", "build:"+b.ID.String()); code != 200 {
 		t.Fatalf("build push: %d", code)
+	}
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(4), "latest", "build:"+b.ID.String()); code != 200 {
+		t.Fatalf("build push of latest: %d", code)
+	}
+	tags, _ = e.store.ImageTags(ctx, img)
+	if tags["build-1"] != digestN(3) || tags["latest"] != digestN(2) {
+		t.Fatalf("build push tags %v", tags)
 	}
 	v, err = e.store.ImageVersion(ctx, img, digestN(3))
 	if err != nil || v.Source != store.VersionFromBuild || v.BuildID == nil || *v.BuildID != b.ID || v.Revision == nil || *v.Revision != 1 || *v.CreatedBy != alice.ID {
@@ -243,5 +251,38 @@ func TestEventsNeedSecret(t *testing.T) {
 	}
 	if vs, _ := e.store.ImageVersions(context.Background(), img); len(vs) != 0 {
 		t.Fatalf("versions %v", vs)
+	}
+}
+
+func TestPushEventIndexCountsEveryChild(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	repo := "i/" + img.String()
+	ctx := context.Background()
+	one := 1
+	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}); err != nil {
+		t.Fatal(err)
+	}
+	amd, arm := registry.Layer{Digest: "sha256:amd", Size: 10}, registry.Layer{Digest: "sha256:arm", Size: 1 << 29}
+	fm := &fakeManifests{manifests: map[string]registry.Manifest{
+		digestN(1): {Platform: "linux/amd64", Layers: []registry.Layer{amd}, Blobs: []registry.Layer{arm, amd}},
+		digestN(2): {Platform: "linux/amd64", Layers: []registry.Layer{amd}, Blobs: []registry.Layer{{Digest: "sha256:arm2", Size: 1<<29 + 1}, amd}},
+	}}
+	h := e.eventsHandler(fm)
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(1), "multi", "user:"+alice.ID.String()); code != 200 {
+		t.Fatalf("push: %d", code)
+	}
+	v, err := e.store.ImageVersion(ctx, img, digestN(1))
+	if used, _ := e.store.OrgImageUsage(ctx, org); err != nil || v.SizeBytes != 10 || used != 1<<29+10 {
+		t.Fatalf("version %+v %v, usage %d", v, err, used)
+	}
+	// Only the arm64 child crosses the limit.
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(2), "multi2", "user:"+alice.ID.String()); code != 200 {
+		t.Fatalf("push 2: %d", code)
+	}
+	if got := e.pushError(img); got != "image storage limit exceeded (1 GB)" || !slices.Equal(fm.deleted, []string{repo + "@" + digestN(2)}) {
+		t.Fatalf("push error %q, deleted %v", got, fm.deleted)
 	}
 }

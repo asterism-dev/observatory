@@ -18,11 +18,13 @@ services:
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
       OBSERVATORY_REGISTRY_URL: http://registry:5000
       OBSERVATORY_REGISTRY_KEY_DIR: /keys
+      OBSERVATORY_REGISTRY_CERT_DIR: /certs
       OBSERVATORY_REGISTRY_EVENTS_SECRET: ${OBSERVATORY_REGISTRY_EVENTS_SECRET:?set OBSERVATORY_REGISTRY_EVENTS_SECRET in deploy/.env}
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     volumes:
       - registry-keys:/keys
+      - registry-certs:/certs
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +61,7 @@ services:
     volumes:
       - ./registry/config.yml:/etc/distribution/config.yml:ro
       - registry-data:/var/lib/registry
-      - registry-keys:/keys:ro
+      - registry-certs:/keys:ro
   # Run by a host cron job (docs/deploy.md); the hub does not drive garbage collection.
   registry-gc:
     image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
@@ -137,6 +139,7 @@ volumes:
   postgres-data:
   registry-data:
   registry-keys:
+  registry-certs:
   ovn:
   ovs:
   disks:

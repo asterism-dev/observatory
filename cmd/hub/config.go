@@ -14,7 +14,7 @@ type config struct {
 	SecretsKey                                                                                                                       seal.Key
 	Dev, DevSkipVerify                                                                                                               bool
 	DevClaudeTokenURL, DocsURL                                                                                                       string
-	RegistryURL, RegistryKeyDir, RegistryEventsSecret                                                                                string
+	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
 }
 
 const minTokenLen = 32
@@ -71,7 +71,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		cfg.GatewayHost = u.Hostname()
 	}
-	cfg.RegistryURL, cfg.RegistryKeyDir = getenv("OBSERVATORY_REGISTRY_URL"), getenv("OBSERVATORY_REGISTRY_KEY_DIR")
+	cfg.RegistryURL, cfg.RegistryKeyDir, cfg.RegistryCertDir = getenv("OBSERVATORY_REGISTRY_URL"), getenv("OBSERVATORY_REGISTRY_KEY_DIR"), getenv("OBSERVATORY_REGISTRY_CERT_DIR")
 	if cfg.RegistryURL != "" {
 		if u, err := url.Parse(cfg.RegistryURL); err != nil || u.Scheme == "" || u.Host == "" {
 			return config{}, errors.New("OBSERVATORY_REGISTRY_URL must be an absolute URL")

@@ -22,10 +22,11 @@ type Layer struct {
 	Size   int64
 }
 
-// Manifest is an image manifest; an index resolves to its linux/amd64 child.
+// Manifest is an image manifest; an index resolves to its linux/amd64 child, while Blobs holds every child's layers.
 type Manifest struct {
 	Platform string
 	Layers   []Layer
+	Blobs    []Layer
 }
 
 var ErrNotFound = errors.New("not found in the registry")
@@ -71,21 +72,35 @@ func (c Client) Manifest(ctx context.Context, repo, digest string) (Manifest, er
 		return Manifest{}, err
 	}
 	if m.Manifests == nil {
-		return c.image(ctx, repo, m)
+		out, err := c.image(ctx, repo, m)
+		out.Blobs = out.Layers
+		return out, err
 	}
+	var out Manifest
 	var platforms []string
 	for _, d := range m.Manifests {
-		p := platform(d.Platform.OS, d.Platform.Architecture, d.Platform.Variant)
-		if p == "linux/amd64" {
-			var child manifestDoc
-			if err := c.getJSON(ctx, repo, "/manifests/"+d.Digest, manifestTypes, &child); err != nil {
-				return Manifest{}, err
-			}
-			return c.image(ctx, repo, child)
+		var child manifestDoc
+		if err := c.getJSON(ctx, repo, "/manifests/"+d.Digest, manifestTypes, &child); err != nil {
+			return Manifest{}, err
 		}
-		platforms = append(platforms, p)
+		for _, l := range child.Layers {
+			out.Blobs = append(out.Blobs, Layer{Digest: l.Digest, Size: l.Size})
+		}
+		p := platform(d.Platform.OS, d.Platform.Architecture, d.Platform.Variant)
+		if p != "linux/amd64" || out.Platform != "" {
+			platforms = append(platforms, p)
+			continue
+		}
+		img, err := c.image(ctx, repo, child)
+		if err != nil {
+			return Manifest{}, err
+		}
+		out.Platform, out.Layers = img.Platform, img.Layers
 	}
-	return Manifest{Platform: strings.Join(platforms, ", ")}, nil
+	if out.Platform == "" {
+		out.Platform = strings.Join(platforms, ", ")
+	}
+	return out, nil
 }
 
 // image takes the platform from the config blob; a nested index yields an empty platform.

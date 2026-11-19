@@ -27,7 +27,7 @@ RUN echo "$VERSION" > /guestboot/VERSION \
 FROM debian:trixie-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && install -d -o 65532 /keys
+    && install -d -o 65532 /keys /certs
 COPY --from=build /hub /usr/local/bin/hub
 COPY --from=build /observatory-node /usr/local/lib/observatory/observatory-node
 COPY --from=build /guestboot.tar /usr/local/lib/observatory/guestboot.tar
