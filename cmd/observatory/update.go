@@ -47,7 +47,7 @@ func (c *cli) updateHint() {
 		cancel()
 		// Written on failure too, so an outage costs one request a day.
 		uc = updateCheck{CheckedAt: c.now(), Latest: latest}
-		if b, err := json.Marshal(uc); err == nil {
+		if b, err := json.Marshal(uc); err == nil && os.MkdirAll(c.cfgDir, 0o700) == nil {
 			_ = os.WriteFile(path, b, 0o600)
 		}
 	}

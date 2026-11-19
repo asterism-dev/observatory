@@ -183,3 +183,43 @@ func TestUpdateHintCorruptCache(t *testing.T) {
 		t.Fatalf("stderr %q", stderr)
 	}
 }
+
+func TestUpdateHintCachedWithoutConfigDir(t *testing.T) {
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	c, _, _ := newTestCLI(t, h)
+	releaseCLI(t, h, c, "v0.4.0", goodSums)
+	if err := os.RemoveAll(c.cfgDir); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		run(c, []string{"whoami"})
+	}
+	if n := len(h.calls("GET /latest")); n != 1 {
+		t.Fatalf("release checks: %d, want 1 (cached)", n)
+	}
+}
+
+func TestUpdateReadOnlyDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	setVersion(t, "v0.3.0")
+	h := newFakeHub(t)
+	c, _, stderr := newTestCLI(t, h)
+	exe := releaseCLI(t, h, c, "v0.4.0", goodSums)
+	dir := filepath.Dir(exe)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if code := run(c, []string{"update"}); code == 0 {
+		t.Fatal("want failure")
+	}
+	if !strings.Contains(stderr.String(), exe) || !strings.Contains(stderr.String(), "sudo") {
+		t.Fatalf("stderr %q", stderr)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "old" {
+		t.Fatalf("binary replaced: %q", b)
+	}
+}
