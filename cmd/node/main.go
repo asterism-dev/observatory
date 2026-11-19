@@ -69,7 +69,7 @@ func main() {
 		CPUs: cfg.Capacity.CPUs, MemoryMB: cfg.Capacity.MemoryMB, Provider: provider,
 		Config: public, Machine: node.MachineInfo(),
 		Version: version.Version, Egress: egressHost,
-		Updater: newUpdater(), ShutdownMarker: filepath.Join(filepath.Dir(*configPath), "shutdown-vms"),
+		Updater: newUpdater(filepath.Dir(*configPath)), ShutdownMarker: filepath.Join(filepath.Dir(*configPath), "shutdown-vms"),
 	}
 	log.Printf("node %s (%s): provider %s, %d CPUs, %d MB", cfg.NodeID, version.Version, provider.Name(), cfg.Capacity.CPUs, cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,12 +20,12 @@ import (
 
 const updateUnit = "observatory-node-update"
 
-type systemdUpdater struct{}
+type systemdUpdater struct{ dir string }
 
-func newUpdater() node.Updater { return systemdUpdater{} }
+func newUpdater(dir string) node.Updater { return systemdUpdater{dir: dir} }
 
 // Start runs install.sh in its own transient unit, so it survives the service restart it triggers.
-func (systemdUpdater) Start(ctx context.Context, hubBase string) error {
+func (u systemdUpdater) Start(ctx context.Context, hubBase string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hubBase+"/node/install.sh", nil)
 	if err != nil {
 		return err
@@ -37,7 +38,8 @@ func (systemdUpdater) Start(ctx context.Context, hubBase string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download install.sh: %s", resp.Status)
 	}
-	f, err := os.CreateTemp("", "observatory-install-*.sh")
+	script := filepath.Join(u.dir, "update.sh")
+	f, err := os.OpenFile(script, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o700)
 	if err != nil {
 		return err
 	}
@@ -46,12 +48,12 @@ func (systemdUpdater) Start(ctx context.Context, hubBase string) error {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(f.Name())
 		return fmt.Errorf("download install.sh: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "systemd-run", "--unit", updateUnit, "--collect", "sh", f.Name(), "--update", "--hub", hubBase).CombinedOutput()
+	// Without --collect a failed unit keeps its Result for Wait, but then blocks the unit name until reset.
+	exec.CommandContext(ctx, "systemctl", "reset-failed", updateUnit).Run()
+	out, err := exec.CommandContext(ctx, "systemd-run", "--unit", updateUnit, "sh", script, "--update", "--hub", hubBase).CombinedOutput()
 	if err != nil {
-		os.Remove(f.Name())
 		return fmt.Errorf("systemd-run: %v: %s", err, bytes.TrimSpace(out))
 	}
 	return nil

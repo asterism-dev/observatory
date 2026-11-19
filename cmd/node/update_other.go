@@ -4,4 +4,4 @@ package main
 
 import "github.com/asterism-dev/observatory/internal/node"
 
-func newUpdater() node.Updater { return nil }
+func newUpdater(string) node.Updater { return nil }
