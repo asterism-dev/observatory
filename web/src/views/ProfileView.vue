@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
+import DefaultImageSection from '@/components/DefaultImageSection.vue'
 import { useMe } from '@/composables/useMe'
 import { Card, DataTable, KeyValue, KeyValueList, Page, ResourceList, ResourceRow, Section, Tag } from '@/ui'
 
@@ -27,7 +28,7 @@ interface SshKey {
 }
 
 const { t, d } = useI18n()
-const { me, expire } = useMe()
+const { me, activeOrg, expire } = useMe()
 
 const sessions = ref<Session[]>([])
 const issuer = ref('')
@@ -160,6 +161,8 @@ onMounted(async () => {
         </p>
       </Card>
     </Section>
+
+    <DefaultImageSection v-if="activeOrg" :org-id="activeOrg.id" level="user" editable :description="t('images.userDefaultHint', { org: activeOrg.name })" />
 
     <Section :label="t('profile.sessions')">
       <p v-if="error" role="alert">{{ error }}</p>

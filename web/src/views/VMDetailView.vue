@@ -13,6 +13,7 @@ import VMNetworkingTab from '@/components/VMNetworkingTab.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
+import { defaultSourceLabel } from '@/composables/images'
 import { kindLabels, type IntegrationKind } from '@/composables/integrations'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
@@ -187,7 +188,10 @@ watch(
               <KeyValueList>
                 <KeyValue :label="t('vms.owner')">{{ vm.owner.name }}</KeyValue>
                 <KeyValue :label="t('vms.node')"><router-link :to="`/orgs/${org.id}/nodes/${vm.node.id}`">{{ vm.node.name }}</router-link></KeyValue>
-                <KeyValue :label="t('vms.image')">{{ vm.image || '–' }}</KeyValue>
+                <KeyValue :label="t('vms.image')">
+                  <code>{{ vm.imageRef || vm.image || '–' }}</code>
+                  <span v-if="vm.imageSource" class="muted">{{ defaultSourceLabel(vm.imageSource, t) }}</span>
+                </KeyValue>
                 <KeyValue v-if="integrations.length" :label="t('integrations.vmLine')">{{ integrations.map(integrationLine).join(', ') }}</KeyValue>
                 <KeyValue :label="t('vms.created')">{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</KeyValue>
               </KeyValueList>

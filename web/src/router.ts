@@ -8,6 +8,8 @@ import DisksView from '@/views/DisksView.vue'
 import DevicesView from '@/views/DevicesView.vue'
 import NetworksView from '@/views/NetworksView.vue'
 import EnvView from '@/views/EnvView.vue'
+import ImageDetailView from '@/views/ImageDetailView.vue'
+import ImagesView from '@/views/ImagesView.vue'
 import IntegrationsView from '@/views/IntegrationsView.vue'
 import NodeDetailView from '@/views/NodeDetailView.vue'
 import NodesView from '@/views/NodesView.vue'
@@ -17,6 +19,7 @@ import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
 import AdminUsersView from '@/views/admin/AdminUsersView.vue'
 import LoginView from '@/views/LoginView.vue'
 import InviteView from '@/views/InviteView.vue'
+import BuilderVMsView from '@/views/org/BuilderVMsView.vue'
 import OrgAuditView from '@/views/org/OrgAuditView.vue'
 import LimitsView from '@/views/org/LimitsView.vue'
 import RoleEditorView from '@/views/org/RoleEditorView.vue'
@@ -51,6 +54,8 @@ export const router = createRouter({
     { path: '/orgs/:orgId/networks', component: NetworksView, meta: { title: 'nav.networks' } },
     { path: '/orgs/:orgId/devices', component: DevicesView, meta: { title: 'nav.devices' } },
     { path: '/orgs/:orgId/env', component: EnvView, meta: { title: 'nav.env' } },
+    { path: '/orgs/:orgId/images', component: ImagesView, meta: { title: 'nav.images' } },
+    { path: '/orgs/:orgId/images/:imageId', component: ImageDetailView },
     { path: '/orgs/:orgId/integrations', component: IntegrationsView, meta: { title: 'nav.integrations' } },
     {
       path: '/orgs/:orgId',
@@ -64,6 +69,7 @@ export const router = createRouter({
         { path: 'roles/:roleId', component: RoleEditorView },
         { path: 'limits', component: LimitsView },
         { path: 'audit', component: OrgAuditView },
+        { path: 'builders', component: BuilderVMsView },
       ],
     },
     { path: '/invite/:token', component: InviteView },

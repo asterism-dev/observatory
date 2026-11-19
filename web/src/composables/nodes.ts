@@ -78,6 +78,8 @@ export interface VmInfo {
   autoSuspendMinutes: number
   canDelete: boolean
   image: string
+  imageRef: string
+  imageSource: string
   legacyRuntime: boolean
   usage?: { at: string; cpuPercent: number; memTotalMB: number; memUsedMB: number; diskUsedMB: number }
 }

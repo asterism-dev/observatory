@@ -16,6 +16,7 @@ const ORG_TABS = [
   { segment: 'roles', action: 'role:read', label: 'nav.roles' },
   { segment: 'limits', action: 'limit:read', label: 'nav.limits' },
   { segment: 'audit', action: 'audit:read', label: 'nav.orgAudit' },
+  { segment: 'builders', action: null, label: 'nav.builders' },
 ] as const
 
 export function useSettingsNav() {
@@ -26,7 +27,9 @@ export function useSettingsNav() {
   const orgTabs = computed<NavTab[]>(() => {
     const id = org.value?.id
     if (!id) return []
-    return ORG_TABS.filter((tab) => can(tab.action)).map((tab) => ({
+    // Builder VMs are for org owners and admins, not a grantable permission.
+    const admin = org.value?.role === 'owner' || org.value?.role === 'admin'
+    return ORG_TABS.filter((tab) => (tab.action ? can(tab.action) : admin)).map((tab) => ({
       path: `/orgs/${id}/${tab.segment}`,
       label: t(tab.label),
     }))

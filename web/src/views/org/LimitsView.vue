@@ -18,7 +18,7 @@ interface LimitsResponse {
   members: Record<string, Limits>
 }
 
-const unlimited: Limits = { vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null }
+const unlimited: Limits = { vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null, imageStorageGb: null }
 
 const { t } = useI18n()
 const { org, can } = useOrg()
@@ -77,7 +77,7 @@ watch(
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
     <Section :label="t('limits.org')">
-      <Card><LimitFields :model-value="orgLimits" disabled /></Card>
+      <Card><LimitFields :model-value="orgLimits" disabled image-storage /></Card>
     </Section>
 
     <template v-for="group in [{ key: 'teams', prefix: 'team', rows: teams }, { key: 'members', prefix: 'user', rows: members }]" :key="group.key">
