@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
@@ -35,18 +36,20 @@ type api struct {
 	newer       func() string
 	firecracker string
 	manifests   ManifestDeleter
+	builds      *builds.Scheduler
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, docsURL string, newer func() string, firecracker string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, docsURL, newer, firecracker)
+// New takes a nil builds when the hub has no registry; builds are refused then.
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, b, docsURL, newer, firecracker)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, builds: b}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -114,6 +117,11 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/versions/{digest}", h.deleteImageVersion)
 	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/tags/{tag}", h.setImageTag)
 	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/tags/{tag}", h.deleteImageTag)
+	mux.HandleFunc("POST /api/orgs/{org}/images/{id}/builds", h.startBuild)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/builds", h.listBuilds)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/builds/{bid}", h.getBuild)
+	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/builds/{bid}/log", h.buildLog)
+	mux.HandleFunc("POST /api/orgs/{org}/images/{id}/builds/{bid}/cancel", h.cancelBuild)
 	mux.HandleFunc("GET /api/orgs/{org}/image-defaults/{level}", h.getImageDefault)
 	mux.HandleFunc("PUT /api/orgs/{org}/image-defaults/{level}", h.setImageDefault)
 	mux.HandleFunc("DELETE /api/orgs/{org}/image-defaults/{level}", h.clearImageDefault)
@@ -135,6 +143,7 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("GET /api/orgs/{org}/vms", h.listVMs)
 	mux.HandleFunc("POST /api/orgs/{org}/vms", h.createVM)
 	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}", h.getVM)
+	mux.HandleFunc("GET /api/orgs/{org}/builder-vms", h.listBuilderVMs)
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/start", h.powerVM("start", proto.PowerRunning, ""))
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/shutdown", h.powerVM("shutdown", proto.PowerStopped, proto.StopGraceful))
 	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/stop", h.powerVM("stop", proto.PowerStopped, proto.StopHard))

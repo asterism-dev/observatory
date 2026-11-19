@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,8 +32,10 @@ const (
 	VersionFromBuild = "build"
 	VersionFromPush  = "push"
 
-	buildLogKeep   = 5 << 20
-	buildLogMarker = "\n--- log truncated ---\n"
+	buildLogKeep      = 5 << 20
+	buildLogMarker    = "\n--- log truncated ---\n"
+	BuildLogLiveCap   = 64 << 20
+	buildLogCapMarker = "\n--- log limit reached, further output dropped ---\n"
 )
 
 // Image of the platform has a nil org in the database; OrgID is then the zero uuid.
@@ -450,6 +455,64 @@ func (s *Store) UpdateImageBuild(ctx context.Context, b ImageBuild) error {
 	return nil
 }
 
+// ActiveBuilds lists queued and running builds of every org, oldest first.
+func (s *Store) ActiveBuilds(ctx context.Context) ([]ImageBuild, error) {
+	rows, err := s.q.Query(ctx, "SELECT "+buildCols+" FROM image_builds WHERE state IN ('queued', 'running') ORDER BY queued_at, id")
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ImageBuild, error) { return scanBuild(r) })
+}
+
+// StartImageBuild moves a queued build to running on its builder VM; ErrConflict when it is no longer queued.
+func (s *Store) StartImageBuild(ctx context.Context, id, node, vm uuid.UUID, secret string, at time.Time) error {
+	hash := sha256.Sum256([]byte(secret))
+	tag, err := s.q.Exec(ctx, `UPDATE image_builds SET state = 'running', node_id = $2, vm_id = $3, secret_hash = $4, started_at = $5
+		WHERE id = $1 AND state = 'queued'`, id, node, vm, hash[:], at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// FinishImageBuild ends a queued or running build; ErrConflict when it already ended.
+func (s *Store) FinishImageBuild(ctx context.Context, id uuid.UUID, state, digest, msg string, at time.Time) (ImageBuild, error) {
+	b, err := scanBuild(s.q.QueryRow(ctx, `UPDATE image_builds SET state = $2, digest = $3, error = $4, finished_at = $5, secret_hash = NULL
+		WHERE id = $1 AND state IN ('queued', 'running') RETURNING `+buildCols, id, state, digest, msg, at))
+	if errors.Is(err, ErrNotFound) {
+		if _, err := s.ImageBuild(ctx, id); err != nil {
+			return ImageBuild{}, err
+		}
+		return ImageBuild{}, ErrConflict
+	}
+	return b, err
+}
+
+// BuildBySecret returns the running build the secret belongs to, else ErrNotFound.
+func (s *Store) BuildBySecret(ctx context.Context, secret string) (ImageBuild, error) {
+	hash := sha256.Sum256([]byte(secret))
+	return scanBuild(s.q.QueryRow(ctx, "SELECT "+buildCols+" FROM image_builds WHERE secret_hash = $1 AND state = 'running'", hash[:]))
+}
+
+// RunningBuildOnVM returns the running build of a builder VM, else ErrNotFound.
+func (s *Store) RunningBuildOnVM(ctx context.Context, vm uuid.UUID) (ImageBuild, error) {
+	return scanBuild(s.q.QueryRow(ctx, "SELECT "+buildCols+" FROM image_builds WHERE vm_id = $1 AND state = 'running'", vm))
+}
+
+// BuildSecret derives the build's credential from the org key, so the hub can render the builder VM's env again while only a hash is stored.
+func (s *Store) BuildSecret(ctx context.Context, org, build uuid.UUID) (string, error) {
+	key, err := s.orgKey(ctx, org)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("image-build:" + build.String()))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
 func (s *Store) ImageBuilds(ctx context.Context, image uuid.UUID) ([]ImageBuild, error) {
 	rows, err := s.q.Query(ctx, "SELECT "+buildCols+" FROM image_builds WHERE image_id = $1 ORDER BY queued_at DESC, id", image)
 	if err != nil {
@@ -458,18 +521,47 @@ func (s *Store) ImageBuilds(ctx context.Context, image uuid.UUID) ([]ImageBuild,
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ImageBuild, error) { return scanBuild(r) })
 }
 
+// AppendBuildLog stores chunk up to BuildLogLiveCap, then drops further output after one marker line.
 func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byte) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		finished, err := tx.lockBuildLog(ctx, build, "FOR SHARE")
+		// FOR UPDATE serializes appends, so chunk ids also commit in order for BuildLogSince.
+		finished, err := tx.lockBuildLog(ctx, build, "FOR UPDATE")
 		if err != nil {
 			return err
 		}
 		if finished {
 			return ErrBuildLogFinished
 		}
+		var stored int64
+		if err := tx.q.QueryRow(ctx, "SELECT live_log_bytes FROM image_builds WHERE id = $1", build).Scan(&stored); err != nil {
+			return err
+		}
+		// Above the cap means the marker is already stored.
+		if stored > BuildLogLiveCap {
+			return nil
+		}
+		if room := BuildLogLiveCap - stored; int64(len(chunk)) > room {
+			chunk = append(chunk[:room:room], buildLogCapMarker...)
+			stored = BuildLogLiveCap + 1
+		} else {
+			stored += int64(len(chunk))
+		}
+		if _, err := tx.q.Exec(ctx, "UPDATE image_builds SET live_log_bytes = $2 WHERE id = $1", build, stored); err != nil {
+			return err
+		}
 		_, err = tx.q.Exec(ctx, "INSERT INTO image_build_log_chunks (build_id, chunk) VALUES ($1, $2)", build, chunk)
 		return err
 	})
+}
+
+// BuildLogSince returns the chunks after chunk id after and the last id read, or finished once the log is compacted.
+func (s *Store) BuildLogSince(ctx context.Context, build uuid.UUID, after int64) (chunk []byte, last int64, finished bool, err error) {
+	if finished, err = s.lockBuildLog(ctx, build, ""); err != nil || finished {
+		return nil, after, finished, err
+	}
+	err = s.q.QueryRow(ctx, `SELECT coalesce(string_agg(chunk, ''::bytea ORDER BY id), ''::bytea), coalesce(max(id), $2)
+		FROM image_build_log_chunks WHERE build_id = $1 AND id > $2`, build, after).Scan(&chunk, &last)
+	return chunk, last, false, err
 }
 
 // lockBuildLog locks the build row so appends and the compaction in FinishBuildLog cannot interleave.

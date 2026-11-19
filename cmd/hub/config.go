@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
@@ -15,6 +16,8 @@ type config struct {
 	Dev, DevSkipVerify                                                                                                               bool
 	DevClaudeTokenURL, DocsURL                                                                                                       string
 	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
+	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
+	BuilderImage, BuilderHubURL string
 }
 
 const minTokenLen = 32
@@ -82,6 +85,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 		if cfg.RegistryEventsSecret = getenv("OBSERVATORY_REGISTRY_EVENTS_SECRET"); len(cfg.RegistryEventsSecret) < minTokenLen {
 			return config{}, fmt.Errorf("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_EVENTS_SECRET of at least %d characters", minTokenLen)
 		}
+	}
+	if cfg.BuilderImage = getenv("OBSERVATORY_BUILDER_IMAGE"); cfg.BuilderImage == "" {
+		cfg.BuilderImage = builds.BuilderRepo
+	}
+	if cfg.BuilderHubURL = getenv("OBSERVATORY_BUILDER_HUB_URL"); cfg.BuilderHubURL == "" {
+		cfg.BuilderHubURL = cfg.PublicURL
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

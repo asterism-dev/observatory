@@ -1892,3 +1892,37 @@ func TestImagePullRetried(t *testing.T) {
 	case <-time.After(400 * time.Millisecond):
 	}
 }
+
+func TestDesiredBuilderVM(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.envVar("OWNER_SECRET", "owner")
+	e.sshKey(e.owner)
+	digest := "sha256:" + strings.Repeat("c", 64)
+	n, cred := e.node(e.org.ID, "a")
+	builder, err := e.s.CreateVM(ctx, store.VM{OrgID: e.org.ID, NodeID: n.ID, UserID: &e.owner, Name: "build-x", CPUs: 2, MemoryMB: 4096, DiskGB: 40, CreatedBy: e.owner,
+		Kind: store.VMKindBuilder, ImageRef: "ghcr.io/asterism-dev/observatory-builder@" + digest, ImageDigest: digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.BootBuildersWith(func(_ context.Context, v store.VM) (map[string]string, []proto.IntegrationToken, error) {
+		if v.ID != builder.ID {
+			t.Errorf("hook called for %s", v.Name)
+		}
+		return map[string]string{"OBSERVATORY_BUILD_ID": "b"}, []proto.IntegrationToken{{Kind: "github", Token: "real"}}, nil
+	})
+	got := e.connect(cred).desired().Desired
+	if len(got) != 1 {
+		t.Fatalf("desired: %+v", got)
+	}
+	d := got[0]
+	if img := d.Spec.Image; img == nil || img.Repo != "ghcr.io/asterism-dev/observatory-builder" || img.Digest != digest || img.PullToken != "" || img.Gone {
+		t.Fatalf("builder image = %+v", d.Spec.Image)
+	}
+	if len(d.Boot.Env) != 1 || d.Boot.Env["OBSERVATORY_BUILD_ID"] != "b" || len(d.Boot.SSHPublicKeys) != 0 || d.Egress != nil {
+		t.Fatalf("builder boot = %+v, egress %+v", d.Boot, d.Egress)
+	}
+	if len(d.Integrations) != 1 || d.Integrations[0].Token != "real" {
+		t.Fatalf("builder integrations = %+v", d.Integrations)
+	}
+}

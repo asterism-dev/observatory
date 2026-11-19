@@ -214,7 +214,7 @@ func (h *api) vmFromPath(w http.ResponseWriter, r *http.Request, act string) (st
 		return store.VM{}, false
 	}
 	v, err := h.store.VM(r.Context(), m.Org.ID, id)
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) || err == nil && v.Kind == store.VMKindBuilder {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.VM{}, false
 	}

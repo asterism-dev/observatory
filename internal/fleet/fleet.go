@@ -51,7 +51,11 @@ type Fleet struct {
 
 	registryHost string
 	issuer       *registry.Issuer
+	builderBoot  BuilderBoot
 }
+
+// BuilderBoot returns a builder VM's whole env and its integration tokens.
+type BuilderBoot func(ctx context.Context, v store.VM) (map[string]string, []proto.IntegrationToken, error)
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
 	maxSeq, err := s.MaxReleaseSeq(ctx)
@@ -69,6 +73,9 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 func (f *Fleet) PullImagesFrom(host string, iss registry.Issuer) {
 	f.registryHost, f.issuer = host, &iss
 }
+
+// BootBuildersWith makes builder VMs boot with fn's env instead of their owner's; call it before nodes connect.
+func (f *Fleet) BootBuildersWith(fn BuilderBoot) { f.builderBoot = fn }
 
 // Close stops update runs and waits for them; they also stop when New's ctx ends.
 func (f *Fleet) Close() {
@@ -333,6 +340,11 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 	if v.ImageDigest == "" || v.ImageRef == platformImageRef || v.Provisioned && strings.HasSuffix(v.Image, "@"+v.ImageDigest) {
 		return nil, nil
 	}
+	if v.Kind == store.VMKindBuilder {
+		// The builder image is public, so the node pulls it anonymously.
+		repo, _, _ := strings.Cut(v.ImageRef, "@")
+		return &proto.ImageRef{Repo: repo, Digest: v.ImageDigest}, nil
+	}
 	gone := &proto.ImageRef{Digest: v.ImageDigest, Gone: true}
 	if f.issuer == nil {
 		slog.Error("vm image without a registry", "vm", v.ID)
@@ -381,6 +393,9 @@ func (f *Fleet) nics(ctx context.Context, v store.VM, rank map[uuid.UUID]int) ([
 
 // ponytail: keys and env resolved per VM; cache per owner if nodes carry many VMs of one owner.
 func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.Boot, _ []proto.HostBoundSecret, _ []proto.IntegrationToken, unresolved bool, _ error) {
+	if v.Kind == store.VMKindBuilder {
+		return f.bootBuilder(ctx, v)
+	}
 	var owner string
 	var users []uuid.UUID
 	switch {
@@ -419,6 +434,23 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 		keys = []string{}
 	}
 	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, unresolved, nil
+}
+
+// bootBuilder gives a builder VM no SSH keys and nothing of its owner's env; one whose build ended (ErrNotFound) gets an empty env until it is deleted.
+func (f *Fleet) bootBuilder(ctx context.Context, v store.VM) (*proto.Boot, []proto.HostBoundSecret, []proto.IntegrationToken, bool, error) {
+	boot := &proto.Boot{SSHPublicKeys: []string{}, Env: map[string]string{}}
+	if f.builderBoot == nil {
+		slog.Error("builder vm without a build scheduler", "vm", v.ID)
+		return boot, nil, nil, false, nil
+	}
+	env, tokens, err := f.builderBoot(ctx, v)
+	if errors.Is(err, store.ErrNotFound) {
+		return boot, nil, nil, false, nil
+	} else if err != nil {
+		return nil, nil, nil, false, err
+	}
+	boot.Env = env
+	return boot, nil, tokens, false, nil
 }
 
 // IntegrationEntries turns resolved integrations into proxy secrets (proxy mode) and the tokens a VM receives.

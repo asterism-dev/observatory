@@ -226,6 +226,35 @@ func TestBuildLogTruncation(t *testing.T) {
 	}
 }
 
+func TestBuildLogLiveCap(t *testing.T) {
+	ctx := context.Background()
+	s, org, user, _ := newImageEnv(t)
+	img := newImage(t, s, org, user, "cap")
+	b, err := s.CreateImageBuild(ctx, store.ImageBuild{ImageID: img.ID, Revision: 1, StartedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := bytes.Repeat([]byte("x"), 8<<20)
+	for range store.BuildLogLiveCap / len(chunk) {
+		if err := s.AppendBuildLog(ctx, b.ID, chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, more := range []string{"over\n", "dropped\n"} {
+		if err := s.AppendBuildLog(ctx, b.ID, []byte(more)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.BuildLog(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := "\n--- log limit reached, further output dropped ---\n"
+	if len(got) != store.BuildLogLiveCap+len(marker) || !strings.HasSuffix(string(got), marker) {
+		t.Fatalf("capped log: %d bytes, ends %q", len(got), got[max(0, len(got)-80):])
+	}
+}
+
 func TestImageDefaultFallsBackWhenImageDeleted(t *testing.T) {
 	ctx := context.Background()
 	s, org, user, team := newImageEnv(t)

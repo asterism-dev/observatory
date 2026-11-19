@@ -118,6 +118,23 @@ func (s *Store) Integration(ctx context.Context, org, id uuid.UUID) (Integration
 	return scanIntegration(s.q.QueryRow(ctx, "SELECT "+integrationCols+" FROM integrations WHERE org_id = $1 AND id = $2", org, id))
 }
 
+// IntegrationToken returns the decrypted access token of v.
+func (s *Store) IntegrationToken(ctx context.Context, v Integration) (string, error) {
+	key, err := s.orgKey(ctx, v.OrgID)
+	if err != nil {
+		return "", err
+	}
+	var nonce, ct []byte
+	err = s.q.QueryRow(ctx, "SELECT nonce, ciphertext FROM integrations WHERE org_id = $1 AND id = $2", v.OrgID, v.ID).Scan(&nonce, &ct)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	plain, err := seal.Open(key, nonce, ct, integrationAAD(v.OrgID, v.ID, "access"))
+	return string(plain), err
+}
+
 func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec IntegrationSecret) (Integration, error) {
 	if v.Mode == "" {
 		v.Mode = integrations.ModeProxy

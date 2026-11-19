@@ -93,6 +93,8 @@ const (
 	ActionImageVersionDelete  = "image:version-delete"
 	ActionImageTag            = "image:tag"
 	ActionImageDefault        = "image:default"
+	ActionImageBuild          = "image:build"
+	ActionImageBuildCancel    = "image:build-cancel"
 )
 
 type AuditEntry struct {

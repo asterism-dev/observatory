@@ -24,7 +24,7 @@ const (
 	registryCredentialTTL = 12 * time.Hour
 )
 
-// BuildCredentials resolves a per-build secret to its queued or running build, else store.ErrNotFound.
+// BuildCredentials resolves a per-build secret to its running build, else store.ErrNotFound.
 type BuildCredentials interface {
 	BuildBySecret(ctx context.Context, secret string) (store.ImageBuild, error)
 }
@@ -131,14 +131,18 @@ func (t *registryTokens) grant(ctx context.Context, p registryPrincipal, scope s
 	}
 	var pull, push bool
 	switch {
+	case p.build.ID != uuid.Nil && img.ID == p.build.ImageID:
+		pull, push = true, true
 	case p.build.ID != uuid.Nil:
-		pull, push = img.ID == p.build.ImageID, img.ID == p.build.ImageID
+		if pull, err = t.buildMayPull(ctx, p.build, img); err != nil {
+			return a, err
+		}
 	case img.Scope != store.EnvScopeUser || *img.OwnerID == p.user:
 		sub, obj := authz.UserSubject(p.user), imageObject(img.Scope, img.OwnerID)
 		pull, push = t.z.Allowed(sub, img.OrgID, obj, "image:use"), t.z.Allowed(sub, img.OrgID, obj, "image:build")
 	}
 	if push && slices.Contains(requested, "push") {
-		over, err := t.overStorageLimit(ctx, img.OrgID)
+		over, err := overImageStorageLimit(ctx, t.store, img.OrgID)
 		if err != nil {
 			return a, err
 		}
@@ -153,8 +157,8 @@ func (t *registryTokens) grant(ctx context.Context, p registryPrincipal, scope s
 	return a, nil
 }
 
-func (t *registryTokens) overStorageLimit(ctx context.Context, org uuid.UUID) (bool, error) {
-	ls, err := t.store.Limits(ctx, org)
+func overImageStorageLimit(ctx context.Context, s *store.Store, org uuid.UUID) (bool, error) {
+	ls, err := s.Limits(ctx, org)
 	if err != nil {
 		return false, err
 	}
@@ -162,8 +166,20 @@ func (t *registryTokens) overStorageLimit(ctx context.Context, org uuid.UUID) (b
 	if limit == nil {
 		return false, nil
 	}
-	used, err := t.store.OrgImageUsage(ctx, org)
+	used, err := s.OrgImageUsage(ctx, org)
 	return used >= int64(*limit)<<30, err
+}
+
+// buildMayPull lets a build pull base images at its image's level or broader that the build's starter may use.
+func (t *registryTokens) buildMayPull(ctx context.Context, b store.ImageBuild, img store.Image) (bool, error) {
+	built, err := t.store.ImageByID(ctx, b.ImageID)
+	if err != nil {
+		return false, err
+	}
+	if img.OrgID != built.OrgID || !refAllowed(store.RecipeRef{Scope: img.Scope, OwnerID: img.OwnerID}, built.Scope, built.OwnerID) {
+		return false, nil
+	}
+	return t.z.Allowed(authz.UserSubject(b.StartedBy), img.OrgID, imageObject(img.Scope, img.OwnerID), "image:use"), nil
 }
 
 var realmPattern = regexp.MustCompile(`realm="[^"]*"`)
