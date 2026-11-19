@@ -1872,8 +1872,9 @@ func TestDesiredVMImageIndex(t *testing.T) {
 			}
 		}
 	}
+	node := e.connect(cred)
 	got := map[string]*proto.ImageRef{}
-	for _, d := range e.connect(cred).desired().Desired {
+	for _, d := range node.desired().Desired {
 		got[d.Spec.Name] = d.Spec.Image
 	}
 	if got["prepared"] != nil {
@@ -1881,6 +1882,17 @@ func TestDesiredVMImageIndex(t *testing.T) {
 	}
 	if f := got["fresh"]; f == nil || f.Digest != child || f.Repo != "hub.test/i/"+img.ID.String() {
 		t.Fatalf("fresh image = %+v, want the amd64 child", f)
+	}
+	if err := e.s.DeleteImageVersion(ctx, img.ID, index); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	got = map[string]*proto.ImageRef{}
+	for _, d := range node.desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["prepared"] != nil || got["fresh"] == nil || !got["fresh"].Gone {
+		t.Fatalf("after deleting the version: prepared %+v, fresh %+v", got["prepared"], got["fresh"])
 	}
 }
 

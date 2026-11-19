@@ -359,6 +359,10 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 		ver, err = f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
 	}
 	if errors.Is(err, store.ErrNotFound) {
+		// A VM prepared from a since-deleted index version reported its child digest, which no row maps back anymore.
+		if v.Provisioned && v.Image != "" {
+			return nil, nil
+		}
 		return gone, nil
 	}
 	if err != nil {
