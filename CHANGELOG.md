@@ -1,3 +1,9 @@
+## v0.10.0 (2026-11-19)
+
+### Feat
+
+- **hub**: hub url for nodes and plain-http aware image pulls (#29)
+
 ## v0.9.0 (2026-11-19)
 
 ### Feat
