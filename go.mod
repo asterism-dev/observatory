@@ -14,6 +14,7 @@ require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/insomniacslk/dhcp v0.0.0-20261014062924-c6bb46ad3f3a
 	github.com/jackc/pgx/v5 v5.13.0
+	github.com/pkg/sftp v1.13.12
 	github.com/pressly/goose/v3 v3.30.1
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -46,7 +47,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
-	github.com/pkg/sftp v1.13.12 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
