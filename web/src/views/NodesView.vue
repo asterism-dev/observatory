@@ -6,10 +6,10 @@ import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
-import { gb, stateTones, type NodeInfo } from '@/composables/nodes'
+import { gb, imageLine, stateTones, type NodeInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const { org, can } = useOrg()
 
@@ -21,6 +21,7 @@ const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: t('nodes.name') },
   { key: 'state', label: t('nodes.state') },
   { key: 'version', label: t('nodes.version') },
+  { key: 'image', label: t('nodes.guestImage') },
   { key: 'cpu', label: t('nodes.cpu') },
   { key: 'memory', label: t('nodes.memory') },
   { key: 'vmCount', label: t('nodes.vms') },
@@ -66,6 +67,8 @@ watch(
     <Table :columns="columns" :rows="nodes" row-key="id">
       <template #cell-state="{ row }"><Badge :tone="stateTones[row.state as NodeInfo['state']]">{{ t(`nodes.states.${row.state}`) }}</Badge></template>
       <template #cell-version="{ row }">{{ row.version || '–' }}</template>
+      <template #cell-image="{ row }"><i18n-t v-if="row.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
+        <template v-else>{{ imageLine(row.image, t, locale) }}</template></template>
       <template #cell-cpu="{ row }">{{ row.state === 'pending' ? '–' : `${row.usedCPUs} / ${row.cpus}` }}</template>
       <template #cell-memory="{ row }">{{ row.state === 'pending' ? '–' : `${gb(row.usedMemoryMB)} / ${gb(row.memoryMB)} GB` }}</template>
       <template #cell-actions="{ row }">

@@ -41,7 +41,7 @@ const problems = computed(() => ({
   name: namePattern.test(name.value) ? '' : t('vms.invalidName'),
   cpus: inRange(cpus.value, 1, 32) ? '' : t('vms.invalidRange', { min: 1, max: 32 }),
   memory: inRange(memoryMB.value, 512, 131072) ? '' : t('vms.invalidRange', { min: '0.5', max: 128 }),
-  disk: inRange(diskGB.value, 5, 2048) ? '' : t('vms.invalidRange', { min: 5, max: 2048 }),
+  disk: inRange(diskGB.value, 10, 2048) ? '' : t('vms.invalidRange', { min: 10, max: 2048 }),
 }))
 const valid = computed(() => !Object.values(problems.value).some(Boolean) && !!selected.value && !!nodeId.value)
 
@@ -113,6 +113,7 @@ async function create() {
         <NumberInput v-model="memoryGB" :aria-label="t('vms.memory')" :invalid="!!problems.memory" />
       </label>
       <small v-if="problems.memory" role="alert">{{ problems.memory }}</small>
+      <small v-else>{{ t('vms.memoryHint') }}</small>
       <label>
         {{ t('vms.disk') }} (GB)
         <NumberInput v-model="diskGB" :aria-label="t('vms.disk')" :invalid="!!problems.disk" />

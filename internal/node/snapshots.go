@@ -415,6 +415,11 @@ func (a *Agent) forkLocal(d proto.DesiredVM) (VMFile, error) {
 	}
 	f := VMFile{Spec: d.Spec, MAC: RandomMAC(), Power: d.Power, StopMode: d.StopMode, Generation: d.Generation, Boot: d.Boot,
 		AutoSuspendMinutes: d.AutoSuspendMinutes, WakeSeq: d.WakeSeq}
+	a.mu.Lock()
+	if src, ok := a.vms[fk.SourceVMID]; ok {
+		f.Image = src.file.Image
+	}
+	a.mu.Unlock()
 	dir := VMDir(a.VMsDir, f.Spec.ID)
 	state := filepath.Join(dir, StateDir)
 	err := os.MkdirAll(dir, 0o700)

@@ -137,3 +137,46 @@ func TestBzImageToELFRejectsBomb(t *testing.T) {
 		t.Fatal("accepted a kernel larger than the limit")
 	}
 }
+
+// rootDisk builds a GPT disk whose only partition is an ext4 labelled cloudimg-rootfs holding /etc/observatory/image.
+func rootDisk(t *testing.T, content []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "root.img")
+	d, err := diskfs.Create(path, 64<<20, diskfs.SectorSizeDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	table := &gpt.Table{Partitions: []*gpt.Partition{{Index: 1, Start: 2048, End: 2048 + (48<<20)/512 - 1, Size: 48 << 20, Type: gpt.LinuxFilesystem, Name: "root"}}}
+	if err := d.Partition(table); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := d.CreateFilesystem(disk.FilesystemSpec{Partition: 1, FSType: filesystem.TypeExt4, VolumeLabel: "cloudimg-rootfs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mkdir("etc/observatory"); err != nil {
+		t.Fatal(err)
+	}
+	f, err := fs.OpenFile("/etc/observatory/image", os.O_CREATE|os.O_RDWR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestReadGuestFile(t *testing.T) {
+	got, err := readGuestFile(rootDisk(t, []byte("2026.11.1-3f9a0c1e\n")), "/etc/observatory/image", 64)
+	if err != nil || string(got) != "2026.11.1-3f9a0c1e\n" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := readGuestFile(rootDisk(t, bytes.Repeat([]byte("x"), 65)), "/etc/observatory/image", 64); err == nil {
+		t.Fatal("read a file over the limit")
+	}
+	if _, err := readGuestFile(bootDisk(t), "/etc/observatory/image", 64); err == nil {
+		t.Fatal("read from a disk without cloudimg-rootfs")
+	}
+}

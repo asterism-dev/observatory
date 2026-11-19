@@ -2,6 +2,8 @@ package node
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -92,11 +95,11 @@ func TestEnsureBaseImageDownloadsOnce(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	p1, err := EnsureBaseImage(dir, srv.URL+"/img")
+	p1, err := EnsureBaseImage(dir, srv.URL+"/img", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := EnsureBaseImage(dir, srv.URL+"/img")
+	p2, err := EnsureBaseImage(dir, srv.URL+"/img", "")
 	if err != nil || p1 != p2 {
 		t.Fatalf("second call: %q %v", p2, err)
 	}
@@ -110,8 +113,32 @@ func TestEnsureBaseImageHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	dir := t.TempDir()
-	if _, err := EnsureBaseImage(dir, srv.URL+"/img"); err == nil {
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", ""); err == nil {
 		t.Fatal("expected error")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("leftover files: %v", entries)
+	}
+}
+
+func TestEnsureBaseImageStalledServer(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	old := downloadClient
+	t.Cleanup(func() { downloadClient = old })
+	c := *downloadClient
+	c.Timeout = 200 * time.Millisecond
+	downloadClient = &c
+	dir := t.TempDir()
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", ""); err == nil {
+		t.Fatal("expected a timeout")
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("leftover files: %v", entries)
@@ -276,5 +303,41 @@ func TestCloudInitStaticPrimary(t *testing.T) {
 	_, _, dhcp := CloudInit(f, PrimaryNet{})
 	if !strings.Contains(dhcp, "dhcp4: true") || !strings.Contains(dhcp, "dhcp-identifier: mac") {
 		t.Errorf("zero PrimaryNet must keep DHCP:\n%s", dhcp)
+	}
+}
+
+func TestEnsureBaseImageChecksum(t *testing.T) {
+	data := bytes.Repeat([]byte{1, 2, 3, 4}, 1<<18)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write(data) }))
+	defer srv.Close()
+	sum := sha256.Sum256(data)
+
+	dir := t.TempDir()
+	if _, err := EnsureBaseImage(dir, srv.URL+"/img", hex.EncodeToString(sum[:])); err != nil {
+		t.Fatalf("right hash: %v", err)
+	}
+
+	bad := t.TempDir()
+	_, err := EnsureBaseImage(bad, srv.URL+"/img", strings.Repeat("0", 64))
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("wrong hash: %v", err)
+	}
+	if entries, _ := os.ReadDir(bad); len(entries) != 0 {
+		t.Fatalf("leftover files: %v", entries)
+	}
+
+	if _, err := EnsureBaseImage(t.TempDir(), srv.URL+"/img", ""); err != nil {
+		t.Fatalf("empty hash: %v", err)
+	}
+}
+
+func TestCloudInitDockerGroup(t *testing.T) {
+	f := VMFile{Spec: proto.VMSpec{ID: "abc123", Name: "dev"}, Image: "2026.11.1-aaaaaaaa"}
+	if ud, _, _ := CloudInit(f, PrimaryNet{}); !strings.Contains(ud, "    shell: /bin/bash\n    groups: [docker]\n") {
+		t.Errorf("user-data without docker group:\n%s", ud)
+	}
+	f.Image = ""
+	if ud, _, _ := CloudInit(f, PrimaryNet{}); strings.Contains(ud, "docker") {
+		t.Errorf("stock image user-data has docker group:\n%s", ud)
 	}
 }

@@ -41,7 +41,7 @@ func testKey(t *testing.T) (key, pub string) {
 
 func keyFor(t *testing.T, p *Provider, f node.VMFile) string {
 	t.Helper()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
+	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,11 @@ func TestFastBootCancelledTakeoffReclonesBase(t *testing.T) {
 	if err := os.MkdirAll(p.VMsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.buildTemplate(context.Background(), key, f); err != nil {
+	base, err := p.baseFor(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.buildTemplate(context.Background(), key, base, f); err != nil {
 		t.Fatal(err)
 	}
 	dir := prepare(t, p, f)
@@ -302,10 +306,6 @@ func TestFastBootCancelledTakeoffReclonesBase(t *testing.T) {
 	if inst, err := p.Start(ctx, f, dir); err == nil {
 		inst.Kill()
 		t.Fatal("start with a cancelled context succeeded")
-	}
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL)
-	if err != nil {
-		t.Fatal(err)
 	}
 	st, _ := os.Stat(base)
 	if out, err := exec.Command("cmp", "-n", strconv.FormatInt(st.Size(), 10), base, filepath.Join(dir, "root.img")).CombinedOutput(); err != nil {

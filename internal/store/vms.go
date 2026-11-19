@@ -37,13 +37,14 @@ type VM struct {
 	CreatedAt          time.Time
 	AutoSuspendMinutes int
 	WakeSeq            uint64
+	Image              string
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -230,7 +231,8 @@ func (s *Store) SetVMStatus(ctx context.Context, node uuid.UUID, st proto.VMStat
 	}
 	_, err = s.q.Exec(ctx, `
 		UPDATE vms SET state = $3, ip = $4, error = $5,
+			image = CASE WHEN $6 <> '' THEN $6 ELSE image END,
 			provisioned = provisioned OR $3 IN ('starting', 'running', 'stopped', 'paused', 'hibernated', 'suspended')
-		WHERE id = $1 AND node_id = $2`, id, node, st.State, st.IP, st.Error)
+		WHERE id = $1 AND node_id = $2`, id, node, st.State, st.IP, st.Error, st.Image)
 	return err
 }

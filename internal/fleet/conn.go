@@ -123,6 +123,12 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			f.NoteMetrics(ctx, node.ID, m.Metrics)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
+		case m.Type == "image" && m.Image != nil:
+			if err := f.store.SetNodeImage(ctx, node.ID, *m.Image); err != nil {
+				slog.Error("node image", "node", node.ID, "err", err)
+			} else {
+				f.NotifyOrg(node.OrgID)
+			}
 		}
 	}
 }
@@ -157,6 +163,11 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 	}
 	if err := f.store.UpdateNodeInfo(ctx, node, reg.CPUs, reg.MemoryMB, machine, reg.Version); err != nil {
 		return err
+	}
+	if reg.Image != nil {
+		if err := f.store.SetNodeImage(ctx, node, *reg.Image); err != nil {
+			return err
+		}
 	}
 	// Statuses land before the first desired list so it carries the right provisioned flags.
 	for _, st := range reg.VMs {

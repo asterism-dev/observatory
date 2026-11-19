@@ -127,11 +127,12 @@ def digest(tok):
     return hashlib.sha256(tok.encode()).hexdigest()
 
 
-def write_private(path, text):
+def write_private(path, text, mode=0o600):
     tmp = path + ".vmm-new"
     if os.path.lexists(tmp):
         os.remove(tmp)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    os.fchmod(fd, mode)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
@@ -209,6 +210,28 @@ def sync_linear(home, state):
         log("claude mcp add failed")
 
 
+def sync_codex(home, state):
+    try:
+        with open(ROOT + "/usr/local/share/vmm/AGENTS.md", encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return
+    path = home + "/.codex/AGENTS.md"
+    try:
+        with open(path, "rb") as f:
+            current = hashlib.sha256(f.read()).hexdigest()
+    except FileNotFoundError:
+        current = None
+    if current is not None and current != state.get("codex_agents"):
+        # The user's own file, or ours edited by the user.
+        state.pop("codex_agents", None)
+        return
+    if current != digest(text):
+        os.makedirs(home + "/.codex", 0o700, exist_ok=True)
+        write_private(path, text, 0o644)
+    state["codex_agents"] = digest(text)
+
+
 def sync_user(home):
     path = STATE_DIR + "/integrations.json"
     try:
@@ -219,7 +242,7 @@ def sync_user(home):
     if not isinstance(state, dict):
         state = {}
     old = dict(state)
-    for name, part in (("claude credentials", sync_claude), ("linear mcp", sync_linear)):
+    for name, part in (("claude credentials", sync_claude), ("linear mcp", sync_linear), ("codex agents", sync_codex)):
         try:
             part(home, state)
         except OSError:

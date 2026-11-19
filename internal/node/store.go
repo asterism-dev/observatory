@@ -29,6 +29,8 @@ type VMFile struct {
 	// Takeoff makes the next resume of the memory state give the guest this VM's identity (a fork's first start).
 	Takeoff     bool   `json:"takeoff,omitempty"`
 	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
+	// Image is the guest image version the root disk was cloned from; empty means the stock or a custom image.
+	Image string `json:"image,omitempty"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
 	// Egress holds host-bound values and CA keys: memory only, refreshed with Boot.

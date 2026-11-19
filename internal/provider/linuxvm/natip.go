@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-const DefaultImageURL = "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
-
 const (
 	natFile    = "nat-ip"
 	NATGateway = "192.168.64.1"

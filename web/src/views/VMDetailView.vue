@@ -26,6 +26,7 @@ const confirmDelete = ref(false)
 const networksOpen = ref(false)
 const disksOpen = ref(false)
 const copyFailed = ref(false)
+const desktopCopyFailed = ref(false)
 const egress = ref<{ secrets: number; hosts: string[]; caNotAfter: string | null; trustChanged: boolean } | null>(null)
 const integrations = ref<{ kind: IntegrationKind; scope?: string; teamName?: string; mode?: string }[]>([])
 
@@ -104,6 +105,15 @@ const remove = () =>
     router.replace(`/orgs/${org.value?.id}/vms`)
   })
 
+async function copyDesktop() {
+  desktopCopyFailed.value = false
+  try {
+    await navigator.clipboard.writeText(`xpra attach ssh://ubuntu@${vm.value?.dnsName}/100`)
+  } catch {
+    desktopCopyFailed.value = true
+  }
+}
+
 async function copySsh() {
   copyFailed.value = false
   try {
@@ -160,6 +170,17 @@ watch(
           </template>
           <template v-else>–</template>
         </dd>
+        <dt>{{ t('vms.image') }}</dt>
+        <dd>{{ vm.image || (vm.stockImage ? t('vms.imageStock') : '–') }}</dd>
+        <template v-if="vm.image && vm.dnsName">
+          <dt>{{ t('vms.desktop') }}</dt>
+          <dd>
+            <code>xpra attach ssh://ubuntu@{{ vm.dnsName }}/100</code>
+            <Button size="sm" @click="copyDesktop">{{ t('networks.copy') }}</Button>
+            <small v-if="desktopCopyFailed" role="alert">{{ t('networks.copyFailed') }}</small>
+            <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
+          </dd>
+        </template>
         <template v-if="egress">
           <dt>{{ t('vms.egress') }}</dt>
           <dd>

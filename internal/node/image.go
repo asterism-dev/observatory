@@ -9,13 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lima-vm/go-qcow2reader"
 	"github.com/lima-vm/go-qcow2reader/convert"
 )
 
 // EnsureBaseImage downloads url once into imagesDir and converts it (qcow2 or raw) to a raw disk.
-func EnsureBaseImage(imagesDir, url string) (string, error) {
+// A non-empty sha256Hex must match the downloaded file; an existing converted image is trusted as is.
+func EnsureBaseImage(imagesDir, url, sha256Hex string) (string, error) {
 	sum := sha256.Sum256([]byte(url))
 	raw := filepath.Join(imagesDir, hex.EncodeToString(sum[:8])+".raw")
 	if _, err := os.Stat(raw); err == nil {
@@ -26,8 +28,12 @@ func EnsureBaseImage(imagesDir, url string) (string, error) {
 	}
 	download := raw + ".download"
 	defer os.Remove(download)
-	if err := fetch(url, download); err != nil {
+	got, err := fetch(url, download)
+	if err != nil {
 		return "", err
+	}
+	if sha256Hex != "" && !strings.EqualFold(got, sha256Hex) {
+		return "", fmt.Errorf("base image %s: checksum mismatch", url)
 	}
 	part := raw + ".part"
 	if err := toRaw(download, part); err != nil {
@@ -37,24 +43,32 @@ func EnsureBaseImage(imagesDir, url string) (string, error) {
 	return raw, os.Rename(part, raw)
 }
 
-func fetch(url, dst string) error {
-	resp, err := http.Get(url)
+// downloadClient fails a stalled base download so the node reports it and retries instead of hanging.
+var downloadClient = func() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone() // 30 s connect, 10 s TLS handshake
+	t.ResponseHeaderTimeout = time.Minute
+	return &http.Client{Transport: t, Timeout: 30 * time.Minute}
+}()
+
+func fetch(url, dst string) (string, error) {
+	resp, err := downloadClient.Get(url)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: %s", url, resp.Status)
+		return "", fmt.Errorf("download %s: %s", url, resp.Status)
 	}
 	f, err := os.Create(dst)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(f, h), resp.Body); err != nil {
 		f.Close()
-		return err
+		return "", err
 	}
-	return f.Close()
+	return hex.EncodeToString(h.Sum(nil)), f.Close()
 }
 
 func toRaw(src, dst string) error {
@@ -108,7 +122,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if err := copyContents(out, in); err != nil {
 		out.Close()
 		return err
 	}
@@ -119,13 +133,18 @@ func copyFile(src, dst string) error {
 type PrimaryNet struct{ Address, Gateway string }
 
 func CloudInit(f VMFile, primary PrimaryNet) (userData, metaData, networkConfig string) {
+	groups := ""
+	if f.Image != "" {
+		// users: replaces cloud-init's default_user, so the image's cloud.cfg.d cannot add the group.
+		groups = "    groups: [docker]\n"
+	}
 	userData = fmt.Sprintf(`#cloud-config
 hostname: %s
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
-bootcmd:
+%sbootcmd:
   # Kernel and systemd output to the virtio console (console.log); takes effect from the second boot.
   - [sh, -c, 'test -f /etc/default/grub.d/99-vmm-console.cfg || { echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT console=tty1 console=hvc0\"" > /etc/default/grub.d/99-vmm-console.cfg && update-grub; }']
   # The disk list lives in the seed, not in user-data, so a reseed changes it without a new instance-id.
@@ -134,7 +153,7 @@ bootcmd:
 updates:
   network:
     when: [boot]
-`, f.Spec.Name)
+`, f.Spec.Name, groups)
 	metaData = fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", f.Spec.ID, f.Spec.Name)
 	// dhcp-identifier: mac makes the guest's DHCP lease findable by MAC (Ubuntu defaults to a DUID).
 	addressing := "    dhcp4: true\n    dhcp-identifier: mac\n"

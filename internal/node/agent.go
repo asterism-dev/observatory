@@ -79,6 +79,9 @@ type Agent struct {
 	// dying holds removed entries whose instance may still run; their disks stay in use until it exits.
 	dying    map[*vmEntry]bool
 	snapJobs map[snapKey]*snapshotJob
+	image    *proto.ImageStatus
+	// imageChanged is closed and replaced when the image changes or a waiting VM gets a newer desired.
+	imageChanged chan struct{}
 
 	// egressMu guards the proxies and the count of running processes per VM; taken after a.mu, never before it.
 	egressMu    sync.Mutex
@@ -113,8 +116,12 @@ type vmEntry struct {
 
 func (a *Agent) Run(ctx context.Context) error {
 	a.vms = map[string]*vmEntry{}
+	a.imageChanged = make(chan struct{})
 	if ts, ok := a.Provider.(TokenServer); ok {
 		ts.SetTokenLookup(a.integrationToken)
+	}
+	if gi, ok := a.Provider.(GuestImages); ok {
+		go gi.RunGuestImages(ctx, a.setImage)
 	}
 	if err := a.restoreAll(ctx); err != nil {
 		return err
@@ -244,7 +251,7 @@ func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 
 func (a *Agent) registerMsg() *proto.Register {
 	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
-		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version}
+		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version, Image: a.image}
 	reg.Hostname, _ = os.Hostname()
 	for _, e := range a.vms {
 		st := e.status
@@ -345,7 +352,13 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 		report(proto.VMStatus{ID: id, State: proto.StateError, Error: fmt.Sprintf("%s: %v", step, err)})
 	}
 	if prepare {
-		if err := a.prepare(ctx, e, f); err != nil {
+		if err := a.prepare(ctx, e, &f); err != nil {
+			if ctx.Err() != nil || errors.Is(err, errNewerDesired) {
+				// Deleted, or a queued desired applies once booted closes: it must find the VM at rest.
+				report(proto.VMStatus{ID: id, State: restingState(f)})
+				close(e.booted)
+				return
+			}
 			fail("prepare", err)
 			return
 		}
@@ -434,16 +447,82 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 	}
 }
 
-func (a *Agent) prepare(ctx context.Context, e *vmEntry, f VMFile) error {
-	if err := a.Provider.Prepare(ctx, f, VMDir(a.VMsDir, f.Spec.ID)); err != nil {
+// prepare sets f.Image to the image it prepared from, which Start needs again for a cold-boot fallback.
+func (a *Agent) prepare(ctx context.Context, e *vmEntry, f *VMFile) error {
+	if _, ok := a.Provider.(GuestImages); ok && f.Image == "" {
+		img, err := a.waitImage(ctx, e)
+		if err != nil {
+			return err
+		}
+		f.Image = img
+	}
+	if err := a.Provider.Prepare(ctx, *f, VMDir(a.VMsDir, f.Spec.ID)); err != nil {
 		return err
 	}
 	a.mu.Lock()
 	e.file.NeedsPrepare = false
+	e.file.Image = f.Image
 	saved := e.file
 	a.mu.Unlock()
 	// Booting without the cleared flag on disk would re-prepare (wipe the disks) on the next restart.
 	return SaveVM(a.VMsDir, saved)
+}
+
+// waitImage waits for the guest image (or the previous one while it builds) and returns its version, or "" for a custom image; it never settles for the stock image.
+func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
+	var shown string
+	for {
+		a.mu.Lock()
+		img, changed, newer, id := a.image, a.imageChanged, e.pending != nil && e.pending.Generation > e.file.Generation, e.file.Spec.ID
+		a.mu.Unlock()
+		switch {
+		case img != nil && img.State == proto.ImageReady:
+			return img.Version, nil
+		case img != nil && img.State == proto.ImageCustom:
+			return "", nil
+		case img != nil && img.Fallback != "":
+			return img.Fallback, nil
+		case newer:
+			return "", errNewerDesired
+		}
+		msg := PreparingImage
+		if img != nil && img.State == proto.ImageFailed {
+			msg += ": build failed: " + img.Error
+			if img.RetryAt != nil {
+				msg += "; next try " + img.RetryAt.Format(time.RFC3339)
+			}
+		}
+		if msg != shown {
+			a.reportEntry(e, proto.VMStatus{ID: id, State: proto.StateStarting, Error: msg})
+			shown = msg
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+}
+
+func (a *Agent) setImage(st proto.ImageStatus) {
+	a.mu.Lock()
+	a.image = &st
+	a.wakeImageWaitersLocked()
+	send := a.send
+	a.mu.Unlock()
+	if send != nil {
+		if err := send(proto.Message{Type: "image", Image: &st}); err != nil {
+			log.Printf("image: %v", err)
+		}
+	}
+}
+
+// wakeImageWaitersLocked makes VMs waiting for the image look at it and their queued desired again; a.mu must be held.
+func (a *Agent) wakeImageWaitersLocked() {
+	if a.imageChanged != nil {
+		close(a.imageChanged)
+	}
+	a.imageChanged = make(chan struct{})
 }
 
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
@@ -641,6 +720,7 @@ func (a *Agent) queue(ctx context.Context, e *vmEntry, d proto.DesiredVM) {
 	}
 	start := !e.waiting
 	e.waiting = true
+	a.wakeImageWaitersLocked()
 	a.mu.Unlock()
 	if start {
 		go a.applyPending(ctx, e)
@@ -835,7 +915,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 		return nil, "", nil
 	}
 	if f.NeedsPrepare {
-		if err := a.prepare(ctx, e, f); err != nil {
+		if err := a.prepare(ctx, e, &f); err != nil {
 			return nil, "", fmt.Errorf("prepare: %w", err)
 		}
 	}
@@ -967,9 +1047,13 @@ func (a *Agent) reportEntry(want *vmEntry, st proto.VMStatus) {
 	}
 	a.mu.Unlock()
 	if ok {
-		st.Disks = a.disks(f)
+		// Before Prepare there is no root.img; asking for disks would only log an error on every status.
+		if !f.NeedsPrepare {
+			st.Disks = a.disks(f)
+		}
 		st.Snapshots = a.snapshotInfos(f.Spec.ID)
 		st.RestoredSeq = f.RestoredSeq
+		st.Image = f.Image
 	}
 	a.mu.Lock()
 	e, ok = a.vms[st.ID]

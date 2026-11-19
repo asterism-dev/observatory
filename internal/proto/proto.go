@@ -78,6 +78,8 @@ type VMStatus struct {
 	Generation  uint64         `json:"generation,omitempty"`
 	Snapshots   []SnapshotInfo `json:"snapshots,omitempty"`
 	RestoredSeq uint64         `json:"restoredSeq,omitempty"`
+	// Image is the guest image version the VM's root disk was cloned from; empty for the stock or a custom image.
+	Image string `json:"image,omitempty"`
 }
 
 // SnapshotRef is a snapshot the hub wants the node to keep; Complete lets the node resume the VM it paused for it.
@@ -162,6 +164,25 @@ type Register struct {
 	DisksInUse []string        `json:"disksInUse,omitempty"`
 	AppliedSeq uint64          `json:"appliedSeq,omitempty"` // seq of the last desired list the node fully reconciled
 	Version    string          `json:"version,omitempty"`
+	Image      *ImageStatus    `json:"image,omitempty"`
+}
+
+const (
+	ImageBuilding = "building"
+	ImageReady    = "ready"
+	ImageFailed   = "failed"
+	ImageCustom   = "custom"
+)
+
+// ImageStatus is the node's guest image: Version is the one it builds or has ready, Fallback the previous one new VMs use meanwhile.
+type ImageStatus struct {
+	Version   string     `json:"version"`
+	State     string     `json:"state"`
+	Fallback  string     `json:"fallback,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	BuiltAt   *time.Time `json:"builtAt,omitempty"`
+	RetryAt   *time.Time `json:"retryAt,omitempty"`
 }
 
 // Underlay tells a node how to join the WireGuard underlay and reach the OVN southbound DB over SSL; Cert is the node's signed chassis cert.
@@ -183,7 +204,7 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status" and "disks" (node→hub).
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics" and "image" (node→hub).
 // VMMetrics is one sample of a running VM; MemTotalMB 0 means the VM has no balloon statistics.
 type VMMetrics struct {
 	ID         string  `json:"id"`
@@ -198,11 +219,12 @@ type Message struct {
 	Status   *VMStatus `json:"status,omitempty"`
 	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
-	Desired    []DesiredVM `json:"desired,omitempty"`
-	DisksInUse []string    `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
-	Seq        uint64      `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
-	AppliedSeq uint64      `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Metrics    []VMMetrics `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
+	Desired    []DesiredVM  `json:"desired,omitempty"`
+	DisksInUse []string     `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
+	Seq        uint64       `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
+	AppliedSeq uint64       `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
+	Metrics    []VMMetrics  `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
+	Image      *ImageStatus `json:"image,omitempty"`      // type "image": the guest image changed state
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

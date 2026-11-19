@@ -561,3 +561,197 @@ func TestRestoreOfPausedVMStaysPaused(t *testing.T) {
 		t.Fatalf("states = %v", states)
 	}
 }
+
+const testImage = "2026.11.1-aaaaaaaa"
+
+func startImageEnv(t *testing.T, initial proto.ImageStatus) (*testEnv, *imageProvider) {
+	t.Helper()
+	var ip *imageProvider
+	env := startEnv(t, func(a *Agent, p *fakeProvider) {
+		ip = &imageProvider{fakeProvider: p, initial: initial}
+		a.Provider = ip
+	})
+	return env, ip
+}
+
+func waitPreparingImage(t *testing.T, env *testEnv, id, want string) {
+	t.Helper()
+	eventually(t, "preparing guest image", func() bool {
+		v, _ := env.hub.vm(id)
+		return v.State == proto.StateStarting && strings.Contains(v.Error, want)
+	})
+}
+
+func TestAgentWaitsForGuestImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	if v, _ := env.hub.vm(vm.ID); v.Error != PreparingImage || len(v.Disks) != 0 {
+		t.Fatalf("error = %q, disks before the root disk exists = %+v", v.Error, v.Disks)
+	}
+	if got := env.provider.gotPrepared(); len(got) != 0 {
+		t.Fatalf("prepared before the image was ready: %v", got)
+	}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	if img, _ := env.provider.gotPreparedImage("dev"); img != testImage {
+		t.Fatalf("Prepare got image %q", img)
+	}
+	if f := loadVM(t, env.agent, vm.ID); f.Image != testImage {
+		t.Fatalf("vm.json image = %q", f.Image)
+	}
+	if v, _ := env.hub.vm(vm.ID); v.Image != testImage {
+		t.Fatalf("status image = %q", v.Image)
+	}
+}
+
+// Start falls back to cloning the VM's image when a template restore fails, so it must see the image Prepare used.
+func TestAgentStartGetsImage(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.provider.mu.Lock()
+	img := env.provider.startedImage["dev"]
+	env.provider.mu.Unlock()
+	if img != testImage {
+		t.Fatalf("Start got image %q", img)
+	}
+}
+
+func TestAgentNeverFallsBackToStock(t *testing.T) {
+	retry := time.Date(2026, 11, 18, 12, 30, 0, 0, time.UTC)
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, "build failed")
+	if v, _ := env.hub.vm(vm.ID); !strings.Contains(v.Error, "apt boom") || !strings.Contains(v.Error, "2026-11-18T12:30:00Z") {
+		t.Fatalf("error = %q", v.Error)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := env.provider.gotPrepared(); len(got) != 0 {
+		t.Fatalf("prepared with a failed image: %v", got)
+	}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+}
+
+func TestAgentCustomImage(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{State: proto.ImageCustom})
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	if img, ok := env.provider.gotPreparedImage("dev"); !ok || img != "" {
+		t.Fatalf("Prepare got image %q (called %v)", img, ok)
+	}
+}
+
+func TestAgentReportsImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	ready := proto.ImageStatus{Version: testImage, State: proto.ImageReady}
+	ip.report(t, ready)
+	isReady := func(st proto.ImageStatus) bool { return st.State == proto.ImageReady }
+	eventually(t, "image message", func() bool { return slices.ContainsFunc(env.hub.gotImages(), isReady) })
+	time.Sleep(50 * time.Millisecond)
+	if n := len(slices.DeleteFunc(env.hub.gotImages(), func(st proto.ImageStatus) bool { return !isReady(st) })); n != 1 {
+		t.Fatalf("%d ready image messages", n)
+	}
+	env.agent.mu.Lock()
+	reg := env.agent.registerMsg()
+	env.agent.mu.Unlock()
+	if reg.Image == nil || *reg.Image != ready {
+		t.Fatalf("register image = %+v", reg.Image)
+	}
+}
+
+func TestAgentWithoutGuestImages(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	if img, ok := env.provider.gotPreparedImage("dev"); !ok || img != "" {
+		t.Fatalf("Prepare got image %q (called %v)", img, ok)
+	}
+	if v, _ := env.hub.vm(vm.ID); v.Image != "" {
+		t.Fatalf("status image = %q", v.Image)
+	}
+	if reg := env.hub.registers()[0]; reg.Image != nil {
+		t.Fatalf("register image = %+v", reg.Image)
+	}
+}
+
+func TestAgentDeleteWhileWaitingForImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	env.agent.mu.Lock()
+	e := env.agent.vms[vm.ID]
+	env.agent.mu.Unlock()
+	env.hub.delete(vm.ID)
+	select {
+	case <-e.booted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("wait for the image did not end")
+	}
+	eventually(t, "removed", func() bool {
+		env.agent.mu.Lock()
+		defer env.agent.mu.Unlock()
+		_, ok := env.agent.vms[vm.ID]
+		return !ok && len(env.agent.dying) == 0 && !exists(VMDir(env.agent.VMsDir, vm.ID))
+	})
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	if got := env.provider.gotPrepared(); len(got) != 0 {
+		t.Fatalf("deleted VM prepared: %v", got)
+	}
+}
+
+func TestAgentStopWhileWaitingForImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	env.hub.setPower(vm.ID, proto.PowerStopped, proto.StopGraceful)
+	eventually(t, "stopped", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateStopped })
+	env.hub.setPower(vm.ID, proto.PowerRunning, "")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	if got := env.provider.gotPrepared(); len(got) != 0 {
+		t.Fatalf("prepared before the image was ready: %v", got)
+	}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	if got := env.provider.gotPrepared(); len(got) != 1 {
+		t.Fatalf("prepared = %v", got)
+	}
+}
+
+func TestAgentSameGenerationKeepsWaitingForImage(t *testing.T) {
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	vm := env.hub.create("dev")
+	waitPreparingImage(t, env, vm.ID, PreparingImage)
+	env.agent.mu.Lock()
+	e := env.agent.vms[vm.ID]
+	d := proto.DesiredVM{Spec: e.file.Spec, Power: proto.PowerRunning, Generation: e.file.Generation}
+	env.agent.mu.Unlock()
+	// A restore that is due queues at the same generation, which applyPending then skips.
+	env.agent.queue(context.Background(), e, d)
+	time.Sleep(50 * time.Millisecond)
+	if st, _ := env.agent.vmStatus(vm.ID); st.State != proto.StateStarting || st.Error != PreparingImage {
+		t.Fatalf("status = %+v", st)
+	}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+}
+
+const previousImage = "2026.10.1-bbbbbbbb"
+
+func TestAgentUsesFallbackImage(t *testing.T) {
+	retry := time.Now().Add(time.Hour)
+	for _, st := range []proto.ImageStatus{
+		{Version: testImage, State: proto.ImageBuilding, Fallback: previousImage},
+		{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry, Fallback: previousImage},
+	} {
+		t.Run(st.State, func(t *testing.T) {
+			env, _ := startImageEnv(t, st)
+			vm := env.hub.create("dev")
+			eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+			if img, _ := env.provider.gotPreparedImage("dev"); img != previousImage {
+				t.Fatalf("Prepare got image %q", img)
+			}
+		})
+	}
+}

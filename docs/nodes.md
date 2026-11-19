@@ -13,7 +13,11 @@ keeps a WebSocket connection to the hub, which pushes the desired VMs.
 - The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
-- Disk under `/var/lib/observatory-node`: about 5 GB for the image, plus each VM's root disk (sparse).
+- Disk under `/var/lib/observatory-node`: about 14 GB for the images (the Ubuntu base image, about 2 GB, plus the
+  current and the previous guest image, up to 6 GB each), 10 GB free while a guest image builds, plus each VM's root
+  disk and each template (sparse; a template takes about the guest image plus its VM size in RAM).
+- RAM for the guest image build: half of the host's available memory, at least 1.5 GB and at most 4 GB, for about
+  5–15 minutes once per image version ([Guest image](#guest-image)).
 
 ## Install
 
@@ -79,9 +83,41 @@ it while the node is connected once less than 30 days are left.
 ## VM addresses
 
 Each VM gets a NAT address in `192.168.64.0/24`, shown as its IP in the GUI. It is reachable only from the node
-host, e.g. `ssh ubuntu@192.168.64.2` with a key from your profile. VMs boot the Ubuntu 24.04 cloud image; set
-`"firecracker": {"imageURL": "..."}` in `node.json` to use another one. Each VM also gets a management address in
-its org's slice, reachable from devices as `<vm>.internal` ([network.md](network.md)).
+host, e.g. `ssh ubuntu@192.168.64.2` with a key from your profile. VMs boot the node's guest image (below). Each VM
+also gets a management address in its org's slice, reachable from devices as `<vm>.internal`
+([network.md](network.md)).
+
+## Guest image
+
+New VMs are cloned from a guest image the node builds itself: the pinned Ubuntu 24.04 cloud image with Claude Code,
+Codex, `gh`, Docker, Node, `uv`, xpra, Chrome for Testing and `agent-browser` ([guest.md](guest.md)). Build script
+and pinned versions are part of the node binary, so a new binary with a changed manifest builds the next version.
+
+- **When:** at node start, if `images/guest-<version>.raw` is missing. The build runs in the background; the node
+  page shows `building`, `ready` or `failed` with the error and the next try (30 minutes later). Meanwhile new VMs
+  use the previous guest image if the node still has one (a tool bump); only on a node without any guest image (its
+  first build) they wait in `starting` with "preparing guest image" and start once it is ready. They never fall back
+  to the stock image.
+- **How:** in a throwaway Firecracker VM (`vms/tpl-image-build`): 2 vCPUs, half the available RAM (1.5–4 GB), a NAT
+  NIC, no management NIC, no keys, variables, integrations or egress proxy. It downloads about 1.5 GB, checks every
+  artifact against the pinned SHA-256 or apt key and version, installs and powers off. The node keeps the disk only
+  after a guest poweroff with the expected version in `/etc/observatory/image`; anything else (timeout 30 minutes,
+  node stop, failed check) is discarded and logged with the build script's last `FAIL` line. One build or template
+  build runs at a time.
+- **Space:** before a build the node needs 10 GB free in `vms/` (and in `images/` if it is another filesystem) and
+  refuses with a clear error otherwise. The image is 10 GB virtual and about 5–6 GB used; VMs and templates are
+  sparse clones of it (reflinks where the filesystem has them, e.g. XFS or Btrfs; otherwise a copy of the used
+  blocks, which takes about a minute per VM on slow disks).
+- **Versions kept:** the current and the previous guest image; older `guest-*.raw` are deleted once the current one
+  is ready. Existing VMs own their root disks and keep the tools they were created with. Templates are keyed by the
+  image, so the first VM of each size after a new version cold-boots and builds a new template.
+- **Base image:** `images/<hash>.raw`, where `<hash>` is the first 16 hex digits of the SHA-256 of the image URL
+  (`printf %s <url> | sha256sum | cut -c1-16`), is the pinned cloud image, checked against its SHA-256 before use.
+  Nodes installed before guest images also keep the `.raw` of the old, unpinned URL; nothing uses it any more, so
+  delete every `<hash>.raw` other than the pinned one (`48a1761f187e3a1d.raw` for `release-20261017`).
+- **`imageURL`:** `"firecracker": {"imageURL": "..."}` in `node.json` makes the node use that image as is, without a
+  build (escape hatch for a stock or own image); the node page shows "custom image". Such VMs have none of the tools,
+  desktop or browser unless the image brings them. Remove the setting and restart the node to go back.
 
 ## Disks
 

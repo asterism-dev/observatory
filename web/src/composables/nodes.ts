@@ -14,6 +14,15 @@ export interface NodeInfo {
   canDelete: boolean
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
   quarantined: boolean
+  image: {
+    state: 'building' | 'ready' | 'failed' | 'custom'
+    version: string
+    fallback?: string
+    startedAt?: string
+    builtAt?: string
+    error?: string
+    retryAt?: string
+  } | null
 }
 
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const
@@ -45,6 +54,8 @@ export interface VmInfo {
   canPower: boolean
   autoSuspendMinutes: number
   canDelete: boolean
+  image: string
+  stockImage: boolean
 }
 
 export const vmTones = {
@@ -66,4 +77,37 @@ export const powerActions = (state: VmInfo['state']) => {
   if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
   if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'shutdown', 'stop']
   return ['start']
+}
+
+export function relativeTime(iso: string, locale: string) {
+  const sec = Math.round((new Date(iso).getTime() - Date.now()) / 1000)
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [['day', 86400], ['hour', 3600], ['minute', 60]]
+  const [unit, size] = units.find(([, s]) => Math.abs(sec) >= s) ?? ['second', 1]
+  return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)
+}
+
+export function elapsed(iso: string, locale: string) {
+  const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
+  const [unit, n] = min >= 1440 ? ['day', Math.floor(min / 1440)] : min >= 60 ? ['hour', Math.floor(min / 60)] : ['minute', min]
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'short' }).format(n)
+}
+
+function fallback(img: NonNullable<NodeInfo['image']>, t: (k: string, p?: Record<string, unknown>) => string) {
+  return img.fallback ? ` · ${t('nodes.image.fallback', { version: img.fallback })}` : ''
+}
+
+export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<string, unknown>) => string, locale: string) {
+  if (!img) return '–'
+  const v = img.version
+  switch (img.state) {
+    case 'ready':
+      return `${v} · ${img.builtAt ? t('nodes.image.readyAt', { time: relativeTime(img.builtAt, locale) }) : t('nodes.image.ready')}`
+    case 'building':
+      return `${v} · ${img.startedAt ? t('nodes.image.buildingFor', { time: elapsed(img.startedAt, locale) }) : t('nodes.image.building')}${fallback(img, t)}`
+    case 'failed': {
+      const error = img.error ?? ''
+      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}${fallback(img, t)}`
+    }
+    default: return ''
+  }
 }

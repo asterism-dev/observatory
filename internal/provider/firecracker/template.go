@@ -17,7 +17,7 @@ import (
 
 const (
 	maxTemplates   = 4
-	templateDiskGB = 5
+	templateDiskGB = 10
 	// templateMarker in a VM dir names the template Prepare cloned root.img from; the first Start restores that template.
 	templateMarker = "from-template"
 	templatesDir   = ".templates"
@@ -53,7 +53,7 @@ var templateNet = node.PrimaryNet{Address: linuxvm.TemplateNATIP + "/24", Gatewa
 
 // templateFile is the VM a template of f's shape is built from: no keys, variables, attachments or OVN ports.
 func templateFile(id string, f node.VMFile) node.VMFile {
-	t := node.VMFile{MAC: "02:00:00:00:00:00", Spec: proto.VMSpec{ID: id, Name: "template", CPUs: f.Spec.CPUs, MemoryMB: f.Spec.MemoryMB, DiskGB: templateDiskGB}}
+	t := node.VMFile{MAC: "02:00:00:00:00:00", Image: f.Image, Spec: proto.VMSpec{ID: id, Name: "template", CPUs: f.Spec.CPUs, MemoryMB: f.Spec.MemoryMB, DiskGB: templateDiskGB}}
 	for i := range f.Spec.NICs {
 		// No OVN logical port has this name (the hub names ports after VM ids), so the template never joins a network.
 		t.Spec.NICs = append(t.Spec.NICs, proto.NIC{Network: "template", MAC: "02:00:00:00:00:00", Port: fmt.Sprintf("%s-%d", id, i)})

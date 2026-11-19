@@ -303,7 +303,18 @@
     "handshake": "Last handshake",
     "yes": "Yes",
     "no": "No",
-    "never": "Never"
+    "never": "Never",
+    "guestImage": "Guest image",
+    "image": {
+      "ready": "ready",
+      "readyAt": "ready (built {time})",
+      "building": "building",
+      "buildingFor": "building for {time}",
+      "failed": "failed: {error}",
+      "failedRetry": "failed: {error} (next try {time})",
+      "fallback": "new VMs use {version} meanwhile",
+      "custom": "custom image ({key})"
+    }
   },
   "vms": {
     "subtitle": "Virtual machines running on your nodes.",
@@ -360,7 +371,12 @@
     "egress": "Egress",
     "egressSecrets": "{n} host-bound secrets",
     "egressCa": "CA expires {date}",
-    "egressRestart": "Restart long-running programs to trust new hosts."
+    "egressRestart": "Restart long-running programs to trust new hosts.",
+    "image": "Image",
+    "imageStock": "stock",
+    "desktop": "Desktop",
+    "desktopInstall": "How to install xpra",
+    "memoryHint": "Desktop and browser want 4 GB RAM or more"
   },
   "devices": {
     "subtitle": "WireGuard devices that connect you to your VMs.",

@@ -127,14 +127,15 @@ SSH host keys and machine id, entropy mixed into its RNG.
 - **Per node and shape** (base image, vCPU, RAM, NIC count, guest script version). The first VM of a shape cold-boots
   as before and the node builds that shape's template in the background (one build at a time); later VMs of the same
   shape use it. Templates live in `<paths.vms>/.templates/`; at most 4 are kept, the least recently used is evicted.
-- Only VMs without attached disks at first boot and with a root disk of at least 5 GB use templates. Every later
+- Only VMs without attached disks at first boot and with a root disk of at least 10 GB use templates. Every later
   boot is a normal cold boot.
 - Template files are root-owned, read-only for the VMs, and hold no owner data: they are built without SSH keys or
   variables.
 - Any failure falls back to a cold boot; a failed takeoff also deletes the template.
 - Turn it off with `"firecracker": {"fastBoot": false}` in `node.json`.
-- **Boot time:** a template boot takes under 2 s to a reachable guest on bare metal; on a 2-core nested test host it
-  measured about 1.4–2.5 s (a first cold boot with cloud-init there: about 1 min).
+- **Boot time:** a template boot is meant to take under 1 s to a reachable guest; on a 2-core nested test host it
+  measured about 4 s with the stock image as with the guest image (8 s right after a node restart, with a cold page
+  cache; a first cold boot with cloud-init there: about 1 min).
 
 ## Metrics
 

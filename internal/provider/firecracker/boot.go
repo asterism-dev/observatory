@@ -187,3 +187,34 @@ func bzImageToELF(r io.Reader) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// readGuestFile reads path from the guest's cloudimg-rootfs filesystem, failing past limit bytes.
+func readGuestFile(rootImg, path string, limit int64) (b []byte, err error) {
+	// The disk is guest-controlled, as in extractBoot.
+	defer func() {
+		if r := recover(); r != nil {
+			b, err = nil, fmt.Errorf("reading %s: %v", rootImg, r)
+		}
+	}()
+	d, err := diskfs.Open(rootImg, diskfs.WithOpenMode(diskfs.ReadOnly))
+	if err != nil {
+		return nil, err
+	}
+	defer d.Close()
+	for i := 1; i <= 128; i++ {
+		fs, err := d.GetFilesystem(i)
+		if err != nil || strings.TrimRight(fs.Label(), "\x00 ") != "cloudimg-rootfs" {
+			continue
+		}
+		f, err := fs.OpenFile(path, os.O_RDONLY)
+		if err != nil {
+			return nil, fmt.Errorf("guest %s: %w", path, err)
+		}
+		b, err := readLimited(f, limit)
+		if err != nil {
+			return nil, fmt.Errorf("guest %s: %w", path, err)
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("%s: no filesystem labelled cloudimg-rootfs", rootImg)
+}

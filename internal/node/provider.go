@@ -54,3 +54,10 @@ type RestoreFrom struct {
 	// Paused leaves the restored VM paused; the guest agent call is skipped, as a paused guest cannot answer it.
 	Paused bool
 }
+
+// GuestImages is a provider that builds the guest image; RunGuestImages runs until ctx ends and calls report on every state change.
+type GuestImages interface {
+	RunGuestImages(ctx context.Context, report func(proto.ImageStatus))
+}
+
+const PreparingImage = "preparing guest image"

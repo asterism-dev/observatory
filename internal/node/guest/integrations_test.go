@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -33,8 +34,35 @@ func needPython(t *testing.T) {
 	}
 }
 
+// tokenAnswers maps kind → reply line; tests change it while the server goroutine reads it.
+type tokenAnswers struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func newAnswers(m map[string]string) *tokenAnswers { return &tokenAnswers{m: m} }
+
+func (a *tokenAnswers) set(kind, reply string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.m[kind] = reply
+}
+
+func (a *tokenAnswers) del(kind string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.m, kind)
+}
+
+func (a *tokenAnswers) get(kind string) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	r, ok := a.m[kind]
+	return r, ok
+}
+
 // tokenServer answers the token protocol from answers (kind → reply line); a missing kind is not connected, nil answers never reply.
-func tokenServer(t *testing.T, answers map[string]string) string {
+func tokenServer(t *testing.T, answers *tokenAnswers) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "gi")
 	if err != nil {
@@ -63,7 +91,7 @@ func tokenServer(t *testing.T, answers map[string]string) string {
 				line, _ := bufio.NewReader(c).ReadBytes('\n')
 				var req struct{ Op, Kind string }
 				json.Unmarshal(line, &req)
-				a, ok := answers[req.Kind]
+				a, ok := answers.get(req.Kind)
 				if req.Op != "token" || !ok {
 					a = notConn
 				}
@@ -117,7 +145,7 @@ func installGuest(t *testing.T) string {
 	root, seed := t.TempDir(), t.TempDir()
 	for name, s := range map[string]string{
 		"vmm-boot.sh": BootScript, "vmm-agent.py": AgentScript, "vmm-integrations.py": IntegrationsScript,
-		"vmm-env": `{}`, "vmm-authorized-keys": "",
+		"vmm-AGENTS.md": ContextFile, "vmm-desktop": DesktopScript, "vmm-browser.py": BrowserScript, "vmm-env": `{}`, "vmm-authorized-keys": "",
 	} {
 		if err := os.WriteFile(filepath.Join(seed, name), []byte(s), 0o644); err != nil {
 			t.Fatal(err)
@@ -132,10 +160,10 @@ func installGuest(t *testing.T) string {
 }
 
 func TestVmmTokenExitCodes(t *testing.T) {
-	sock := tokenServer(t, map[string]string{
+	sock := tokenServer(t, newAnswers(map[string]string{
 		"github": okAnswer(dummyGitHub), "linear": unavail, "claude": okAnswer("ghp_a\nusername=evil"),
 		"short": okAnswer("abc"), "spaced": okAnswer("  " + dummyLinear + "\n"),
-	})
+	}))
 	env := guestBin(t, sock)
 	for _, tc := range []struct {
 		kind, out string
@@ -168,7 +196,7 @@ func TestVmmTokenTimeout(t *testing.T) {
 }
 
 func TestGitCredentialVmm(t *testing.T) {
-	env := guestBin(t, tokenServer(t, map[string]string{"github": okAnswer(dummyGitHub)}))
+	env := guestBin(t, tokenServer(t, newAnswers(map[string]string{"github": okAnswer(dummyGitHub)})))
 	gh := "protocol=https\nhost=github.com\n\n"
 	for _, tc := range []struct{ args, in, out string }{
 		{"get", gh, "username=x-access-token\npassword=" + dummyGitHub + "\n"},
@@ -182,7 +210,7 @@ func TestGitCredentialVmm(t *testing.T) {
 			t.Errorf("%s %q = %q, %d", tc.args, tc.in, out, code)
 		}
 	}
-	env = guestBin(t, tokenServer(t, map[string]string{}))
+	env = guestBin(t, tokenServer(t, newAnswers(map[string]string{})))
 	if out, code := run(t, env, gh, "git-credential-vmm", "get"); out != "" || code != 0 {
 		t.Errorf("not connected = %q, %d", out, code)
 	}
@@ -198,7 +226,7 @@ func TestGitCredentialWithGit(t *testing.T) {
 		t.Skip("git not installed")
 	}
 	root := installGuest(t)
-	env := gitEnv(t, root, tokenServer(t, map[string]string{"github": okAnswer(dummyGitHub)}))
+	env := gitEnv(t, root, tokenServer(t, newAnswers(map[string]string{"github": okAnswer(dummyGitHub)})))
 	if _, code := run(t, env, "", "python3", "-I", filepath.Join(root, "usr/local/lib/vmm/vmm-integrations.py"), "sync"); code != 0 {
 		t.Fatalf("sync exit %d", code)
 	}
@@ -217,7 +245,7 @@ func TestGitCredentialWithGit(t *testing.T) {
 func TestSyncGitInclude(t *testing.T) {
 	needPython(t)
 	root := t.TempDir()
-	answers := map[string]string{"github": okAnswer(dummyGitHub)}
+	answers := newAnswers(map[string]string{"github": okAnswer(dummyGitHub)})
 	env := append(guestBin(t, tokenServer(t, answers)), "VMM_ROOT="+root)
 	script := filepath.Join(t.TempDir(), "vmm-integrations.py")
 	os.WriteFile(script, []byte(IntegrationsScript), 0o644)
@@ -240,16 +268,16 @@ func TestSyncGitInclude(t *testing.T) {
 	if got := sync(); got != user+include {
 		t.Fatalf("second sync: %q", got)
 	}
-	answers["github"] = unavail
+	answers.set("github", unavail)
 	if got := sync(); got != user+include {
 		t.Fatalf("unavailable: %q", got)
 	}
-	delete(answers, "github")
+	answers.del("github")
 	if got := sync(); got != user {
 		t.Fatalf("not connected: %q", got)
 	}
 	os.Remove(gitconfig)
-	answers["github"] = okAnswer(dummyGitHub)
+	answers.set("github", okAnswer(dummyGitHub))
 	if got := sync(); got != include {
 		t.Fatalf("no gitconfig before: %q", got)
 	}
@@ -261,7 +289,7 @@ func TestGhWrapperRespectsUserLogin(t *testing.T) {
 	fake := filepath.Join(bin, "gh")
 	os.WriteFile(fake, []byte("#!/bin/sh\nprintf %s \"$GH_TOKEN\"\nexit 7\n"), 0o755)
 	home := t.TempDir()
-	base := append(guestBin(t, tokenServer(t, map[string]string{"github": okAnswer(dummyGitHub)})),
+	base := append(guestBin(t, tokenServer(t, newAnswers(map[string]string{"github": okAnswer(dummyGitHub)}))),
 		"VMM_GH_BIN="+fake, "HOME="+home, "GH_TOKEN=", "GITHUB_TOKEN=", "GH_CONFIG_DIR=")
 	wrapper := filepath.Join(root, "usr/local/bin/gh")
 	for _, tc := range []struct {
@@ -286,7 +314,7 @@ func TestGhWrapperRespectsUserLogin(t *testing.T) {
 	if out, _ := run(t, append(base, "GH_CONFIG_DIR="+cfg), "", wrapper); out != dummyGitHub {
 		t.Errorf("GH_CONFIG_DIR without login: %q", out)
 	}
-	env := append(guestBin(t, tokenServer(t, map[string]string{})), "VMM_GH_BIN="+fake, "HOME="+t.TempDir(), "GH_TOKEN=", "GITHUB_TOKEN=", "GH_CONFIG_DIR=")
+	env := append(guestBin(t, tokenServer(t, newAnswers(map[string]string{}))), "VMM_GH_BIN="+fake, "HOME="+t.TempDir(), "GH_TOKEN=", "GITHUB_TOKEN=", "GH_CONFIG_DIR=")
 	if out, code := run(t, env, "", wrapper); out != "" || code != 7 {
 		t.Errorf("not connected: %q, %d", out, code)
 	}
@@ -294,7 +322,7 @@ func TestGhWrapperRespectsUserLogin(t *testing.T) {
 
 func TestLinearProfile(t *testing.T) {
 	root := installGuest(t)
-	env := guestBin(t, tokenServer(t, map[string]string{"linear": okAnswer(dummyLinear)}))
+	env := guestBin(t, tokenServer(t, newAnswers(map[string]string{"linear": okAnswer(dummyLinear)})))
 	profile := filepath.Join(root, "etc/profile.d/vmm-linear.sh")
 	script := `unset LINEAR_API_KEY; . "$1"; echo "$LINEAR_API_KEY"`
 	if out, _ := run(t, env, "", "sh", "-c", script, "sh", profile); out != dummyLinear+"\n" {
@@ -303,7 +331,7 @@ func TestLinearProfile(t *testing.T) {
 	if out, _ := run(t, env, "", "sh", "-c", `LINEAR_API_KEY=mine; . "$1"; echo "$LINEAR_API_KEY"`, "sh", profile); out != "mine\n" {
 		t.Errorf("own key: %q", out)
 	}
-	env = guestBin(t, tokenServer(t, map[string]string{}))
+	env = guestBin(t, tokenServer(t, newAnswers(map[string]string{})))
 	if out, _ := run(t, env, "", "sh", "-c", `unset LINEAR_API_KEY; . "$1"; echo "${LINEAR_API_KEY-unset}"`, "sh", profile); out != "unset\n" {
 		t.Errorf("not connected: %q", out)
 	}
@@ -320,10 +348,10 @@ type userGuest struct {
 	t                           *testing.T
 	env                         []string
 	script, home, state, claude string
-	log, flag                   string
+	log, flag, root             string
 }
 
-func newUserGuest(t *testing.T, answers map[string]string) *userGuest {
+func newUserGuest(t *testing.T, answers *tokenAnswers) *userGuest {
 	t.Helper()
 	needPython(t)
 	u, err := user.Current()
@@ -331,7 +359,7 @@ func newUserGuest(t *testing.T, answers map[string]string) *userGuest {
 		t.Skip("no current user")
 	}
 	root := t.TempDir()
-	g := &userGuest{t: t, home: filepath.Join(root, "home", u.Username), state: filepath.Join(root, "var/lib/vmm", u.Username, "integrations.json")}
+	g := &userGuest{t: t, root: root, home: filepath.Join(root, "home", u.Username), state: filepath.Join(root, "var/lib/vmm", u.Username, "integrations.json")}
 	g.script = filepath.Join(t.TempDir(), "vmm-integrations.py")
 	os.WriteFile(g.script, []byte(IntegrationsScript), 0o644)
 	os.MkdirAll(g.home, 0o755)
@@ -398,7 +426,7 @@ func credsFile(tok string) string {
 }
 
 func TestClaudeCredentialsWritten(t *testing.T) {
-	answers := map[string]string{"claude": okAnswer(dummyClaude)}
+	answers := newAnswers(map[string]string{"claude": okAnswer(dummyClaude)})
 	g := newUserGuest(t, answers)
 	g.sync()
 	if got := g.read(g.creds()); got != credsFile(dummyClaude) {
@@ -410,12 +438,12 @@ func TestClaudeCredentialsWritten(t *testing.T) {
 	if fi, _ := os.Stat(filepath.Dir(g.creds())); fi.Mode().Perm() != 0o700 {
 		t.Errorf("dir mode %v", fi.Mode().Perm())
 	}
-	answers["claude"] = okAnswer(dummyClaude2)
+	answers.set("claude", okAnswer(dummyClaude2))
 	g.sync()
 	if got := g.read(g.creds()); got != credsFile(dummyClaude2) {
 		t.Fatalf("after token change = %q", got)
 	}
-	delete(answers, "claude")
+	answers.del("claude")
 	g.sync()
 	if got := g.read(g.creds()); got != "<missing>" {
 		t.Fatalf("not connected = %q", got)
@@ -423,7 +451,7 @@ func TestClaudeCredentialsWritten(t *testing.T) {
 }
 
 func TestClaudeUserFileLeftAlone(t *testing.T) {
-	answers := map[string]string{"claude": okAnswer(dummyClaude)}
+	answers := newAnswers(map[string]string{"claude": okAnswer(dummyClaude)})
 	g := newUserGuest(t, answers)
 	own := credsFile("sk-ant-oat01-users-own-login") + "\n"
 	os.MkdirAll(filepath.Dir(g.creds()), 0o700)
@@ -432,7 +460,7 @@ func TestClaudeUserFileLeftAlone(t *testing.T) {
 	if got := g.read(g.creds()); got != own {
 		t.Fatalf("after ok = %q", got)
 	}
-	delete(answers, "claude")
+	answers.del("claude")
 	g.sync()
 	if got := g.read(g.creds()); got != own {
 		t.Fatalf("after not-connected = %q", got)
@@ -440,7 +468,7 @@ func TestClaudeUserFileLeftAlone(t *testing.T) {
 }
 
 func TestClaudeFileOursByToken(t *testing.T) {
-	answers := map[string]string{"claude": okAnswer(dummyClaude)}
+	answers := newAnswers(map[string]string{"claude": okAnswer(dummyClaude)})
 	g := newUserGuest(t, answers)
 	g.sync()
 	pretty := "{\n  \"claudeAiOauth\": {\n    \"accessToken\": \"" + dummyClaude + "\",\n    \"refreshToken\": null,\n    \"expiresAt\": null,\n    \"scopes\": [\"user:inference\"],\n    \"subscriptionType\": \"max\"\n  }\n}\n"
@@ -449,7 +477,7 @@ func TestClaudeFileOursByToken(t *testing.T) {
 	if got := g.read(g.creds()); got != pretty {
 		t.Fatalf("same token rewritten: %q", got)
 	}
-	answers["claude"] = okAnswer(dummyClaude2)
+	answers.set("claude", okAnswer(dummyClaude2))
 	g.sync()
 	if got := g.read(g.creds()); got != credsFile(dummyClaude2) {
 		t.Fatalf("re-serialised file treated as the user's: %q", got)
@@ -457,11 +485,11 @@ func TestClaudeFileOursByToken(t *testing.T) {
 }
 
 func TestClaudeUnavailableKeepsFile(t *testing.T) {
-	answers := map[string]string{"claude": okAnswer(dummyClaude)}
+	answers := newAnswers(map[string]string{"claude": okAnswer(dummyClaude)})
 	g := newUserGuest(t, answers)
 	g.sync()
 	state := g.read(g.state)
-	answers["claude"] = unavail
+	answers.set("claude", unavail)
 	g.sync()
 	if got := g.read(g.creds()); got != credsFile(dummyClaude) {
 		t.Fatalf("credentials = %q", got)
@@ -472,7 +500,7 @@ func TestClaudeUnavailableKeepsFile(t *testing.T) {
 }
 
 func TestLinearMCPAddRemove(t *testing.T) {
-	answers := map[string]string{"linear": okAnswer(dummyLinear)}
+	answers := newAnswers(map[string]string{"linear": okAnswer(dummyLinear)})
 	g := newUserGuest(t, answers)
 	g.addClaude()
 	add := func(tok string) string {
@@ -488,32 +516,32 @@ func TestLinearMCPAddRemove(t *testing.T) {
 	}
 	check("ok", get, add(dummyLinear))
 	check("same token")
-	answers["linear"] = okAnswer(dummyLinear2)
+	answers.set("linear", okAnswer(dummyLinear2))
 	check("new token", remove, add(dummyLinear2))
-	answers["linear"] = unavail
+	answers.set("linear", unavail)
 	check("unavailable")
-	delete(answers, "linear")
+	answers.del("linear")
 	check("not connected", remove)
 	check("not connected again")
 	os.WriteFile(g.flag, nil, 0o644)
-	answers["linear"] = okAnswer(dummyLinear)
+	answers.set("linear", okAnswer(dummyLinear))
 	check("user's own entry", get)
-	delete(answers, "linear")
+	answers.del("linear")
 	check("user's own entry, not connected")
 }
 
 func TestLinearMCPRemoveFailureKeepsRecord(t *testing.T) {
-	answers := map[string]string{"linear": okAnswer(dummyLinear)}
+	answers := newAnswers(map[string]string{"linear": okAnswer(dummyLinear)})
 	g := newUserGuest(t, answers)
 	g.addClaude()
 	remove := "mcp remove --scope user linear"
 	g.sync()
 	os.WriteFile(g.flag+".rmfail", nil, 0o644)
-	answers["linear"] = okAnswer(dummyLinear2)
+	answers.set("linear", okAnswer(dummyLinear2))
 	if got := g.sync(); strings.Join(got, "|") != remove {
 		t.Fatalf("new token, remove fails: calls %q", got)
 	}
-	delete(answers, "linear")
+	answers.del("linear")
 	for i := 0; i < 2; i++ {
 		if got := g.sync(); strings.Join(got, "|") != remove {
 			t.Fatalf("not connected, remove fails (%d): calls %q", i, got)
@@ -529,7 +557,7 @@ func TestLinearMCPRemoveFailureKeepsRecord(t *testing.T) {
 }
 
 func TestSyncWithoutClaude(t *testing.T) {
-	g := newUserGuest(t, map[string]string{"claude": okAnswer(dummyClaude), "linear": okAnswer(dummyLinear)})
+	g := newUserGuest(t, newAnswers(map[string]string{"claude": okAnswer(dummyClaude), "linear": okAnswer(dummyLinear)}))
 	if calls := g.sync(); calls != nil {
 		t.Fatalf("calls without claude: %q", calls)
 	}
@@ -543,23 +571,24 @@ func TestSyncWithoutClaude(t *testing.T) {
 }
 
 func TestSyncNeverPrintsToken(t *testing.T) {
-	answers := map[string]string{"github": okAnswer(dummyGitHub), "claude": okAnswer(dummyClaude), "linear": okAnswer(dummyLinear)}
+	answers := newAnswers(map[string]string{"github": okAnswer(dummyGitHub), "claude": okAnswer(dummyClaude), "linear": okAnswer(dummyLinear)})
 	g := newUserGuest(t, answers)
 	g.addClaude()
 	// The fake claude echoes its argv, token included, on both streams; sync() fails on any token in the output.
 	g.sync()
-	answers["claude"], answers["linear"] = okAnswer(dummyClaude2), okAnswer(dummyLinear2)
+	answers.set("claude", okAnswer(dummyClaude2))
+	answers.set("linear", okAnswer(dummyLinear2))
 	g.sync()
 	os.WriteFile(g.claude, []byte("#!/bin/sh\necho \"$*\" >&2\nexit 1\n"), 0o755)
-	answers["linear"] = okAnswer(dummyLinear)
+	answers.set("linear", okAnswer(dummyLinear))
 	g.sync()
-	delete(answers, "claude")
-	delete(answers, "linear")
+	answers.del("claude")
+	answers.del("linear")
 	g.sync()
 }
 
 func TestSyncWriteErrorsExitZero(t *testing.T) {
-	answers := map[string]string{"github": okAnswer(dummyGitHub), "claude": okAnswer(dummyClaude)}
+	answers := newAnswers(map[string]string{"github": okAnswer(dummyGitHub), "claude": okAnswer(dummyClaude)})
 	g := newUserGuest(t, answers)
 	root := strings.TrimPrefix(g.env[len(g.env)-2], "VMM_ROOT=")
 	// A file where a directory has to be: every write fails.
@@ -591,5 +620,67 @@ func TestLinearProfileWithoutVmmToken(t *testing.T) {
 	cmd.Env = []string{"PATH=" + t.TempDir()}
 	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "unset\n" {
 		t.Fatalf("login without vmm-token: %v %q", err, out)
+	}
+}
+
+func (g *userGuest) setContext(text string) {
+	src := filepath.Join(g.root, "usr/local/share/vmm/AGENTS.md")
+	os.MkdirAll(filepath.Dir(src), 0o755)
+	if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
+		g.t.Fatal(err)
+	}
+}
+
+func (g *userGuest) codexAgents() string { return filepath.Join(g.home, ".codex/AGENTS.md") }
+
+func TestCodexAgentsWritten(t *testing.T) {
+	g := newUserGuest(t, newAnswers(map[string]string{}))
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "<missing>" {
+		t.Fatalf("without a source = %q", got)
+	}
+	g.setContext("platform v1\n")
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v1\n" {
+		t.Fatalf("written = %q", got)
+	}
+	if fi, _ := os.Stat(g.codexAgents()); fi.Mode().Perm() != 0o644 {
+		t.Errorf("file mode %v", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(filepath.Dir(g.codexAgents())); fi.Mode().Perm() != 0o700 {
+		t.Errorf("dir mode %v", fi.Mode().Perm())
+	}
+	if !strings.Contains(g.read(g.state), `"codex_agents"`) {
+		t.Fatalf("state = %q", g.read(g.state))
+	}
+	g.setContext("platform v2\n")
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v2\n" {
+		t.Fatalf("after a source change = %q", got)
+	}
+}
+
+func TestCodexAgentsUserFileLeftAlone(t *testing.T) {
+	g := newUserGuest(t, newAnswers(map[string]string{}))
+	g.setContext("platform v1\n")
+	os.MkdirAll(filepath.Dir(g.codexAgents()), 0o755)
+	os.WriteFile(g.codexAgents(), []byte("my own rules\n"), 0o600)
+	g.sync()
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "my own rules\n" {
+		t.Fatalf("own file = %q", got)
+	}
+
+	g = newUserGuest(t, newAnswers(map[string]string{}))
+	g.setContext("platform v1\n")
+	g.sync()
+	if err := os.WriteFile(g.codexAgents(), []byte("platform v1\nmy addition\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g.setContext("platform v2\n")
+	g.sync()
+	g.sync()
+	if got := g.read(g.codexAgents()); got != "platform v1\nmy addition\n" {
+		t.Fatalf("edited file = %q", got)
 	}
 }

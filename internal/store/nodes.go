@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 var ErrEnrollInvalid = errors.New("invalid enroll token")
@@ -35,12 +37,13 @@ type Node struct {
 	Quarantined bool
 	CreatedBy   uuid.UUID
 	CreatedAt   time.Time
+	Image       *proto.ImageStatus
 }
 
-const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const nodeColumns = "id, org_id, name, enrolled_at IS NOT NULL, coalesce(cpus, 0), coalesce(memory_mb, 0), machine, coalesce(version, ''), last_seen, underlay_ip, quarantined, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, image"
 
 func scanNode(row pgx.Row) (n Node, err error) {
-	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt)
+	err = row.Scan(&n.ID, &n.OrgID, &n.Name, &n.Enrolled, &n.CPUs, &n.MemoryMB, &n.Machine, &n.Version, &n.LastSeen, &n.UnderlayIP, &n.Quarantined, &n.CreatedBy, &n.CreatedAt, &n.Image)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -191,4 +194,15 @@ func (s *Store) QuarantineNodes(ctx context.Context, ids []uuid.UUID) ([]uuid.UU
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+}
+
+func (s *Store) SetNodeImage(ctx context.Context, id uuid.UUID, img proto.ImageStatus) error {
+	tag, err := s.q.Exec(ctx, "UPDATE nodes SET image = $2 WHERE id = $1", id, img)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

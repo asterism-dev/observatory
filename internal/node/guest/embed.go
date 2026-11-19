@@ -13,3 +13,12 @@ var AgentScript string
 
 //go:embed vmm-integrations.py
 var IntegrationsScript string
+
+//go:embed AGENTS.md
+var ContextFile string
+
+//go:embed vmm-desktop
+var DesktopScript string
+
+//go:embed vmm-browser.py
+var BrowserScript string

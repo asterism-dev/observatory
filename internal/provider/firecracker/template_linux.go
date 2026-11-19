@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/node"
@@ -20,7 +21,7 @@ func (p *Provider) templateDir(key string) string {
 }
 
 // buildTemplate boots a VM of f's shape with a seed holding no keys, variables or networks and saves it once its agent answers.
-func (p *Provider) buildTemplate(ctx context.Context, key string, f node.VMFile) error {
+func (p *Provider) buildTemplate(ctx context.Context, key, base string, f node.VMFile) error {
 	if !p.building.TryLock() {
 		return nil
 	}
@@ -29,15 +30,16 @@ func (p *Provider) buildTemplate(ctx context.Context, key string, f node.VMFile)
 	if _, err := os.Stat(dst); err == nil {
 		return nil
 	}
-	if err := node.CheckSpace(p.VMsDir, int64(f.Spec.MemoryMB)<<20+templateDiskGB<<30+1<<30); err != nil {
+	var st syscall.Stat_t
+	if err := syscall.Stat(base, &st); err != nil {
+		return err
+	}
+	// The clone is sparse: it takes about the base's allocated blocks, not templateDiskGB.
+	if err := node.CheckSpace(p.VMsDir, st.Blocks*512+int64(f.Spec.MemoryMB)<<20+1<<30); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, templateBuildTimeout)
 	defer cancel()
-	base, err := p.baseImage()
-	if err != nil {
-		return err
-	}
 	t := templateFile("tpl-"+key[:8], f)
 	t.MAC = node.RandomMAC()
 	for i := range t.Spec.NICs {

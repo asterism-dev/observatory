@@ -1,0 +1,121 @@
+{
+  "release": "2026.11.1",
+  "aptSnapshot": "20261117T000000Z",
+  "base": {
+    "name": "base",
+    "version": "20261017",
+    "url": "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img",
+    "sha256": "04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94"
+  },
+  "apt": [
+    "build-essential",
+    "ca-certificates",
+    "curl",
+    "git",
+    "gnupg",
+    "jq",
+    "python3",
+    "python3-venv",
+    "ripgrep",
+    "unzip",
+    "xterm",
+    "xvfb",
+    "fonts-liberation",
+    "libasound2t64",
+    "libatk-bridge2.0-0t64",
+    "libatk1.0-0t64",
+    "libatspi2.0-0t64",
+    "libcairo2",
+    "libcups2t64",
+    "libdbus-1-3",
+    "libgbm1",
+    "libglib2.0-0t64",
+    "libgtk-3-0t64",
+    "libnspr4",
+    "libnss3",
+    "libpango-1.0-0",
+    "libxcomposite1",
+    "libxdamage1",
+    "libxfixes3",
+    "libxkbcommon0",
+    "libxrandr2"
+  ],
+  "repos": [
+    {
+      "name": "docker",
+      "url": "https://download.docker.com/linux/ubuntu",
+      "suite": "noble",
+      "component": "stable",
+      "keyURL": "https://download.docker.com/linux/ubuntu/gpg",
+      "fingerprint": "9DC858229FC7DD38854AE2D88D81803C0EBFCD88",
+      "packages": {
+        "containerd.io": "2.4.2-4~ubuntu.24.04~noble",
+        "docker-buildx-plugin": "0.39.0-1~ubuntu.24.04~noble",
+        "docker-ce": "5:29.10.0-1~ubuntu.24.04~noble",
+        "docker-ce-cli": "5:29.10.0-1~ubuntu.24.04~noble",
+        "docker-compose-plugin": "5.8.0-1~ubuntu.24.04~noble"
+      }
+    },
+    {
+      "name": "xpra",
+      "url": "https://xpra.org",
+      "suite": "noble",
+      "component": "main",
+      "keyURL": "https://xpra.org/xpra.asc",
+      "fingerprint": "B4993B57323148E37977E5D873254CAD17978FAF",
+      "packages": {
+        "xpra": "6.5.5-r0-1",
+        "xpra-client": "6.5.5-r0-1",
+        "xpra-client-gtk3": "6.5.5-r0-1",
+        "xpra-codecs": "6.5.5-r0-1",
+        "xpra-common": "6.5.5-r0-1",
+        "xpra-server": "6.5.5-r0-1",
+        "xpra-x11": "6.5.5-r0-1"
+      }
+    }
+  ],
+  "files": [
+    {
+      "name": "node",
+      "version": "26.13.1",
+      "url": "https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.xz",
+      "sha256": "5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864"
+    },
+    {
+      "name": "claude",
+      "version": "2.1.311",
+      "url": "https://downloads.claude.ai/claude-code-releases/2.1.311/linux-x64/claude",
+      "sha256": "86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada"
+    },
+    {
+      "name": "codex",
+      "version": "0.170.0",
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.170.0/codex-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "d054916ccd28a53820376b8d2f7c875184ca8f40fcd44bbabeb8ee240ce247f5"
+    },
+    {
+      "name": "uv",
+      "version": "0.13.9",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.9/uv-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
+    },
+    {
+      "name": "chrome",
+      "version": "158.0.8127.36",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36/linux64/chrome-linux64.zip",
+      "sha256": "dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7"
+    },
+    {
+      "name": "gh",
+      "version": "2.105.0",
+      "url": "https://github.com/cli/cli/releases/download/v2.105.0/gh_2.105.0_linux_amd64.tar.gz",
+      "sha256": "79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f"
+    },
+    {
+      "name": "check-config",
+      "version": "29.10.0",
+      "url": "https://raw.githubusercontent.com/moby/moby/docker-v29.10.0/contrib/check-config.sh",
+      "sha256": "07dd6666c6f1edb3c8f6e534aeb0926683967e4dca358c4e7df53582713f7f4d"
+    }
+  ]
+}
