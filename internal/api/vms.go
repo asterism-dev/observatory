@@ -50,6 +50,7 @@ type vmJSON struct {
 	DiskGB        int            `json:"diskGB"`
 	Image         string         `json:"image"`
 	ImageRef      string         `json:"imageRef"`
+	ImageDigest   string         `json:"imageDigest,omitempty"`
 	ImageSource   string         `json:"imageSource"`
 	LegacyRuntime bool           `json:"legacyRuntime"`
 	CreatedAt     time.Time      `json:"createdAt"`
@@ -147,7 +148,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageDigest: v.ImageDigest, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),

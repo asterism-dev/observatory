@@ -115,7 +115,7 @@ func TestRegistryPushRoundTrip(t *testing.T) {
 	waitVersion(d2.String())
 	v, _ := e.store.ImageVersion(ctx, id, d2.String())
 	layers, _ := amd64.Layers()
-	if size, _ := layers[0].Size(); v.Source != store.VersionFromPush || v.SizeBytes != size {
+	if size, _ := layers[0].Size(); v.Source != store.VersionFromPush || v.SizeBytes != size || v.PlatformDigest != d1.String() {
 		t.Fatalf("index version %+v", v)
 	}
 	armLayers, _ := armChild.Layers()

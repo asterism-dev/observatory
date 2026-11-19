@@ -1844,6 +1844,46 @@ func TestDesiredVMImage(t *testing.T) {
 	}
 }
 
+func TestDesiredVMImageIndex(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, child := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("c", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: index, PlatformDigest: child, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	for _, name := range []string{"fresh", "prepared"} {
+		v := e.vm(e.org.ID, n.ID, name, &e.owner, nil)
+		if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = 'org/tools', image_digest = $2, image_id = $3 WHERE id = $1", v.ID, index, img.ID); err != nil {
+			t.Fatal(err)
+		}
+		if name == "prepared" {
+			if err := e.s.SetVMStatus(ctx, n.ID, proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + child}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got := map[string]*proto.ImageRef{}
+	for _, d := range e.connect(cred).desired().Desired {
+		got[d.Spec.Name] = d.Spec.Image
+	}
+	if got["prepared"] != nil {
+		t.Fatalf("image sent to a VM prepared from the amd64 child: %+v", got["prepared"])
+	}
+	if f := got["fresh"]; f == nil || f.Digest != child || f.Repo != "hub.test/i/"+img.ID.String() {
+		t.Fatalf("fresh image = %+v, want the amd64 child", f)
+	}
+}
+
 func TestImagePullRetried(t *testing.T) {
 	ctx := context.Background()
 	old := *fleet.ImageRetryMin

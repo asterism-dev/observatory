@@ -11,18 +11,19 @@ import (
 )
 
 type vmJSON struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Power    string `json:"power"`
-	StopMode string `json:"stopMode"`
-	Error    string `json:"error"`
-	IP       string `json:"ip"`
-	MgmtIP   string `json:"mgmtIP"`
-	DNSName  string `json:"dnsName"`
-	Image    string `json:"image"`
-	ImageRef string `json:"imageRef"`
-	Owner    struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	State       string `json:"state"`
+	Power       string `json:"power"`
+	StopMode    string `json:"stopMode"`
+	Error       string `json:"error"`
+	IP          string `json:"ip"`
+	MgmtIP      string `json:"mgmtIP"`
+	DNSName     string `json:"dnsName"`
+	Image       string `json:"image"`
+	ImageRef    string `json:"imageRef"`
+	ImageDigest string `json:"imageDigest"` // the version; Image ends with what the node pulled, an index's amd64 child
+	Owner       struct {
 		Kind, ID, Name string
 	} `json:"owner"`
 	Node     ref `json:"node"`
@@ -224,6 +225,9 @@ func cmdVMShow(c *cli, args []string) error {
 	}
 	if _, d, ok := strings.Cut(v.Image, "@"); ok {
 		digest = d
+	}
+	if v.ImageDigest != "" {
+		digest = v.ImageDigest
 	}
 	if v.LegacyRuntime {
 		state += " - old guest runtime, recreate this VM"

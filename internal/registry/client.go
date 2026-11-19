@@ -23,11 +23,12 @@ type Layer struct {
 	Size   int64
 }
 
-// Manifest is an image manifest; an index resolves to its linux/amd64 child, while Blobs holds every child's layers.
+// Manifest is an image manifest; an index resolves to its linux/amd64 child (PlatformDigest), while Blobs holds every child's layers.
 type Manifest struct {
-	Platform string
-	Layers   []Layer
-	Blobs    []Layer
+	Platform       string
+	PlatformDigest string
+	Layers         []Layer
+	Blobs          []Layer
 }
 
 var ErrNotFound = errors.New("not found in the registry")
@@ -100,7 +101,7 @@ func (c Client) Manifest(ctx context.Context, repo, digest string) (Manifest, er
 		if err != nil {
 			return Manifest{}, err
 		}
-		out.Platform, out.Layers = img.Platform, img.Layers
+		out.Platform, out.PlatformDigest, out.Layers = img.Platform, d.Digest, img.Layers
 	}
 	if out.Platform == "" {
 		out.Platform = strings.Join(platforms, ", ")

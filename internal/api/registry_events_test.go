@@ -310,7 +310,7 @@ func TestPushEventIndexCountsEveryChild(t *testing.T) {
 	}
 	amd, arm := registry.Layer{Digest: "sha256:amd", Size: 10}, registry.Layer{Digest: "sha256:arm", Size: 1 << 29}
 	fm := &fakeManifests{manifests: map[string]registry.Manifest{
-		digestN(1): {Platform: "linux/amd64", Layers: []registry.Layer{amd}, Blobs: []registry.Layer{arm, amd}},
+		digestN(1): {Platform: "linux/amd64", PlatformDigest: digestN(9), Layers: []registry.Layer{amd}, Blobs: []registry.Layer{arm, amd}},
 		digestN(2): {Platform: "linux/amd64", Layers: []registry.Layer{amd}, Blobs: []registry.Layer{{Digest: "sha256:arm2", Size: 1<<29 + 1}, amd}},
 	}}
 	h := e.eventsHandler(fm)
@@ -318,7 +318,7 @@ func TestPushEventIndexCountsEveryChild(t *testing.T) {
 		t.Fatalf("push: %d", code)
 	}
 	v, err := e.store.ImageVersion(ctx, img, digestN(1))
-	if used, _ := e.store.OrgImageUsage(ctx, org); err != nil || v.SizeBytes != 10 || used != 1<<29+10 {
+	if used, _ := e.store.OrgImageUsage(ctx, org); err != nil || v.SizeBytes != 10 || v.PlatformDigest != digestN(9) || used != 1<<29+10 {
 		t.Fatalf("version %+v %v, usage %d", v, err, used)
 	}
 	// Only the arm64 child crosses the limit.

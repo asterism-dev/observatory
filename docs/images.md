@@ -13,7 +13,8 @@ observatory image default set user my-tools
 observatory vm create dev --wait
 ```
 
-Only `linux/amd64` images are supported. An image index is accepted when it contains a `linux/amd64` manifest.
+Only `linux/amd64` images are supported. An image index is accepted when it contains a `linux/amd64` manifest;
+the version keeps the index digest, and nodes pull and cache only that manifest.
 
 ## Scopes and visibility
 
@@ -160,7 +161,8 @@ observatory image push my-tools:v1 my-tools:local        # tags and pushes with 
 `observatory login` first. `image push` without a tag pushes `latest`. A push needs the right to build the image. Every
 tagged push becomes a version, sets its tag and moves `latest`. A push by digest alone becomes no version.
 
-A push the hub cannot turn into a version (not `linux/amd64`, over the storage limit) is removed again and the reason
+A push the hub cannot turn into a version (not `linux/amd64`, over the storage limit, an
+unreadable manifest or config) is removed again and the reason
 is shown on the image.
 
 ## Storage limit

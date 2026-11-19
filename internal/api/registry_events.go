@@ -103,7 +103,7 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 	if m.Platform != "linux/amd64" {
 		return h.reject(ctx, img, repo, digest, fmt.Sprintf("image platform %s is not linux/amd64", m.Platform))
 	}
-	v := store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush}
+	v := store.ImageVersion{ImageID: img.ID, Digest: digest, PlatformDigest: m.PlatformDigest, Source: store.VersionFromPush}
 	for _, l := range m.Layers {
 		v.SizeBytes += l.Size
 	}

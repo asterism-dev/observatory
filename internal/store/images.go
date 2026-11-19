@@ -76,15 +76,16 @@ type RecipeRevision struct {
 }
 
 type ImageVersion struct {
-	ImageID   uuid.UUID
-	Digest    string
-	Source    string
-	Revision  *int
-	BuildID   *uuid.UUID
-	SizeBytes int64
-	CreatedBy *uuid.UUID
-	CreatedAt time.Time
-	Layers    []ImageLayer
+	ImageID        uuid.UUID
+	Digest         string
+	PlatformDigest string // the linux/amd64 child when Digest is an index; nodes pull and cache it
+	Source         string
+	Revision       *int
+	BuildID        *uuid.UUID
+	SizeBytes      int64
+	CreatedBy      *uuid.UUID
+	CreatedAt      time.Time
+	Layers         []ImageLayer
 }
 
 type ImageLayer struct {
@@ -291,8 +292,8 @@ func (s *Store) AddImageVersion(ctx context.Context, v ImageVersion) error {
 	digests, sizes := layerColumns(v.Layers)
 	return s.InTx(ctx, func(tx *Store) error {
 		if _, err := tx.q.Exec(ctx, `
-			INSERT INTO image_versions (image_id, digest, source, revision, build_id, size_bytes, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (image_id, digest) DO NOTHING`, v.ImageID, v.Digest, v.Source, v.Revision, v.BuildID, v.SizeBytes, v.CreatedBy); err != nil {
+			INSERT INTO image_versions (image_id, digest, source, revision, build_id, size_bytes, created_by, platform_digest) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
+			ON CONFLICT (image_id, digest) DO NOTHING`, v.ImageID, v.Digest, v.Source, v.Revision, v.BuildID, v.SizeBytes, v.CreatedBy, v.PlatformDigest); err != nil {
 			return err
 		}
 		_, err := tx.q.Exec(ctx, `
@@ -309,16 +310,21 @@ func layerColumns(layers []ImageLayer) (digests []string, sizes []int64) {
 	return digests, sizes
 }
 
-// ImageWithVersion returns an image of org holding the version digest, the oldest first, else ErrNotFound.
-func (s *Store) ImageWithVersion(ctx context.Context, org uuid.UUID, digest string) (uuid.UUID, error) {
-	var id uuid.UUID
-	err := s.q.QueryRow(ctx, `
-		SELECT v.image_id FROM image_versions v JOIN images i ON i.id = v.image_id
-		WHERE i.org_id = $1 AND v.digest = $2 ORDER BY v.created_at LIMIT 1`, org, digest).Scan(&id)
+const versionColumns = "image_id, digest, COALESCE(platform_digest, ''), source, revision, build_id, size_bytes, created_by, created_at"
+
+func scanVersion(r pgx.Row) (v ImageVersion, err error) {
+	err = r.Scan(&v.ImageID, &v.Digest, &v.PlatformDigest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, ErrNotFound
+		err = ErrNotFound
 	}
-	return id, err
+	return
+}
+
+// ImageWithVersion returns the version digest of an image of org, the oldest first, else ErrNotFound.
+func (s *Store) ImageWithVersion(ctx context.Context, org uuid.UUID, digest string) (ImageVersion, error) {
+	return scanVersion(s.q.QueryRow(ctx, `
+		SELECT `+versionColumns+` FROM image_versions
+		WHERE image_id IN (SELECT id FROM images WHERE org_id = $1) AND digest = $2 ORDER BY created_at LIMIT 1`, org, digest))
 }
 
 // SetImagePushError shows why the last push did not become a version; empty clears it.
@@ -328,27 +334,15 @@ func (s *Store) SetImagePushError(ctx context.Context, image uuid.UUID, msg stri
 }
 
 func (s *Store) ImageVersions(ctx context.Context, image uuid.UUID) ([]ImageVersion, error) {
-	rows, err := s.q.Query(ctx, `
-		SELECT image_id, digest, source, revision, build_id, size_bytes, created_by, created_at
-		FROM image_versions WHERE image_id = $1 ORDER BY created_at DESC, digest`, image)
+	rows, err := s.q.Query(ctx, `SELECT `+versionColumns+` FROM image_versions WHERE image_id = $1 ORDER BY created_at DESC, digest`, image)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (v ImageVersion, err error) {
-		err = r.Scan(&v.ImageID, &v.Digest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt)
-		return
-	})
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ImageVersion, error) { return scanVersion(r) })
 }
 
-func (s *Store) ImageVersion(ctx context.Context, image uuid.UUID, digest string) (v ImageVersion, err error) {
-	err = s.q.QueryRow(ctx, `
-		SELECT image_id, digest, source, revision, build_id, size_bytes, created_by, created_at
-		FROM image_versions WHERE image_id = $1 AND digest = $2`, image, digest).
-		Scan(&v.ImageID, &v.Digest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrNotFound
-	}
-	return
+func (s *Store) ImageVersion(ctx context.Context, image uuid.UUID, digest string) (ImageVersion, error) {
+	return scanVersion(s.q.QueryRow(ctx, `SELECT `+versionColumns+` FROM image_versions WHERE image_id = $1 AND digest = $2`, image, digest))
 }
 
 // DeleteImageVersion drops the version's tags and layers with it.

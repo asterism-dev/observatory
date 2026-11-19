@@ -59,17 +59,33 @@ func BuilderTag() string {
 	return latestTag
 }
 
-// ResolveBuilder looks up the digest of repo:BuilderTag() anonymously and returns repo@digest.
+// ResolveBuilder looks up repo:BuilderTag() anonymously and returns repo@digest, of the linux/amd64 child for an index: that is what the node pulls and reports.
 func ResolveBuilder(ctx context.Context, repo string) (string, error) {
 	ref, err := name.ParseReference(repo + ":" + BuilderTag())
 	if err != nil {
 		return "", err
 	}
-	desc, err := remote.Head(ref, remote.WithContext(ctx))
+	desc, err := remote.Get(ref, remote.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", ref, err)
 	}
-	return repo + "@" + desc.Digest.String(), nil
+	if !desc.MediaType.IsIndex() {
+		return repo + "@" + desc.Digest.String(), nil
+	}
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ref, err)
+	}
+	im, err := idx.IndexManifest()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", ref, err)
+	}
+	for _, m := range im.Manifests {
+		if m.Platform != nil && m.Platform.OS == "linux" && m.Platform.Architecture == "amd64" {
+			return repo + "@" + m.Digest.String(), nil
+		}
+	}
+	return "", fmt.Errorf("%s has no linux/amd64 image", ref)
 }
 
 // Kick makes Run look at the queue now.

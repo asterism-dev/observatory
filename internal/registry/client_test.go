@@ -12,6 +12,9 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	ggcrregistry "github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
@@ -94,5 +97,32 @@ func TestManifestInvalidDocuments(t *testing.T) {
 	}
 	if _, err := c.Manifest(context.Background(), "i/x", "sha256:down"); err == nil || errors.Is(err, ErrInvalid) {
 		t.Errorf("outage: %v", err)
+	}
+}
+
+func TestManifestOfIndex(t *testing.T) {
+	srv := httptest.NewServer(ggcrregistry.New(ggcrregistry.Logger(log.New(io.Discard, "", 0))))
+	defer srv.Close()
+	iss, err := LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	amd, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	amd, err = mutate.ConfigFile(amd, &v1.ConfigFile{OS: "linux", Architecture: "amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := mutate.AppendManifests(empty.Index, mutate.IndexAddendum{Add: amd, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}})
+	d, _ := idx.Digest()
+	if err := remote.WriteIndex(ref(t, strings.TrimPrefix(srv.URL, "http://")+"/i/x@"+d.String()), idx); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Client{URL: srv.URL, Issuer: iss}.Manifest(context.Background(), "i/x", d.String())
+	child, _ := amd.Digest()
+	if err != nil || m.Platform != "linux/amd64" || m.PlatformDigest != child.String() {
+		t.Fatalf("manifest %+v %v, want child %s", m, err, child)
 	}
 }

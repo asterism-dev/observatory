@@ -268,3 +268,14 @@ func TestVMShowLegacyRuntimeHint(t *testing.T) {
 		t.Fatalf("no recreate hint:\n%s", out())
 	}
 }
+
+func TestVMShowVersionDigest(t *testing.T) {
+	h, c, out, _ := vmHub(t, oneNode)
+	h.on("GET /api/orgs/o1/vms/v2", 200, strings.Replace(vmWeb, `"image":"v3"`, `"image":"hub/i/x@sha256:child","imageRef":"org/tools","imageDigest":"sha256:index"`, 1))
+	if code := run(c, []string{"vm", "show", "web"}); code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(out(), "sha256:index") || strings.Contains(out(), "sha256:child") {
+		t.Errorf("stdout %s", out())
+	}
+}

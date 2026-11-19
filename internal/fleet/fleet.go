@@ -351,13 +351,12 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 		slog.Error("vm image without a registry", "vm", v.ID)
 		return gone, nil
 	}
-	var id uuid.UUID
+	var ver store.ImageVersion
 	var err error
 	if v.ImageID != nil {
-		id = *v.ImageID
-		_, err = f.store.ImageVersion(ctx, id, v.ImageDigest)
+		ver, err = f.store.ImageVersion(ctx, *v.ImageID, v.ImageDigest)
 	} else {
-		id, err = f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
+		ver, err = f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		return gone, nil
@@ -365,8 +364,16 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 	if err != nil {
 		return nil, err
 	}
-	repo := "i/" + id.String()
-	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: v.ImageDigest}
+	// Of an index the node pulls, caches and reports the amd64 child.
+	digest := v.ImageDigest
+	if ver.PlatformDigest != "" {
+		if v.Provisioned && strings.HasSuffix(v.Image, "@"+ver.PlatformDigest) {
+			return nil, nil
+		}
+		digest = ver.PlatformDigest
+	}
+	repo := "i/" + ver.ImageID.String()
+	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: digest}
 	if ref.PullToken, err = f.issuer.NodePullToken(v.OrgID, []string{repo}); err != nil {
 		slog.Error("node pull token", "vm", v.ID, "err", err)
 	}

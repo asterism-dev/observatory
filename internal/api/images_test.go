@@ -23,7 +23,7 @@ type fakeManifests struct {
 	mu        sync.Mutex
 	deleted   []string
 	manifests map[string]registry.Manifest
-	errs      map[string]error // Manifest fails for these digests
+	errs      map[string]error  // Manifest fails for these digests
 	tags      map[string]string // repo:tag -> digest, as mirrored by PutTag
 	putErr    error
 	block     chan struct{} // PutTag waits for it when set
