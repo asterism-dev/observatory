@@ -34,6 +34,10 @@ type Fleet struct {
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 	metrics  map[uuid.UUID][]MetricSample
 	retrying map[uuid.UUID]bool // orgs with a pending integrationRetry push
+
+	runs           map[uuid.UUID]*updateRun // by org: the active or last run
+	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
+	updateTimeouts updateTimeouts
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -41,7 +45,8 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{},
+		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, poll: 2 * time.Second}}
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }
@@ -132,6 +137,7 @@ func (f *Fleet) Disconnect(node uuid.UUID) {
 func (f *Fleet) attach(c *conn) {
 	f.mu.Lock()
 	old := f.conns[c.node]
+	c.since = time.Now()
 	f.conns[c.node] = c
 	f.mu.Unlock()
 	if old != nil {

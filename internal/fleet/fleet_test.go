@@ -187,7 +187,10 @@ func (e *env) register(cred string, reg proto.Register) *fakeNode {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	reg.NodeID, reg.Hostname, reg.CPUs, reg.MemoryMB, reg.Version = "whatever", "h", 4, 4096, "v1"
+	reg.NodeID, reg.Hostname, reg.CPUs, reg.MemoryMB = "whatever", "h", 4, 4096
+	if reg.Version == "" {
+		reg.Version = "v1"
+	}
 	n.send(proto.Message{Type: "register", Register: &reg})
 	return n
 }

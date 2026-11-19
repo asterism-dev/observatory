@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"cmp"
 	"context"
 	"crypto/x509"
 	"encoding/json"
@@ -38,6 +39,10 @@ type conn struct {
 	vms       map[string]bool // IDs of the VMs in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
 	wake chan struct{}
+	// update holds a pending update request for pushLoop to send.
+	update chan struct{}
+	since  time.Time       // when attached; guarded by Fleet.mu
+	seen   map[string]bool // IDs of VMs with a status on this connection; guarded by Fleet.mu
 }
 
 func (c *conn) kick() {
@@ -91,7 +96,10 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
-	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1)}
+	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}, 1), seen: map[string]bool{}}
+	for _, st := range m.Register.VMs {
+		c.seen[st.ID] = true
+	}
 	f.attach(c)
 	defer f.detach(c)
 	defer f.failSnapshots(node.ID)
@@ -113,12 +121,20 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			if err := f.store.SetVMStatus(ctx, node.ID, *m.Status); err != nil {
 				slog.Error("vm status", "node", node.ID, "vm", m.Status.ID, "err", err)
 			}
+			f.mu.Lock()
+			c.seen[m.Status.ID] = true // after SetVMStatus, so an update run never pairs it with the stored state from before
+			f.mu.Unlock()
 			f.noteDiskErrors(c, *m.Status)
 			if changed, err := f.store.ApplySnapshotStatus(ctx, node.ID, *m.Status); err != nil {
 				slog.Error("vm snapshot status", "node", node.ID, "vm", m.Status.ID, "err", err)
 			} else if changed {
 				f.NotifyOrg(node.OrgID)
 			}
+		case m.Type == "update" && m.Update != nil:
+			slog.Warn("node update failed", "node", node.ID, "err", m.Update.Error)
+			f.mu.Lock()
+			f.updateErrs[node.ID] = cmp.Or(m.Update.Error, "update failed")
+			f.mu.Unlock()
 		case m.Type == "metrics":
 			f.NoteMetrics(ctx, node.ID, m.Metrics)
 		case m.Type == "disks":
@@ -226,6 +242,12 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 					c.sess.Close()
 					return
 				}
+			}
+			continue
+		case <-c.update:
+			if err := enc.Encode(proto.Message{Type: "update"}); err != nil {
+				c.sess.Close()
+				return
 			}
 			continue
 		case <-c.wake:
