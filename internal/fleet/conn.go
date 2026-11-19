@@ -39,8 +39,9 @@ type conn struct {
 	vms       map[string]bool // IDs of the VMs in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
 	wake chan struct{}
-	// update holds a pending update request for pushLoop to send.
+	// update hands an update request to pushLoop; done closes when the connection's handler ends, pushLoop gone or not.
 	update chan struct{}
+	done   <-chan struct{}
 	since  time.Time       // when attached; guarded by Fleet.mu
 	seen   map[string]bool // IDs of VMs with a status on this connection; guarded by Fleet.mu
 }
@@ -96,7 +97,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
-	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}, 1), seen: map[string]bool{}}
+	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{}}
 	for _, st := range m.Register.VMs {
 		c.seen[st.ID] = true
 	}

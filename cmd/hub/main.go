@@ -88,6 +88,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
 	api.NodeEndpoints(mux, s, f)

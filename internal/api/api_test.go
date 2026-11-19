@@ -57,6 +57,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.Close)
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo := &fakeVerifier{}, &fakeOAuth{}
 	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo}, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0")
@@ -69,6 +70,7 @@ func (e *env) newFleet() *fleet.Fleet {
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	e.t.Cleanup(f.Close)
 	return f
 }
 

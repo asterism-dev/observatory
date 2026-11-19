@@ -60,7 +60,7 @@ func (f *Fleet) updatable(n store.Node) bool {
 	return f.conns[n.ID] != nil && version.Older(n.Version, version.Version) && n.Hypervisor != nil
 }
 
-// StartUpdate updates nodes one at a time in list order; the run outlives ctx and ends only on its own or by CancelUpdate.
+// StartUpdate updates nodes one at a time in list order; the run outlives ctx and ends on its own, by CancelUpdate or when the fleet stops.
 func (f *Fleet) StartUpdate(_ context.Context, org, by uuid.UUID, nodes []store.Node) (UpdateRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -75,7 +75,7 @@ func (f *Fleet) StartUpdate(_ context.Context, org, by uuid.UUID, nodes []store.
 		r.Nodes = append(r.Nodes, UpdateNode{ID: n.ID, Status: "pending"})
 	}
 	f.runs[org] = r
-	go f.runUpdate(r, nodes)
+	f.updates.Go(func() { f.runUpdate(r, nodes) })
 	return r.copy(), nil
 }
 
@@ -142,6 +142,9 @@ func (f *Fleet) runUpdate(r *updateRun, nodes []store.Node) {
 			continue
 		}
 		reason := f.updateNode(n)
+		if f.ctx.Err() != nil {
+			return
+		}
 		result, res := "done", store.ResultAllowed
 		if reason != "" {
 			result, res, state = "failed", store.ResultFailed, "failed"
@@ -165,25 +168,33 @@ func (f *Fleet) runUpdate(r *updateRun, nodes []store.Node) {
 
 // updateNode asks the node to update and waits until it runs the hub's version with its VMs back; it returns why that failed, or "".
 func (f *Fleet) updateNode(n store.Node) string {
-	ctx := context.Background()
+	ctx := f.ctx
 	f.mu.Lock()
 	c := f.conns[n.ID]
 	delete(f.updateErrs, n.ID)
 	t := f.updateTimeouts
 	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(f.updateErrs, n.ID)
+		f.mu.Unlock()
+	}()
 	if c == nil {
 		return "node offline"
 	}
 	sent := time.Now()
 	select {
 	case c.update <- struct{}{}:
-	default:
+	case <-c.done:
+		return "node offline"
+	case <-ctx.Done():
+		return "hub shutting down"
 	}
 	tick := time.NewTicker(t.poll)
 	defer tick.Stop()
 	var backAt time.Time
 	errSince := map[string]time.Time{}
-	for ; ; <-tick.C {
+	for ; ctx.Err() == nil; wait(ctx, tick.C) {
 		f.mu.Lock()
 		report, failed := f.updateErrs[n.ID]
 		c := f.conns[n.ID]
@@ -229,6 +240,14 @@ func (f *Fleet) updateNode(n store.Node) string {
 			}
 			return fmt.Sprintf("timed out after %s waiting for vm %s", t.vms, waiting)
 		}
+	}
+	return "hub shutting down"
+}
+
+func wait(ctx context.Context, c <-chan time.Time) {
+	select {
+	case <-c:
+	case <-ctx.Done():
 	}
 }
 

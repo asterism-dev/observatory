@@ -261,6 +261,9 @@ func TestUpdateFailsOnReport(t *testing.T) {
 		t.Fatalf("run %+v", r)
 	}
 	ns[1].conn.noUpdate()
+	if _, ok := fleet.UpdateErr(e.f, ns[0].ID); ok {
+		t.Fatal("report kept after the node's update ended")
+	}
 	entries, err := e.s.AuditEntries(context.Background(), store.AuditFilter{Action: store.ActionNodeUpdate, OrgID: &e.org.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -356,6 +359,26 @@ func TestUpdateFailsWhenNodeOffline(t *testing.T) {
 	r := e.ended()
 	if r.State != "failed" || r.Nodes[0].Status != "done" || r.Nodes[1].Status != "failed" || r.Nodes[1].Reason != "node offline" {
 		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateFailsFastOnDeadConnection(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.AttachDeadConn(e.f, ns[0].ID, e.org.ID)
+	e.start(ns...)
+	if r := e.ended(); r.State != "failed" || r.Nodes[0].Reason != "node offline" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestCloseStopsUpdateRun(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	start := time.Now()
+	e.f.Close()
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("Close took %s", d)
 	}
 }
 

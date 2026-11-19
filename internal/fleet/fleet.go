@@ -29,6 +29,10 @@ type Fleet struct {
 	// seq numbers every desired list hub-wide; starting at the clock (or above any recorded release_seq) keeps it increasing across hub restarts.
 	seq atomic.Uint64
 
+	ctx     context.Context
+	stop    context.CancelFunc
+	updates sync.WaitGroup
+
 	mu       sync.Mutex
 	conns    map[uuid.UUID]*conn
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
@@ -48,8 +52,15 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	}
 	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
+	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
+}
+
+// Close stops update runs and waits for them; they also stop when New's ctx ends.
+func (f *Fleet) Close() {
+	f.stop()
+	f.updates.Wait()
 }
 
 // DiskErrors returns the VM's attachment errors by disk ID as its node last reported them; callers must not modify it.

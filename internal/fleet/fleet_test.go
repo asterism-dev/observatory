@@ -80,6 +80,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.Close)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
 	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
@@ -934,6 +935,7 @@ func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(f.Close)
 	e.f = f
 	e.srv = httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(e.srv.Close)
