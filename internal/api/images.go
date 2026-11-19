@@ -55,7 +55,10 @@ type codedError struct {
 	code string
 }
 
-const codeWidenDeletesVersions = "widen_deletes_versions"
+const (
+	codeWidenDeletesVersions = "widen_deletes_versions"
+	codeRecipeChanged        = "recipe_changed"
+)
 
 var errRecipeChanged = httpError{http.StatusConflict, "the recipe changed since your base revision, reload it"}
 
@@ -177,15 +180,26 @@ type imageJSON struct {
 	AutoOnBaseChange bool       `json:"autoOnBaseChange"`
 	AutoError        string     `json:"autoError"`
 	AutoLastAt       *time.Time `json:"autoLastAt"`
+	AutoRevision     *int       `json:"autoRevision"`
+	// AutoNeedsApproval: the current revision is by someone else than the user automatic builds run as and not approved yet.
+	AutoNeedsApproval bool `json:"autoNeedsApproval"`
 }
 
 // ponytail: three queries per image; join them in the store if image lists get long.
 func (h *api) imageJSON(ctx context.Context, img store.Image, teams map[uuid.UUID]string) (imageJSON, error) {
 	j := imageJSON{ID: img.ID, Name: img.Name, Description: img.Description, Ref: imageRef(img, teams, "", ""), Scope: img.Scope,
 		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, PushError: img.PushError, CreatedAt: img.CreatedAt,
-		AutoSchedule: img.AutoSchedule, AutoOnBaseChange: img.AutoOnBaseChange, AutoError: img.AutoError, AutoLastAt: img.AutoLastAt}
+		AutoSchedule: img.AutoSchedule, AutoOnBaseChange: img.AutoOnBaseChange, AutoError: img.AutoError, AutoLastAt: img.AutoLastAt,
+		AutoRevision: img.AutoRevision}
 	if img.Platform {
 		return j, nil
+	}
+	if img.RecipeRevision != nil && (img.AutoSchedule != "" || img.AutoOnBaseChange) {
+		author, err := h.store.RecipeRevisionAuthor(ctx, img.ID, *img.RecipeRevision)
+		if err != nil {
+			return j, err
+		}
+		j.AutoNeedsApproval = needsApproval(img, author)
 	}
 	p, _ := auth.PrincipalFrom(ctx)
 	sub, obj := authz.UserSubject(p.User.ID), imageObject(img.Scope, img.OwnerID)
@@ -380,13 +394,14 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		ConfirmDeleteVersions bool
 		AutoSchedule          *string
 		AutoOnBaseChange      *bool
+		ApproveRevision       *int
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
 	v := old
 	auto := body.AutoSchedule != nil || body.AutoOnBaseChange != nil
-	if auto {
+	if auto || body.ApproveRevision != nil {
 		if body.AutoSchedule != nil {
 			if !slices.Contains([]string{"", store.AutoDaily, store.AutoWeekly}, *body.AutoSchedule) {
 				writeError(w, http.StatusBadRequest, "invalid autoSchedule")
@@ -469,9 +484,17 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 				deleted = append(deleted, ver.Digest)
 			}
 		}
+		p, _ := auth.PrincipalFrom(ctx)
 		if auto {
-			p, _ := auth.PrincipalFrom(ctx)
 			if err := tx.SetImageAuto(ctx, old.ID, v.AutoSchedule, v.AutoOnBaseChange, p.User.ID); err != nil {
+				return err
+			}
+		}
+		// Only the revision the client showed is approved, never one saved since.
+		if body.ApproveRevision != nil {
+			if err := tx.ApproveImageRevision(ctx, old.ID, *body.ApproveRevision, p.User.ID); errors.Is(err, store.ErrConflict) {
+				return codedError{httpError{http.StatusConflict, errRecipeChanged.msg}, codeRecipeChanged}
+			} else if err != nil {
 				return err
 			}
 		}
@@ -487,6 +510,9 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		e.Details["deletedVersions"] = len(deleted)
 		if auto {
 			e.Details["autoSchedule"], e.Details["autoOnBaseChange"] = v.AutoSchedule, v.AutoOnBaseChange
+		}
+		if body.ApproveRevision != nil {
+			e.Details["approvedRevision"] = *body.ApproveRevision
 		}
 		return tx.Audit(ctx, e)
 	}) {

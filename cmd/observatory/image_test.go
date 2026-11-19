@@ -214,17 +214,19 @@ func TestImageUpdateSendsOnlyGivenFields(t *testing.T) {
 
 func TestImageAuto(t *testing.T) {
 	h, c, out, errb := imageHub(t)
-	auto := strings.Replace(imgApp, `"pushError":""`, `"pushError":"","autoSchedule":"weekly","autoOnBaseChange":true,"autoError":"secret org/NPM_TOKEN no longer exists"`, 1)
+	auto := strings.Replace(imgApp, `"pushError":""`, `"pushError":"","autoSchedule":"weekly","autoOnBaseChange":true,"autoError":"secret org/NPM_TOKEN no longer exists","autoNeedsApproval":true`, 1)
 	h.on("PATCH /api/orgs/o1/images/i-app", 200, auto)
 	h.on("GET /api/orgs/o1/images/i-app", 200, auto)
 	mustRun(t, c, errb, 0, "image", "auto", "app", "--schedule", "weekly", "--on-base-change")
 	mustRun(t, c, errb, 0, "image", "auto", "app", "--schedule", "off")
 	mustRun(t, c, errb, 0, "image", "auto", "app", "--on-base-change=false")
+	mustRun(t, c, errb, 0, "image", "auto", "app", "--approve")
 	calls := h.calls("PATCH /api/orgs/o1/images/i-app")
-	if len(calls) != 3 || calls[0].Body != `{"autoSchedule":"weekly","autoOnBaseChange":true}` || calls[1].Body != `{"autoSchedule":""}` || calls[2].Body != `{"autoOnBaseChange":false}` {
+	if len(calls) != 4 || calls[0].Body != `{"autoSchedule":"weekly","autoOnBaseChange":true,"approveRevision":3}` || calls[1].Body != `{"autoSchedule":""}` ||
+		calls[2].Body != `{"autoOnBaseChange":false}` || calls[3].Body != `{"approveRevision":3}` {
 		t.Errorf("bodies %+v", calls)
 	}
-	if !strings.Contains(out(), "Automatic rebuilds of backend/app: weekly, on base change.") {
+	if !strings.Contains(out(), "Automatic rebuilds of backend/app: weekly, on base change, revision r3 needs approval (image auto --approve).") {
 		t.Errorf("stdout %s", out())
 	}
 	mustRun(t, c, errb, 2, "image", "auto", "app", "--schedule", "hourly")

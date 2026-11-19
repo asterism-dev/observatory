@@ -7,6 +7,6 @@ Latest:      sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 Size:        150.0 MiB
 Tags:        latest=sha256:aaaaaaaaaaaa, v1=sha256:bbbbbbbbbbbb
 Last build:  succeeded
-Automatic:   weekly, on base change
+Automatic:   weekly, on base change, revision r3 needs approval (image auto --approve)
 Auto error:  automatic rebuild failed: secret org/NPM_TOKEN no longer exists
 Created:     4 h ago

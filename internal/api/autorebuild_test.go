@@ -371,23 +371,51 @@ func TestAutoEditorCannotBorrowRefs(t *testing.T) {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
 	}
 
+	var shown imageJSON
+	decode(t, e.do("GET", imagePath(org, img), aliceTok), &shown)
+	if !shown.AutoNeedsApproval || shown.AutoRevision != nil || *shown.RecipeRevision != 2 {
+		t.Fatalf("approval not asked for: %+v", shown)
+	}
+
 	e.autoTick()
 	e.tick()
 	bs := e.builds(img)
 	if len(bs) != 1 || bs[0].State != store.BuildFailed || bs[0].VMID != nil || bs[0].Revision != 2 ||
-		!strings.Contains(bs[0].Error, "recipe revision 2 by bob uses references they may not use") {
+		!strings.Contains(bs[0].Error, "recipe revision 2 by bob: no right to build the image — approve the revision") {
 		t.Fatalf("builds: %+v", bs)
 	}
 	if i := e.image(img); i.AutoError != bs[0].Error || i.AutoSchedule != "weekly" {
 		t.Fatalf("image: %+v", i)
 	}
 
-	// After review, saving the settings vouches for revision 2.
-	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly"}`)
+	// Saving settings vouches for nothing.
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly","autoOnBaseChange":true}`)
 	e.now = e.now.Add(7 * time.Hour)
 	e.autoTick()
-	if bs := e.builds(img); len(bs) != 2 || bs[0].State != store.BuildQueued {
-		t.Fatalf("after review: %+v", bs)
+	if bs := e.builds(img); len(bs) != 2 || bs[0].State != store.BuildFailed {
+		t.Fatalf("settings change vouched: %+v", bs)
+	}
+
+	// Only the revision the client showed can be approved.
+	rec := e.send("PATCH", imagePath(org, img), aliceTok, `{"approveRevision":1}`)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "recipe_changed") {
+		t.Fatalf("stale approval: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.send("PATCH", imagePath(org, img), bobTok, `{"approveRevision":2}`); rec.Code != 403 {
+		t.Fatalf("approval without image:build: %d", rec.Code)
+	}
+	rec = e.send("PATCH", imagePath(org, img), aliceTok, `{"approveRevision":2}`)
+	decode(t, rec, &shown)
+	if rec.Code != 200 || shown.AutoNeedsApproval || shown.AutoRevision == nil || *shown.AutoRevision != 2 || shown.AutoError != "" {
+		t.Fatalf("approve: %d %+v", rec.Code, shown)
+	}
+	if es := e.audit(store.ActionImageUpdate); es[0].Details["approvedRevision"] != float64(2) {
+		t.Fatalf("audit: %+v", es[0].Details)
+	}
+	// The approval answers the failures: the next build runs at once, not 6 h after the last one.
+	e.autoTick()
+	if bs := e.builds(img); len(bs) != 3 || bs[0].State != store.BuildQueued || bs[0].Revision != 2 {
+		t.Fatalf("after approval: %+v", bs)
 	}
 }
 

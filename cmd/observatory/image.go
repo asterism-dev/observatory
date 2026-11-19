@@ -39,10 +39,11 @@ type imageJSON struct {
 	PushError      string            `json:"pushError"`
 	CreatedAt      time.Time         `json:"createdAt"`
 
-	AutoSchedule     string     `json:"autoSchedule"`
-	AutoOnBaseChange bool       `json:"autoOnBaseChange"`
-	AutoError        string     `json:"autoError"`
-	AutoLastAt       *time.Time `json:"autoLastAt"`
+	AutoSchedule      string     `json:"autoSchedule"`
+	AutoOnBaseChange  bool       `json:"autoOnBaseChange"`
+	AutoError         string     `json:"autoError"`
+	AutoLastAt        *time.Time `json:"autoLastAt"`
+	AutoNeedsApproval bool       `json:"autoNeedsApproval"`
 }
 
 type buildJSON struct {
@@ -74,7 +75,7 @@ func imageCommands() []command {
 		{"image recipe pull", "<ref> <dir>", "download the recipe into a directory", cmdRecipePull},
 		{"image recipe push", "<ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...", "upload a directory as the next recipe revision", cmdRecipePush},
 		{"image build", "<ref> [--follow]", "build the current recipe", cmdImageBuild},
-		{"image auto", "<ref> [--schedule off|daily|weekly] [--on-base-change=true|false]", "rebuild an image automatically", cmdImageAuto},
+		{"image auto", "<ref> [--schedule off|daily|weekly] [--on-base-change=true|false] [--approve]", "rebuild an image automatically", cmdImageAuto},
 		{"image builds", "<ref>", "list the builds of an image", cmdImageBuilds},
 		{"image log", "<build-id> [--follow]", "show a build log", cmdImageLog},
 		{"image cancel", "<build-id>", "cancel a queued or running build", cmdImageCancel},
@@ -116,6 +117,9 @@ func (i imageJSON) automation() string {
 	}
 	if len(parts) == 0 {
 		return "off"
+	}
+	if i.AutoNeedsApproval {
+		parts = append(parts, fmt.Sprintf("revision %s needs approval (image auto --approve)", revLabel(i.RecipeRevision)))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -601,6 +605,7 @@ func cmdImageAuto(c *cli, args []string) error {
 	fs := c.flags("image auto")
 	schedule := fs.String("schedule", "", "off, daily or weekly")
 	onBase := fs.Bool("on-base-change", false, "rebuild when a base image changes")
+	approve := fs.Bool("approve", false, "let automatic builds run the current recipe revision after reviewing it")
 	pos, err := c.parse(fs, args, 1, 1)
 	if err != nil {
 		return err
@@ -608,6 +613,7 @@ func cmdImageAuto(c *cli, args []string) error {
 	var body struct {
 		AutoSchedule     *string `json:"autoSchedule,omitempty"`
 		AutoOnBaseChange *bool   `json:"autoOnBaseChange,omitempty"`
+		ApproveRevision  *int    `json:"approveRevision,omitempty"`
 	}
 	var bad bool
 	fs.Visit(func(f *flag.Flag) {
@@ -633,8 +639,14 @@ func cmdImageAuto(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
+	wasOff := img.AutoSchedule == "" && !img.AutoOnBaseChange
+	turnsOn := body.AutoSchedule != nil && *body.AutoSchedule != "" || body.AutoOnBaseChange != nil && *body.AutoOnBaseChange
+	// Turning automation on approves the revision shown here; a later one would need its own approval.
+	if *approve || wasOff && turnsOn {
+		body.ApproveRevision = img.RecipeRevision
+	}
 	var raw json.RawMessage
-	if body.AutoSchedule != nil || body.AutoOnBaseChange != nil {
+	if body.AutoSchedule != nil || body.AutoOnBaseChange != nil || body.ApproveRevision != nil {
 		err = c.call(http.MethodPatch, path, body, &raw)
 	} else {
 		err = c.call(http.MethodGet, path, nil, &raw)

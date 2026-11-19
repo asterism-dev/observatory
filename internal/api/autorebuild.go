@@ -96,7 +96,9 @@ func (a *AutoRebuilds) Tick(ctx context.Context) error {
 func (a *AutoRebuilds) image(ctx context.Context, img store.Image) error {
 	now := a.Now()
 	active, lastAutomatic, lastSuccess, err := a.store.AutoBuildState(ctx, img.ID)
-	if err != nil || active || lastAutomatic != nil && now.Sub(*lastAutomatic) < autoBuildEvery {
+	// An approval answers the last failure, so builds before it do not count against the limit.
+	sinceApproval := lastAutomatic != nil && (img.AutoApprovedAt == nil || lastAutomatic.After(*img.AutoApprovedAt))
+	if err != nil || active || sinceApproval && now.Sub(*lastAutomatic) < autoBuildEvery {
 		return err
 	}
 	due := false
@@ -238,11 +240,11 @@ func (a *AutoRebuilds) problem(ctx context.Context, img store.Image, rev store.R
 		return fmt.Sprintf("automatic rebuilds run as %s: %s", a.userName(ctx, user), msg), nil
 	}
 	// Otherwise someone with only image:edit could change the Dockerfile and have it run with user's references.
-	if rev.CreatedBy != user && (img.AutoRevision == nil || rev.Number > *img.AutoRevision) {
+	if needsApproval(img, rev.CreatedBy) {
 		if msg, err := a.mayBuild(ctx, img, rev, rev.CreatedBy); err != nil {
 			return "", err
 		} else if msg != "" {
-			return fmt.Sprintf("recipe revision %d by %s uses references they may not use — save the automation settings again after review", rev.Number, a.userName(ctx, rev.CreatedBy)), nil
+			return fmt.Sprintf("recipe revision %d by %s: %s — approve the revision for automatic builds after review", rev.Number, a.userName(ctx, rev.CreatedBy), msg), nil
 		}
 	}
 	if over, err := overImageStorageLimit(ctx, a.store, img.OrgID); err != nil || over {
@@ -264,4 +266,9 @@ func (a *AutoRebuilds) userName(ctx context.Context, id uuid.UUID) string {
 		return u.Name
 	}
 	return id.String()
+}
+
+// needsApproval reports whether the current revision, by author, is newer than what was approved and not by the user builds run as.
+func needsApproval(img store.Image, author uuid.UUID) bool {
+	return img.RecipeRevision != nil && (img.AutoBy == nil || author != *img.AutoBy) && (img.AutoRevision == nil || *img.RecipeRevision > *img.AutoRevision)
 }

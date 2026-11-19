@@ -57,7 +57,8 @@ type Image struct {
 	AutoSchedule     string // "", AutoDaily or AutoWeekly
 	AutoOnBaseChange bool
 	AutoBy           *uuid.UUID // automatic builds run as this user
-	AutoRevision     *int       // the recipe revision current when AutoBy saved the settings
+	AutoRevision     *int       // the newest recipe revision approved for automatic builds
+	AutoApprovedAt   *time.Time
 	AutoError        string
 	AutoLastAt       *time.Time
 	AutoCheckedAt    *time.Time // last base-image check that resolved every base
@@ -132,11 +133,11 @@ type ImageDefault struct {
 }
 
 const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, " +
-	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_error, auto_last_at, auto_checked_at"
+	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_approved_at, auto_error, auto_last_at, auto_checked_at"
 
 func scanImage(r pgx.Row) (v Image, err error) {
 	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt,
-		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
+		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoApprovedAt, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -235,11 +236,34 @@ func (s *Store) UpdateImage(ctx context.Context, v Image) (Image, error) {
 	return out, err
 }
 
-// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as and vouches for the current revision.
+// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as.
 func (s *Store) SetImageAuto(ctx context.Context, image uuid.UUID, schedule string, onBaseChange bool, by uuid.UUID) error {
-	_, err := s.q.Exec(ctx, `UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_revision = recipe_revision, auto_error = ''
-		WHERE id = $1`, image, schedule, onBaseChange, by)
+	_, err := s.q.Exec(ctx, "UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_error = '' WHERE id = $1",
+		image, schedule, onBaseChange, by)
 	return err
+}
+
+// ApproveImageRevision lets automatic builds run revision as by; ErrConflict when it is no longer the current revision.
+func (s *Store) ApproveImageRevision(ctx context.Context, image uuid.UUID, revision int, by uuid.UUID) error {
+	tag, err := s.q.Exec(ctx, `UPDATE images SET auto_revision = $2, auto_by = $3, auto_approved_at = now(), auto_error = ''
+		WHERE id = $1 AND recipe_revision = $2`, image, revision, by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RecipeRevisionAuthor returns who saved revision n of image.
+func (s *Store) RecipeRevisionAuthor(ctx context.Context, image uuid.UUID, n int) (uuid.UUID, error) {
+	var by uuid.UUID
+	err := s.q.QueryRow(ctx, "SELECT created_by FROM recipe_revisions WHERE image_id = $1 AND number = $2", image, n).Scan(&by)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return by, ErrNotFound
+	}
+	return by, err
 }
 
 // AutoBuildState sums up an image's builds for the automatic rebuild checks.

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"syscall"
 	"time"
 
@@ -38,7 +39,11 @@ func PlatformDigest(ctx context.Context, ref name.Reference, opts ...remote.Opti
 	return "", fmt.Errorf("%s has no linux/amd64 image", ref)
 }
 
-var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+// nonPublic adds what the netip predicates miss: "this network", CGNAT, NAT64, benchmarking and reserved ranges.
+var nonPublic = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("240.0.0.0/4"),
+}
 
 // publicOnly runs on every connect, after DNS and for redirects too, so a reference cannot reach the hub's own network.
 func publicOnly(_, address string, _ syscall.RawConn) error {
@@ -47,7 +52,7 @@ func publicOnly(_, address string, _ syscall.RawConn) error {
 		return err
 	}
 	ip := ap.Addr().Unmap()
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || cgnat.Contains(ip) {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || slices.ContainsFunc(nonPublic, func(p netip.Prefix) bool { return p.Contains(ip) }) {
 		return fmt.Errorf("refusing to connect to non-public address %s", ip)
 	}
 	return nil
