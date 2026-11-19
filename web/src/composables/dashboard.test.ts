@@ -50,9 +50,10 @@ test('device and ssh count only my devices', () => {
   assert.equal(step(i, 'ssh')?.done, false)
 })
 
-test('ssh needs a recent handshake and a running vm', () => {
+test('ssh needs a handshake ever and a running vm', () => {
   const vms = [{ name: 'a', state: 'running' }]
-  assert.equal(step(input({ vms, devices: [{ owner: { id: 'u1' }, lastHandshake: ago(200_000) }] }), 'ssh')?.done, false)
+  // An idle tunnel must not bring the finished guide back.
+  assert.equal(step(input({ vms, devices: [{ owner: { id: 'u1' }, lastHandshake: ago(200_000) }] }), 'ssh')?.done, true)
   assert.equal(step(input({ vms, devices: [{ owner: { id: 'u1' }, lastHandshake: null }] }), 'ssh')?.done, false)
   const fresh = input({ vms, devices: [{ owner: { id: 'u1' }, lastHandshake: ago(10_000) }] })
   assert.equal(step(fresh, 'device')?.done, true)

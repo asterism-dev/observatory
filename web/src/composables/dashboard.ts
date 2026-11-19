@@ -38,7 +38,7 @@ export function guideSteps(i: DashboardInput): GuideStep[] {
     { id: 'sshKey', done: i.sshKeys > 0 },
     { id: 'device', done: mine.length > 0 },
     { id: 'vm', done: sshTarget(i) !== null },
-    { id: 'ssh', done: sshTarget(i) !== null && mine.some((d) => connected(d, i.now)) },
+    { id: 'ssh', done: sshTarget(i) !== null && mine.some((d) => !!d.lastHandshake) },
   )
   return steps
 }
