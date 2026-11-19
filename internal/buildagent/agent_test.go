@@ -57,7 +57,8 @@ func fakeTools(t *testing.T, dir, buildctlExit string) {
 	bin := t.TempDir()
 	scripts := map[string]string{
 		"buildkitd": "exec sleep 60\n",
-		"vmm-token": `[ "$1" = github ] && echo ghs_integration_token && exit 0; exit 3` + "\n",
+		"vmm-token": `[ -n "$FAKE_TOKEN_LEAK" ] && echo "npm_s3cr3t_value rejected" >&2 && exit 1
+[ "$1" = github ] && echo ghs_integration_token && exit 0; exit 3` + "\n",
 		"buildctl": `[ "$1" = debug ] && exit 0
 printf '%s\n' "$@" > ` + dir + `/args
 cp "$DOCKER_CONFIG/config.json" ` + dir + `/docker.json
@@ -75,7 +76,8 @@ exit ` + buildctlExit + "\n",
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 }
 
-func runAgent(t *testing.T, buildctlExit string) (*fakeHub, string, error) {
+// runAgent returns the fake hub, the buildctl record dir and the agent's work dir.
+func runAgent(t *testing.T, buildctlExit string) (*fakeHub, string, string, error) {
 	t.Helper()
 	hub := &fakeHub{}
 	srv := httptest.NewServer(hub)
@@ -89,19 +91,21 @@ func runAgent(t *testing.T, buildctlExit string) (*fakeHub, string, error) {
 	t.Setenv("OBSERVATORY_BUILD_SECRETS", "NPM_TOKEN")
 	t.Setenv("OBSERVATORY_BUILD_INTEGRATIONS", "github")
 	t.Setenv("NPM_TOKEN", "npm_s3cr3t_value")
-	a, err := FromEnv(t.TempDir())
+	dir := t.TempDir()
+	a, err := FromEnv(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = a.Run(context.Background())
-	return hub, rec, err
+	return hub, rec, dir, err
 }
 
 func TestAgentFlowWithFakes(t *testing.T) {
-	hub, rec, err := runAgent(t, "0")
+	hub, rec, dir, err := runAgent(t, "0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertCleanedUp(t, dir)
 	if hub.bad != 0 {
 		t.Errorf("%d requests without the build secret", hub.bad)
 	}
@@ -145,11 +149,35 @@ func TestAgentFlowWithFakes(t *testing.T) {
 }
 
 func TestAgentReportsBuildError(t *testing.T) {
-	hub, _, err := runAgent(t, "1")
+	hub, _, _, err := runAgent(t, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hub.result["digest"] != "" || !strings.Contains(hub.result["error"], "buildctl") {
 		t.Errorf("result = %v, want a buildctl error", hub.result)
+	}
+}
+
+func TestAgentMasksResultError(t *testing.T) {
+	t.Setenv("FAKE_TOKEN_LEAK", "1")
+	hub, _, dir, err := runAgent(t, "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := hub.result["error"]; !strings.Contains(e, "*** rejected") || strings.Contains(e, "npm_s3cr3t_value") {
+		t.Errorf("result error = %q, want the secret masked", e)
+	}
+	if strings.Contains(hub.log.String(), "npm_s3cr3t_value") {
+		t.Errorf("log leaks the secret: %q", hub.log.String())
+	}
+	assertCleanedUp(t, dir)
+}
+
+func assertCleanedUp(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"secrets", "docker"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s still exists after Run (stat: %v)", name, err)
+		}
 	}
 }

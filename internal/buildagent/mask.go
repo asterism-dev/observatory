@@ -58,6 +58,13 @@ func (m *Masker) Take() []byte {
 	return out
 }
 
+// MaskString masks s on its own, apart from the streamed text.
+func (m *Masker) MaskString(s string) string {
+	c := &Masker{secrets: m.secrets, raw: []byte(s), closed: true}
+	c.scan()
+	return string(c.out)
+}
+
 // scan moves raw text to out, stopping where the rest could still become a secret with the next write.
 func (m *Masker) scan() {
 	i, start := 0, 0

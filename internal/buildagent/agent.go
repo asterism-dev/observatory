@@ -75,25 +75,27 @@ func (a *Agent) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := os.MkdirAll(a.Dir, 0o700); err != nil {
-		return a.postResult(ctx, "", err)
+		return a.postResult(ctx, "", err.Error())
 	}
+	defer os.RemoveAll(filepath.Join(a.Dir, "secrets"))
 	secrets, values, err := a.writeSecrets(ctx)
 	log := NewMasker(append(values, []byte(a.Secret)))
 	shipped := a.shipLog(ctx, log)
-	var digest string
+	var digest, failure string
 	if err == nil {
 		digest, err = a.build(ctx, log, secrets)
 	}
 	if err != nil {
-		fmt.Fprintf(log, "build failed: %v\n", err)
+		failure = log.MaskString(err.Error())
+		fmt.Fprintf(log, "build failed: %s\n", failure)
 	}
 	log.Close()
 	cancel()
 	<-shipped
-	return a.postResult(context.Background(), digest, err)
+	return a.postResult(context.Background(), digest, failure)
 }
 
-// writeSecrets writes one file per reference and returns the --secret flags and the values to mask.
+// writeSecrets writes one file per reference and returns the --secret flags and the values to mask, which are also returned on failure.
 func (a *Agent) writeSecrets(ctx context.Context) ([]string, [][]byte, error) {
 	dir := filepath.Join(a.Dir, "secrets")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -116,10 +118,10 @@ func (a *Agent) writeSecrets(ctx context.Context) ([]string, [][]byte, error) {
 	for _, name := range a.Secrets {
 		v, ok := os.LookupEnv(name)
 		if !ok {
-			return nil, nil, fmt.Errorf("secret %s is not set", name)
+			return nil, values, fmt.Errorf("secret %s is not set", name)
 		}
 		if err := write(name, v); err != nil {
-			return nil, nil, err
+			return nil, values, err
 		}
 	}
 	for _, kind := range a.Integrations {
@@ -128,10 +130,10 @@ func (a *Agent) writeSecrets(ctx context.Context) ([]string, [][]byte, error) {
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
-			return nil, nil, fmt.Errorf("integration %s: vmm-token: %v %s", kind, err, strings.TrimSpace(stderr.String()))
+			return nil, values, fmt.Errorf("integration %s: vmm-token: %v %s", kind, err, strings.TrimSpace(stderr.String()))
 		}
 		if err := write(kind, strings.TrimSpace(string(out))); err != nil {
-			return nil, nil, err
+			return nil, values, err
 		}
 	}
 	return flags, values, nil
@@ -151,6 +153,7 @@ func (a *Agent) build(ctx context.Context, log io.Writer, secretFlags []string) 
 		return "", fmt.Errorf("recipe: %w", err)
 	}
 	dockerConfig := filepath.Join(a.Dir, "docker")
+	defer os.RemoveAll(dockerConfig)
 	if err := a.writeDockerConfig(dockerConfig, hub.Host); err != nil {
 		return "", err
 	}
@@ -329,10 +332,11 @@ func (a *Agent) shipLog(ctx context.Context, log *Masker) <-chan struct{} {
 	return done
 }
 
-func (a *Agent) postResult(ctx context.Context, digest string, buildErr error) error {
+// postResult reports the digest, or failure when it is not empty; failure must already be masked.
+func (a *Agent) postResult(ctx context.Context, digest, failure string) error {
 	result := map[string]string{"digest": digest}
-	if buildErr != nil {
-		result = map[string]string{"error": buildErr.Error()}
+	if failure != "" {
+		result = map[string]string{"error": failure}
 	}
 	body, err := json.Marshal(result)
 	if err != nil {
