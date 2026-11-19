@@ -55,6 +55,27 @@ func TestInstallTokenStdinRefusesPipedScript(t *testing.T) {
 	}
 }
 
+func TestInstallUpdateRefusesToken(t *testing.T) {
+	cmd := exec.Command("sh", "-s", "--", "--hub", "http://x", "--update", "--token", "t")
+	cmd.Stdin = bytes.NewReader(installScript)
+	out, err := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() != 2 {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestInstallUpdateNeedsEnrolledNode(t *testing.T) {
+	if _, err := os.Stat("/etc/observatory-node"); err == nil {
+		t.Skip("/etc/observatory-node exists on this machine")
+	}
+	cmd := exec.Command("sh", "-s", "--", "--hub", "http://x", "--update")
+	cmd.Stdin = bytes.NewReader(installScript)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "--update needs an enrolled node") {
+		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
 func TestFirecrackerVersion(t *testing.T) {
 	script, err := os.ReadFile("install.sh")
 	if err != nil {
