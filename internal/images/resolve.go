@@ -23,7 +23,10 @@ const (
 	latestTag   = "latest"
 )
 
-var ErrAmbiguous = errors.New("image name is ambiguous")
+var (
+	ErrAmbiguous      = errors.New("image name is ambiguous")
+	ErrPlatformPinned = errors.New("platform image is not pinnable")
+)
 
 type Checker interface {
 	Allowed(sub string, org uuid.UUID, obj, act string) bool
@@ -47,8 +50,11 @@ func (r Resolver) Resolve(ctx context.Context, org, caller uuid.UUID, owner Owne
 	if ref == "" {
 		return r.cascade(ctx, org, owner)
 	}
-	if ref == platformRef || strings.HasPrefix(ref, platformRef+":") {
-		return Resolved{Tag: strings.TrimPrefix(strings.TrimPrefix(ref, platformRef), ":"), Source: SourcePlatform}, nil
+	if ref == platformRef {
+		return Resolved{Source: SourcePlatform}, nil
+	}
+	if strings.HasPrefix(ref, platformRef+":") || strings.HasPrefix(ref, platformRef+"@") {
+		return Resolved{}, ErrPlatformPinned
 	}
 	p, err := ParseRef(ref)
 	if err != nil {
@@ -60,6 +66,11 @@ func (r Resolver) Resolve(ctx context.Context, org, caller uuid.UUID, owner Owne
 	}
 	res := Resolved{Image: &img, Tag: p.Tag, Digest: p.Digest, Source: SourceExplicit}
 	if p.Digest != "" {
+		if _, err := r.Store.ImageVersion(ctx, img.ID, p.Digest); errors.Is(err, store.ErrNotFound) {
+			return Resolved{}, fmt.Errorf("digest %q not found", p.Digest)
+		} else if err != nil {
+			return Resolved{}, err
+		}
 		return res, nil
 	}
 	if res.Tag == "" {
@@ -151,6 +162,7 @@ func (r Resolver) lookup(ctx context.Context, org, caller uuid.UUID, scope store
 	return img, nil
 }
 
+// Defaults skip image:use because they are set by someone allowed to set them.
 func (r Resolver) cascade(ctx context.Context, org uuid.UUID, owner Owner) (Resolved, error) {
 	defaults, err := r.Store.ImageDefaults(ctx, org)
 	if err != nil {
@@ -169,20 +181,31 @@ func (r Resolver) cascade(ctx context.Context, org uuid.UUID, owner Owner) (Reso
 			if d.Scope != st.scope || !sameID(d.OwnerID, st.id) {
 				continue
 			}
-			img, err := r.Store.Image(ctx, org, d.ImageID)
-			if err != nil {
-				return Resolved{}, err
+			res, err := r.resolveDefault(ctx, org, d, st.source)
+			if errors.Is(err, store.ErrNotFound) {
+				break
 			}
-			res := Resolved{Image: &img, Tag: d.Tag, Digest: d.Digest, Source: st.source}
-			if res.Digest == "" && res.Tag != "" {
-				if res.Digest, err = r.Store.ResolveImageTag(ctx, img.ID, res.Tag); err != nil {
-					return Resolved{}, fmt.Errorf("default tag %q: %w", res.Tag, err)
-				}
-			}
-			return res, nil
+			return res, err
 		}
 	}
 	return Resolved{Source: SourcePlatform}, nil
+}
+
+func (r Resolver) resolveDefault(ctx context.Context, org uuid.UUID, d store.ImageDefault, source string) (Resolved, error) {
+	img, err := r.Store.Image(ctx, org, d.ImageID)
+	if err != nil {
+		return Resolved{}, err
+	}
+	res := Resolved{Image: &img, Tag: d.Tag, Digest: d.Digest, Source: source}
+	if d.Digest != "" {
+		_, err = r.Store.ImageVersion(ctx, img.ID, d.Digest)
+		return res, err
+	}
+	if res.Tag == "" {
+		res.Tag = latestTag
+	}
+	res.Digest, err = r.Store.ResolveImageTag(ctx, img.ID, res.Tag)
+	return res, err
 }
 
 func sameID(a, b *uuid.UUID) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }

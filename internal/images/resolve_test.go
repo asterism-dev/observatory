@@ -133,6 +133,10 @@ func TestResolveTags(t *testing.T) {
 	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools:v9"); err == nil || !strings.Contains(err.Error(), `tag "v9" not found`) {
 		t.Fatalf("missing tag: %v", err)
 	}
+	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools@"+digest); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("unknown digest: %v", err)
+	}
+	f.tag(t, img, "latest")
 	got, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "tools@"+digest)
 	if err != nil || got.Digest != digest || got.Image.ID != img.ID {
 		t.Fatalf("digest: %+v %v", got, err)
@@ -189,6 +193,37 @@ func TestResolvePlatformFallback(t *testing.T) {
 		got, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, ref)
 		if err != nil || got.Image != nil || got.Digest != "" || got.Source != images.SourcePlatform {
 			t.Fatalf("%q: %+v %v", ref, got, err)
+		}
+	}
+}
+
+func TestResolveBrokenDefaultsFallBack(t *testing.T) {
+	f := newFixture(t, grants{})
+	ud := f.image(t, store.EnvScopeUser, &f.user, "mine")
+	od := f.image(t, store.EnvScopeOrg, nil, "all")
+	f.tag(t, ud, "latest")
+	f.tag(t, od, "latest")
+	f.setDefault(t, store.EnvScopeOrg, nil, od, "")
+	f.setDefault(t, store.EnvScopeUser, &f.user, ud, "v1")
+	owner := images.Owner{UserID: &f.user}
+	got, err := f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "")
+	if err != nil || got.Source != images.SourceOrgDefault || got.Digest != digest || got.Tag != "latest" {
+		t.Fatalf("missing tag / empty tag: %+v %v", got, err)
+	}
+	if err := f.s.DeleteImage(context.Background(), f.org.ID, od.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.r.Resolve(context.Background(), f.org.ID, f.user, owner, "")
+	if err != nil || got.Source != images.SourcePlatform {
+		t.Fatalf("gone image: %+v %v", got, err)
+	}
+}
+
+func TestResolvePlatformNotPinnable(t *testing.T) {
+	f := newFixture(t, grants{})
+	for _, ref := range []string{"observatory/standard:v2", "observatory/standard@" + digest} {
+		if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, images.Owner{UserID: &f.user}, ref); !errors.Is(err, images.ErrPlatformPinned) {
+			t.Fatalf("%q: %v", ref, err)
 		}
 	}
 }

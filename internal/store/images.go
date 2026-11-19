@@ -260,6 +260,17 @@ func (s *Store) ImageVersions(ctx context.Context, image uuid.UUID) ([]ImageVers
 	})
 }
 
+func (s *Store) ImageVersion(ctx context.Context, image uuid.UUID, digest string) (v ImageVersion, err error) {
+	err = s.q.QueryRow(ctx, `
+		SELECT image_id, digest, source, revision, build_id, size_bytes, created_by, created_at
+		FROM image_versions WHERE image_id = $1 AND digest = $2`, image, digest).
+		Scan(&v.ImageID, &v.Digest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return
+}
+
 // DeleteImageVersion drops the version's tags and layers with it.
 func (s *Store) DeleteImageVersion(ctx context.Context, image uuid.UUID, digest string) error {
 	tag, err := s.q.Exec(ctx, "DELETE FROM image_versions WHERE image_id = $1 AND digest = $2", image, digest)
