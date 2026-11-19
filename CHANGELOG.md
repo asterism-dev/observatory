@@ -1,3 +1,9 @@
+## v0.7.0 (2026-11-19)
+
+### Feat
+
+- **node**: go guest runtime booting oci images (#24)
+
 ## v0.6.0 (2026-11-19)
 
 ### Feat
