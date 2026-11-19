@@ -111,6 +111,24 @@ func TestUpdateIgnoresSecondRequest(t *testing.T) {
 	}
 }
 
+func TestUpdateReportsFailureAfterReconnect(t *testing.T) {
+	u := &fakeUpdater{block: make(chan struct{}), waitErr: errors.New("install.sh --update failed")}
+	env := startUpdateEnv(t, u)
+	env.hub.sendUpdate()
+	eventually(t, "started", func() bool { return len(u.gotStarts()) == 1 })
+	env.hub.drop()
+	eventually(t, "disconnected", func() bool {
+		env.agent.mu.Lock()
+		defer env.agent.mu.Unlock()
+		return env.agent.send == nil
+	})
+	close(u.block)
+	waitUpdateError(t, env, "install.sh --update failed")
+	if n := len(env.hub.registers()); n != 2 {
+		t.Fatalf("%d registers", n)
+	}
+}
+
 func TestUpdateWithoutUpdater(t *testing.T) {
 	env := startUpdateEnv(t, nil)
 	env.hub.sendUpdate()

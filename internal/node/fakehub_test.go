@@ -35,6 +35,7 @@ type fakeHub struct {
 	regs     []proto.Register
 	auth     []string
 	conn     *json.Encoder
+	sess     *yamux.Session // guarded by connMu
 	connMu   sync.Mutex
 	seq      uint64
 	nextID   int
@@ -102,7 +103,7 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	h.mu.Unlock()
 	h.connMu.Lock()
-	h.conn = enc
+	h.conn, h.sess = enc, sess
 	h.connMu.Unlock()
 	h.push()
 	if m.Register.ChassisKey != "" {
@@ -244,6 +245,13 @@ func (h *fakeHub) gotImages() []proto.ImageStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.images)
+}
+
+// drop ends the node's connection; the agent reconnects after reconnectDelay.
+func (h *fakeHub) drop() {
+	h.connMu.Lock()
+	defer h.connMu.Unlock()
+	h.sess.Close()
 }
 
 func (h *fakeHub) sendUpdate() { h.send(proto.Message{Type: "update"}) }

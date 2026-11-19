@@ -169,7 +169,8 @@ its page, or several as a rolling update, one node after the other. The hub send
 downloads the hub's installer and runs `install.sh --update` in its own systemd unit
 (`observatory-node-update`). The node keeps its credential and `node.json`, stays enrolled and never goes through
 the offline phase of a re-enroll. When the installer fails before it restarts the service, the old node keeps
-running and reports the update as failed to the hub; the next update retries.
+running and reports the update as failed to the hub, right after it reconnects if the connection was down; the next
+update retries.
 
 What happens to the VMs depends on the Firecracker version (the node reports it as `hypervisor`):
 

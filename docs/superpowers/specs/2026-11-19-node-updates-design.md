@@ -94,8 +94,8 @@ state they were in before, with memory kept unless the update changes the hyperv
   `systemd-run --unit observatory-node-update --collect sh <script> --update --hub <hub>` so the script survives the
   service restart it triggers. A second `update` while that unit is active is ignored.
 - The node reports only failures to the hub (`{"type":"update","update":{"error":…}}`) if starting the unit fails or
-  the unit exits unsuccessfully; success shows as a re-register on the new version. A report sent while disconnected
-  is dropped and the hub falls back to its timeout. The node watches the unit's
+  the unit exits unsuccessfully; success shows as a re-register on the new version. A report that cannot be sent while
+  disconnected is kept and sent right after the next register. The node watches the unit's
   result (`systemctl show -p Result,ExecMainStatus`) while it is still the old binary; a successful script ends in a
   service restart, so the old binary never sees success. *(our call: fail fast instead of waiting for the timeout)*
 - `install.sh --update` removes the Firecracker marker (and anything else it wrote for the restart) on any failure

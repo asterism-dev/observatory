@@ -60,7 +60,8 @@ type Agent struct {
 	// Egress runs the per-VM egress proxies; nil runs none.
 	Egress EgressHost
 
-	updating atomic.Bool
+	updating     atomic.Bool
+	unsentUpdate *proto.UpdateReport // guarded by mu
 
 	diskRefresh  time.Duration // zero means defaultDiskRefresh
 	metricsEvery time.Duration // zero means the package default
@@ -192,6 +193,9 @@ func (a *Agent) connect(ctx context.Context) error {
 	err = send(proto.Message{Type: "register", Register: a.registerMsg()})
 	if err == nil {
 		a.send = send
+		if a.unsentUpdate != nil && send(proto.Message{Type: "update", Update: a.unsentUpdate}) == nil {
+			a.unsentUpdate = nil
+		}
 	}
 	a.mu.Unlock()
 	if err != nil {
@@ -220,15 +224,15 @@ func (a *Agent) connect(ctx context.Context) error {
 		case m.Type == "underlay" && m.Underlay != nil:
 			go a.startChassis(ctx, *m.Underlay)
 		case m.Type == "update":
-			// The installer may drop the connection; a failure reported while disconnected is lost and the hub falls back to its timeout.
+			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
 			go a.runUpdate(ctx, func(m proto.Message) error {
 				a.mu.Lock()
-				send := a.send
-				a.mu.Unlock()
-				if send == nil {
-					return errors.New("not connected")
+				defer a.mu.Unlock()
+				if a.send != nil && a.send(m) == nil {
+					return nil
 				}
-				return send(m)
+				a.unsentUpdate = m.Update
+				return errors.New("not connected, sending after the next register")
 			})
 		}
 	}
