@@ -22,7 +22,7 @@ Success: a member creates the private image `my-tools` in the web UI, writes a D
 - **Recipes stored in Postgres.**
 - **Default cascade by VM owner:** a personal VM takes the user's default, else the org default; a team VM takes the team's default, else the org default. Team defaults never apply to personal VMs, personal defaults never to team VMs.
 - **Build-time secrets are explicit in the Dockerfile:** referenced secrets and integrations are BuildKit secrets, used with `RUN --mount=type=secret,id=…`; the real value exists only for that step and never lands in a layer. The docs ship snippets (git clone with the GitHub integration, npm, pip). Same Dockerfile works locally with `docker build --secret`.
-- **Every build keeps its log**, succeeded, failed or cancelled.
+- **Every build keeps its log**, succeeded, failed or cancelled. Logs are shown in the web UI, live and for every past build.
 
 Everything else is marked *(Our call.)*
 
@@ -109,7 +109,7 @@ New org limit "image storage GB" (registry usage counted per org from version si
 
 ### UI and CLI
 
-- Web: Images page (list per scope with tags, size, last build), image detail (recipe files with editor for text and upload for others, references picker, builds with live log, versions and tags, delete, visibility), default image selectors in org, team and user settings, image picker in "Create VM".
+- Web: Images page (list per scope with tags, size, last build), image detail (recipe files with editor for text and upload for others, references picker, build history (every build with state, revision, who started it, duration and resulting version) with a log viewer for the running build (live, follows the end) and for every past build (decided with the user), including download as text, versions and tags, delete, visibility), default image selectors in org, team and user settings, image picker in "Create VM".
 - CLI: `observatory image list|show|create|delete`, `image recipe pull|push <dir>`, `image build [--follow]`, `image push`, `image login`, `image tag`, `image versions`, `image default set|show`, `vm create --image`.
 - Docs: images page, recipe reference, `docker push` how-to, limits.
 
