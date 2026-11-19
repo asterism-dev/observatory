@@ -1,0 +1,9 @@
+.git
+.superpowers
+bin
+web/node_modules
+web/dist
+deploy/dev/hub.env
+deploy/idp/.env
+deploy/idp/.bootstrap
+deploy/.env
