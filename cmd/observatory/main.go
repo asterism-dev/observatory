@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/asterism-dev/observatory/internal/release"
 )
 
 type globals struct {
@@ -37,6 +39,9 @@ type cli struct {
 	lookPath       func(string) (string, error)
 	readPassword   func() ([]byte, error)
 	now            func() time.Time
+	latestURL      string
+	downloadURL    string
+	executable     func() (string, error)
 	g              globals
 	cfgDir         string
 	cfg            config
@@ -64,6 +69,9 @@ func newCLI(ctx context.Context) *cli {
 		lookPath:     exec.LookPath,
 		readPassword: func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) },
 		now:          time.Now,
+		latestURL:    release.LatestURL,
+		downloadURL:  downloadURL,
+		executable:   os.Executable,
 	}
 }
 
@@ -78,6 +86,7 @@ func commands() []command {
 		{"logout", "", "revoke this CLI session", cmdLogout},
 		{"whoami", "", "show the user, orgs and session", cmdWhoami},
 		{"version", "", "print the CLI version", cmdVersion},
+		{"update", "", "update the CLI to the latest release", cmdUpdate},
 		{"help", "[noun]", "show this help", cmdHelp},
 		{"org list", "", "list your orgs", cmdOrgList},
 		{"org use", "<org>", "set the default org", cmdOrgUse},
@@ -131,6 +140,9 @@ func run(c *cli, args []string) int {
 		return 1
 	}
 	err = cmd.fn(c, rest)
+	if cmd.path != "update" && cmd.path != "version" && cmd.path != "help" {
+		c.updateHint()
+	}
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}

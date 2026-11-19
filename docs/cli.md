@@ -13,11 +13,17 @@ observatory ssh dev
 
 ## Install
 
-```
-make cli        # → bin/observatory
-```
+Download `observatory_<version>_<os>_<arch>.tar.gz` from the
+[latest release](https://github.com/asterism-dev/observatory/releases/latest), check it against `SHA256SUMS`, and put
+`observatory` somewhere on your `PATH`. From a checkout, `make cli` builds `bin/observatory` instead.
+`observatory version` prints the build version.
 
-Copy `bin/observatory` somewhere on your `PATH`. `observatory version` prints the build version.
+## Updates
+
+Once a day the CLI asks GitHub for the latest release; when it is newer, commands print a one-line hint on stderr.
+`observatory update` downloads the release for this OS and architecture, verifies it against `SHA256SUMS` and replaces
+the binary in place (with `sudo` if it lives in a root-owned directory). `OBSERVATORY_NO_UPDATE_CHECK=1` turns the
+daily check off; builds that are not a release tag never check and cannot update themselves.
 
 ## Login and sessions
 
