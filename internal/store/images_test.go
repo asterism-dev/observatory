@@ -316,3 +316,33 @@ func TestLimitsImageStorage(t *testing.T) {
 	}
 	_ = user
 }
+
+func TestBuildLogFinishOnce(t *testing.T) {
+	ctx := context.Background()
+	s, org, user, _ := newImageEnv(t)
+	b, err := s.CreateImageBuild(ctx, store.ImageBuild{ImageID: newImage(t, s, org, user, "f").ID, Revision: 1, StartedBy: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.AppendBuildLog(ctx, b.ID, []byte("hello\n"))
+	for range 2 {
+		if err := s.FinishBuildLog(ctx, b.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.BuildLog(ctx, b.ID); string(got) != "hello\n" {
+		t.Fatalf("log after double finish: %q", got)
+	}
+	if err := s.AppendBuildLog(ctx, b.ID, []byte("late\n")); !errors.Is(err, store.ErrBuildLogFinished) {
+		t.Fatalf("append after finish: %v", err)
+	}
+	if got, _ := s.BuildLog(ctx, b.ID); string(got) != "hello\n" {
+		t.Fatalf("log after late append: %q", got)
+	}
+	if err := s.FinishBuildLog(ctx, uuid.New()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("finish unknown: %v", err)
+	}
+	if err := s.AppendBuildLog(ctx, uuid.New(), []byte("x")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("append unknown: %v", err)
+	}
+}

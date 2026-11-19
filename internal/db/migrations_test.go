@@ -90,3 +90,32 @@ func TestMigration00017MarksExistingVMs(t *testing.T) {
 		t.Fatalf("legacy_runtime old=%v new=%v, want true/false", old, fresh)
 	}
 }
+
+func TestMigration00018RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
+	defer conn.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		WITH u AS (INSERT INTO users (subject, email, name) VALUES ('s', 'u@example.com', 'u') RETURNING id),
+		o AS (INSERT INTO orgs (name) VALUES ('o') RETURNING id),
+		i AS (INSERT INTO images (org_id, scope, name, created_by) SELECT o.id, 'org', 'img', u.id FROM o, u RETURNING id),
+		r AS (INSERT INTO recipe_revisions (image_id, number, created_by) SELECT i.id, 1, u.id FROM i, u RETURNING image_id),
+		f AS (INSERT INTO recipe_files (image_id, revision, path, mode, content) SELECT image_id, 1, 'Dockerfile', 420, '\x00' FROM r),
+		b AS (INSERT INTO image_builds (image_id, revision, started_by) SELECT i.id, 1, u.id FROM i, u RETURNING id),
+		v AS (INSERT INTO image_versions (image_id, digest, source) SELECT id, 'sha256:a', 'push' FROM i RETURNING image_id),
+		t AS (INSERT INTO image_tags (image_id, tag, digest) SELECT image_id, 'latest', 'sha256:a' FROM v)
+		INSERT INTO image_defaults (org_id, scope, image_id, tag) SELECT o.id, 'org', i.id, 'latest' FROM o, i`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 17); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 18); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+}

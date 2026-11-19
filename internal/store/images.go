@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrImageExists  = errors.New("an image with this name already exists")
-	ErrBuildRunning = errors.New("a build of this image is already queued or running")
+	ErrImageExists      = errors.New("an image with this name already exists")
+	ErrBuildRunning     = errors.New("a build of this image is already queued or running")
+	ErrBuildLogFinished = errors.New("the build log is already finished")
 )
 
 const (
@@ -361,13 +362,34 @@ func (s *Store) ImageBuilds(ctx context.Context, image uuid.UUID) ([]ImageBuild,
 }
 
 func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byte) error {
-	_, err := s.q.Exec(ctx, "INSERT INTO image_build_log_chunks (build_id, chunk) VALUES ($1, $2)", build, chunk)
-	return err
+	return s.InTx(ctx, func(tx *Store) error {
+		finished, err := tx.lockBuildLog(ctx, build, "FOR SHARE")
+		if err != nil {
+			return err
+		}
+		if finished {
+			return ErrBuildLogFinished
+		}
+		_, err = tx.q.Exec(ctx, "INSERT INTO image_build_log_chunks (build_id, chunk) VALUES ($1, $2)", build, chunk)
+		return err
+	})
+}
+
+// lockBuildLog locks the build row so appends and the compaction in FinishBuildLog cannot interleave.
+func (s *Store) lockBuildLog(ctx context.Context, build uuid.UUID, mode string) (finished bool, err error) {
+	err = s.q.QueryRow(ctx, "SELECT log IS NOT NULL FROM image_builds WHERE id = $1 "+mode, build).Scan(&finished)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return finished, err
 }
 
 // FinishBuildLog replaces the chunks with one gzip blob, cutting the middle above 2*buildLogKeep.
 func (s *Store) FinishBuildLog(ctx context.Context, build uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		if finished, err := tx.lockBuildLog(ctx, build, "FOR UPDATE"); err != nil || finished {
+			return err
+		}
 		raw, err := tx.chunkedLog(ctx, build)
 		if err != nil {
 			return err
