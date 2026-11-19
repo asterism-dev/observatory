@@ -979,8 +979,11 @@ func (a *Agent) stopAll() {
 	a.mu.Unlock()
 	a.releaseSnapshots()
 	var fits map[*vmEntry]bool
+	hv, ok := a.Provider.(interface{ HypervisorChanged() bool })
 	if _, err := os.Stat(a.ShutdownMarker); err == nil {
 		log.Printf("%s present: stopping VMs instead of hibernating", a.ShutdownMarker)
+	} else if ok && hv.HypervisorChanged() {
+		log.Printf("hypervisor changed since start: stopping VMs instead of hibernating")
 	} else {
 		fits = a.hibernateFits(entries)
 	}

@@ -138,6 +138,7 @@ type fakeProvider struct {
 	block         chan struct{} // when set, StartChassis waits for it to close
 	inflight      atomic.Int32
 	maxInflight   atomic.Int32
+	hvChanged     atomic.Bool
 	events        []string
 	failDisks     bool
 	failReseed    bool
@@ -452,6 +453,8 @@ func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
 func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
 func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
 func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }
+
+func (p *fakeProvider) HypervisorChanged() bool { return p.hvChanged.Load() }
 
 func (p *fakeProvider) Hypervisor() proto.Hypervisor {
 	return proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}

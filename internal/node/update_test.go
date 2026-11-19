@@ -201,3 +201,16 @@ func TestUpdateFailureRemovesShutdownMarker(t *testing.T) {
 		t.Fatalf("marker still there: %v", err)
 	}
 }
+
+func TestStopAllShutsDownWhenHypervisorChanged(t *testing.T) {
+	freeSpace(t, 1<<40)
+	env := startEnv(t, nil)
+	vm := env.hub.create("one")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.provider.hvChanged.Store(true)
+	env.stop()
+	<-env.runDone
+	if env.provider.hasEvent("savestate:"+filepath.Join(VMDir(env.agent.VMsDir, vm.ID), "state.tmp")) || !env.provider.hasEvent("stop-guest") {
+		t.Fatalf("events = %v", env.provider.gotEvents())
+	}
+}
