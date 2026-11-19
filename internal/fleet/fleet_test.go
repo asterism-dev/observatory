@@ -1060,9 +1060,17 @@ func TestDesiredRestoreReady(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.f.NotifyOrg(e.org.ID)
-		r := node.desired().Desired[0].Restore
-		if r == nil || *r != (proto.Restore{SnapshotID: sn.ID.String(), Seq: 1, Ready: c.ready}) {
-			t.Fatalf("%s: restore = %+v", c.state, r)
+		want := proto.Restore{SnapshotID: sn.ID.String(), Seq: 1, Ready: c.ready}
+		// A list computed before the update may still be queued; the kick guarantees a newer one follows.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			r := node.desired().Desired[0].Restore
+			if r != nil && *r == want {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: restore = %+v", c.state, r)
+			}
 		}
 	}
 }
