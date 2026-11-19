@@ -111,7 +111,7 @@ func run() error {
 		go ck.Run(ctx, 6*time.Hour)
 		newer = ck.Newer
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL, newer))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
