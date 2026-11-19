@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { List, ListItem } from '@asterism-dev/lumen'
+import { Button, List, ListItem } from '@asterism-dev/lumen'
 import { Box, Building2, HardDrive, KeyRound, Laptop, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -11,6 +11,7 @@ import UserMenu from '@/components/UserMenu.vue'
 import { useCrumbs, type Crumb } from '@/composables/useCrumbs'
 import { useMe, type Org } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import { DISMISS_KEY, releaseURL, showBanner } from '@/composables/release'
 import { useSettingsNav } from '@/composables/useSettingsNav'
 
 const { t } = useI18n()
@@ -26,6 +27,23 @@ const creating = ref(false)
 const orgId = computed(() => (route.path.startsWith('/admin/') ? '' : ((route.params.orgId as string | undefined) ?? '')))
 
 const orgError = ref('')
+
+function storedDismissed(): string | null {
+  try {
+    return localStorage.getItem(DISMISS_KEY)
+  } catch {
+    return null
+  }
+}
+const dismissed = ref(storedDismissed())
+function dismissRelease(tag: string) {
+  dismissed.value = tag
+  try {
+    localStorage.setItem(DISMISS_KEY, tag)
+  } catch {
+    // Without storage the banner returns on the next load.
+  }
+}
 
 // Without an org in the route (e.g. /profile) load the active org so the user menu knows its permissions.
 watch(
@@ -128,6 +146,12 @@ const activePath = computed(() => {
           </template>
         </nav>
       </header>
+      <div v-if="me && showBanner(me, dismissed)" role="status" class="release-banner">
+        <span>{{ t('release.available', { latest: me.latestVersion, current: me.version }) }}</span>
+        <a :href="releaseURL(me.latestVersion)" target="_blank" rel="noopener">{{ t('release.notes') }}</a>
+        <span class="release-banner__spacer" />
+        <Button size="sm" @click="dismissRelease(me.latestVersion)">{{ t('release.dismiss') }}</Button>
+      </div>
       <p v-if="orgError" role="alert" class="org-error">{{ orgError }}</p>
       <slot />
     </main>
@@ -170,6 +194,18 @@ const activePath = computed(() => {
 }
 .org-error {
   margin: 16px var(--page-x) 0;
+}
+.release-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px var(--page-x);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.release-banner__spacer {
+  flex: 1;
 }
 .side__nav {
   display: grid;

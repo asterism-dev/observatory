@@ -13,6 +13,8 @@ export interface Me {
   user: { id: string; email: string; name: string; platformAdmin: boolean }
   orgs: Org[]
   docsURL: string
+  version: string
+  latestVersion: string
 }
 
 const STORAGE_KEY = 'obs-org'
