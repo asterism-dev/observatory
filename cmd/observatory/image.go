@@ -38,14 +38,20 @@ type imageJSON struct {
 	LastBuildState string            `json:"lastBuildState"`
 	PushError      string            `json:"pushError"`
 	CreatedAt      time.Time         `json:"createdAt"`
+
+	AutoSchedule     string     `json:"autoSchedule"`
+	AutoOnBaseChange bool       `json:"autoOnBaseChange"`
+	AutoError        string     `json:"autoError"`
+	AutoLastAt       *time.Time `json:"autoLastAt"`
 }
 
 type buildJSON struct {
 	ID       string    `json:"id"`
 	ImageID  string    `json:"imageId"`
 	Revision int       `json:"revision"`
-	State    string    `json:"state"`
-	QueuedAt time.Time `json:"queuedAt"`
+	State     string    `json:"state"`
+	Automatic bool      `json:"automatic"`
+	QueuedAt  time.Time `json:"queuedAt"`
 	Digest   string    `json:"digest"`
 	Error    string    `json:"error"`
 }
@@ -68,6 +74,7 @@ func imageCommands() []command {
 		{"image recipe pull", "<ref> <dir>", "download the recipe into a directory", cmdRecipePull},
 		{"image recipe push", "<ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...", "upload a directory as the next recipe revision", cmdRecipePush},
 		{"image build", "<ref> [--follow]", "build the current recipe", cmdImageBuild},
+		{"image auto", "<ref> [--schedule off|daily|weekly] [--on-base-change=true|false]", "rebuild an image automatically", cmdImageAuto},
 		{"image builds", "<ref>", "list the builds of an image", cmdImageBuilds},
 		{"image log", "<build-id> [--follow]", "show a build log", cmdImageLog},
 		{"image cancel", "<build-id>", "cancel a queued or running build", cmdImageCancel},
@@ -96,6 +103,21 @@ func (i imageJSON) visibility() string {
 		return "platform"
 	}
 	return scopeLabel(i.Scope, i.OwnerName)
+}
+
+// automation describes the automatic rebuild settings, e.g. "weekly, on base change".
+func (i imageJSON) automation() string {
+	var parts []string
+	if i.AutoSchedule != "" {
+		parts = append(parts, i.AutoSchedule)
+	}
+	if i.AutoOnBaseChange {
+		parts = append(parts, "on base change")
+	}
+	if len(parts) == 0 {
+		return "off"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func revLabel(r *int) string {
@@ -215,6 +237,12 @@ func cmdImageShow(c *cli, args []string) error {
 	}
 	if img.PushError != "" {
 		pairs = append(pairs, [2]string{"Push error", img.PushError})
+	}
+	if !img.Platform {
+		pairs = append(pairs, [2]string{"Automatic", img.automation()})
+	}
+	if img.AutoError != "" {
+		pairs = append(pairs, [2]string{"Auto error", "automatic rebuild failed: " + img.AutoError})
 	}
 	pairs = append(pairs, [2]string{"Created", ago(c.now(), img.CreatedAt)})
 	return c.emitKV(raw, pairs)
@@ -569,6 +597,57 @@ func cmdImageBuild(c *cli, args []string) error {
 	return c.done(nil, "Build %s succeeded: %s", out.BuildID, b.Digest)
 }
 
+func cmdImageAuto(c *cli, args []string) error {
+	fs := c.flags("image auto")
+	schedule := fs.String("schedule", "", "off, daily or weekly")
+	onBase := fs.Bool("on-base-change", false, "rebuild when a base image changes")
+	pos, err := c.parse(fs, args, 1, 1)
+	if err != nil {
+		return err
+	}
+	var body struct {
+		AutoSchedule     *string `json:"autoSchedule,omitempty"`
+		AutoOnBaseChange *bool   `json:"autoOnBaseChange,omitempty"`
+	}
+	var bad bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "schedule":
+			bad = !slices.Contains([]string{"off", "daily", "weekly"}, *schedule)
+			if *schedule == "off" {
+				*schedule = ""
+			}
+			body.AutoSchedule = schedule
+		case "on-base-change":
+			body.AutoOnBaseChange = onBase
+		}
+	})
+	if bad {
+		return usagef("--schedule must be off, daily or weekly")
+	}
+	img, _, _, err := c.findImage(pos[0])
+	if err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "")
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if body.AutoSchedule != nil || body.AutoOnBaseChange != nil {
+		err = c.call(http.MethodPatch, path, body, &raw)
+	} else {
+		err = c.call(http.MethodGet, path, nil, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, &img); err != nil {
+		return err
+	}
+	return c.done(raw, "Automatic rebuilds of %s: %s.", img.Ref, img.automation())
+}
+
 func cmdImageBuilds(c *cli, args []string) error {
 	pos, err := c.parse(c.flags("image builds"), args, 1, 1)
 	if err != nil {
@@ -592,7 +671,11 @@ func cmdImageBuilds(c *cli, args []string) error {
 	}
 	rows := make([][]string, len(l))
 	for i, b := range l {
-		rows[i] = []string{b.ID, fmt.Sprintf("r%d", b.Revision), b.State, ago(c.now(), b.QueuedAt), shortDigest(b.Digest), b.Error}
+		state := b.State
+		if b.Automatic {
+			state += " (auto)"
+		}
+		rows[i] = []string{b.ID, fmt.Sprintf("r%d", b.Revision), state, ago(c.now(), b.QueuedAt), shortDigest(b.Digest), b.Error}
 	}
 	return c.emit(raw, []string{"build", "recipe", "state", "queued", "digest", "error"}, rows)
 }

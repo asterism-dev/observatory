@@ -51,7 +51,7 @@ func TestImageAmbiguousBareName(t *testing.T) {
 
 func TestImageBuildsGolden(t *testing.T) {
 	h, c, out, errb := imageHub(t)
-	h.on("GET /api/orgs/o1/images/i-app/builds", 200, `[{"id":"b2","imageId":"i-app","revision":3,"state":"failed","queuedAt":"2026-11-19T14:00:00Z","digest":"","error":"step 4 failed"},{"id":"b1","imageId":"i-app","revision":2,"state":"succeeded","queuedAt":"2026-11-19T12:00:00Z","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","error":""}]`)
+	h.on("GET /api/orgs/o1/images/i-app/builds", 200, `[{"id":"b2","imageId":"i-app","revision":3,"state":"failed","automatic":true,"queuedAt":"2026-11-19T14:00:00Z","digest":"","error":"step 4 failed"},{"id":"b1","imageId":"i-app","revision":2,"state":"succeeded","queuedAt":"2026-11-19T12:00:00Z","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","error":""}]`)
 	mustRun(t, c, errb, 0, "image", "builds", "backend/app")
 	golden(t, "image-builds.golden", out())
 }
@@ -210,6 +210,27 @@ func TestImageUpdateSendsOnlyGivenFields(t *testing.T) {
 		t.Errorf("bodies %s %s", calls[0].Body, calls[1].Body)
 	}
 	mustRun(t, c, errb, 2, "image", "update", "app")
+}
+
+func TestImageAuto(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	auto := strings.Replace(imgApp, `"pushError":""`, `"pushError":"","autoSchedule":"weekly","autoOnBaseChange":true,"autoError":"secret org/NPM_TOKEN no longer exists"`, 1)
+	h.on("PATCH /api/orgs/o1/images/i-app", 200, auto)
+	h.on("GET /api/orgs/o1/images/i-app", 200, auto)
+	mustRun(t, c, errb, 0, "image", "auto", "app", "--schedule", "weekly", "--on-base-change")
+	mustRun(t, c, errb, 0, "image", "auto", "app", "--schedule", "off")
+	mustRun(t, c, errb, 0, "image", "auto", "app", "--on-base-change=false")
+	calls := h.calls("PATCH /api/orgs/o1/images/i-app")
+	if len(calls) != 3 || calls[0].Body != `{"autoSchedule":"weekly","autoOnBaseChange":true}` || calls[1].Body != `{"autoSchedule":""}` || calls[2].Body != `{"autoOnBaseChange":false}` {
+		t.Errorf("bodies %+v", calls)
+	}
+	if !strings.Contains(out(), "Automatic rebuilds of backend/app: weekly, on base change.") {
+		t.Errorf("stdout %s", out())
+	}
+	mustRun(t, c, errb, 2, "image", "auto", "app", "--schedule", "hourly")
+	before := len(out())
+	mustRun(t, c, errb, 0, "image", "show", "app")
+	golden(t, "image-show-auto.golden", out()[before:])
 }
 
 func TestImageCancel(t *testing.T) {
