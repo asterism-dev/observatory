@@ -103,6 +103,30 @@ func TestPullPicksAmd64(t *testing.T) {
 	}
 }
 
+func TestPullByDigestUsesCache(t *testing.T) {
+	srv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	defer srv.Close()
+	img := platformImage(t, "amd64", v1.Config{Cmd: []string{"/bin/app"}})
+	d, _ := img.Digest()
+	ref := strings.TrimPrefix(srv.URL, "http://") + "/img@" + d.String()
+	if err := remote.Write(mustRef(t, ref), img); err != nil {
+		t.Fatal(err)
+	}
+	s := Store{Dir: t.TempDir()}
+	first, err := s.Pull(context.Background(), ref, authn.Anonymous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	again, err := s.Pull(context.Background(), ref, authn.Anonymous)
+	if err != nil {
+		t.Fatalf("cached pull contacted the registry: %v", err)
+	}
+	if !reflect.DeepEqual(again, first) {
+		t.Fatalf("cached pull %+v, want %+v", again, first)
+	}
+}
+
 func TestPullRejectsArm64Only(t *testing.T) {
 	ref := testRegistry(t) + "/guest:1"
 	pushIndex(t, ref, map[string]v1.Image{"arm64": platformImage(t, "arm64", v1.Config{})})

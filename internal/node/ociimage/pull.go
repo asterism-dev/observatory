@@ -46,6 +46,12 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 	if err != nil {
 		return Pulled{}, err
 	}
+	// ponytail: only image manifests are cached by their own digest; a ref to an index digest still asks the registry.
+	if d, ok := r.(name.Digest); ok {
+		if h, err := v1.NewHash(d.DigestStr()); err == nil && s.hasBlob(h) {
+			return s.cached(h)
+		}
+	}
 	desc, err := remote.Get(r, remote.WithContext(ctx), remote.WithAuth(auth))
 	if err != nil {
 		return Pulled{}, err
@@ -121,12 +127,37 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 	if err := s.writeBlob(digest, bytes.NewReader(rawManifest)); err != nil {
 		return Pulled{}, err
 	}
+	return pulled(digest, cfg, size), nil
+}
+
+func pulled(digest v1.Hash, cfg *v1.ConfigFile, size int64) Pulled {
 	c := cfg.Config
 	return Pulled{
 		Digest:    digest.String(),
 		Config:    proto.ImageConfig{Entrypoint: c.Entrypoint, Cmd: c.Cmd, Env: c.Env, WorkingDir: c.WorkingDir, StopSignal: c.StopSignal},
 		SizeBytes: size,
-	}, nil
+	}
+}
+
+// cached returns an image whose manifest, and so every blob, is already in the store, without asking the registry.
+func (s Store) cached(h v1.Hash) (Pulled, error) {
+	img, err := s.image(h)
+	if err != nil {
+		return Pulled{}, err
+	}
+	m, err := img.Manifest()
+	if err != nil {
+		return Pulled{}, err
+	}
+	cfg, err := img.ConfigFile()
+	if err != nil {
+		return Pulled{}, err
+	}
+	var size int64
+	for _, l := range m.Layers {
+		size += l.Size
+	}
+	return pulled(h, cfg, size), nil
 }
 
 func amd64Image(desc *remote.Descriptor) (v1.Image, error) {
