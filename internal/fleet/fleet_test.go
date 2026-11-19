@@ -1792,6 +1792,23 @@ func TestDesiredVMImage(t *testing.T) {
 	e.vm(e.org.ID, n.ID, "plain", &e.owner, nil)
 	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
 	setImage(gone, "org/gone", unknown)
+	other, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "other", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: other.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	byID := e.vm(e.org.ID, n.ID, "byid", &e.owner, nil)
+	setImage(byID, "org/other", digest)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_id = $2 WHERE id = $1", byID.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleID := e.vm(e.org.ID, n.ID, "staleid", &e.owner, nil)
+	setImage(staleID, "org/tools", unknown)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_id = $2 WHERE id = $1", staleID.ID, img.ID); err != nil {
+		t.Fatal(err)
+	}
 	prepared := e.vm(e.org.ID, n.ID, "prepared", &e.owner, nil)
 	setImage(prepared, "org/tools", digest)
 	if err := e.s.SetVMStatus(ctx, n.ID, proto.VMStatus{ID: prepared.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + digest}); err != nil {
@@ -1807,6 +1824,12 @@ func TestDesiredVMImage(t *testing.T) {
 	}
 	if g := got["gone"]; g == nil || !g.Gone || g.Repo != "" || g.PullToken != "" || g.Digest != unknown {
 		t.Fatalf("gone image = %+v", g)
+	}
+	if b := got["byid"]; b == nil || b.Repo != "hub.test/i/"+other.ID.String() {
+		t.Fatalf("image_id not preferred: %+v", b)
+	}
+	if g := got["staleid"]; g == nil || !g.Gone {
+		t.Fatalf("missing version under image_id = %+v", g)
 	}
 	u := got["user"]
 	if u == nil || u.Repo != "hub.test/i/"+img.ID.String() || u.Digest != digest {

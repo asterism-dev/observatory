@@ -338,7 +338,14 @@ func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, 
 		slog.Error("vm image without a registry", "vm", v.ID)
 		return gone, nil
 	}
-	id, err := f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
+	var id uuid.UUID
+	var err error
+	if v.ImageID != nil {
+		id = *v.ImageID
+		_, err = f.store.ImageVersion(ctx, id, v.ImageDigest)
+	} else {
+		id, err = f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return gone, nil
 	}

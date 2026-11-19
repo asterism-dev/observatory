@@ -43,13 +43,16 @@ type VM struct {
 	LegacyRuntime      bool
 	// ImageRef is the image reference the VM was created with, ImageDigest the version it runs; empty digest means the platform image.
 	ImageRef, ImageDigest string
+	// ImageID is nil for the platform image and once the image is deleted; ImageSource says how the reference was chosen.
+	ImageID     *uuid.UUID
+	ImageSource string
 }
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime, coalesce(image_ref, ''), coalesce(image_digest, '')"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime, coalesce(image_ref, ''), coalesce(image_digest, ''), image_id, coalesce(image_source, '')"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime, &v.ImageRef, &v.ImageDigest)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime, &v.ImageRef, &v.ImageDigest, &v.ImageID, &v.ImageSource)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -156,9 +159,9 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 			return err
 		}
 		out, err = scanVM(tx.q.QueryRow(ctx, `
-			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING `+vmColumns,
-			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP))
+			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip, image_ref, image_digest, image_id, image_source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), nullif($12, ''), $13, nullif($14, '')) RETURNING `+vmColumns,
+			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP, v.ImageRef, v.ImageDigest, v.ImageID, v.ImageSource))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}

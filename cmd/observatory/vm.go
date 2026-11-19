@@ -21,6 +21,7 @@ type vmJSON struct {
 	MgmtIP   string `json:"mgmtIP"`
 	DNSName  string `json:"dnsName"`
 	Image    string `json:"image"`
+	ImageRef string `json:"imageRef"`
 	Owner    struct {
 		Kind, ID, Name string
 	} `json:"owner"`
@@ -214,8 +215,15 @@ func cmdVMShow(c *cli, args []string) error {
 	if v.AutoSuspendMinutes > 0 {
 		suspend = fmt.Sprintf("%d min", v.AutoSuspendMinutes)
 	}
+	digest := "–"
 	if v.Image != "" {
 		image = v.Image
+	}
+	if v.ImageRef != "" {
+		image = v.ImageRef
+	}
+	if _, d, ok := strings.Cut(v.Image, "@"); ok {
+		digest = d
 	}
 	if v.LegacyRuntime {
 		state += " - old guest runtime, recreate this VM"
@@ -224,7 +232,7 @@ func cmdVMShow(c *cli, args []string) error {
 		{"name", v.Name}, {"state", state}, {"owner", c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name)}, {"node", v.Node.Name},
 		{"size", v.size()}, {"dns", v.DNSName}, {"ip", orDash(v.IP)},
 		{"networks", orDash(strings.Join(nets, ", "))}, {"disks", orDash(strings.Join(disks, ", "))},
-		{"auto-suspend", suspend}, {"image", image}, {"created", ago(c.now(), v.CreatedAt)},
+		{"auto-suspend", suspend}, {"image", image}, {"digest", digest}, {"created", ago(c.now(), v.CreatedAt)},
 	})
 }
 
@@ -235,6 +243,7 @@ func cmdVMCreate(c *cli, args []string) error {
 	cpus := fs.Int("cpus", 2, "vCPUs")
 	memory := fs.String("memory", "4G", "memory, e.g. 4G or 512M")
 	disk := fs.Int("disk", 20, "disk size in GB")
+	image := fs.String("image", "", "image `REF` (default: the owner's default image)")
 	wait := fs.Bool("wait", false, "wait until the VM is running")
 	pos, err := c.parse(fs, args, 1, 1)
 	if err != nil {
@@ -289,7 +298,8 @@ func cmdVMCreate(c *cli, args []string) error {
 		CPUs     int    `json:"cpus"`
 		MemoryMB int    `json:"memoryMB"`
 		DiskGB   int    `json:"diskGB"`
-	}{pos[0], o, nodeID, *cpus, memMB, *disk}, &raw)
+		Image    string `json:"image,omitempty"`
+	}{pos[0], o, nodeID, *cpus, memMB, *disk, *image}, &raw)
 	if err != nil {
 		return err
 	}

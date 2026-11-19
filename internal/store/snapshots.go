@@ -458,9 +458,10 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 		var id uuid.UUID
 		err = tx.q.QueryRow(ctx, `
 			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip,
-				fork_snapshot_id, fork_source_vm, fork_memory)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-			org, src.NodeID, src.UserID, src.TeamID, name, sn.CPUs, sn.MemoryMB, sn.DiskGB, createdBy, mgmtIP, sn.ID, src.ID, memory).Scan(&id)
+				fork_snapshot_id, fork_source_vm, fork_memory, image_ref, image_digest, image_id, image_source)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, nullif($14, ''), nullif($15, ''), $16, nullif($17, '')) RETURNING id`,
+			org, src.NodeID, src.UserID, src.TeamID, name, sn.CPUs, sn.MemoryMB, sn.DiskGB, createdBy, mgmtIP, sn.ID, src.ID, memory,
+			src.ImageRef, src.ImageDigest, src.ImageID, src.ImageSource).Scan(&id)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		} else if err != nil {

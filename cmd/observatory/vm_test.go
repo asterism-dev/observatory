@@ -52,6 +52,17 @@ func TestVMCreateBody(t *testing.T) {
 	}
 }
 
+func TestVMCreateImageFlag(t *testing.T) {
+	h, c, _, _ := vmHub(t, oneNode)
+	h.on("POST /api/orgs/o1/vms", 201, vmDev)
+	if code := run(c, []string{"vm", "create", "dev", "--image", "org/base:v2"}); code != 0 {
+		t.Fatal(code)
+	}
+	if b := h.calls("POST /api/orgs/o1/vms")[0].Body; !strings.Contains(b, `"image":"org/base:v2"`) {
+		t.Errorf("body %s", b)
+	}
+}
+
 func TestVMCreateSeveralNodes(t *testing.T) {
 	h, c, _, errb := vmHub(t, `[{"id":"n1","name":"pve1"},{"id":"n2","name":"pve2"}]`)
 	if code := run(c, []string{"vm", "create", "dev"}); code != 2 {
