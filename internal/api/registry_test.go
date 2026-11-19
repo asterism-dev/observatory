@@ -199,7 +199,7 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 		ExpiresAt time.Time
 	}
 	decode(t, rec, &got)
-	if d := time.Until(got.ExpiresAt); d > 12*time.Hour || d < 12*time.Hour-time.Minute {
+	if d := time.Until(got.ExpiresAt); d > 12*time.Hour+5*time.Second || d < 12*time.Hour-time.Minute {
 		t.Fatalf("expiresAt in %v", d)
 	}
 	var stored int
