@@ -65,3 +65,34 @@ func TestVMConfig(t *testing.T) {
 		t.Error("accepted a drive list that does not match the attach order")
 	}
 }
+
+func TestVMConfigBalloonVsock(t *testing.T) {
+	b, err := vmConfig(testVMFile(), "k", "i", []string{"/root.img", "/seed.iso"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Balloon *struct {
+			Amount      int  `json:"amount_mib"`
+			DeflateOOM  bool `json:"deflate_on_oom"`
+			StatsPeriod int  `json:"stats_polling_interval_s"`
+		} `json:"balloon"`
+		Vsock *struct {
+			CID  int    `json:"guest_cid"`
+			Path string `json:"uds_path"`
+		} `json:"vsock"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Balloon == nil || c.Balloon.Amount != 0 || !c.Balloon.DeflateOOM || c.Balloon.StatsPeriod != 5 {
+		t.Errorf("balloon = %+v", c.Balloon)
+	}
+	if c.Vsock == nil || c.Vsock.CID != 3 || c.Vsock.Path != "/v.sock" {
+		t.Errorf("vsock = %+v", c.Vsock)
+	}
+}
+
+func testVMFile() node.VMFile {
+	return node.VMFile{MAC: "06:00:c0:a8:40:05", Spec: proto.VMSpec{ID: "vm1", CPUs: 1, MemoryMB: 512}}
+}

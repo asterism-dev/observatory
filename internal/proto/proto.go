@@ -17,6 +17,10 @@ const (
 	StateStopped  VMState = "stopped"
 	StateError    VMState = "error"
 	StateUnknown  VMState = "unknown"
+	// StatePaused keeps the VM's process and RAM with its vCPUs stopped; StateHibernated keeps its memory on the node's disk, StateSuspended too, by auto-suspend.
+	StatePaused     VMState = "paused"
+	StateHibernated VMState = "hibernated"
+	StateSuspended  VMState = "suspended"
 )
 
 type VMSpec struct {
@@ -69,14 +73,47 @@ type VMStatus struct {
 	Error string  `json:"error,omitempty"`
 	Disks []Disk  `json:"disks,omitempty"`
 	// Generation echoes the DesiredVM generation this status reflects.
-	Generation uint64 `json:"generation,omitempty"`
+	Generation  uint64         `json:"generation,omitempty"`
+	Snapshots   []SnapshotInfo `json:"snapshots,omitempty"`
+	RestoredSeq uint64         `json:"restoredSeq,omitempty"`
+}
+
+// SnapshotRef is a snapshot the hub wants the node to keep; Complete lets the node resume the VM it paused for it.
+type SnapshotRef struct {
+	ID       string `json:"id"`
+	Memory   bool   `json:"memory"`
+	Complete bool   `json:"complete,omitempty"`
+}
+
+// Restore asks the node to roll a VM back to one of its snapshots; Ready means the attached disks are restored too.
+type Restore struct {
+	SnapshotID string `json:"snapshotId"`
+	Seq        uint64 `json:"seq"`
+	Memory     bool   `json:"memory"`
+	Ready      bool   `json:"ready,omitempty"`
+}
+
+// Fork builds a new VM from a snapshot of another VM on the same node.
+type Fork struct {
+	SourceVMID string `json:"sourceVmId"`
+	SnapshotID string `json:"snapshotId"`
+	Memory     bool   `json:"memory"`
+}
+
+type SnapshotInfo struct {
+	ID        string `json:"id"`
+	Memory    bool   `json:"memory"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Error     string `json:"error,omitempty"`
 }
 
 type Power string
 
 const (
-	PowerRunning Power = "running"
-	PowerStopped Power = "stopped"
+	PowerRunning    Power = "running"
+	PowerStopped    Power = "stopped"
+	PowerPaused     Power = "paused"
+	PowerHibernated Power = "hibernated"
 )
 
 type StopMode string
@@ -89,12 +126,17 @@ const (
 const ErrVMDirMissing = "VM directory missing"
 
 type DesiredVM struct {
-	Spec        VMSpec   `json:"spec"`
-	Power       Power    `json:"power"`
-	StopMode    StopMode `json:"stopMode,omitempty"`
-	Generation  uint64   `json:"generation"`
-	Provisioned bool     `json:"provisioned"`
-	Boot        *Boot    `json:"boot,omitempty"`
+	Spec               VMSpec        `json:"spec"`
+	Power              Power         `json:"power"`
+	StopMode           StopMode      `json:"stopMode,omitempty"`
+	Generation         uint64        `json:"generation"`
+	Provisioned        bool          `json:"provisioned"`
+	Boot               *Boot         `json:"boot,omitempty"`
+	Snapshots          []SnapshotRef `json:"snapshots,omitempty"`
+	Restore            *Restore      `json:"restore,omitempty"`
+	Fork               *Fork         `json:"fork,omitempty"`
+	AutoSuspendMinutes int           `json:"autoSuspendMinutes,omitempty"`
+	WakeSeq            uint64        `json:"wakeSeq,omitempty"`
 }
 
 type Register struct {
@@ -134,6 +176,14 @@ type Machine struct {
 }
 
 // Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status" and "disks" (node→hub).
+// VMMetrics is one sample of a running VM; MemTotalMB 0 means the VM has no balloon statistics.
+type VMMetrics struct {
+	ID         string  `json:"id"`
+	CPUPercent float64 `json:"cpuPercent"`
+	MemTotalMB int     `json:"memTotalMB"`
+	MemUsedMB  int     `json:"memUsedMB"`
+}
+
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -144,6 +194,7 @@ type Message struct {
 	DisksInUse []string    `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
 	Seq        uint64      `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
 	AppliedSeq uint64      `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
+	Metrics    []VMMetrics `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }
@@ -161,7 +212,9 @@ type StorageDisk struct {
 	SizeBytes int64  `json:"sizeBytes"`
 	CopyFrom  string `json:"copyFrom,omitempty"`
 	// Create is false once the hub has seen the file, so a vanished file is never replaced by a blank one.
-	Create bool `json:"create,omitempty"`
+	Create       bool   `json:"create,omitempty"`
+	RestoreFrom  string `json:"restoreFrom,omitempty"`
+	RestoreToken string `json:"restoreToken,omitempty"`
 }
 
 type StorageExport struct {
@@ -185,9 +238,10 @@ type StorageExportStatus struct {
 
 // StorageStatus is what the storage server reports to the hub.
 type StorageStatus struct {
-	Files   []StorageFile         `json:"files"`
-	Exports []StorageExportStatus `json:"exports"`
-	Version string                `json:"version"`
+	Files    []StorageFile         `json:"files"`
+	Exports  []StorageExportStatus `json:"exports"`
+	Version  string                `json:"version"`
+	Restored []string              `json:"restored,omitempty"`
 }
 
 // ValidEndpoint reports whether s is host:port with a non-empty host and a port in 1-65535.

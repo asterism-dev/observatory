@@ -40,7 +40,8 @@ func GuestSeedFiles(f VMFile, primary PrimaryNet) map[string][]byte {
 	return map[string][]byte{
 		"user-data": []byte(userData), "meta-data": []byte(metaData),
 		"network-config": []byte(networkConfig), "vmm-disks.sh": []byte(DiskScript(f)),
-		"vmm-boot.sh": []byte(guest.BootScript), "vmm-env": env, "vmm-authorized-keys": []byte(keys.String()),
+		"vmm-boot.sh": []byte(guest.BootScript), "vmm-agent.py": []byte(guest.AgentScript),
+		"vmm-env": env, "vmm-authorized-keys": []byte(keys.String()),
 	}
 }
 

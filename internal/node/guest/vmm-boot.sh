@@ -63,8 +63,25 @@ if block:
 write(path, "".join(keep))
 PY
 
+changed=
+mkdir -p "$root/usr/local/lib/vmm" "$root/etc/systemd/system"
+cp "$seed/vmm-agent.py" "$root/usr/local/lib/vmm/vmm-agent.py.new"
+printf '[Unit]\nDescription=vmm guest agent\n\n[Service]\nExecStart=/usr/bin/python3 /usr/local/lib/vmm/vmm-agent.py\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=multi-user.target\n' >"$root/etc/systemd/system/vmm-agent.service.new"
+for f in "$root/usr/local/lib/vmm/vmm-agent.py" "$root/etc/systemd/system/vmm-agent.service"; do
+	if cmp -s "$f.new" "$f"; then rm -f "$f.new"; else chmod 644 "$f.new" && mv "$f.new" "$f" && changed=1; fi
+done
+
 # A running sshd reads its config only on start or reload.
 if [ -z "$root" ] && command -v systemctl >/dev/null 2>&1; then
 	systemctl try-reload-or-restart ssh.service >/dev/null 2>&1
+	[ -n "$changed" ] && systemctl daemon-reload >/dev/null 2>&1
+	# enable reloads systemd, which costs a fast-booted VM half a second.
+	systemctl is-enabled -q vmm-agent.service || systemctl enable vmm-agent.service >/dev/null 2>&1
+	# --no-block: at boot this runs inside cloud-init, which the unit is ordered after; under the agent (VMM_AGENT) a restart would kill its own request.
+	if [ -n "$changed" ] && [ -z "${VMM_AGENT:-}" ]; then
+		systemctl --no-block restart vmm-agent.service >/dev/null 2>&1
+	else
+		systemctl --no-block start vmm-agent.service >/dev/null 2>&1
+	fi
 fi
 exit 0

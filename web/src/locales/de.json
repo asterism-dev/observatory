@@ -171,7 +171,8 @@
     "vmCount": "VMs",
     "unlimited": "Unbegrenzt",
     "required": "Wert eingeben oder unbegrenzt wählen",
-    "invalid": "Ganze Zahl ab 0 verwenden"
+    "invalid": "Ganze Zahl ab 0 verwenden",
+    "snapshotCount": "Snapshots"
   },
   "admin": {
     "members": "Mitglieder",
@@ -276,6 +277,15 @@
     "start": "Starten",
     "shutdown": "Herunterfahren",
     "stop": "Stoppen",
+    "pause": "Pausieren",
+    "hibernate": "Ruhezustand",
+    "autoSuspend": "Automatisch anhalten",
+    "autoSuspendOff": "Aus",
+    "autoSuspendMinutes": "Nach {n} Min. Leerlauf",
+    "autoSuspendCustom": "Eigener Wert",
+    "autoSuspendApply": "Übernehmen",
+    "autoSuspendHint": "Leerlauf heißt: kein TCP- oder UDP-Verkehr außer DNS, DHCP und NTP (5 bis 1440 Minuten). Die VM wacht beim ersten eingehenden Verkehr auf.",
+    "resume": "Fortsetzen",
     "delete": "Löschen",
     "deleteTitle": "VM löschen",
     "deleteBody": "{name} löschen? Die Festplatte wird entfernt und das kann nicht rückgängig gemacht werden.",
@@ -290,6 +300,9 @@
       "starting": "Startet",
       "running": "Läuft",
       "stopped": "Gestoppt",
+      "paused": "Pausiert",
+      "hibernated": "Ruhezustand",
+      "suspended": "Schläft, wacht bei Verkehr auf",
       "error": "Fehler",
       "unknown": "Unbekannt"
     }
@@ -344,6 +357,7 @@
     "save": "Speichern",
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Netzwerkänderung zu übernehmen.",
+    "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Netzwerkänderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
     "restart": "Speichern und neu starten"
   },
   "vmDisks": {
@@ -363,6 +377,7 @@
     "save": "Speichern",
     "restartTitle": "VM neu starten",
     "restartBody": "{name} läuft und wird neu gestartet, um die Disk-Änderung zu übernehmen.",
+    "restartBodySaved": "{name} ist pausiert oder im Ruhezustand. Die Disk-Änderung verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
     "restart": "Speichern und neu starten"
   },
   "disks": {
@@ -400,12 +415,52 @@
     "grow": "Vergrößern",
     "growTitle": "{name} vergrößern",
     "growHint": "Disks können nur wachsen. Gib eine Größe über {size} GB ein.",
-    "growRestart": "Angehängte VM neu starten, falls sie läuft, um die neue Größe zu übernehmen",
+    "growRestart": "Angehängte VM neu starten, falls sie läuft, pausiert oder im Ruhezustand ist, um die neue Größe zu übernehmen (verwirft den gespeicherten Arbeitsspeicher)",
     "release": "Freigabe erzwingen",
     "releaseTitle": "Freigabe der Disk erzwingen",
     "releaseBody": "Freigabe von {name} von der VM erzwingen? Nicht geschriebene Daten der VM können verloren gehen.",
     "delete": "Löschen",
     "deleteTitle": "Disk löschen",
     "deleteBody": "{name} löschen? Die Daten gehen unwiderruflich verloren."
+  },
+  "usage": {
+    "section": "Auslastung",
+    "cpu": "CPU",
+    "ram": "RAM",
+    "none": "Noch keine Daten. Messwerte erscheinen, solange die VM läuft.",
+    "stale": "Läuft nicht, keine aktuellen Werte.",
+    "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart."
+  },
+  "snapshots": {
+    "section": "Snapshots",
+    "take": "Snapshot erstellen",
+    "takeTitle": "Snapshot erstellen",
+    "name": "Name",
+    "invalidName": "Kleinbuchstaben, Ziffern und Bindestriche; muss mit einem Buchstaben beginnen; maximal 31 Zeichen.",
+    "includeMemory": "Arbeitsspeicher einschließen (laufende Prozesse)",
+    "memory": "Arbeitsspeicher",
+    "disks": "Disks",
+    "size": "Größe",
+    "yes": "ja",
+    "no": "nein",
+    "empty": "Noch keine Snapshots.",
+    "states": {
+      "creating": "wird erstellt",
+      "ready": "bereit",
+      "error": "Fehler"
+    },
+    "restore": "Wiederherstellen",
+    "restoreTitle": "{name} wiederherstellen",
+    "restoreBody": "{name} läuft und wird neu gestartet, um den Snapshot wiederherzustellen.",
+    "restoreBodySaved": "{name} ist pausiert oder im Ruhezustand. Das Wiederherstellen verwirft den gespeicherten Arbeitsspeicher und startet die VM neu.",
+    "restoreBodyStopped": "Die Disks von {name} auf diesen Snapshot zurücksetzen. Spätere Änderungen gehen verloren.",
+    "restoreMemory": "Auch Arbeitsspeicher wiederherstellen (laufende Prozesse fortsetzen)",
+    "fork": "Kopie erstellen",
+    "forkTitle": "Kopie von {name} erstellen",
+    "forkName": "Name der neuen VM",
+    "forkMemory": "Vom gespeicherten Arbeitsspeicher starten",
+    "delete": "Löschen",
+    "deleteTitle": "Snapshot löschen",
+    "deleteBody": "Snapshot {name} löschen?"
   }
 }

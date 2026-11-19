@@ -44,7 +44,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
-| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect` | `org/vms/*` |
+| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect`, `vm:snapshot`, `vm:restore`, `vm:fork` | `org/vms/*` |
 | `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
 | `network:read`, `network:create` | `org/networks` |
 | `network:use`, `network:delete` | `org/networks/*` |
@@ -67,14 +67,14 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
-| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks` on `org/vms/*` | | yes | yes |
+| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:snapshot`, `vm:restore` on `org/vms/*` | | yes | yes |
 | `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
 | `network:delete` on `org/networks/*` | | yes | yes |
 | `device:list`, `device:delete` on `org/user-devices/*` | | yes | yes |
 | `disk:create` on `org/disks` | yes | yes | yes |
 | `disk:create` on `org/team-disks/*`; `disk:read`, `disk:update`, `disk:delete` on `org/disks/*` | | yes | yes |
 
-No built-in role holds `vm:connect`, `disk:use` or `device:create` on others' objects; those come only from the
+No built-in role holds `vm:connect`, `vm:fork`, `disk:use` or `device:create` on others' objects; those come only from the
 generated rules below. VM actions are always granted as explicit lists, never `vm:*`, so a new VM action
 is never granted by accident. Disk actions are explicit too, never `disk:*`.
 
@@ -157,6 +157,39 @@ add, rename or delete nodes.
 A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
 disks cannot be deleted (`409` "owns VMs or disks").
 
+## VM lifecycle
+
+Pause, hibernate, resume and the auto-suspend setting are power actions (`vm:power`). Snapshots are VM sub-resources,
+so their actions are on the VM object; listing snapshots and reading metrics need `vm:read`
+([vm-lifecycle.md](vm-lifecycle.md)).
+
+| Action | Allows |
+|---|---|
+| `vm:power` | start, shut down, stop, pause, hibernate, resume, set auto-suspend |
+| `vm:snapshot` | take and delete snapshots |
+| `vm:restore` | restore the VM to one of its snapshots |
+| `vm:fork` | create a new VM from a snapshot; the owner also needs `vm:create` for the new VM |
+
+- A user VM gives its user `vm:snapshot`, `vm:restore` and `vm:fork` on it.
+- A team VM gives the team subject `vm:snapshot`, and each admin of that team `vm:snapshot`, `vm:restore` and
+  `vm:fork`.
+- Org admins and owners get `vm:snapshot` and `vm:restore` on every VM, never `vm:fork`: a fork holds the source's
+  memory and disks, so like `vm:connect` and `disk:use` it is data access. All three actions go through the escalation
+  rule.
+
+| | member | team admin (of that team) | admin | owner |
+|---|---|---|---|---|
+| own VMs: pause, hibernate, auto-suspend, snapshot, restore, fork | yes | yes | yes | yes |
+| team VMs: pause, hibernate, auto-suspend, take and delete snapshots | team member | yes | yes | yes |
+| team VMs: restore | | yes | yes | yes |
+| team VMs: fork | | yes | | |
+| every VM: power incl. hibernate, snapshots, restore | | | yes | yes |
+| every VM: fork | | | | |
+
+Audit rows: `vm:power` (details `action`, or `autoSuspendMinutes`), `vm:snapshot` (name, memory, disk names),
+`vm:snapshot-delete`, `vm:restore` (snapshot name, memory), `vm:fork` on the source (details: the new VM) plus
+`vm:create` for the new VM. Suspend and wake by the node are logged, not audited.
+
 ## Disks
 
 Every disk object is org-scoped (`org/disks/<id>`), whether a user or a team owns it, so org-wide rules such
@@ -185,7 +218,7 @@ that VM. The connect check does not apply to network traffic: every VM on a netw
 
 ## Limits
 
-Fields: vCPU, RAM (MB), disk (GB), VM count; `null` is unlimited. Set per org by platform admins, per team
+Fields: vCPU, RAM (MB), disk (GB), VM count, snapshots (`snapshotCount`); `null` is unlimited. Set per org by platform admins, per team
 and per member by org admins (`limit:set`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
 team or member limit (both return `400` "limit exceeds org limit"). Creating a VM that would exceed a limit returns `409` "limit exceeded".
 

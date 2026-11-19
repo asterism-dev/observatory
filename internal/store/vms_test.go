@@ -182,6 +182,12 @@ func TestVMLifecycleAndNodeScoping(t *testing.T) {
 	if err != nil || got.Power != proto.PowerStopped || got.StopMode != proto.StopHard || got.Generation != vm.Generation+1 {
 		t.Fatalf("power: %+v %v", got, err)
 	}
+	if _, err := e.s.SetVMPower(ctx, e.org.ID, vm.ID, proto.PowerHibernated, ""); !errors.Is(err, store.ErrNotRunning) {
+		t.Fatalf("hibernate stopped: %v", err)
+	}
+	if _, err := e.s.SetVMPower(ctx, e.org.ID, uuid.New(), proto.PowerPaused, ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("pause missing: %v", err)
+	}
 
 	st := proto.VMStatus{ID: vm.ID.String(), State: proto.StateRunning, IP: "10.0.0.2"}
 	if err := e.s.SetVMStatus(ctx, foreign.ID, st); err != nil {

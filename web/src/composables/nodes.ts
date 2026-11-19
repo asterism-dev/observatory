@@ -25,8 +25,8 @@ export interface VmInfo {
   name: string
   owner: { kind: 'user' | 'team'; id: string; name: string }
   node: { id: string; name: string }
-  state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
-  power: 'running' | 'stopped'
+  state: 'pending' | 'starting' | 'running' | 'stopped' | 'paused' | 'hibernated' | 'suspended' | 'error' | 'unknown'
+  power: 'running' | 'stopped' | 'paused' | 'hibernated'
   error?: string
   ip?: string
   mgmtIP?: string
@@ -35,14 +35,35 @@ export interface VmInfo {
   canNetwork: boolean
   disks: { id: string; name: string; mountPath: string; sizeGB: number; state: string; error?: string }[]
   canDisks: boolean
+  canSnapshot: boolean
+  canRestore: boolean
+  canFork: boolean
   cpus: number
   memoryMB: number
   diskGB: number
   createdAt: string
   canPower: boolean
+  autoSuspendMinutes: number
   canDelete: boolean
 }
 
-export const vmTones = { running: 'success', starting: 'warning', pending: 'warning', stopped: 'muted', error: 'danger', unknown: 'muted' } as const
+export const vmTones = {
+  running: 'success',
+  starting: 'warning',
+  pending: 'warning',
+  stopped: 'muted',
+  paused: 'warning',
+  hibernated: 'muted',
+  suspended: 'muted',
+  error: 'danger',
+  unknown: 'muted',
+} as const
 
-export const powerActions = (state: VmInfo['state']) => (state === 'running' ? ['shutdown', 'stop'] : ['start'])
+// A restart while the VM's memory is saved boots it fresh and discards that memory.
+export const keepsMemory = (vm: VmInfo) => vm.power === 'paused' || vm.power === 'hibernated' || vm.state === 'suspended'
+
+export const powerActions = (state: VmInfo['state']) => {
+  if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
+  if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'shutdown', 'stop']
+  return ['start']
+}

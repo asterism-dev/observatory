@@ -2,11 +2,14 @@ package node
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,8 +341,8 @@ func TestStopAllDoesNotRestart(t *testing.T) {
 	cancel()
 	<-done
 	time.Sleep(50 * time.Millisecond)
-	if p.instance("a") != first || !first.stopped.Load() {
-		t.Fatalf("restarted=%v stopped=%v", p.instance("a") != first, first.stopped.Load())
+	if p.instance("a") != first || !first.killed.Load() {
+		t.Fatalf("restarted=%v hibernated=%v", p.instance("a") != first, first.killed.Load())
 	}
 	if f := loadVM(t, a, "a"); f.Power != proto.PowerRunning {
 		t.Fatalf("vm.json = %+v", f)
@@ -598,6 +601,8 @@ func TestReconcileSendsDisksInUse(t *testing.T) {
 	if m := lastDisks(); m.Type != "disks" || !slices.Equal(m.DisksInUse, []string{"da", "db"}) || m.AppliedSeq != 3 {
 		t.Fatalf("last message = %+v", m)
 	}
+	// Dropping a VM that is still booting releases its disks only once the boot ends.
+	waitState(t, a, "a", proto.StateRunning, 1)
 	a.reconcile(context.Background(), 7, []proto.DesiredVM{dvAtts("b", proto.PowerRunning, 1, att("db", "/data", addr))})
 	if m := lastDisks(); m.Type != "disks" || !slices.Equal(m.DisksInUse, []string{"db"}) || m.AppliedSeq != 7 {
 		t.Fatalf("last message = %+v", m)
@@ -774,4 +779,755 @@ func TestDestroyStopsVMWithDisksGracefully(t *testing.T) {
 	if !without.killed.Load() {
 		t.Fatal("without disks: not killed")
 	}
+}
+
+func freeSpace(t *testing.T, bytes int64) {
+	t.Helper()
+	old := statfsFree
+	statfsFree = func(string) (int64, error) { return bytes, nil }
+	t.Cleanup(func() { statfsFree = old })
+}
+
+func countEvent(p *fakeProvider, e string) int {
+	n := 0
+	for _, got := range p.gotEvents() {
+		if got == e {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDesiredPausePauses(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	if n := countEvent(p, "pause"); n != 1 {
+		t.Fatalf("pause called %d times, events = %v", n, p.gotEvents())
+	}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 3)})
+	waitState(t, a, "a", proto.StateRunning, 3)
+	if n := countEvent(p, "resume"); n != 1 {
+		t.Fatalf("resume called %d times, events = %v", n, p.gotEvents())
+	}
+	if st, _ := a.vmStatus("a"); st.IP == "" {
+		t.Fatalf("status lost the IP: %+v", st)
+	}
+}
+
+// hibernatedVM boots VM "a" with atts and hibernates it.
+func hibernatedVM(t *testing.T, a *Agent, atts ...proto.DiskAttachment) {
+	t.Helper()
+	freeSpace(t, 1<<40)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 1, atts...)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerHibernated, 2, atts...)})
+	waitState(t, a, "a", proto.StateHibernated, 2)
+}
+
+func TestDesiredHibernateSavesStateThenKills(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	hibernatedVM(t, a)
+	dir := VMDir(a.VMsDir, "a")
+	ev := strings.Join(p.gotEvents(), ",")
+	if s, k := strings.Index(ev, "savestate:"+filepath.Join(dir, "state.tmp")), strings.Index(ev, "kill-guest"); s < 0 || k < s {
+		t.Fatalf("events = %s", ev)
+	}
+	if _, err := os.Stat(filepath.Join(dir, StateDir, MemFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("state.tmp left: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "vm.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"hibernated": true`) {
+		t.Fatalf("vm.json = %s", b)
+	}
+}
+
+func saveHibernated(t *testing.T, a *Agent, f VMFile) string {
+	t.Helper()
+	f.Hibernated = true
+	if err := SaveVM(a.VMsDir, f); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(VMDir(a.VMsDir, f.Spec.ID), StateDir)
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, StateFile), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func TestHibernatedStartsViaRestore(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	f.Power = proto.PowerHibernated
+	state := saveHibernated(t, a, f)
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateHibernated, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 2)})
+	waitState(t, a, "a", proto.StateRunning, 2)
+	if !p.hasEvent("restore:" + state) {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 0 {
+		t.Fatalf("Start called %d times", starts)
+	}
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json still hibernated after restore")
+	}
+}
+
+func TestColdStartDeletesState(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	state := saveHibernated(t, a, f)
+	f.Hibernated = false
+	if err := SaveVM(a.VMsDir, f); err != nil {
+		t.Fatal(err)
+	}
+	var leftover atomic.Bool
+	p.beforeStart = func(string) {
+		_, err := os.Stat(filepath.Join(state, StateFile))
+		leftover.Store(err == nil)
+	}
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateRunning, 1)
+	if leftover.Load() {
+		t.Fatal("state/ still there when Start ran")
+	}
+	if p.hasEvent("restore:" + state) {
+		t.Fatal("restored without Hibernated")
+	}
+}
+
+func TestRestoreLoadFailureFallsBackToColdBoot(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	p.failRestore = errors.New("version")
+	state := saveHibernated(t, a, cachedVM("a", "a"))
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateRunning, 1)
+	if st, _ := a.vmStatus("a"); !strings.Contains(st.Error, "hibernation discarded: version") {
+		t.Fatalf("status = %+v", st)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("state/ still there: %v", err)
+	}
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json still hibernated")
+	}
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 1 {
+		t.Fatalf("Start called %d times", starts)
+	}
+}
+
+func testStopHibernated(t *testing.T, mode proto.StopMode) (*Agent, *fakeProvider) {
+	a, p := newReconcileAgent(t)
+	d := att("d1", "/data", storageAddr(t))
+	hibernatedVM(t, a, d)
+	stop := dvAtts("a", proto.PowerStopped, 3, d)
+	stop.StopMode = mode
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	waitState(t, a, "a", proto.StateStopped, 3)
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); !os.IsNotExist(err) {
+		t.Fatalf("state/ still there: %v", err)
+	}
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json still hibernated")
+	}
+	return a, p
+}
+
+func TestGracefulStopOfHibernatedWithDisksResumesFirst(t *testing.T) {
+	_, p := testStopHibernated(t, proto.StopGraceful)
+	ev := p.gotEvents()
+	r := slices.IndexFunc(ev, func(e string) bool { return strings.HasPrefix(e, "restore:") })
+	if r < 0 || !slices.Contains(ev[r:], "stop-guest") {
+		t.Fatalf("events = %v", ev)
+	}
+}
+
+func TestHardStopOfHibernatedDiscardsState(t *testing.T) {
+	_, p := testStopHibernated(t, proto.StopHard)
+	for _, e := range p.gotEvents() {
+		if strings.HasPrefix(e, "restore:") {
+			t.Fatalf("events = %v", p.gotEvents())
+		}
+	}
+}
+
+func TestDeleteHibernatedWithDisksResumesFirst(t *testing.T) {
+	for _, withDisk := range []bool{true, false} {
+		a, p := newReconcileAgent(t)
+		var atts []proto.DiskAttachment
+		if withDisk {
+			atts = append(atts, att("d1", "/data", storageAddr(t)))
+		}
+		hibernatedVM(t, a, atts...)
+		a.reconcile(context.Background(), 0, nil)
+		eventually(t, "dir deleted", func() bool {
+			_, err := os.Stat(VMDir(a.VMsDir, "a"))
+			return os.IsNotExist(err)
+		})
+		ev := p.gotEvents()
+		r := slices.IndexFunc(ev, func(e string) bool { return strings.HasPrefix(e, "restore:") })
+		if withDisk && (r < 0 || !slices.Contains(ev[r:], "stop-guest")) {
+			t.Fatalf("with disk: events = %v", ev)
+		}
+		if !withDisk && r >= 0 {
+			t.Fatalf("without disk: events = %v", ev)
+		}
+	}
+}
+
+func TestHibernateRefusedWhenDiskFull(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	freeSpace(t, 100<<20)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerHibernated, 2)})
+	eventually(t, "error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 2 && strings.Contains(st.Error, "not enough space on node")
+	})
+	if st, _ := a.vmStatus("a"); st.State != proto.StateRunning {
+		t.Fatalf("status = %+v", st)
+	}
+	for _, e := range p.gotEvents() {
+		if strings.HasPrefix(e, "savestate:") || e == "kill-guest" {
+			t.Fatalf("events = %v", p.gotEvents())
+		}
+	}
+}
+
+func TestRestoreClearsHibernatedFirst(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	var hibernatedAtRestore atomic.Bool
+	p.beforeRestore = func(dir string) {
+		b, _ := os.ReadFile(filepath.Join(dir, "vm.json"))
+		hibernatedAtRestore.Store(strings.Contains(string(b), `"hibernated"`))
+	}
+	saveHibernated(t, a, cachedVM("a", "a"))
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateRunning, 1)
+	if !p.hasEvent("restore:" + filepath.Join(VMDir(a.VMsDir, "a"), StateDir)) {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+	if hibernatedAtRestore.Load() {
+		t.Fatal("vm.json still hibernated while restoring")
+	}
+}
+
+func TestFailedSaveStateResumesVM(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	freeSpace(t, 1<<40)
+	p.failSaveState = errors.New("disk error")
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerHibernated, 2)})
+	eventually(t, "error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 2 && strings.Contains(st.Error, "disk error")
+	})
+	if st, _ := a.vmStatus("a"); st.State != proto.StateRunning {
+		t.Fatalf("status = %+v", st)
+	}
+	if !p.hasEvent("resume") || p.hasEvent("kill-guest") {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+	dir := VMDir(a.VMsDir, "a")
+	for _, n := range []string{"state.tmp", StateDir} {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Fatalf("%s left: %v", n, err)
+		}
+	}
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json hibernated")
+	}
+}
+
+func TestHibernateDoesNotBlockReconcile(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	freeSpace(t, 1<<40)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1), dv("b", "b", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	waitState(t, a, "b", proto.StateRunning, 1)
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.saveBlock = block
+	p.mu.Unlock()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerHibernated, 2), dv("b", "b", proto.PowerRunning, 1)})
+	eventually(t, "hibernate started", func() bool { return countEvent(p, "savestate:"+filepath.Join(VMDir(a.VMsDir, "a"), "state.tmp")) == 1 })
+	stopA, stopB := dv("a", "a", proto.PowerStopped, 3), dv("b", "b", proto.PowerStopped, 2)
+	stopA.StopMode, stopB.StopMode = proto.StopGraceful, proto.StopGraceful
+	done := make(chan struct{})
+	go func() { a.reconcile(context.Background(), 0, []proto.DesiredVM{stopA, stopB}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcile blocked by another VM's hibernate")
+	}
+	waitState(t, a, "b", proto.StateStopped, 2)
+	if st, _ := a.vmStatus("a"); st.Generation != 1 {
+		t.Fatalf("a changed while hibernating: %+v", st)
+	}
+	close(block)
+	waitState(t, a, "a", proto.StateStopped, 3)
+	if loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json still hibernated after the stop")
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); !os.IsNotExist(err) {
+		t.Fatalf("state/ left: %v", err)
+	}
+}
+
+// flakyStorage stands in for an NBD server: it listens until down is called and again after up.
+func flakyStorage(t *testing.T) (addr string, down, up func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr = ln.Addr().String()
+	up = func() {
+		if ln, err = net.Listen("tcp", addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { ln.Close() })
+	return addr, func() { ln.Close() }, up
+}
+
+func TestGracefulStopOfHibernatedWaitsForStorage(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	stop := dvAtts("a", proto.PowerStopped, 3, d)
+	stop.StopMode = proto.StopGraceful
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.State == proto.StateHibernated && strings.Contains(st.Error, "storage unreachable")
+	})
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir, MemFile)); err != nil {
+		t.Fatalf("state discarded while storage is down: %v", err)
+	}
+	if !loadVM(t, a, "a").Hibernated {
+		t.Fatal("vm.json not hibernated while storage is down")
+	}
+	for _, e := range p.gotEvents() {
+		if strings.HasPrefix(e, "restore:") {
+			t.Fatalf("restored without storage: %v", p.gotEvents())
+		}
+	}
+	up()
+	waitState(t, a, "a", proto.StateStopped, 3)
+	ev := p.gotEvents()
+	r := slices.IndexFunc(ev, func(e string) bool { return strings.HasPrefix(e, "restore:") })
+	if r < 0 || !slices.Contains(ev[r:], "stop-guest") {
+		t.Fatalf("events = %v", ev)
+	}
+}
+
+func TestDeleteHibernatedWaitsForStorage(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	lastDisks := captureDisks(a)
+	addr, down, up := flakyStorage(t)
+	hibernatedVM(t, a, att("d1", "/data", addr))
+	down()
+	a.reconcile(context.Background(), 5, nil)
+	if m := lastDisks(); m.AppliedSeq != 5 || !slices.Equal(m.DisksInUse, []string{"d1"}) {
+		t.Fatalf("disks = %+v", m)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir, MemFile)); err != nil {
+		t.Fatalf("state discarded while storage is down: %v", err)
+	}
+	up()
+	eventually(t, "dir deleted", func() bool {
+		_, err := os.Stat(VMDir(a.VMsDir, "a"))
+		return os.IsNotExist(err)
+	})
+	eventually(t, "disk released", func() bool { return len(lastDisks().DisksInUse) == 0 })
+	if !p.hasEvent("stop-guest") {
+		t.Fatalf("events = %v", p.gotEvents())
+	}
+}
+
+func TestHibernatedVMReportsHibernatedAtStart(t *testing.T) {
+	a, _ := newReconcileAgent(t)
+	var mu sync.Mutex
+	var states []proto.VMState
+	a.send = func(m proto.Message) error {
+		if m.Type == "status" {
+			mu.Lock()
+			states = append(states, m.Status.State)
+			mu.Unlock()
+		}
+		return nil
+	}
+	f := cachedVM("a", "a")
+	f.Power = proto.PowerHibernated
+	saveHibernated(t, a, f)
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateHibernated, 1)
+	mu.Lock()
+	defer mu.Unlock()
+	if slices.Contains(states, proto.StateStarting) || slices.Contains(states, proto.StateStopped) {
+		t.Fatalf("states = %v", states)
+	}
+}
+
+func TestReplayedDetachSendsDisks(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	freeSpace(t, 1<<40)
+	lastDisks := captureDisks(a)
+	addr := storageAddr(t)
+	d := att("d1", "/data", addr)
+	a.reconcile(context.Background(), 1, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 1, d)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.saveBlock = block
+	p.mu.Unlock()
+	a.reconcile(context.Background(), 2, []proto.DesiredVM{dvAtts("a", proto.PowerHibernated, 2, d)})
+	a.reconcile(context.Background(), 3, []proto.DesiredVM{dvAtts("a", proto.PowerHibernated, 3)})
+	if m := lastDisks(); m.AppliedSeq != 3 || !slices.Equal(m.DisksInUse, []string{"d1"}) {
+		t.Fatalf("disks while hibernating = %+v", m)
+	}
+	close(block)
+	eventually(t, "detach reported", func() bool {
+		m := lastDisks()
+		return m.AppliedSeq == 3 && len(m.DisksInUse) == 0
+	})
+	if f := loadVM(t, a, "a"); len(f.Spec.Attachments) != 0 || f.Generation != 3 {
+		t.Fatalf("vm.json = %+v", f)
+	}
+}
+
+func TestResumeOfHibernatedWaitsForStorage(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	time.Sleep(150 * time.Millisecond)
+	state := filepath.Join(VMDir(a.VMsDir, "a"), StateDir)
+	if _, err := os.Stat(filepath.Join(state, MemFile)); err != nil {
+		t.Fatalf("state discarded while storage is down: %v", err)
+	}
+	up()
+	waitState(t, a, "a", proto.StateRunning, 3)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 1 || !p.hasEvent("restore:"+state) {
+		t.Fatalf("starts = %d (want only the first boot), events = %v", starts, p.gotEvents())
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("state/ left: %v", err)
+	}
+}
+
+func TestDeleteCutShortByShutdownKeepsDisks(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, _ := newReconcileAgent(t)
+	addr, down, _ := flakyStorage(t)
+	hibernatedVM(t, a, att("d1", "/data", addr))
+	down()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.reconcile(ctx, 2, nil)
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+	a.mu.Lock()
+	inUse := a.disksInUse()
+	a.mu.Unlock()
+	if !slices.Equal(inUse, []string{"d1"}) {
+		t.Fatalf("disks in use = %v", inUse)
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir, MemFile)); err != nil {
+		t.Fatalf("state gone: %v", err)
+	}
+}
+
+func TestHardStopWithDetachDiscardsHibernation(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	hibernatedVM(t, a, att("d1", "/data", storageAddr(t)))
+	stop := dvAtts("a", proto.PowerStopped, 3)
+	stop.StopMode = proto.StopHard
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	waitState(t, a, "a", proto.StateStopped, 3)
+	for _, e := range p.gotEvents() {
+		if strings.HasPrefix(e, "restore:") {
+			t.Fatalf("events = %v", p.gotEvents())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); !os.IsNotExist(err) {
+		t.Fatalf("state/ left: %v", err)
+	}
+}
+
+func TestDestroyGivesUpOnUnremovableState(t *testing.T) {
+	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond)
+	a, _ := newReconcileAgent(t)
+	hibernatedVM(t, a)
+	locked := filepath.Join(VMDir(a.VMsDir, "a"), StateDir, "locked")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	done := make(chan struct{})
+	go func() { a.reconcile(context.Background(), 2, nil); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reconcile waits on the destroy")
+	}
+	eventually(t, "destroy gave up", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return len(a.dying) == 0
+	})
+}
+
+// restoringVM leaves VM "a" hibernated with a disk and a resume to running blocked inside Restore.
+func restoringVM(t *testing.T, a *Agent, p *fakeProvider) (release func()) {
+	t.Helper()
+	fastRestarts(t, 20*time.Millisecond)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	block := make(chan struct{})
+	p.mu.Lock()
+	p.restoreBlock = block
+	p.mu.Unlock()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	up()
+	eventually(t, "restore started", func() bool { return countEvent(p, "restore:"+filepath.Join(VMDir(a.VMsDir, "a"), StateDir)) == 1 })
+	return func() { close(block) }
+}
+
+// afterRestore returns the events after the first restore.
+func afterRestore(p *fakeProvider) []string {
+	ev := p.gotEvents()
+	r := slices.IndexFunc(ev, func(e string) bool { return strings.HasPrefix(e, "restore:") })
+	return ev[r+1:]
+}
+
+func TestDestroyDuringRestoreStopsGracefully(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	release := restoringVM(t, a, p)
+	a.reconcile(context.Background(), 4, nil)
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(VMDir(a.VMsDir, "a")); err != nil {
+		t.Fatalf("dir deleted while restoring: %v", err)
+	}
+	release()
+	eventually(t, "dir deleted", func() bool {
+		_, err := os.Stat(VMDir(a.VMsDir, "a"))
+		return os.IsNotExist(err)
+	})
+	if ev := afterRestore(p); !slices.Contains(ev, "stop-guest") || slices.Contains(ev, "kill-guest") {
+		t.Fatalf("events after restore = %v", ev)
+	}
+}
+
+func TestStopAllDuringRestoreStopsGracefully(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	release := restoringVM(t, a, p)
+	stopped := make(chan struct{})
+	go func() { a.stopAll(); close(stopped) }()
+	select {
+	case <-stopped:
+		t.Fatal("stopAll returned while a restore was in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	<-stopped
+	if ev := afterRestore(p); !slices.Contains(ev, "stop-guest") || slices.Contains(ev, "kill-guest") {
+		t.Fatalf("events after restore = %v", ev)
+	}
+}
+
+func TestGracefulStopDuringResumeWaitDoesNotBoot(t *testing.T) {
+	fastRestarts(t, 20*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	addr, down, up := flakyStorage(t)
+	d := att("d1", "/data", addr)
+	hibernatedVM(t, a, d)
+	down()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dvAtts("a", proto.PowerRunning, 3, d)})
+	eventually(t, "storage error", func() bool {
+		st, _ := a.vmStatus("a")
+		return st.Generation == 3 && strings.Contains(st.Error, "storage unreachable")
+	})
+	stop := dvAtts("a", proto.PowerStopped, 4, d)
+	stop.StopMode = proto.StopGraceful
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{stop})
+	time.Sleep(50 * time.Millisecond)
+	up()
+	waitState(t, a, "a", proto.StateStopped, 4)
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if n := countEvent(p, "restore:"+filepath.Join(VMDir(a.VMsDir, "a"), StateDir)); starts != 1 || n != 1 {
+		t.Fatalf("starts = %d, restores = %d, events = %v", starts, n, p.gotEvents())
+	}
+	if st, _ := a.vmStatus("a"); st.State != proto.StateStopped {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestClearHibernatedKeepsFlagWhenSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only dirs")
+	}
+	a, _ := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	saveHibernated(t, a, f)
+	f.Hibernated = true
+	e := &vmEntry{file: f}
+	dir := VMDir(a.VMsDir, "a")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := a.clearHibernated(e); err == nil {
+		t.Fatal("clearHibernated succeeded on a read-only dir")
+	}
+	if !e.file.Hibernated {
+		t.Fatal("Hibernated cleared in memory although vm.json still says hibernated")
+	}
+}
+
+func TestRestoreRetriesWhenClearingHibernatedFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to read-only dirs")
+	}
+	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
+	a, p := newReconcileAgent(t)
+	state := saveHibernated(t, a, cachedVM("a", "a"))
+	dir := VMDir(a.VMsDir, "a")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StateError, 1)
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	starts := p.starts["a"]
+	p.mu.Unlock()
+	if starts != 0 || p.hasEvent("restore:"+state) {
+		t.Fatalf("started without clearing hibernated: starts=%d events=%v", starts, p.gotEvents())
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "restored", func() bool { return p.hasEvent("restore:" + state) })
+}
+
+func guestResumedSince(p *fakeProvider, since time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.guestResumes) > 0 && !p.guestResumes[len(p.guestResumes)-1].Before(since)
+}
+
+func TestUnpauseCallsGuestResume(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	if guestResumedSince(p, time.Time{}) {
+		t.Fatal("guest resume called on pause")
+	}
+	since := time.Now()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 3)})
+	waitState(t, a, "a", proto.StateRunning, 3)
+	eventually(t, "guest resume", func() bool { return guestResumedSince(p, since) })
+}
+
+func TestUnpauseReloadsSeedFirst(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 1)})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerPaused, 2)})
+	waitState(t, a, "a", proto.StatePaused, 2)
+	p.mu.Lock()
+	p.events = nil
+	p.mu.Unlock()
+	d := dv("a", "a", proto.PowerRunning, 3)
+	d.Boot = &proto.Boot{SSHPublicKeys: []string{"ssh-ed25519 new"}}
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{d})
+	waitState(t, a, "a", proto.StateRunning, 3)
+	want := []string{"reseed:a", "reseed-keys:ssh-ed25519 new", "reload-seed", "resume"}
+	if got := p.gotEvents(); !slices.Equal(got, want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+}
+
+func TestPausedRestoreCallsGuestResumeOnUnpause(t *testing.T) {
+	a, p := newReconcileAgent(t)
+	f := cachedVM("a", "a")
+	f.Power = proto.PowerPaused
+	saveHibernated(t, a, f)
+	if err := a.restoreAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, a, "a", proto.StatePaused, 1)
+	since := time.Now()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{dv("a", "a", proto.PowerRunning, 2)})
+	waitState(t, a, "a", proto.StateRunning, 2)
+	eventually(t, "guest resume", func() bool { return guestResumedSince(p, since) })
 }

@@ -190,7 +190,7 @@ func (s *Store) SetVMNetworks(ctx context.Context, org, vm uuid.UUID, networks [
 		if len(added) == 0 && len(current) == len(want) {
 			return nil
 		}
-		if v.Power == proto.PowerRunning && !restartAllowed {
+		if v.Power != proto.PowerStopped && !restartAllowed {
 			return ErrRestartRequired
 		}
 		if _, err := tx.q.Exec(ctx, "DELETE FROM vm_networks WHERE vm_id = $1 AND network_id <> ALL($2)", vm, want); err != nil {

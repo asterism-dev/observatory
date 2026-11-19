@@ -133,6 +133,9 @@ ExecStartPre=-/bin/sh -c 'iptables -L DOCKER-USER -n >/dev/null 2>&1 || exit 0; 
 ExecStart=/usr/local/bin/observatory-node -config /etc/observatory-node/node.json
 Restart=always
 RestartSec=5
+# Only the node gets SIGTERM; it hibernates the VMs (Firecracker children in this cgroup) before exiting.
+KillMode=mixed
+TimeoutStopSec=300
 
 [Install]
 WantedBy=multi-user.target

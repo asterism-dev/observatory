@@ -17,7 +17,7 @@ interface LimitsResponse {
   members: Record<string, Limits>
 }
 
-const unlimited: Limits = { vcpu: null, ramMb: null, diskGb: null, vmCount: null }
+const unlimited: Limits = { vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null }
 
 const { t } = useI18n()
 const { org, can } = useOrg()

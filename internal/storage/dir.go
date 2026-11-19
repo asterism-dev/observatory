@@ -64,6 +64,69 @@ func (d Dir) Apply(disks []proto.StorageDisk, deleted []string) error {
 	return errors.Join(errs...)
 }
 
+// StartRestore validates and starts replacing the disk file with the snapshot file d.RestoreFrom; done gets the result and the target is untouched on failure.
+func (d Dir) StartRestore(disk proto.StorageDisk, done func(error)) error {
+	if !plainName(disk.ID) || !plainName(disk.RestoreFrom) {
+		return fmt.Errorf("restore %q from %q: not a plain file name", disk.ID, disk.RestoreFrom)
+	}
+	target := d.File(disk.ID)
+	if _, err := os.Stat(target); err != nil {
+		return d.restoreErr(err)
+	}
+	srcPath := filepath.Join(d.Path, disk.RestoreFrom)
+	st, err := os.Lstat(srcPath)
+	if err != nil {
+		return d.restoreErr(err)
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("restore source %q: not a regular file", disk.RestoreFrom)
+	}
+	if st.Size() > disk.SizeBytes {
+		return fmt.Errorf("restore source %q: %d bytes exceed the disk size %d", disk.RestoreFrom, st.Size(), disk.SizeBytes)
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return d.restoreErr(err)
+	}
+	if err := os.MkdirAll(filepath.Join(d.Path, partialDir), 0o755); err != nil {
+		src.Close()
+		return err
+	}
+	copiesMu.Lock()
+	defer copiesMu.Unlock()
+	if _, running := copies[target]; running {
+		src.Close()
+		return errors.New("a copy of the disk is running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	copies[target] = cancel
+	go func() {
+		defer src.Close()
+		err := d.build(ctx, target, src, disk.SizeBytes)
+		copiesMu.Lock()
+		delete(copies, target)
+		copiesMu.Unlock()
+		done(err)
+	}()
+	return nil
+}
+
+// Restore is StartRestore waiting for the result.
+func (d Dir) Restore(disk proto.StorageDisk) error {
+	res := make(chan error, 1)
+	if err := d.StartRestore(disk, func(err error) { res <- err }); err != nil {
+		return err
+	}
+	return <-res
+}
+
+func (d Dir) restoreErr(err error) error {
+	if os.IsNotExist(err) {
+		return errors.New("file missing")
+	}
+	return err
+}
+
 // plainName rejects IDs that would resolve outside Path.
 func plainName(id string) bool {
 	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\`)

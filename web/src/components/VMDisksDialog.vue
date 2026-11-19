@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
-import type { VmInfo } from '@/composables/nodes'
+import { keepsMemory, type VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 
 interface Disk {
@@ -141,15 +141,15 @@ async function save(restartAllowed: boolean) {
   }
 }
 
-// The hub requires restartAllowed by desired power, which can be running while the VM is still starting or in error.
-const submit = () => (props.vm.power === 'running' ? (confirming.value = true) : save(false))
+// The hub requires restartAllowed unless desired power is stopped, even while the VM is still starting or in error.
+const submit = () => (props.vm.power !== 'stopped' ? (confirming.value = true) : save(false))
 </script>
 
 <template>
   <Dialog
     :open="open"
     :title="confirming ? t('vmDisks.restartTitle') : t('vmDisks.changeTitle')"
-    :description="confirming ? t('vmDisks.restartBody', { name: vm.name }) : undefined"
+    :description="confirming ? t(keepsMemory(vm) ? 'vmDisks.restartBodySaved' : 'vmDisks.restartBody', { name: vm.name }) : undefined"
     @update:open="(o) => !busy && emit('update:open', o)"
   >
     <template v-if="!confirming">

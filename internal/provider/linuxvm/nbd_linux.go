@@ -88,6 +88,16 @@ func AttachNBD(vmDir, diskID, rawURL, psk string) (dev string, err error) {
 	return "", errors.New("no free /dev/nbd device (is the nbd module loaded?)")
 }
 
+// FlushNBD writes dev's cached blocks; qemu-nbd passes the fsync on to the server as an NBD flush.
+func FlushNBD(dev string) error {
+	f, err := os.Open(dev)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
 func DetachNBD(vmDir, diskID string) error {
 	b, err := os.ReadFile(NBDRecord(vmDir, diskID))
 	if errors.Is(err, fs.ErrNotExist) {

@@ -12,6 +12,7 @@ import (
 
 	diskfs "github.com/diskfs/go-diskfs"
 
+	"github.com/asterism-dev/observatory/internal/node/guest"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -74,6 +75,12 @@ func TestSeedBootRoundTrip(t *testing.T) {
 	}
 	if got, err := SeedBoot(dir); err != nil || len(got.SSHPublicKeys) != 0 || len(got.Env) != 0 {
 		t.Fatalf("SeedBoot of an empty seed = %+v, %v", got, err)
+	}
+}
+
+func TestSeedHasAgent(t *testing.T) {
+	if got := GuestSeedFiles(VMFile{}, PrimaryNet{})["vmm-agent.py"]; string(got) != guest.AgentScript || len(got) == 0 {
+		t.Fatalf("seed vmm-agent.py = %q", got)
 	}
 }
 

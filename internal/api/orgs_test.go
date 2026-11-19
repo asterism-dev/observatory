@@ -100,7 +100,7 @@ func TestOrgPermissionsByRole(t *testing.T) {
 	adminPerms := []string{"audit:read", "device:delete", "device:list", "disk:create", "disk:delete", "disk:read", "disk:update", "env:delete", "env:list", "env:set", "env:use", "limit:read", "limit:set", "member:invite", "member:read", "member:remove",
 		"network:create", "network:delete", "network:read", "network:use", "node:create", "node:delete", "node:read", "node:update", "node:use", "org:update",
 		"role:bind", "role:read", "role:write", "team:create", "team:delete", "team:leave", "team:manage-members", "team:read", "team:update",
-		"vm:create", "vm:delete", "vm:disks", "vm:network", "vm:power", "vm:read"}
+		"vm:create", "vm:delete", "vm:disks", "vm:network", "vm:power", "vm:read", "vm:restore", "vm:snapshot"}
 	ownerPerms := append(slices.Clone(adminPerms), "member:set-role")
 	slices.Sort(ownerPerms)
 

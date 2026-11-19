@@ -149,3 +149,18 @@ func TestExportsRemovesStaleKeysOnFirstApply(t *testing.T) {
 		t.Fatalf("stale key kept: %v", err)
 	}
 }
+
+func TestExportsRestart(t *testing.T) {
+	ex, f := newExports(t, "d1")
+	want := []proto.StorageExport{{DiskID: "d1", Port: 10810, PSK: psk1}}
+	ex.Apply(want)
+	ex.Restart("d1")
+	if len(f.procs) != 1 || !f.procs[0].stopped {
+		t.Fatalf("procs %d", len(f.procs))
+	}
+	ex.Apply(want)
+	if len(f.procs) != 2 || f.procs[1].stopped || !reflect.DeepEqual(f.procs[0].args[:4], f.procs[1].args[:4]) {
+		t.Fatalf("procs %d", len(f.procs))
+	}
+	ex.Restart("nope")
+}

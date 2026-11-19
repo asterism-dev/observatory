@@ -3,7 +3,10 @@ package node
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,6 +24,8 @@ type fakeInstance struct {
 	p       *fakeProvider
 	staleIP bool // simulates finding the previous boot's lease only after the VM already died
 	hang    bool // Stop and Kill do not end the instance
+
+	ticks, tickStep atomic.Uint64 // CPUTicks advances by tickStep per call
 }
 
 func (i *fakeInstance) WaitIP(context.Context) (string, error) {
@@ -45,6 +50,13 @@ func (i *fakeInstance) Stop() error {
 }
 
 func (i *fakeInstance) Kill() error {
+	i.p.mu.Lock()
+	failKill := i.p.failKill
+	i.p.mu.Unlock()
+	if failKill != nil {
+		i.p.record("kill-failed")
+		return failKill
+	}
 	if i.hang {
 		i.p.record("kill-guest")
 		return nil
@@ -56,24 +68,75 @@ func (i *fakeInstance) Kill() error {
 	return nil
 }
 
+func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
+func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
+func (i *fakeInstance) Flush() error  { i.p.record("flush"); return nil }
+
+func (i *fakeInstance) CPUTicks() (uint64, error) { return i.ticks.Add(i.tickStep.Load()), nil }
+func (i *fakeInstance) Memory() (int, int, error) { return 1024, 256, nil }
+
+func (i *fakeInstance) ReloadSeed() error { i.p.record("reload-seed"); return nil }
+
+func (i *fakeInstance) GuestResume(context.Context) error {
+	i.p.mu.Lock()
+	i.p.guestResumes = append(i.p.guestResumes, time.Now())
+	i.p.mu.Unlock()
+	return nil
+}
+
+func (i *fakeInstance) SaveState(dir string) error {
+	i.p.record("savestate:" + dir)
+	i.p.mu.Lock()
+	block, fail := i.p.saveBlock, i.p.failSaveState
+	i.p.mu.Unlock()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if block != nil {
+		// Killing Firecracker breaks its snapshot call.
+		select {
+		case <-block:
+		case <-i.done:
+			return errors.New("killed while saving")
+		}
+	}
+	for _, n := range []string{StateFile, MemFile} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o600); err != nil {
+			return err
+		}
+	}
+	return fail
+}
+
 type fakeProvider struct {
-	mu           sync.Mutex
-	prepared     []string
-	started      map[string]*fakeInstance
-	failPrepare  map[string]bool
-	failStart    map[string]bool
-	staleIP      map[string]bool
-	chassis      []chassisconf.Config
-	block        chan struct{} // when set, StartChassis waits for it to close
-	inflight     atomic.Int32
-	maxInflight  atomic.Int32
-	events       []string
-	failDisks    bool
-	failReseed   bool
-	starts       map[string]int
-	boots        map[string]*proto.Boot // Boot of the latest Start per VM
-	bigRoot      bool                   // makes Disks report a different allocation, as if the guest wrote data
-	afterPrepare func(dir string)
+	mu            sync.Mutex
+	prepared      []string
+	started       map[string]*fakeInstance
+	failPrepare   map[string]bool
+	failStart     map[string]bool
+	staleIP       map[string]bool
+	chassis       []chassisconf.Config
+	block         chan struct{} // when set, StartChassis waits for it to close
+	inflight      atomic.Int32
+	maxInflight   atomic.Int32
+	events        []string
+	failDisks     bool
+	failReseed    bool
+	starts        map[string]int
+	boots         map[string]*proto.Boot // Boot of the latest Start per VM
+	bigRoot       bool                   // makes Disks report a different allocation, as if the guest wrote data
+	afterPrepare  func(dir string)
+	beforeStart   func(dir string)
+	failRestore   error
+	beforeRestore func(dir string)
+	saveBlock     chan struct{}
+	restoreBlock  chan struct{}
+	failSaveState error
+	failKill      error
+	guestResumes  []time.Time
+	restores      map[string]int
+	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil
+	wakeTeardown  chan struct{} // when set, a cancelled WaitWake removes its taps only once it is closed
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {
@@ -125,7 +188,7 @@ func (p *fakeProvider) gotChassis() []chassisconf.Config {
 }
 
 func newFakeProvider() *fakeProvider {
-	return &fakeProvider{started: map[string]*fakeInstance{}, starts: map[string]int{}, failPrepare: map[string]bool{}, failStart: map[string]bool{}, staleIP: map[string]bool{}}
+	return &fakeProvider{idle: make(chan struct{}), wake: make(chan struct{}), started: map[string]*fakeInstance{}, starts: map[string]int{}, failPrepare: map[string]bool{}, failStart: map[string]bool{}, staleIP: map[string]bool{}}
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -148,15 +211,21 @@ func (p *fakeProvider) Reseed(_ context.Context, f VMFile, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.events = append(p.events, "reseed:"+f.Spec.Name)
+	if f.Boot != nil {
+		p.events = append(p.events, "reseed-keys:"+strings.Join(f.Boot.SSHPublicKeys, ","))
+	}
 	if p.failReseed {
 		return errors.New("reseed boom")
 	}
 	return nil
 }
 
-func (p *fakeProvider) Start(f VMFile, _ string) (Instance, error) {
+func (p *fakeProvider) Start(_ context.Context, f VMFile, dir string) (Instance, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.beforeStart != nil {
+		p.beforeStart(dir)
+	}
 	if p.failStart[f.Spec.Name] {
 		return nil, errors.New("start boom")
 	}
@@ -168,6 +237,68 @@ func (p *fakeProvider) Start(f VMFile, _ string) (Instance, error) {
 	inst := &fakeInstance{p: p, done: make(chan struct{}), staleIP: p.staleIP[f.Spec.Name]}
 	p.started[f.Spec.Name] = inst
 	return inst, nil
+}
+
+func (p *fakeProvider) Restore(_ context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error) {
+	p.record("restore:" + from.StateDir)
+	if from.Paused {
+		p.record("restore-paused")
+	}
+	if from.Takeoff {
+		p.record("restore-takeoff")
+	}
+	p.mu.Lock()
+	block := p.restoreBlock
+	p.mu.Unlock()
+	if block != nil {
+		<-block
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.beforeRestore != nil {
+		p.beforeRestore(dir)
+	}
+	if p.failRestore != nil {
+		return nil, p.failRestore
+	}
+	if p.restores == nil {
+		p.restores = map[string]int{}
+	}
+	p.restores[f.Spec.Name]++
+	if !from.Shared {
+		os.RemoveAll(from.StateDir)
+	}
+	inst := &fakeInstance{p: p, done: make(chan struct{})}
+	p.started[f.Spec.Name] = inst
+	return inst, nil
+}
+
+func (p *fakeProvider) WaitIdle(ctx context.Context, _ VMFile, _ time.Duration) error {
+	return p.wait(ctx, p.idle, "wait-idle")
+}
+
+func (p *fakeProvider) WaitWake(ctx context.Context, _ VMFile) error {
+	err := p.wait(ctx, p.wake, "wait-wake")
+	p.mu.Lock()
+	block := p.wakeTeardown
+	p.mu.Unlock()
+	if err != nil && block != nil {
+		p.record("wake-teardown-begin")
+		<-block
+		p.record("wake-teardown-end")
+	}
+	return err
+}
+
+func (p *fakeProvider) wait(ctx context.Context, ch chan struct{}, name string) error {
+	p.record(name)
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		p.record(name + "-cancelled")
+		return ctx.Err()
+	}
 }
 
 func (p *fakeProvider) startedBoot(name string) *proto.Boot {

@@ -16,9 +16,11 @@ var ErrLimitExceedsOrg = errors.New("limit exceeds org limit")
 const ScopeOrg = "org"
 
 // Limits holds nil for unlimited.
-type Limits struct{ VCPU, RAMMB, DiskGB, VMCount *int }
+type Limits struct{ VCPU, RAMMB, DiskGB, VMCount, SnapshotCount *int }
 
-func (l Limits) fields() [4]*int { return [4]*int{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount} }
+func (l Limits) fields() [5]*int {
+	return [5]*int{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount}
+}
 
 // exceeds reports whether any non-null value of l is above the matching non-null value of org.
 func (l Limits) exceeds(org Limits) bool {
@@ -33,7 +35,7 @@ func (l Limits) exceeds(org Limits) bool {
 
 // Limits returns the stored rows by scope; scopes without a row are absent (all unlimited).
 func (s *Store) Limits(ctx context.Context, orgID uuid.UUID) (map[string]Limits, error) {
-	rows, err := s.q.Query(ctx, "SELECT scope, vcpu, ram_mb, disk_gb, vm_count FROM limits WHERE org_id = $1", orgID)
+	rows, err := s.q.Query(ctx, "SELECT scope, vcpu, ram_mb, disk_gb, vm_count, snapshot_count FROM limits WHERE org_id = $1", orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +43,7 @@ func (s *Store) Limits(ctx context.Context, orgID uuid.UUID) (map[string]Limits,
 	for rows.Next() {
 		var scope string
 		var l Limits
-		if err := rows.Scan(&scope, &l.VCPU, &l.RAMMB, &l.DiskGB, &l.VMCount); err != nil {
+		if err := rows.Scan(&scope, &l.VCPU, &l.RAMMB, &l.DiskGB, &l.VMCount, &l.SnapshotCount); err != nil {
 			return nil, err
 		}
 		out[scope] = l
@@ -59,8 +61,8 @@ func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l 
 			var below bool
 			err := tx.q.QueryRow(ctx, `
 				SELECT EXISTS (SELECT 1 FROM limits WHERE org_id = $1 AND scope <> 'org'
-					AND (vcpu > $2::int OR ram_mb > $3::int OR disk_gb > $4::int OR vm_count > $5::int))`,
-				orgID, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount).Scan(&below)
+					AND (vcpu > $2::int OR ram_mb > $3::int OR disk_gb > $4::int OR vm_count > $5::int OR snapshot_count > $6::int))`,
+				orgID, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount).Scan(&below)
 			if err != nil {
 				return err
 			}
@@ -72,8 +74,8 @@ func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l 
 				return err
 			}
 			var org Limits
-			err := tx.q.QueryRow(ctx, "SELECT vcpu, ram_mb, disk_gb, vm_count FROM limits WHERE org_id = $1 AND scope = 'org'", orgID).
-				Scan(&org.VCPU, &org.RAMMB, &org.DiskGB, &org.VMCount)
+			err := tx.q.QueryRow(ctx, "SELECT vcpu, ram_mb, disk_gb, vm_count, snapshot_count FROM limits WHERE org_id = $1 AND scope = 'org'", orgID).
+				Scan(&org.VCPU, &org.RAMMB, &org.DiskGB, &org.VMCount, &org.SnapshotCount)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
@@ -82,10 +84,10 @@ func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l 
 			}
 		}
 		_, err := tx.q.Exec(ctx, `
-			INSERT INTO limits (org_id, scope, vcpu, ram_mb, disk_gb, vm_count) VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO limits (org_id, scope, vcpu, ram_mb, disk_gb, vm_count, snapshot_count) VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (org_id, scope) DO UPDATE SET vcpu = EXCLUDED.vcpu, ram_mb = EXCLUDED.ram_mb,
-				disk_gb = EXCLUDED.disk_gb, vm_count = EXCLUDED.vm_count`,
-			orgID, scope, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount)
+				disk_gb = EXCLUDED.disk_gb, vm_count = EXCLUDED.vm_count, snapshot_count = EXCLUDED.snapshot_count`,
+			orgID, scope, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount)
 		return err
 	})
 }

@@ -53,6 +53,11 @@ type vmJSON struct {
 	CanNetwork bool           `json:"canNetwork"`
 	Disks      []vmDiskJSON   `json:"disks"`
 	CanDisks   bool           `json:"canDisks"`
+
+	AutoSuspendMinutes int  `json:"autoSuspendMinutes"`
+	CanSnapshot        bool `json:"canSnapshot"`
+	CanRestore         bool `json:"canRestore"`
+	CanFork            bool `json:"canFork"`
 }
 
 type vmDiskJSON struct {
@@ -134,11 +139,12 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
-		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks),
-		DNSName:  v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
+		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
+		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
+		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}
@@ -316,7 +322,7 @@ func (h *api) getVM(w http.ResponseWriter, r *http.Request) {
 	h.writeVM(w, r, http.StatusOK, v)
 }
 
-func (h *api) powerVM(power proto.Power, mode proto.StopMode) http.HandlerFunc {
+func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		v, ok := h.vmFromPath(w, r, store.ActionVMPower)
 		if !ok {
@@ -328,11 +334,15 @@ func (h *api) powerVM(power proto.Power, mode proto.StopMode) http.HandlerFunc {
 				return err
 			}
 			e := vmAudit(r, store.ActionVMPower, v)
-			e.Details["power"], e.Details["stopMode"] = power, mode
+			e.Details["action"], e.Details["power"], e.Details["stopMode"] = action, power, mode
 			return tx.Audit(r.Context(), e)
 		})
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if errors.Is(err, store.ErrNotRunning) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		if err != nil {
@@ -344,21 +354,74 @@ func (h *api) powerVM(power proto.Power, mode proto.StopMode) http.HandlerFunc {
 	}
 }
 
+func (h *api) setAutoSuspend(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, store.ActionVMPower)
+	if !ok {
+		return
+	}
+	var body struct {
+		Minutes int `json:"minutes"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Minutes != 0 && (body.Minutes < 5 || body.Minutes > 1440) {
+		writeError(w, http.StatusBadRequest, "minutes must be 0 or between 5 and 1440")
+		return
+	}
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if v, err = tx.SetAutoSuspend(r.Context(), v.OrgID, v.ID, body.Minutes); err != nil {
+			return err
+		}
+		e := vmAudit(r, store.ActionVMPower, v)
+		e.Details["autoSuspendMinutes"] = body.Minutes
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	h.writeVM(w, r, http.StatusOK, v)
+}
+
 func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 	v, ok := h.vmFromPath(w, r, store.ActionVMDelete)
 	if !ok {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID); err != nil {
+		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID); errors.Is(err, store.ErrConflict) {
+			return errForkPending
+		} else if err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), vmAudit(r, store.ActionVMDelete, v))
 	}) {
 		return
 	}
+	h.fleet.DropMetrics(v.ID)
 	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) vmMetrics(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, "vm:read")
+	if !ok {
+		return
+	}
+	samples := h.fleet.Metrics(v.ID)
+	out := make([]metricJSON, len(samples))
+	for i, s := range samples {
+		out[i] = metricJSON(s)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"samples": out})
+}
+
+type metricJSON struct {
+	At         time.Time `json:"at"`
+	CPUPercent float64   `json:"cpuPercent"`
+	MemTotalMB int       `json:"memTotalMB"`
+	MemUsedMB  int       `json:"memUsedMB"`
 }
 
 func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {
@@ -430,6 +493,7 @@ var (
 	reservedMountTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/lib/cloud", "/home/ubuntu/.ssh"}
 	reservedMountPaths = []string{"/home", "/home/ubuntu", "/root", "/var", "/var/lib"}
 	errDiskMissing     = fmt.Errorf("disk is missing from storage: %w", store.ErrConflict)
+	errForkPending     = errors.New("a fork from this VM's snapshot is still being created or failed; delete the fork first")
 )
 
 func validateVMDisks(disks []store.VMDisk) error {

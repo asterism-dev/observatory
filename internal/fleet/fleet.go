@@ -3,6 +3,7 @@ package fleet
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ type Fleet struct {
 	mu       sync.Mutex
 	conns    map[uuid.UUID]*conn
 	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
+	metrics  map[uuid.UUID][]MetricSample
 }
 
 func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
@@ -35,7 +37,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}}
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}}
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
 }
@@ -126,6 +128,43 @@ func (f *Fleet) detach(c *conn) {
 	}
 }
 
+// failSnapshots runs when a node's connection ends: a stopping or restarting node resumes the VMs it paused, so copies made later would not match.
+func (f *Fleet) failSnapshots(node uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	orgs, err := f.store.FailNodeSnapshots(ctx, node)
+	if err != nil {
+		slog.Error("fail snapshots of disconnected node", "node", node, "err", err)
+		return
+	}
+	for _, org := range orgs {
+		f.NotifyOrg(org)
+	}
+}
+
+// SweepSnapshots fails snapshots whose storage copies took longer than timeout, so their nodes resume the VMs; it returns when ctx ends.
+func (f *Fleet) SweepSnapshots(ctx context.Context, every, timeout time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		orgs, err := f.store.FailStaleSnapshots(ctx, timeout)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("sweep snapshots", "err", err)
+			}
+			continue
+		}
+		for _, org := range orgs {
+			f.NotifyOrg(org)
+		}
+	}
+}
+
 // desired builds the node's list and returns the releasing disks it no longer carries.
 func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.DesiredVM, []uuid.UUID, error) {
 	// Read first: a detach committed after this read is still in the list below, so its export is never marked by it.
@@ -141,6 +180,14 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	if err != nil {
 		return nil, nil, err
 	}
+	snaps, err := f.store.NodeSnapshots(ctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
+	plans, err := f.store.NodeVMPlans(ctx, node)
+	if err != nil {
+		return nil, nil, err
+	}
 	nets, err := f.store.Networks(ctx, org)
 	if err != nil {
 		return nil, nil, err
@@ -151,6 +198,10 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	}
 	out := make([]proto.DesiredVM, 0, len(vms))
 	for _, v := range vms {
+		plan := plans[v.ID]
+		if plan.Hold {
+			continue
+		}
 		boot, err := f.boot(ctx, org, v)
 		if err != nil {
 			return nil, nil, err
@@ -162,6 +213,8 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		out = append(out, proto.DesiredVM{
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID]},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
+			Snapshots: snaps[v.ID], Restore: plan.Restore, Fork: plan.Fork,
+			AutoSuspendMinutes: v.AutoSuspendMinutes, WakeSeq: v.WakeSeq,
 		})
 	}
 	return out, releasing, nil

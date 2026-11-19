@@ -20,9 +20,24 @@ type VMFile struct {
 	Generation uint64         `json:"generation,omitempty"`
 	// NeedsPrepare is cleared once Prepare succeeds; inverted so vm.json files predating it count as prepared.
 	NeedsPrepare bool `json:"needsPrepare,omitempty"`
+	// Hibernated is set only once StateDir holds a complete, fsynced memory state.
+	Hibernated bool `json:"hibernated,omitempty"`
+	// Suspended marks a hibernation by auto-suspend, which traffic ends; it counts only together with Hibernated.
+	Suspended          bool   `json:"suspended,omitempty"`
+	WakeSeq            uint64 `json:"wakeSeq,omitempty"`
+	AutoSuspendMinutes int    `json:"autoSuspendMinutes,omitempty"`
+	// Takeoff makes the next resume of the memory state give the guest this VM's identity (a fork's first start).
+	Takeoff     bool   `json:"takeoff,omitempty"`
+	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
 }
+
+const (
+	StateDir  = "state"
+	StateFile = "vmstate"
+	MemFile   = "mem"
+)
 
 func VMDir(vmsDir, id string) string { return filepath.Join(vmsDir, id) }
 
@@ -40,10 +55,26 @@ func SaveVM(vmsDir string, f VMFile) error {
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := writeSynced(tmp, b); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, "vm.json"))
+	if err := os.Rename(tmp, filepath.Join(dir, "vm.json")); err != nil {
+		return err
+	}
+	// Hibernated must be on disk before a resumed guest writes to its disks.
+	return syncDir(dir)
+}
+
+func writeSynced(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
 }
 
 func LoadVMs(vmsDir string) ([]VMFile, error) {
@@ -74,6 +105,15 @@ func LoadVMs(vmsDir string) ([]VMFile, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Spec.ID < out[j].Spec.ID })
 	return out, nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func DeleteVMDir(vmsDir, id string) error { return os.RemoveAll(VMDir(vmsDir, id)) }

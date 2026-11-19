@@ -94,6 +94,15 @@ func (e *Exports) Apply(want []proto.StorageExport) []proto.StorageExportStatus 
 	return out
 }
 
+// Restart kills the export's nbdkit so the next Apply starts it on the current file.
+func (e *Exports) Restart(diskID string) {
+	if r, ok := e.running[diskID]; ok {
+		r.stop()
+		os.Remove(e.keyFile(diskID))
+		delete(e.running, diskID)
+	}
+}
+
 func (e *Exports) start(w proto.StorageExport) error {
 	// ':' and newlines would break the "<id>:<key>" line of the key file
 	if !plainName(w.DiskID) || strings.ContainsAny(w.DiskID, ":\n") {

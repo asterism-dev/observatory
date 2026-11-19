@@ -18,7 +18,7 @@ interface AdminOrg {
 const { t } = useI18n()
 const route = useRoute()
 const org = ref<AdminOrg | null>(null)
-const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null })
+const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null })
 const valid = ref(true)
 const busy = ref(false)
 const error = ref('')

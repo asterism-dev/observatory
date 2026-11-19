@@ -91,6 +91,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1)}
 	f.attach(c)
 	defer f.detach(c)
+	defer f.failSnapshots(node.ID)
 	// A Disconnect racing with this handshake ran before attach; recheck so a revoked credential never stays connected.
 	if _, err := f.store.NodeByCredential(ctx, cred); err != nil {
 		return
@@ -110,6 +111,13 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 				slog.Error("vm status", "node", node.ID, "vm", m.Status.ID, "err", err)
 			}
 			f.noteDiskErrors(c, *m.Status)
+			if changed, err := f.store.ApplySnapshotStatus(ctx, node.ID, *m.Status); err != nil {
+				slog.Error("vm snapshot status", "node", node.ID, "vm", m.Status.ID, "err", err)
+			} else if changed {
+				f.NotifyOrg(node.OrgID)
+			}
+		case m.Type == "metrics":
+			f.NoteMetrics(ctx, node.ID, m.Metrics)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		}
@@ -150,6 +158,9 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 	// Statuses land before the first desired list so it carries the right provisioned flags.
 	for _, st := range reg.VMs {
 		if err := f.store.SetVMStatus(ctx, node, st); err != nil {
+			return err
+		}
+		if _, err := f.store.ApplySnapshotStatus(ctx, node, st); err != nil {
 			return err
 		}
 	}

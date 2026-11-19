@@ -3,6 +3,7 @@ package firecracker
 import (
 	"context"
 	"os"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,9 @@ func TestStartWithNBDDisk(t *testing.T) {
 	}
 	p := testProvider(t)
 	f := testVM("fcnbd")
-	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: "d1", MountPath: "/data", URL: url, PSK: psk}}
+	// The export's PSK identity is the disk ID, so it must match the URL.
+	diskID := path.Base(url)
+	f.Spec.Attachments = []proto.DiskAttachment{{DiskID: diskID, MountPath: "/data", URL: url, PSK: psk}}
 	inst := startVM(t, p, f)
 	dir := node.VMDir(p.VMsDir, f.Spec.ID)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -29,11 +32,11 @@ func TestStartWithNBDDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	disks, err := p.Disks(f, dir)
-	if err != nil || len(disks) != 3 || disks[1].Name != "d1" || disks[1].Device != "vdb" || disks[1].Error != "" {
+	if err != nil || len(disks) != 3 || disks[1].Name != diskID || disks[1].Device != "vdb" || disks[1].Error != "" {
 		inst.Kill()
 		t.Fatalf("disks = %+v, %v", disks, err)
 	}
-	b, _ := os.ReadFile(linuxvm.NBDRecord(dir, "d1"))
+	b, _ := os.ReadFile(linuxvm.NBDRecord(dir, diskID))
 	dev := strings.TrimSpace(string(b))
 	inst.Stop()
 	<-inst.Done()

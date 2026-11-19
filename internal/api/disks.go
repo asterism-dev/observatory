@@ -318,5 +318,7 @@ func (h *api) deleteDisk(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	// Deleting a disk can finish a pending restore, which bumps the VM's generation.
+	h.fleet.NotifyOrg(d.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -129,6 +129,15 @@ func TestSetVMDisksRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	paused, hibernated := mustStoppedVM(t, e, "p", nil), mustStoppedVM(t, e, "h", nil)
+	for _, c := range []struct {
+		id uuid.UUID
+		p  proto.Power
+	}{{paused.ID, proto.PowerRunning}, {paused.ID, proto.PowerPaused}, {hibernated.ID, proto.PowerRunning}, {hibernated.ID, proto.PowerHibernated}} {
+		if _, err := e.s.SetVMPower(ctx, e.org.ID, c.id, c.p, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
 	other, err := e.s.CreateOrg(ctx, "B", e.user)
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +154,8 @@ func TestSetVMDisksRefusals(t *testing.T) {
 		{"attached to b", vmA.ID, onB.ID, store.ErrConflict},
 		{"releasing", vmA.ID, releasing.ID, store.ErrConflict},
 		{"running without flag", running.ID, free.ID, store.ErrRestartRequired},
+		{"paused without flag", paused.ID, free.ID, store.ErrRestartRequired},
+		{"hibernated without flag", hibernated.ID, free.ID, store.ErrRestartRequired},
 		{"other org", vmA.ID, foreign.ID, store.ErrNotFound},
 	} {
 		if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, c.vm, []store.VMDisk{{DiskID: c.disk, MountPath: "/data"}}, false); !errors.Is(err, c.want) {

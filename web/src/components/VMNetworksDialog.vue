@@ -4,7 +4,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
-import type { VmInfo } from '@/composables/nodes'
+import { keepsMemory, type VmInfo } from '@/composables/nodes'
 
 interface Network {
   id: string
@@ -63,14 +63,14 @@ async function save(restartAllowed: boolean) {
   }
 }
 
-const submit = () => (props.vm.state === 'running' ? (confirming.value = true) : save(false))
+const submit = () => (props.vm.power !== 'stopped' ? (confirming.value = true) : save(false))
 </script>
 
 <template>
   <Dialog
     :open="open"
     :title="confirming ? t('networks.restartTitle') : t('networks.changeTitle')"
-    :description="confirming ? t('networks.restartBody', { name: vm.name }) : undefined"
+    :description="confirming ? t(keepsMemory(vm) ? 'networks.restartBodySaved' : 'networks.restartBody', { name: vm.name }) : undefined"
     @update:open="(o) => !busy && emit('update:open', o)"
   >
     <template v-if="!confirming">
