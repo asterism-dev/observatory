@@ -30,7 +30,7 @@ func newAgent(root Root) *Agent {
 		ReseedRNG:     reseedRNG,
 		SetHostname:   func(name string) error { return unix.Sethostname([]byte(name)) },
 		ConfigureNICs: ConfigureNICs,
-		GrowRoot:      func() error { return growRoot(rootDevice) },
+		GrowRoot:      func() error { return growFS(rootDevice, root.Path) },
 		MountDisks:    MountDisks,
 	}
 }

@@ -15,13 +15,11 @@ func TestMountDisksLoop(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root")
 	}
-	for _, p := range []*string{&mke2fs, &resize2fs} {
-		bin, err := exec.LookPath(filepath.Base(*p))
-		if err != nil {
-			t.Skip(err)
-		}
-		*p = bin
+	bin, err := exec.LookPath("mke2fs")
+	if err != nil {
+		t.Skip(err)
 	}
+	mke2fs = bin
 	img := filepath.Join(t.TempDir(), "disk.img")
 	if err := os.WriteFile(img, make([]byte, 64<<20), 0o600); err != nil {
 		t.Fatal(err)
@@ -64,5 +62,38 @@ func TestMountDisksLoop(t *testing.T) {
 	}
 	if err := syscall.Stat(mnt, &st); err != nil || st.Uid != 0 {
 		t.Fatalf("existing disk re-chowned: uid %d", st.Uid)
+	}
+}
+
+func TestGrowFSLoop(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root")
+	}
+	img := filepath.Join(t.TempDir(), "disk.img")
+	if out, err := exec.Command("mke2fs", "-q", "-t", "ext4", img, "32M").CombinedOutput(); err != nil {
+		t.Skipf("mke2fs: %v: %s", err, out)
+	}
+	if err := os.Truncate(img, 128<<20); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("losetup", "--find", "--show", img).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := strings.TrimSpace(string(out))
+	t.Cleanup(func() { exec.Command("losetup", "-d", dev).Run() })
+	mnt := t.TempDir()
+	if err := syscall.Mount(dev, mnt, "ext4", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { syscall.Unmount(mnt, 0) })
+	for range 2 {
+		if err := growFS(dev, mnt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(mnt, &st); err != nil || int64(st.Blocks)*st.Bsize < 100<<20 {
+		t.Fatalf("size after grow = %d bytes, %v", int64(st.Blocks)*st.Bsize, err)
 	}
 }

@@ -228,7 +228,7 @@ func setupCgroups() error {
 	return nil
 }
 
-// runNsinit is PID 1 of an image without systemd: it mounts /proc, reaps orphans and supervises Entrypoint+Cmd until SIGTERM.
+// runNsinit is PID 1 of an image without systemd: it mounts /proc and /sys, reaps orphans and supervises Entrypoint+Cmd until SIGTERM.
 func runNsinit(args []string) int {
 	fs := flag.NewFlagSet("nsinit", flag.ContinueOnError)
 	dir := fs.String("dir", "", "working directory of the service")
@@ -240,9 +240,11 @@ func runNsinit(args []string) int {
 		fmt.Fprintln(os.Stderr, "nsinit: must run as PID 1 of the image")
 		return 2
 	}
-	if err := os.MkdirAll("/proc", 0o555); err == nil {
-		if err := syscall.Mount("proc", "/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil && !errors.Is(err, syscall.EBUSY) {
-			fmt.Fprintln(os.Stderr, "nsinit: mount /proc:", err)
+	for _, m := range []struct{ fstype, target string }{{"proc", "/proc"}, {"sysfs", "/sys"}} {
+		if err := os.MkdirAll(m.target, 0o555); err == nil {
+			if err := syscall.Mount(m.fstype, m.target, m.fstype, syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, ""); err != nil && !errors.Is(err, syscall.EBUSY) {
+				fmt.Fprintf(os.Stderr, "nsinit: mount %s: %v\n", m.target, err)
+			}
 		}
 	}
 	// Caught and dropped rather than ignored: SIG_IGN would be inherited by the service and swallow a SIGINT StopSignal.

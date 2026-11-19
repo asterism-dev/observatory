@@ -12,7 +12,8 @@ import (
 	"slices"
 	"strings"
 
-	diskfs "github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/backend/file"
+	"github.com/diskfs/go-diskfs/filesystem/iso9660"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -49,15 +50,20 @@ func ReadSeed(dev string) (proto.GuestSeed, error) {
 	return seed, nil
 }
 
+// readISOFile reads the ISO as such: diskfs.Open would take a block device's 512-byte sectors as the ISO block size.
 func readISOFile(dev, name string) ([]byte, error) {
-	d, err := diskfs.Open(dev, diskfs.WithOpenMode(diskfs.ReadOnly))
+	iso, err := os.Open(dev)
 	if err != nil {
 		return nil, err
 	}
-	defer d.Close()
-	fs, err := d.GetFilesystem(0)
+	defer iso.Close()
+	size, err := iso.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, err
+	}
+	fs, err := iso9660.Read(file.New(iso, true), size, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("seed %s: %w", dev, err)
 	}
 	entries, err := fs.ReadDir(".")
 	if err != nil {

@@ -43,7 +43,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	if err := growRoot(rootDevice); err != nil {
+	if err := growFS(rootDevice, root.Path); err != nil {
 		return err
 	}
 	agent := newAgent(root)

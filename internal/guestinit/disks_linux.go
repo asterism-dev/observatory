@@ -13,11 +13,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-// The initramfs's e2fsprogs; vars so tests can use the host's.
-var (
-	mke2fs    = "/bin/mke2fs"
-	resize2fs = "/bin/resize2fs"
-)
+// mke2fs is the initramfs's; a var so tests can use the host's.
+var mke2fs = "/bin/mke2fs"
 
 // MountDisks formats blank attached disks, mounts each at its path in r and grows its filesystem.
 func MountDisks(r Root, disks []proto.GuestDisk) error {
@@ -53,8 +50,8 @@ func mountDisk(r Root, d proto.GuestDisk) error {
 			return fmt.Errorf("mount %s: %w", target, err)
 		}
 	}
-	// Grows a disk that was resized while detached; a filesystem resize2fs does not know is left as is.
-	exec.Command(resize2fs, d.Device).Run()
+	// Grows a disk that was resized while detached; a filesystem other than ext4 is left as is.
+	growFS(d.Device, target)
 	if blank {
 		return chown(target, devID, devID)
 	}
