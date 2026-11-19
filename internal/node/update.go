@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -41,6 +42,17 @@ func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
 		err = a.Updater.Wait(ctx)
 	}
 	if err != nil && ctx.Err() == nil {
+		// No restart happened, so the next unrelated one must hibernate as usual.
+		a.removeShutdownMarker()
 		fail(err)
+	}
+}
+
+func (a *Agent) removeShutdownMarker() {
+	if a.ShutdownMarker == "" {
+		return
+	}
+	if err := os.Remove(a.ShutdownMarker); err != nil && !os.IsNotExist(err) {
+		log.Printf("shutdown marker: %v", err)
 	}
 }

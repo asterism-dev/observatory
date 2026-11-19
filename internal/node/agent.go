@@ -121,9 +121,7 @@ type vmEntry struct {
 func (a *Agent) Run(ctx context.Context) error {
 	a.vms = map[string]*vmEntry{}
 	a.imageChanged = make(chan struct{})
-	if err := os.Remove(a.ShutdownMarker); a.ShutdownMarker != "" && err != nil && !os.IsNotExist(err) {
-		log.Printf("shutdown marker: %v", err)
-	}
+	a.removeShutdownMarker()
 	if ts, ok := a.Provider.(TokenServer); ok {
 		ts.SetTokenLookup(a.integrationToken)
 	}

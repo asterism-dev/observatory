@@ -185,3 +185,19 @@ func TestRestoreAfterShutdownKeepsPower(t *testing.T) {
 		t.Fatalf("memory resumed: %v", p.gotEvents())
 	}
 }
+
+func TestUpdateFailureRemovesShutdownMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "shutdown-vms")
+	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
+		a.Updater = &fakeUpdater{waitErr: errors.New("install.sh --update failed")}
+		a.ShutdownMarker = marker
+	})
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.hub.sendUpdate()
+	waitUpdateError(t, env, "install.sh --update failed")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker still there: %v", err)
+	}
+}

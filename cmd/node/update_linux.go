@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,7 +19,11 @@ import (
 	"github.com/asterism-dev/observatory/internal/node"
 )
 
-const updateUnit = "observatory-node-update"
+const (
+	updateUnit      = "observatory-node-update"
+	downloadTimeout = 2 * time.Minute
+	maxShowFailures = 5
+)
 
 type systemdUpdater struct{ dir string }
 
@@ -26,7 +31,13 @@ func newUpdater(dir string) node.Updater { return systemdUpdater{dir: dir} }
 
 // Start runs install.sh in its own transient unit, so it survives the service restart it triggers.
 func (u systemdUpdater) Start(ctx context.Context, hubBase string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hubBase+"/node/install.sh", nil)
+	// A unit still running from before an agent restart is the update in progress; Wait follows it.
+	if props, err := unitProps(ctx); err == nil && unitActive(props) {
+		return nil
+	}
+	dctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(dctx, http.MethodGet, hubBase+"/node/install.sh", nil)
 	if err != nil {
 		return err
 	}
@@ -60,23 +71,23 @@ func (u systemdUpdater) Start(ctx context.Context, hubBase string) error {
 }
 
 func (systemdUpdater) Wait(ctx context.Context) error {
+	failures := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(5 * time.Second):
 		}
-		out, err := exec.CommandContext(ctx, "systemctl", "show", updateUnit, "-p", "ActiveState,Result").Output()
+		props, err := unitProps(ctx)
 		if err != nil {
-			return fmt.Errorf("systemctl show: %w", err)
-		}
-		props := map[string]string{}
-		for _, line := range strings.Split(string(out), "\n") {
-			if k, v, ok := strings.Cut(line, "="); ok {
-				props[k] = v
+			if failures++; failures == maxShowFailures {
+				return err
 			}
+			log.Printf("update: %v", err)
+			continue
 		}
-		if s := props["ActiveState"]; s == "active" || s == "activating" {
+		failures = 0
+		if unitActive(props) {
 			continue
 		}
 		if props["Result"] != "success" {
@@ -84,4 +95,22 @@ func (systemdUpdater) Wait(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func unitProps(ctx context.Context) (map[string]string, error) {
+	out, err := exec.CommandContext(ctx, "systemctl", "show", updateUnit, "-p", "ActiveState,Result").Output()
+	if err != nil {
+		return nil, fmt.Errorf("systemctl show: %w", err)
+	}
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			props[k] = v
+		}
+	}
+	return props, nil
+}
+
+func unitActive(props map[string]string) bool {
+	return props["ActiveState"] == "active" || props["ActiveState"] == "activating"
 }
