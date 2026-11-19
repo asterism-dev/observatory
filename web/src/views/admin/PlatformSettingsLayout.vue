@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Shield } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import SettingsLayout from '@/components/SettingsLayout.vue'
@@ -9,5 +10,5 @@ const { platformTabs } = useSettingsNav()
 </script>
 
 <template>
-  <SettingsLayout :title="t('nav.platformSettings')" :tabs="platformTabs" />
+  <SettingsLayout :icon="Shield" :title="t('nav.platformSettings')" :subtitle="t('nav.platformSettingsSubtitle')" :tabs="platformTabs" />
 </template>

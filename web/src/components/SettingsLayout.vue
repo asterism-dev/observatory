@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { Tabs } from '@asterism-dev/lumen'
-import { computed } from 'vue'
+import { computed, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import type { NavTab } from '@/composables/useSettingsNav'
+import Page from '@/ui/Page.vue'
 
-const props = defineProps<{ title: string; tabs: NavTab[] }>()
+const props = defineProps<{ icon: Component; title: string; subtitle: string; tabs: NavTab[] }>()
 const route = useRoute()
 const router = useRouter()
 
@@ -17,13 +18,8 @@ const active = computed({
 </script>
 
 <template>
-  <h1>{{ title }}</h1>
-  <Tabs v-model="active" :tabs="tabs.map((tab) => ({ value: tab.path, label: tab.label }))" variant="underline" activation-mode="manual" :aria-label="title" />
-  <div class="settings__body"><RouterView /></div>
+  <Page :icon="icon" :title="title" :subtitle="subtitle">
+    <Tabs v-model="active" :tabs="tabs.map((tab) => ({ value: tab.path, label: tab.label }))" variant="underline" activation-mode="manual" :aria-label="title" />
+    <RouterView />
+  </Page>
 </template>
-
-<style scoped>
-.settings__body {
-  padding-top: 16px;
-}
-</style>

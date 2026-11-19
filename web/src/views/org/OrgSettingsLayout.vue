@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Building2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import SettingsLayout from '@/components/SettingsLayout.vue'
@@ -9,5 +10,5 @@ const { orgTabs } = useSettingsNav()
 </script>
 
 <template>
-  <SettingsLayout :title="t('nav.orgSettings')" :tabs="orgTabs" />
+  <SettingsLayout :icon="Building2" :title="t('nav.orgSettings')" :subtitle="t('nav.orgSettingsSubtitle')" :tabs="orgTabs" />
 </template>

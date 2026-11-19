@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog } from '@asterism-dev/lumen'
-import { Code, Copy, Zap } from '@lucide/vue'
+import { Button, Dialog } from '@asterism-dev/lumen'
+import { Code, Zap } from '@lucide/vue'
 import QRCode from 'qrcode'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import type { VmInfo } from '@/composables/nodes'
+import { CommandBox, CopyButton, Tag } from '@/ui'
 
 const props = defineProps<{ orgId: string; vm: VmInfo | null }>()
 const open = defineModel<boolean>('open', { required: true })
@@ -18,24 +19,9 @@ const editors = computed(() => [
   { name: 'Zed', icon: Zap, href: `zed://ssh/ubuntu@${host.value}/home/ubuntu` },
 ])
 const qr = ref('')
-const copied = ref('')
-const copyFailed = ref(false)
-
-async function copy(text: string) {
-  copyFailed.value = false
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = text
-  } catch {
-    copyFailed.value = true
-  }
-}
-
 watch(
   () => [open.value, host.value],
   async () => {
-    copied.value = ''
-    copyFailed.value = false
     qr.value = ''
     if (!open.value || !host.value) return
     const want = host.value
@@ -49,13 +35,10 @@ watch(
 <template>
   <Dialog v-model:open="open" :title="vm ? t('open.title', { name: vm.name }) : ''" :description="t('open.subtitle')" width="640px">
     <template v-if="vm">
-      <p><Badge variant="outline" weight="bold">{{ vm.node.name }}</Badge></p>
+      <p><Tag strong>{{ vm.node.name }}</Tag></p>
       <section>
         <div class="label"><span>{{ t('open.cli') }}</span><span>{{ t('open.cliHint') }}</span></div>
-        <div v-for="c in commands" :key="c" class="cmd">
-          <code>$ {{ c }}</code>
-          <Button size="sm" :icon="Copy" @click="copy(c)">{{ copied === c ? t('open.copied') : t('networks.copy') }}</Button>
-        </div>
+        <CommandBox v-for="c in commands" :key="c" :command="c" class="cmd" />
         <small>
           {{ t('open.desktopHint') }}
           <a href="https://github.com/Xpra-org/xpra/wiki/Download" target="_blank" rel="noopener">{{ t('vms.desktopInstall') }}</a>
@@ -64,8 +47,7 @@ watch(
       <section>
         <div class="label">
           <span>{{ t('open.editors') }}</span>
-          <span>{{ t('open.overSsh') }} <code>{{ host }}</code>
-            <button type="button" class="icon-btn" :aria-label="t('networks.copy')" @click="copy(host)"><Copy :size="12" /></button></span>
+          <span>{{ t('open.overSsh') }} <code>{{ host }}</code> <CopyButton :text="host" /></span>
         </div>
         <div class="editors">
           <a v-for="e in editors" :key="e.name" :href="e.href" class="tile"><component :is="e.icon" :size="20" :stroke-width="1.75" />{{ e.name }}</a>
@@ -84,7 +66,6 @@ watch(
           </div>
         </div>
       </section>
-      <p v-if="copyFailed" role="alert">{{ t('networks.copyFailed') }}</p>
     </template>
     <template #actions><Button @click="open = false">{{ t('nodes.done') }}</Button></template>
   </Dialog>
@@ -100,7 +81,7 @@ section {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.7rem;
   color: var(--muted);
 }
@@ -109,21 +90,7 @@ section {
   text-transform: uppercase;
 }
 .cmd {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 14px;
   margin-bottom: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.icon-btn {
-  padding: 0 2px;
-  border: 0;
-  background: none;
-  color: inherit;
-  cursor: pointer;
 }
 .editors {
   display: grid;
