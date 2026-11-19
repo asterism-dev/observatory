@@ -434,3 +434,84 @@ func TestStartUpdateRejects(t *testing.T) {
 		}
 	}
 }
+
+func (e *env) power(v store.VM, p proto.Power) {
+	e.t.Helper()
+	if _, err := e.s.SetVMPower(context.Background(), e.org.ID, v.ID, p, ""); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func TestUpdateSettlesVMsByPower(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	stopped, paused := e.vm(e.org.ID, ns[0].ID, "stopped", &e.owner, nil), e.vm(e.org.ID, ns[0].ID, "paused", &e.owner, nil)
+	hib, hibStopped := e.vm(e.org.ID, ns[0].ID, "hib", &e.owner, nil), e.vm(e.org.ID, ns[0].ID, "hib-stopped", &e.owner, nil)
+	e.power(paused, proto.PowerPaused)
+	e.power(hib, proto.PowerHibernated)
+	e.power(hibStopped, proto.PowerHibernated)
+	e.power(stopped, proto.PowerStopped)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version,
+		proto.VMStatus{ID: stopped.ID.String(), State: proto.StateStopped},
+		proto.VMStatus{ID: paused.ID.String(), State: proto.StatePaused},
+		proto.VMStatus{ID: hib.ID.String(), State: proto.StateHibernated},
+		proto.VMStatus{ID: hibStopped.ID.String(), State: proto.StateStopped})
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateWaitsForVMInItsPowerState(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.SetUpdateTimeouts(e.f, 2*time.Second, 50*time.Millisecond, 10*time.Millisecond)
+	v := e.vm(e.org.ID, ns[0].ID, "paused", &e.owner, nil)
+	e.power(v, proto.PowerPaused)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version, running(v))
+	if r := e.ended(); r.State != "failed" || !strings.Contains(r.Nodes[0].Reason, "waiting for vm paused") {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateIgnoresVMDeletedMidUpdate(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version)
+	if err := e.s.DeleteVM(context.Background(), e.org.ID, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateCancelDuringLastNodeEndsDone(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	if !e.f.CancelUpdate(e.org.ID) {
+		t.Fatal("cancel refused")
+	}
+	e.back(ns[0], version.Version)
+	if r := e.ended(); r.State != "done" || r.Nodes[0].Status != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestUpdateSurvivesReconnectDuringVMWait(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	v := e.vm(e.org.ID, ns[0].ID, "web", &e.owner, nil)
+	e.start(ns...)
+	ns[0].conn.awaitUpdate()
+	e.back(ns[0], version.Version)
+	ns[0].conn.sess.Close()
+	waitFor(t, func() bool { return !e.f.Online(ns[0].ID) })
+	e.back(ns[0], version.Version, running(v))
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
