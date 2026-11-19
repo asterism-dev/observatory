@@ -15,12 +15,21 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
 type fakeManifests struct {
-	mu      sync.Mutex
-	deleted []string
+	mu        sync.Mutex
+	deleted   []string
+	manifests map[string]registry.Manifest
+}
+
+func (f *fakeManifests) Manifest(_ context.Context, repo, digest string) (registry.Manifest, error) {
+	if m, ok := f.manifests[digest]; ok {
+		return m, nil
+	}
+	return registry.Manifest{}, registry.ErrNotFound
 }
 
 func (f *fakeManifests) DeleteManifest(_ context.Context, repo, digest string) error {

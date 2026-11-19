@@ -1,6 +1,7 @@
 # Deploying the hub with Docker Compose
 
-`deploy/compose.yaml` runs the hub with its Postgres, the WireGuard/OVN gateway and the storage server, configured
+`deploy/compose.yaml` runs the hub with its Postgres, the WireGuard/OVN gateway, the storage server and the image
+registry, configured
 only through `deploy/.env`. A login service is not part of it: use any OIDC provider (see [idp.md](idp.md)) or the
 Zitadel stack in `deploy/idp/`.
 
@@ -83,6 +84,21 @@ cannot read it.
   URL.
 - `OBSERVATORY_SECRETS_KEY` encrypts every stored secret. Back it up; a new key makes them unreadable.
 - `OBSERVATORY_OIDC_ISSUER` must be reachable from the hub container, so not `localhost`.
+- `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub.
+
+## Image registry
+
+The `registry` service stores image versions and publishes no port: Docker clients and nodes reach it through the
+hub's `/v2/` proxy, and the hub issues the registry tokens. The registry reports every push to the hub, which turns it
+into an image version or deletes it (not linux/amd64, over the org's storage limit) and shows the reason on the image.
+The hub's token key and certificate live in the volume `registry-keys`, the images in `registry-data`.
+
+Deleting versions or images removes their manifests; the disk space comes back with garbage collection, which the hub
+does not run. Run it daily from the host's crontab, at a quiet hour (a push during the run can fail and needs repeating):
+
+```sh
+0 4 * * * cd /path/to/observatory && docker compose -f deploy/compose.yaml --profile maintenance run --rm registry-gc
+```
 
 ## Updating
 
@@ -96,5 +112,5 @@ The hub checks GitHub for a newer release every 6 hours and shows platform admin
 an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDATE_CHECK=1` in `deploy/.env` turns the
 check off (air-gapped hosts). Builds that are not a release tag never check.
 
-The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs` and, with
-TLS, `caddy-data`.
+The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
+`registry-data`, `registry-keys` and, with TLS, `caddy-data`.

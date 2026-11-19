@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,8 +111,16 @@ func TestClientManifestAndDelete(t *testing.T) {
 			_, _ = w.Write([]byte(`{"config":{"digest":"sha256:c"},"layers":[{"digest":"sha256:l1","size":7}]}`))
 		case "GET /v2/i/x/blobs/sha256:c":
 			_, _ = w.Write([]byte(`{"os":"linux","architecture":"arm64","variant":"v8"}`))
+		case "GET /v2/i/x/manifests/sha256:m64":
+			_, _ = w.Write([]byte(`{"config":{"digest":"sha256:c64"},"layers":[{"digest":"sha256:l2","size":9}]}`))
+		case "GET /v2/i/x/blobs/sha256:c64":
+			_, _ = w.Write([]byte(`{"os":"linux","architecture":"amd64"}`))
 		case "GET /v2/i/x/manifests/sha256:idx":
-			_, _ = w.Write([]byte(`{"manifests":[{"digest":"sha256:m"}]}`))
+			_, _ = w.Write([]byte(`{"manifests":[{"digest":"sha256:m","platform":{"os":"linux","architecture":"arm64","variant":"v8"}},
+				{"digest":"sha256:m64","platform":{"os":"linux","architecture":"amd64"}}]}`))
+		case "GET /v2/i/x/manifests/sha256:idxarm":
+			_, _ = w.Write([]byte(`{"manifests":[{"digest":"sha256:m","platform":{"os":"linux","architecture":"arm64","variant":"v8"}},
+				{"digest":"sha256:att","platform":{"os":"unknown","architecture":"unknown"}}]}`))
 		case "DELETE /v2/i/x/manifests/sha256:m":
 			deleted = c.Access[0].Actions[0]
 			w.WriteHeader(http.StatusAccepted)
@@ -126,8 +135,14 @@ func TestClientManifestAndDelete(t *testing.T) {
 	if err != nil || m.Platform != "linux/arm64/v8" || len(m.Layers) != 1 || m.Layers[0] != (Layer{"sha256:l1", 7}) {
 		t.Fatalf("manifest %+v %v", m, err)
 	}
-	if m, err := cl.Manifest(ctx, "i/x", "sha256:idx"); err != nil || m.Platform != "" {
+	if m, err := cl.Manifest(ctx, "i/x", "sha256:idx"); err != nil || m.Platform != "linux/amd64" || len(m.Layers) != 1 || m.Layers[0] != (Layer{"sha256:l2", 9}) {
 		t.Fatalf("index %+v %v", m, err)
+	}
+	if m, err := cl.Manifest(ctx, "i/x", "sha256:idxarm"); err != nil || m.Platform != "linux/arm64/v8, unknown/unknown" || m.Layers != nil {
+		t.Fatalf("index without amd64 %+v %v", m, err)
+	}
+	if _, err := cl.Manifest(ctx, "i/x", "sha256:gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing manifest: %v", err)
 	}
 	if err := cl.DeleteManifest(ctx, "i/x", "sha256:m"); err != nil || deleted != "delete" {
 		t.Fatalf("delete: %v %q", err, deleted)

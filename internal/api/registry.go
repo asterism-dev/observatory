@@ -33,12 +33,16 @@ type Registry struct {
 	Upstream, PublicURL *url.URL
 	Issuer              registry.Issuer
 	Builds              BuildCredentials
+	Manifests           RegistryManifests
+	EventsSecret        string
 }
 
-// RegistryEndpoints serves the token endpoint and proxies the rest of /v2/ to the registry.
+// RegistryEndpoints serves the token endpoint and the registry's push events, and proxies the rest of /v2/ to the registry.
 func RegistryEndpoints(mux *http.ServeMux, s *store.Store, z *authz.Service, reg Registry) {
 	t := &registryTokens{store: s, z: z, reg: reg}
 	mux.HandleFunc("GET /v2/token", t.token)
+	ev := &registryEvents{store: s, manifests: reg.Manifests, secret: reg.EventsSecret}
+	mux.HandleFunc("POST /internal/registry/events", ev.serve)
 	mux.Handle("/v2/", registryProxy(reg.Upstream, reg.PublicURL.JoinPath("/v2/token").String()))
 }
 

@@ -120,8 +120,9 @@ func run() error {
 			return err
 		}
 		upstream, _ := url.Parse(cfg.RegistryURL)
-		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss})
-		manifests = registry.Client{URL: cfg.RegistryURL, Issuer: iss}
+		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Manifests: client, EventsSecret: cfg.RegistryEventsSecret})
+		manifests = client
 	}
 	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))

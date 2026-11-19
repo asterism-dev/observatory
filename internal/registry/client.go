@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,11 +22,13 @@ type Layer struct {
 	Size   int64
 }
 
-// Manifest is an image manifest; Platform is empty for an index, which has no single platform.
+// Manifest is an image manifest; an index resolves to its linux/amd64 child.
 type Manifest struct {
 	Platform string
 	Layers   []Layer
 }
+
+var ErrNotFound = errors.New("not found in the registry")
 
 const (
 	hubSubject    = "hub"
@@ -49,19 +52,44 @@ func (c Client) DeleteManifest(ctx context.Context, repo, digest string) error {
 	return nil
 }
 
-func (c Client) Manifest(ctx context.Context, repo, digest string) (Manifest, error) {
-	var m struct {
-		MediaType string
-		Config    struct{ Digest string }
-		Layers    []struct {
-			Digest string
-			Size   int64
-		}
-		Manifests []json.RawMessage
+type manifestDoc struct {
+	Config struct{ Digest string }
+	Layers []struct {
+		Digest string
+		Size   int64
 	}
+	Manifests []struct {
+		Digest   string
+		Platform struct{ OS, Architecture, Variant string }
+	}
+}
+
+// Manifest of an index without a linux/amd64 child lists the index's platforms as Platform.
+func (c Client) Manifest(ctx context.Context, repo, digest string) (Manifest, error) {
+	var m manifestDoc
 	if err := c.getJSON(ctx, repo, "/manifests/"+digest, manifestTypes, &m); err != nil {
 		return Manifest{}, err
 	}
+	if m.Manifests == nil {
+		return c.image(ctx, repo, m)
+	}
+	var platforms []string
+	for _, d := range m.Manifests {
+		p := platform(d.Platform.OS, d.Platform.Architecture, d.Platform.Variant)
+		if p == "linux/amd64" {
+			var child manifestDoc
+			if err := c.getJSON(ctx, repo, "/manifests/"+d.Digest, manifestTypes, &child); err != nil {
+				return Manifest{}, err
+			}
+			return c.image(ctx, repo, child)
+		}
+		platforms = append(platforms, p)
+	}
+	return Manifest{Platform: strings.Join(platforms, ", ")}, nil
+}
+
+// image takes the platform from the config blob; a nested index yields an empty platform.
+func (c Client) image(ctx context.Context, repo string, m manifestDoc) (Manifest, error) {
 	if m.Manifests != nil || m.Config.Digest == "" {
 		return Manifest{}, nil
 	}
@@ -69,14 +97,18 @@ func (c Client) Manifest(ctx context.Context, repo, digest string) (Manifest, er
 	if err := c.getJSON(ctx, repo, "/blobs/"+m.Config.Digest, "", &cfg); err != nil {
 		return Manifest{}, err
 	}
-	out := Manifest{Platform: cfg.OS + "/" + cfg.Architecture}
-	if cfg.Variant != "" {
-		out.Platform += "/" + cfg.Variant
-	}
+	out := Manifest{Platform: platform(cfg.OS, cfg.Architecture, cfg.Variant)}
 	for _, l := range m.Layers {
 		out.Layers = append(out.Layers, Layer{Digest: l.Digest, Size: l.Size})
 	}
 	return out, nil
+}
+
+func platform(os, arch, variant string) string {
+	if variant != "" {
+		return os + "/" + arch + "/" + variant
+	}
+	return os + "/" + arch
 }
 
 func (c Client) getJSON(ctx context.Context, repo, path, accept string, v any) error {
@@ -85,6 +117,9 @@ func (c Client) getJSON(ctx context.Context, repo, path, accept string, v any) e
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("get %s%s: %w", repo, path, ErrNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("get %s%s: %s", repo, path, resp.Status)
 	}

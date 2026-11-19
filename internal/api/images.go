@@ -160,6 +160,7 @@ type imageJSON struct {
 	LatestDigest   string            `json:"latestDigest"`
 	SizeBytes      int64             `json:"sizeBytes"`
 	LastBuildState string            `json:"lastBuildState"`
+	PushError      string            `json:"pushError"`
 	CreatedAt      time.Time         `json:"createdAt"`
 	CanEdit        bool              `json:"canEdit"`
 	CanBuild       bool              `json:"canBuild"`
@@ -168,7 +169,7 @@ type imageJSON struct {
 // ponytail: three queries per image; join them in the store if image lists get long.
 func (h *api) imageJSON(ctx context.Context, img store.Image, teams map[uuid.UUID]string) (imageJSON, error) {
 	j := imageJSON{ID: img.ID, Name: img.Name, Description: img.Description, Ref: imageRef(img, teams, "", ""), Scope: img.Scope,
-		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, CreatedAt: img.CreatedAt}
+		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, PushError: img.PushError, CreatedAt: img.CreatedAt}
 	if img.Platform {
 		return j, nil
 	}

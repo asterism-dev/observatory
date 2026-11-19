@@ -14,7 +14,7 @@ type config struct {
 	SecretsKey                                                                                                                       seal.Key
 	Dev, DevSkipVerify                                                                                                               bool
 	DevClaudeTokenURL, DocsURL                                                                                                       string
-	RegistryURL, RegistryKeyDir                                                                                                      string
+	RegistryURL, RegistryKeyDir, RegistryEventsSecret                                                                                string
 }
 
 const minTokenLen = 32
@@ -78,6 +78,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		if cfg.RegistryKeyDir == "" {
 			return config{}, errors.New("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_KEY_DIR")
+		}
+		if cfg.RegistryEventsSecret = getenv("OBSERVATORY_REGISTRY_EVENTS_SECRET"); len(cfg.RegistryEventsSecret) < minTokenLen {
+			return config{}, fmt.Errorf("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_EVENTS_SECRET of at least %d characters", minTokenLen)
 		}
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"

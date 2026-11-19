@@ -42,6 +42,7 @@ type Image struct {
 	Description    string
 	RecipeRevision *int
 	Platform       bool
+	PushError      string
 	CreatedBy      uuid.UUID
 	CreatedAt      time.Time
 }
@@ -78,6 +79,12 @@ type ImageVersion struct {
 	SizeBytes int64
 	CreatedBy *uuid.UUID
 	CreatedAt time.Time
+	Layers    []ImageLayer
+}
+
+type ImageLayer struct {
+	Digest string
+	Size   int64
 }
 
 type ImageBuild struct {
@@ -99,10 +106,10 @@ type ImageDefault struct {
 	Tag, Digest string
 }
 
-const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
 
 func scanImage(r pgx.Row) (v Image, err error) {
-	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.CreatedBy, &v.CreatedAt)
+	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -274,10 +281,32 @@ func (s *Store) RecipeRevision(ctx context.Context, image uuid.UUID, n int) (Rec
 	return rev, err
 }
 
+// AddImageVersion records the version with its layers; an existing version stays as it is.
 func (s *Store) AddImageVersion(ctx context.Context, v ImageVersion) error {
-	_, err := s.q.Exec(ctx, `
-		INSERT INTO image_versions (image_id, digest, source, revision, build_id, size_bytes, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (image_id, digest) DO NOTHING`, v.ImageID, v.Digest, v.Source, v.Revision, v.BuildID, v.SizeBytes, v.CreatedBy)
+	digests, sizes := layerColumns(v.Layers)
+	return s.InTx(ctx, func(tx *Store) error {
+		if _, err := tx.q.Exec(ctx, `
+			INSERT INTO image_versions (image_id, digest, source, revision, build_id, size_bytes, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (image_id, digest) DO NOTHING`, v.ImageID, v.Digest, v.Source, v.Revision, v.BuildID, v.SizeBytes, v.CreatedBy); err != nil {
+			return err
+		}
+		_, err := tx.q.Exec(ctx, `
+			INSERT INTO image_version_layers (image_id, version_digest, digest, size) SELECT $1, $2, d, n FROM unnest($3::text[], $4::bigint[]) AS l(d, n)
+			ON CONFLICT DO NOTHING`, v.ImageID, v.Digest, digests, sizes)
+		return err
+	})
+}
+
+func layerColumns(layers []ImageLayer) (digests []string, sizes []int64) {
+	for _, l := range layers {
+		digests, sizes = append(digests, l.Digest), append(sizes, l.Size)
+	}
+	return digests, sizes
+}
+
+// SetImagePushError shows why the last push did not become a version; empty clears it.
+func (s *Store) SetImagePushError(ctx context.Context, image uuid.UUID, msg string) error {
+	_, err := s.q.Exec(ctx, "UPDATE images SET push_error = $2 WHERE id = $1", image, msg)
 	return err
 }
 
@@ -526,11 +555,14 @@ func (s *Store) ImageDefaults(ctx context.Context, org uuid.UUID) ([]ImageDefaul
 	})
 }
 
-// OrgImageUsage sums each layer digest once however many versions share it.
-func (s *Store) OrgImageUsage(ctx context.Context, org uuid.UUID) (int64, error) {
+// OrgImageUsage sums each layer digest once however many versions share it, counting extra layers as if recorded.
+func (s *Store) OrgImageUsage(ctx context.Context, org uuid.UUID, extra ...ImageLayer) (int64, error) {
+	digests, sizes := layerColumns(extra)
 	var n int64
 	err := s.q.QueryRow(ctx, `
 		SELECT coalesce(sum(size), 0)::bigint FROM (
-			SELECT DISTINCT ON (l.digest) l.size FROM image_version_layers l JOIN images i ON i.id = l.image_id WHERE i.org_id = $1) d`, org).Scan(&n)
+			SELECT DISTINCT ON (digest) size FROM (
+				SELECT l.digest, l.size FROM image_version_layers l JOIN images i ON i.id = l.image_id WHERE i.org_id = $1
+				UNION ALL SELECT * FROM unnest($2::text[], $3::bigint[])) a) d`, org, digests, sizes).Scan(&n)
 	return n, err
 }

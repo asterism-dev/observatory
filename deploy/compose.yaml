@@ -16,8 +16,13 @@ services:
       OBSERVATORY_OIDC_WEB_CLIENT_ID: ${OBSERVATORY_OIDC_WEB_CLIENT_ID:?set OBSERVATORY_OIDC_WEB_CLIENT_ID in deploy/.env}
       OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
+      OBSERVATORY_REGISTRY_URL: http://registry:5000
+      OBSERVATORY_REGISTRY_KEY_DIR: /keys
+      OBSERVATORY_REGISTRY_EVENTS_SECRET: ${OBSERVATORY_REGISTRY_EVENTS_SECRET:?set OBSERVATORY_REGISTRY_EVENTS_SECRET in deploy/.env}
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
+    volumes:
+      - registry-keys:/keys
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,6 +40,35 @@ services:
       retries: 10
     volumes:
       - postgres-data:/var/lib/postgresql/data
+  # Reached only through the hub's /v2/ proxy; restarts until the hub has written its token certificate.
+  registry:
+    image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+    restart: unless-stopped
+    depends_on: [hub]
+    environment:
+      OTEL_TRACES_EXPORTER: none
+      REGISTRY_AUTH_TOKEN_REALM: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}/v2/token
+      REGISTRY_NOTIFICATIONS_ENDPOINTS: |
+        - name: hub
+          url: http://hub:8090/internal/registry/events
+          headers: {Authorization: ["Bearer ${OBSERVATORY_REGISTRY_EVENTS_SECRET:?set OBSERVATORY_REGISTRY_EVENTS_SECRET in deploy/.env}"]}
+          timeout: 10s
+          threshold: 3
+          backoff: 10s
+          ignore: {actions: [pull]}
+    volumes:
+      - ./registry/config.yml:/etc/distribution/config.yml:ro
+      - registry-data:/var/lib/registry
+      - registry-keys:/keys:ro
+  # Run by a host cron job (docs/deploy.md); the hub does not drive garbage collection.
+  registry-gc:
+    image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+    profiles: [maintenance]
+    restart: "no"
+    command: ["garbage-collect", "/etc/distribution/config.yml"]
+    volumes:
+      - ./registry/config.yml:/etc/distribution/config.yml:ro
+      - registry-data:/var/lib/registry
   # Loads the kernel modules the gateway needs; built-in modules make modprobe fail harmlessly.
   modules:
     image: alpine:3.22
@@ -101,6 +135,8 @@ services:
 
 volumes:
   postgres-data:
+  registry-data:
+  registry-keys:
   ovn:
   ovs:
   disks:

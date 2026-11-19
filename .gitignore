@@ -6,6 +6,7 @@ deploy/dev/zitadel/.bootstrap/
 deploy/idp/.env
 deploy/.env
 deploy/dev/hub.env
+deploy/dev/registry-keys/
 bin/
 web/node_modules/
 web/dist/*
