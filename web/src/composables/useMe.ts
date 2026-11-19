@@ -12,6 +12,7 @@ export interface Org {
 export interface Me {
   user: { id: string; email: string; name: string; platformAdmin: boolean }
   orgs: Org[]
+  docsURL: string
 }
 
 const STORAGE_KEY = 'obs-org'

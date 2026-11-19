@@ -31,7 +31,8 @@
     "userMenu": "Kontomenü",
     "networks": "Netzwerke",
     "disks": "Disks",
-    "integrations": "Integrationen"
+    "integrations": "Integrationen",
+    "docs": "Doku"
   },
   "theme": {
     "system": "System",
