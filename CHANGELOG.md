@@ -1,3 +1,9 @@
+## v0.6.0 (2026-11-19)
+
+### Feat
+
+- **web**: show the hub version in the sidebar (#23)
+
 ## v0.5.0 (2026-11-19)
 
 ### Feat
