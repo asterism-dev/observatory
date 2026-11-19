@@ -88,8 +88,8 @@ cannot read it.
 ## Updating
 
 ```sh
-git pull                                          # compose file and docs of the new release
-docker compose -f deploy/compose.yaml pull       # or set OBSERVATORY_VERSION to the new tag
+git fetch --tags && git checkout v0.2.0          # compose file and docs of that release
+# set OBSERVATORY_VERSION=v0.2.0 in deploy/.env (with latest: docker compose -f deploy/compose.yaml pull)
 docker compose -f deploy/compose.yaml up -d
 ```
 
