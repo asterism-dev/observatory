@@ -55,6 +55,7 @@ const remove = (v: VmInfo) => act(() => api(`/api/orgs/${props.orgId}/vms/${v.id
         <Tag strong>{{ v.node.name }}</Tag>
         <Tag>{{ isMine(v) ? t('vms.mine') : v.owner.name }}</Tag>
         <Tag :tone="vmTones[v.state]">{{ t(`vms.states.${v.state}`) }}</Tag>
+        <Tag v-if="v.legacyRuntime" tone="warning">{{ t('vms.legacyRuntime') }}</Tag>
       </template>
       <Meter :label="t('usage.cpu')" :percent="liveUsage(v).cpu" />
       <Meter :label="t('usage.mem')" :percent="liveUsage(v).mem" />

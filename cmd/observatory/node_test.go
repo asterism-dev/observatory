@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	nodeN1 = `{"id":"n1","name":"orga","state":"online","version":"1.2.0","cpus":16,"memoryMB":65536,"lastSeen":"2026-11-19T14:02:00Z","vmCount":3,"usedCPUs":6,"usedMemoryMB":12288,"canUpdate":true,"canDelete":true,"quarantined":false,"image":{"version":"v7","state":"building"}}`
+	nodeN1 = `{"id":"n1","name":"orga","state":"online","version":"1.2.0","cpus":16,"memoryMB":65536,"lastSeen":"2026-11-19T14:02:00Z","vmCount":3,"usedCPUs":6,"usedMemoryMB":12288,"canUpdate":true,"canDelete":true,"quarantined":false,"image":{"version":"v7","state":"pulling"}}`
 	nodeN2 = `{"id":"n2","name":"orgc","state":"offline","version":"1.1.0","cpus":8,"memoryMB":32768,"lastSeen":"2026-11-18T09:00:00Z","vmCount":0,"usedCPUs":0,"usedMemoryMB":0,"quarantined":true,"image":{"version":"v7","state":"failed","error":"disk full","retryAt":"2026-11-19T14:10:00Z"}}`
 	nodeN3 = `{"id":"n3","name":"fresh","state":"pending","version":"","cpus":0,"memoryMB":0,"lastSeen":null,"vmCount":0,"usedCPUs":0,"usedMemoryMB":0,"quarantined":false,"image":null}`
 )

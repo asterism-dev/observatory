@@ -13,8 +13,8 @@ import (
 
 func connectCommands() []command {
 	return []command{
-		{"ssh", "<vm> [--user ubuntu] [-- args...]", "ssh into a VM", cmdSSH},
-		{"desktop", "<vm> [--user ubuntu]", "start the VM desktop and attach with xpra", cmdDesktop},
+		{"ssh", "<vm> [--user dev] [-- args...]", "ssh into a VM", cmdSSH},
+		{"desktop", "<vm> [--user dev]", "start the VM desktop and attach with xpra", cmdDesktop},
 		{"ssh-key list", "", "list your SSH keys", cmdSSHKeyList},
 		{"ssh-key add", "[FILE] [--name N]", "add a public key (default ~/.ssh/id_ed25519.pub)", cmdSSHKeyAdd},
 		{"ssh-key delete", "<key>", "delete an SSH key", cmdSSHKeyDelete},
@@ -65,7 +65,7 @@ var validSSHUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}[$]?$`)
 
 func (c *cli) sshTarget(cmdPath string, args []string, max int) (target string, rest []string, err error) {
 	fs := c.flags(cmdPath)
-	user := fs.String("user", "ubuntu", "login `user`")
+	user := fs.String("user", "dev", "login `user`")
 	pos, err := c.parse(fs, args, 1, max)
 	if err != nil {
 		return "", nil, err

@@ -18,7 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-var vmNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+var vmNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type refJSON struct {
 	ID   uuid.UUID `json:"id"`
@@ -32,29 +32,29 @@ type ownerJSON struct {
 }
 
 type vmJSON struct {
-	ID         uuid.UUID      `json:"id"`
-	Name       string         `json:"name"`
-	Owner      ownerJSON      `json:"owner"`
-	Node       refJSON        `json:"node"`
-	State      proto.VMState  `json:"state"`
-	Power      proto.Power    `json:"power"`
-	StopMode   proto.StopMode `json:"stopMode,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	IP         string         `json:"ip,omitempty"`
-	MgmtIP     string         `json:"mgmtIP,omitempty"`
-	DNSName    string         `json:"dnsName"`
-	Networks   []vmNICJSON    `json:"networks"`
-	CPUs       int            `json:"cpus"`
-	MemoryMB   int            `json:"memoryMB"`
-	DiskGB     int            `json:"diskGB"`
-	Image      string         `json:"image"`
-	StockImage bool           `json:"stockImage"` // ran without a guest image on a node that has guest images
-	CreatedAt  time.Time      `json:"createdAt"`
-	CanPower   bool           `json:"canPower"`
-	CanDelete  bool           `json:"canDelete"`
-	CanNetwork bool           `json:"canNetwork"`
-	Disks      []vmDiskJSON   `json:"disks"`
-	CanDisks   bool           `json:"canDisks"`
+	ID            uuid.UUID      `json:"id"`
+	Name          string         `json:"name"`
+	Owner         ownerJSON      `json:"owner"`
+	Node          refJSON        `json:"node"`
+	State         proto.VMState  `json:"state"`
+	Power         proto.Power    `json:"power"`
+	StopMode      proto.StopMode `json:"stopMode,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	IP            string         `json:"ip,omitempty"`
+	MgmtIP        string         `json:"mgmtIP,omitempty"`
+	DNSName       string         `json:"dnsName"`
+	Networks      []vmNICJSON    `json:"networks"`
+	CPUs          int            `json:"cpus"`
+	MemoryMB      int            `json:"memoryMB"`
+	DiskGB        int            `json:"diskGB"`
+	Image         string         `json:"image"`
+	LegacyRuntime bool           `json:"legacyRuntime"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	CanPower      bool           `json:"canPower"`
+	CanDelete     bool           `json:"canDelete"`
+	CanNetwork    bool           `json:"canNetwork"`
+	Disks         []vmDiskJSON   `json:"disks"`
+	CanDisks      bool           `json:"canDisks"`
 
 	AutoSuspendMinutes int  `json:"autoSuspendMinutes"`
 	CanSnapshot        bool `json:"canSnapshot"`
@@ -144,7 +144,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
@@ -157,11 +157,6 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
-	}
-	if v.Image == "" && v.Provisioned {
-		j.StockImage = !slices.ContainsFunc(names.nodeList, func(n store.Node) bool {
-			return n.ID == v.NodeID && n.Image != nil && n.Image.State == proto.ImageCustom
-		})
 	}
 	for _, nic := range names.nics[v.ID] {
 		nn := names.networks[nic.NetworkID]
@@ -356,7 +351,7 @@ func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) htt
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		if errors.Is(err, store.ErrNotRunning) {
+		if errors.Is(err, store.ErrNotRunning) || errors.Is(err, store.ErrLegacyRuntime) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -506,8 +501,8 @@ const maxVMDisks = 8
 
 var (
 	mountPathPattern   = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)+$`)
-	reservedMountTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/lib/cloud", "/home/ubuntu/.ssh"}
-	reservedMountPaths = []string{"/home", "/home/ubuntu", "/root", "/var", "/var/lib"}
+	reservedMountTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/proc", "/run", "/sbin", "/sys", "/usr", "/var/lib/cloud", "/home/dev/.ssh"}
+	reservedMountPaths = []string{"/home", "/home/dev", "/root", "/var", "/var/lib"}
 	errDiskMissing     = fmt.Errorf("disk is missing from storage: %w", store.ErrConflict)
 	errForkPending     = errors.New("a fork from this VM's snapshot is still being created or failed; delete the fork first")
 )

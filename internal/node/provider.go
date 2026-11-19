@@ -12,7 +12,7 @@ type Provider interface {
 	Name() string
 	// Prepare runs once at create time; Start runs on create and again after every node restart.
 	Prepare(ctx context.Context, f VMFile, dir string) error
-	// Reseed rewrites only the cloud-init seed of a prepared, stopped or paused VM; disks are left alone.
+	// Reseed rewrites only the seed of a prepared, stopped or paused VM; disks are left alone.
 	Reseed(ctx context.Context, f VMFile, dir string) error
 	Start(ctx context.Context, f VMFile, dir string) (Instance, error)
 	Restore(ctx context.Context, f VMFile, dir string, from RestoreFrom) (Instance, error)
@@ -55,7 +55,7 @@ type RestoreFrom struct {
 	Paused bool
 }
 
-// GuestImages is a provider that builds the guest image; RunGuestImages runs until ctx ends and calls report on every state change.
+// GuestImages is a provider that pulls the guest image; RunGuestImages runs until ctx ends and calls report on every state change.
 type GuestImages interface {
 	RunGuestImages(ctx context.Context, report func(proto.ImageStatus))
 }

@@ -20,7 +20,7 @@ const props = defineProps<{ open: boolean; orgId: string; owners: Owner[]; nodes
 const emit = defineEmits<{ 'update:open': [boolean]; created: [] }>()
 
 const { t } = useI18n()
-const namePattern = /^[a-z0-9][a-z0-9-]{0,62}$/
+const namePattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const name = ref('')
 const owner = ref('')
 const nodeId = ref('')

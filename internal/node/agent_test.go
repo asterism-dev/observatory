@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -569,7 +570,7 @@ func TestRestoreOfPausedVMStaysPaused(t *testing.T) {
 	}
 }
 
-const testImage = "2026.11.1-aaaaaaaa"
+const testImage = "ghcr.io/asterism-dev/observatory-guest:v1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func startImageEnv(t *testing.T, initial proto.ImageStatus) (*testEnv, *imageProvider) {
 	t.Helper()
@@ -590,7 +591,7 @@ func waitPreparingImage(t *testing.T, env *testEnv, id, want string) {
 }
 
 func TestAgentWaitsForGuestImage(t *testing.T) {
-	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	vm := env.hub.create("dev")
 	waitPreparingImage(t, env, vm.ID, PreparingImage)
 	if v, _ := env.hub.vm(vm.ID); v.Error != PreparingImage || len(v.Disks) != 0 {
@@ -599,13 +600,14 @@ func TestAgentWaitsForGuestImage(t *testing.T) {
 	if got := env.provider.gotPrepared(); len(got) != 0 {
 		t.Fatalf("prepared before the image was ready: %v", got)
 	}
-	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	cfg := proto.ImageConfig{Cmd: []string{"sleep", "1"}}
+	ip.report(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady, Config: cfg})
 	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 	if img, _ := env.provider.gotPreparedImage("dev"); img != testImage {
 		t.Fatalf("Prepare got image %q", img)
 	}
-	if f := loadVM(t, env.agent, vm.ID); f.Image != testImage {
-		t.Fatalf("vm.json image = %q", f.Image)
+	if f := loadVM(t, env.agent, vm.ID); f.Image != testImage || !reflect.DeepEqual(f.ImageConfig, cfg) {
+		t.Fatalf("vm.json image = %q, config %+v", f.Image, f.ImageConfig)
 	}
 	if v, _ := env.hub.vm(vm.ID); v.Image != testImage {
 		t.Fatalf("status image = %q", v.Image)
@@ -625,11 +627,11 @@ func TestAgentStartGetsImage(t *testing.T) {
 	}
 }
 
-func TestAgentNeverFallsBackToStock(t *testing.T) {
+func TestAgentWaitsForFailedPull(t *testing.T) {
 	retry := time.Date(2026, 11, 18, 12, 30, 0, 0, time.UTC)
 	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry})
 	vm := env.hub.create("dev")
-	waitPreparingImage(t, env, vm.ID, "build failed")
+	waitPreparingImage(t, env, vm.ID, "pull failed")
 	if v, _ := env.hub.vm(vm.ID); !strings.Contains(v.Error, "apt boom") || !strings.Contains(v.Error, "2026-11-18T12:30:00Z") {
 		t.Fatalf("error = %q", v.Error)
 	}
@@ -641,17 +643,8 @@ func TestAgentNeverFallsBackToStock(t *testing.T) {
 	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 }
 
-func TestAgentCustomImage(t *testing.T) {
-	env, _ := startImageEnv(t, proto.ImageStatus{State: proto.ImageCustom})
-	vm := env.hub.create("dev")
-	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
-	if img, ok := env.provider.gotPreparedImage("dev"); !ok || img != "" {
-		t.Fatalf("Prepare got image %q (called %v)", img, ok)
-	}
-}
-
 func TestAgentReportsImage(t *testing.T) {
-	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	ready := proto.ImageStatus{Version: testImage, State: proto.ImageReady}
 	ip.report(t, ready)
 	isReady := func(st proto.ImageStatus) bool { return st.State == proto.ImageReady }
@@ -663,7 +656,7 @@ func TestAgentReportsImage(t *testing.T) {
 	env.agent.mu.Lock()
 	reg := env.agent.registerMsg()
 	env.agent.mu.Unlock()
-	if reg.Image == nil || *reg.Image != ready {
+	if reg.Image == nil || !reflect.DeepEqual(*reg.Image, ready) {
 		t.Fatalf("register image = %+v", reg.Image)
 	}
 }
@@ -684,7 +677,7 @@ func TestAgentWithoutGuestImages(t *testing.T) {
 }
 
 func TestAgentDeleteWhileWaitingForImage(t *testing.T) {
-	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	vm := env.hub.create("dev")
 	waitPreparingImage(t, env, vm.ID, PreparingImage)
 	env.agent.mu.Lock()
@@ -709,7 +702,7 @@ func TestAgentDeleteWhileWaitingForImage(t *testing.T) {
 }
 
 func TestAgentStopWhileWaitingForImage(t *testing.T) {
-	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	vm := env.hub.create("dev")
 	waitPreparingImage(t, env, vm.ID, PreparingImage)
 	env.hub.setPower(vm.ID, proto.PowerStopped, proto.StopGraceful)
@@ -727,7 +720,7 @@ func TestAgentStopWhileWaitingForImage(t *testing.T) {
 }
 
 func TestAgentSameGenerationKeepsWaitingForImage(t *testing.T) {
-	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageBuilding})
+	env, ip := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImagePulling})
 	vm := env.hub.create("dev")
 	waitPreparingImage(t, env, vm.ID, PreparingImage)
 	env.agent.mu.Lock()
@@ -744,21 +737,41 @@ func TestAgentSameGenerationKeepsWaitingForImage(t *testing.T) {
 	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
 }
 
-const previousImage = "2026.10.1-bbbbbbbb"
-
-func TestAgentUsesFallbackImage(t *testing.T) {
-	retry := time.Now().Add(time.Hour)
-	for _, st := range []proto.ImageStatus{
-		{Version: testImage, State: proto.ImageBuilding, Fallback: previousImage},
-		{Version: testImage, State: proto.ImageFailed, Error: "apt boom", RetryAt: &retry, Fallback: previousImage},
-	} {
-		t.Run(st.State, func(t *testing.T) {
-			env, _ := startImageEnv(t, st)
-			vm := env.hub.create("dev")
-			eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
-			if img, _ := env.provider.gotPreparedImage("dev"); img != previousImage {
-				t.Fatalf("Prepare got image %q", img)
-			}
+// A VM made for the cloud-init guest neither boots nor gets a new root disk on the new runtime.
+func TestPrepareRejectsLegacyVM(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
+	ln.Close()
+	p := newFakeProvider()
+	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192,
+		Provider: &imageProvider{fakeProvider: p, initial: proto.ImageStatus{Version: testImage, State: proto.ImageReady}}}
+	stock, built, unprepared, current := cachedVM("l1", "stock"), cachedVM("l2", "built"), cachedVM("l3", "unprepared"), cachedVM("n1", "current")
+	built.Image = "2026.11.1-aaaaaaaa"
+	unprepared.Image, unprepared.NeedsPrepare = "2026.11.1-aaaaaaaa", true
+	current.Image = testImage
+	for _, f := range []VMFile{stock, built, unprepared, current} {
+		SaveVM(a.VMsDir, f)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	eventually(t, "current started", func() bool { return p.instance("current") != nil })
+	for _, id := range []string{"l1", "l2", "l3"} {
+		eventually(t, id+" refused", func() bool {
+			st, _ := a.vmStatus(id)
+			return st.State == proto.StateError && strings.HasSuffix(st.Error, ErrLegacyRuntime.Error())
 		})
+	}
+	if got := p.gotPrepared(); len(got) != 0 {
+		t.Fatalf("prepared = %v", got)
+	}
+	for _, name := range []string{"stock", "built", "unprepared"} {
+		if p.instance(name) != nil {
+			t.Fatalf("%s started", name)
+		}
 	}
 }

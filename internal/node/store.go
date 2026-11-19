@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -29,8 +31,9 @@ type VMFile struct {
 	// Takeoff makes the next resume of the memory state give the guest this VM's identity (a fork's first start).
 	Takeoff     bool   `json:"takeoff,omitempty"`
 	RestoredSeq uint64 `json:"restoredSeq,omitempty"`
-	// Image is the guest image version the root disk was cloned from; empty means the stock or a custom image.
-	Image string `json:"image,omitempty"`
+	// Image is ref@digest of the image the root disk was built from.
+	Image       string            `json:"image,omitempty"`
+	ImageConfig proto.ImageConfig `json:"imageConfig"`
 	// Boot is never written to disk; nil means the hub has not pushed it since the node started.
 	Boot *proto.Boot `json:"-"`
 	// Egress holds host-bound values and CA keys: memory only, refreshed with Boot.
@@ -46,6 +49,12 @@ const (
 	StateFile = "vmstate"
 	MemFile   = "mem"
 )
+
+var ErrLegacyRuntime = errors.New("created with the old guest runtime; recreate this VM")
+
+func legacyRuntime(f VMFile) bool {
+	return reflect.ValueOf(f.ImageConfig).IsZero() && !strings.Contains(f.Image, "@")
+}
 
 func VMDir(vmsDir, id string) string { return filepath.Join(vmsDir, id) }
 

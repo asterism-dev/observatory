@@ -10,10 +10,10 @@ import (
 )
 
 type config struct {
-	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, GatewayToken, GatewayHost, StorageToken string
-	SecretsKey                                                                                                            seal.Key
-	Dev, DevSkipVerify                                                                                                    bool
-	DevClaudeTokenURL, DocsURL                                                                                            string
+	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken string
+	SecretsKey                                                                                                                       seal.Key
+	Dev, DevSkipVerify                                                                                                               bool
+	DevClaudeTokenURL, DocsURL                                                                                                       string
 }
 
 const minTokenLen = 32
@@ -29,6 +29,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.NodeBinary = getenv("OBSERVATORY_NODE_BINARY")
 	if cfg.NodeBinary == "" {
 		cfg.NodeBinary = "bin/observatory-node-linux-amd64"
+	}
+	if cfg.Guestboot = getenv("OBSERVATORY_GUESTBOOT"); cfg.Guestboot == "" {
+		cfg.Guestboot = "bin/guestboot.tar"
 	}
 	var missing []string
 	required := func(dst *string, key string) {

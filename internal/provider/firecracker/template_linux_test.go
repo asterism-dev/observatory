@@ -41,11 +41,7 @@ func testKey(t *testing.T) (key, pub string) {
 
 func keyFor(t *testing.T, p *Provider, f node.VMFile) string {
 	t.Helper()
-	base, err := node.EnsureBaseImage(p.ImagesDir, p.ImageURL, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := templateKey(base, p.fcVersion, f)
+	key, err := templateKey(f, p.fcVersion, p.boot.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,10 +152,6 @@ func TestFastBoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The RSA host key is made in the background after takeoff; waiting for it also keeps it off the next VM's clock.
-		if got := sshVM(t, sshKey, ip, "timeout 60 sh -c 'until [ -s /etc/ssh/ssh_host_rsa_key.pub ]; do sleep 0.2; done' && echo ok"); got != "ok" {
-			t.Errorf("%s: no RSA host key: %q", id, got)
-		}
 		out := sshVM(t, sshKey, ip, "hostname; cat /etc/machine-id; cat /sys/class/net/*/address | grep -v 00:00:00:00:00:00 | sort | tr '\\n' ' '; echo; "+
 			"head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n'; echo; df -B1G --output=size / | tail -1; ip -4 -o addr show | grep -c 192.168.64.; ls /sys/bus/acpi/drivers/vmgenid 2>/dev/null | tr '\\n' ' '; echo")
 		lines := strings.Split(out, "\n")
@@ -195,7 +187,7 @@ func TestFastBoot(t *testing.T) {
 		}
 		ids = append(ids, g)
 		if id == "fcfb3" {
-			// A cold boot of a clone must not look like a new cloud-init instance, which would make new host keys.
+			// A cold boot of a clone keeps the host keys its takeoff made.
 			if err := inst.Stop(); err != nil {
 				t.Fatal(err)
 			}
@@ -207,7 +199,6 @@ func TestFastBoot(t *testing.T) {
 			if _, err := inst.WaitIP(ctx); err != nil {
 				t.Fatal(err)
 			}
-			sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null || true")
 			after, err := exec.Command("sh", "-c", "ssh-keyscan -t ed25519 "+ip+" 2>/dev/null | ssh-keygen -lf -").Output()
 			if err != nil {
 				t.Fatal(err)
@@ -235,7 +226,7 @@ func TestFastBoot(t *testing.T) {
 	}
 }
 
-func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
+func TestFastBootRestoreFailureFallsBack(t *testing.T) {
 	p := testProviderWith(t, "")
 	sshKey, pub := testKey(t)
 	f0 := templateVM(t, "fcbad0", pub)
@@ -247,12 +238,16 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	templateID := sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null; sudo systemctl stop vmm-agent; cat /etc/machine-id")
+	templateID := sshVM(t, sshKey, ip, "cat /etc/machine-id")
 	tpl := p.templateDir(keyFor(t, p, f0))
 	if err := saveTemplate(inst0, node.VMDir(p.VMsDir, f0.Spec.ID), tpl); err != nil {
 		t.Fatal(err)
 	}
 	inst0.Kill()
+	// The platform agent cannot be stopped from inside the image, so the restore fails on a broken state instead.
+	if err := os.WriteFile(filepath.Join(tpl, node.StateFile), []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	f := templateVM(t, "fcbad1", pub)
 	dir := prepare(t, p, f)
@@ -265,7 +260,7 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	}
 	defer func() { inst.Kill(); <-inst.Done() }()
 	if inst.(*instance).restored {
-		t.Fatal("started from a template whose agent does not answer")
+		t.Fatal("started from a broken template")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
@@ -273,11 +268,11 @@ func TestFastBootTakeoffFailureFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id := sshVM(t, sshKey, ip, "cloud-init status --wait >/dev/null; cat /etc/machine-id"); id == templateID {
+	if id := sshVM(t, sshKey, ip, "cat /etc/machine-id"); id == templateID {
 		t.Errorf("fallback VM booted the template's disk: machine id %s", id)
 	}
 	if _, err := os.Stat(tpl); !os.IsNotExist(err) {
-		t.Errorf("template left after a failed takeoff: %v", err)
+		t.Errorf("template left after a failed restore: %v", err)
 	}
 }
 
@@ -289,7 +284,7 @@ func TestFastBootCancelledTakeoffReclonesBase(t *testing.T) {
 	if err := os.MkdirAll(p.VMsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	base, err := p.baseFor(f)
+	base, err := p.baseFor(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}

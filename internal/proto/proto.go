@@ -78,7 +78,7 @@ type VMStatus struct {
 	Generation  uint64         `json:"generation,omitempty"`
 	Snapshots   []SnapshotInfo `json:"snapshots,omitempty"`
 	RestoredSeq uint64         `json:"restoredSeq,omitempty"`
-	// Image is the guest image version the VM's root disk was cloned from; empty for the stock or a custom image.
+	// Image is the reference and digest (ref@sha256:…) of the image the VM's root disk was built from.
 	Image string `json:"image,omitempty"`
 }
 
@@ -179,21 +179,20 @@ type UpdateReport struct {
 }
 
 const (
-	ImageBuilding = "building"
-	ImageReady    = "ready"
-	ImageFailed   = "failed"
-	ImageCustom   = "custom"
+	ImagePulling = "pulling"
+	ImageReady   = "ready"
+	ImageFailed  = "failed"
 )
 
-// ImageStatus is the node's guest image: Version is the one it builds or has ready, Fallback the previous one new VMs use meanwhile.
+// ImageStatus is the node's guest image: Version is the reference it pulls, and ref@digest once ready.
 type ImageStatus struct {
-	Version   string     `json:"version"`
-	State     string     `json:"state"`
-	Fallback  string     `json:"fallback,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	StartedAt *time.Time `json:"startedAt,omitempty"`
-	BuiltAt   *time.Time `json:"builtAt,omitempty"`
-	RetryAt   *time.Time `json:"retryAt,omitempty"`
+	Version   string      `json:"version"`
+	State     string      `json:"state"`
+	Config    ImageConfig `json:"-"` // node-local: goes into seeds, not to the hub
+	Error     string      `json:"error,omitempty"`
+	StartedAt *time.Time  `json:"startedAt,omitempty"`
+	BuiltAt   *time.Time  `json:"builtAt,omitempty"`
+	RetryAt   *time.Time  `json:"retryAt,omitempty"`
 }
 
 // Underlay tells a node how to join the WireGuard underlay and reach the OVN southbound DB over SSL; Cert is the node's signed chassis cert.

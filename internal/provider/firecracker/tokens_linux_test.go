@@ -182,9 +182,10 @@ func TestStartVMTokenService(t *testing.T) {
 	if got := askGuest(t, key, ip); got != want {
 		t.Fatalf("booted guest got %s", got)
 	}
-	sshVM(t, key, ip, "cloud-init status --wait >/dev/null; systemctl is-active vmm-agent")
-
 	dir := node.VMDir(p.VMsDir, f.Spec.ID)
+	if err := waitAgent(ctx, dir, inst); err != nil {
+		t.Fatal(err)
+	}
 	state := hibernate(t, inst, dir)
 	if serveTokensRunning() {
 		t.Fatal("token service still running after the VM was killed")

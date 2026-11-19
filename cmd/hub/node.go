@@ -26,8 +26,8 @@ func firecrackerVersion(script string) string {
 	return ""
 }
 
-// nodeAssets serves the installer and the node binary; the binary is optional so a hub without one still starts.
-func nodeAssets(mux *http.ServeMux, binaryPath string) {
+// nodeAssets serves the installer, the node binary and the guest boot tarball; the downloads are optional so a hub without them still starts.
+func nodeAssets(mux *http.ServeMux, binaryPath, guestbootPath string) {
 	mux.HandleFunc("GET /node/install.sh", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/x-shellscript")
 		_, _ = w.Write(installScript)
@@ -38,29 +38,40 @@ func nodeAssets(mux *http.ServeMux, binaryPath string) {
 		mux.HandleFunc("GET /node/", http.NotFound)
 		return
 	}
-	mux.HandleFunc("GET /node/observatory-node", func(w http.ResponseWriter, r *http.Request) {
+	sums := fmt.Sprintf("%s  observatory-node\n", sum)
+	serveFile(mux, "/node/observatory-node", binaryPath)
+	if guestbootSum, err := fileSHA256(guestbootPath); err != nil {
+		slog.Warn("guest boot tarball unavailable, /node/guestboot.tar disabled", "path", guestbootPath, "err", err)
+	} else {
+		sums += fmt.Sprintf("%s  guestboot.tar\n", guestbootSum)
+		serveFile(mux, "/node/guestboot.tar", guestbootPath)
+	}
+	mux.HandleFunc("GET /node/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, sums)
+	})
+}
+
+func serveFile(mux *http.ServeMux, route, path string) {
+	mux.HandleFunc("GET "+route, func(w http.ResponseWriter, r *http.Request) {
 		// A large download must outlive the server's write timeout.
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-		f, err := os.Open(binaryPath)
+		f, err := os.Open(path)
 		if err != nil {
-			slog.Error("open node binary", "path", binaryPath, "err", err)
-			http.Error(w, "node binary unavailable", http.StatusInternalServerError)
+			slog.Error("open node download", "path", path, "err", err)
+			http.Error(w, "download unavailable", http.StatusInternalServerError)
 			return
 		}
 		defer f.Close()
 		fi, err := f.Stat()
 		if err != nil {
-			slog.Error("stat node binary", "path", binaryPath, "err", err)
-			http.Error(w, "node binary unavailable", http.StatusInternalServerError)
+			slog.Error("stat node download", "path", path, "err", err)
+			http.Error(w, "download unavailable", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		// Hiding the *os.File avoids sendfile, whose headers some macOS network filters drop (client sees HTTP/0.9).
 		http.ServeContent(w, r, "", fi.ModTime(), struct{ io.ReadSeeker }{f})
-	})
-	mux.HandleFunc("GET /node/SHA256SUMS", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "%s  observatory-node\n", sum)
 	})
 }
 

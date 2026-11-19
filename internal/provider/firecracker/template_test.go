@@ -3,24 +3,22 @@ package firecracker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/node"
-	"github.com/asterism-dev/observatory/internal/node/guest"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
+const testDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestTemplateKey(t *testing.T) {
-	base := filepath.Join(t.TempDir(), "base.raw")
-	if err := os.WriteFile(base, []byte("img"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f := node.VMFile{Spec: proto.VMSpec{ID: "a", Name: "a", CPUs: 1, MemoryMB: 512, DiskGB: 10, NICs: []proto.NIC{{MAC: "02:00:00:00:00:01"}}}}
-	fcVersion := "Firecracker v1.18.0"
+	f := node.VMFile{Image: "img@" + testDigest, Spec: proto.VMSpec{ID: "a", Name: "a", CPUs: 1, MemoryMB: 512, DiskGB: 10, NICs: []proto.NIC{{MAC: "02:00:00:00:00:01"}}}}
+	fcVersion, bootID := "Firecracker v1.18.0", "boot1"
 	key := func(f node.VMFile) string {
 		t.Helper()
-		k, err := templateKey(base, fcVersion, f)
+		k, err := templateKey(f, fcVersion, bootID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -33,13 +31,16 @@ func TestTemplateKey(t *testing.T) {
 	same := f
 	same.Spec.ID, same.Spec.Name, same.Spec.DiskGB, same.MAC = "b", "b", 20, "02:00:00:00:00:02"
 	same.Spec.NICs = []proto.NIC{{MAC: "02:00:00:00:00:03"}}
+	same.Image = "other-name@" + testDigest
 	if key(same) != k {
-		t.Error("id, name, disk size or MACs changed the key")
+		t.Error("id, name, disk size, MACs or image name changed the key")
 	}
 	changes := map[string]func(f *node.VMFile){
 		"cpus":   func(f *node.VMFile) { f.Spec.CPUs = 2 },
 		"memory": func(f *node.VMFile) { f.Spec.MemoryMB = 1024 },
 		"nics":   func(f *node.VMFile) { f.Spec.NICs = nil },
+		"digest": func(f *node.VMFile) { f.Image = "img@sha256:" + strings.Repeat("b", 64) },
+		"config": func(f *node.VMFile) { f.ImageConfig.Cmd = []string{"sleep", "1"} },
 	}
 	for name, change := range changes {
 		g := f
@@ -48,62 +49,43 @@ func TestTemplateKey(t *testing.T) {
 			t.Errorf("changed %s gave the same key", name)
 		}
 	}
-	if err := os.Chtimes(base, time.Now(), time.Now().Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if key(f) == k {
-		t.Error("changed base mtime gave the same key")
-	}
-	k = key(f)
 	fcVersion = "Firecracker v1.19.0"
 	if key(f) == k {
 		t.Error("changed Firecracker version gave the same key")
 	}
-	k = key(f)
-	oldBoot := guest.BootScript
-	defer func() { guest.BootScript = oldBoot }()
-	guest.BootScript += "\n"
-	if key(f) == k {
-		t.Error("changed seed gave the same key")
-	}
-	k = key(f)
-	old := guest.AgentScript
-	defer func() { guest.AgentScript = old }()
-	guest.AgentScript += "\n"
-	if key(f) == k {
-		t.Error("changed agent script gave the same key")
+	if _, err := templateKey(node.VMFile{Image: "2026.11.1-aaaaaaaa"}, fcVersion, bootID); err == nil {
+		t.Error("key for an image without digest")
 	}
 }
 
-func TestTemplateKeyFollowsImage(t *testing.T) {
-	dir := t.TempDir()
-	a, b := guestImagePath(dir, "a"), guestImagePath(dir, "b")
-	mod := time.Now()
-	for _, p := range []string{a, b} {
-		if err := os.WriteFile(p, []byte("img"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(p, mod, mod); err != nil {
-			t.Fatal(err)
-		}
-	}
-	key := func(base, image string) string {
+func TestTemplateKeyChangesWithInitVersion(t *testing.T) {
+	src := fakeGuestboot(t)
+	f := node.VMFile{Image: "img@" + testDigest, Spec: proto.VMSpec{ID: "a", Name: "a", CPUs: 1, MemoryMB: 512, DiskGB: 10}}
+	key := func() string {
 		t.Helper()
-		f := node.VMFile{Image: image, Spec: proto.VMSpec{ID: "x", Name: "x", CPUs: 1, MemoryMB: 512, DiskGB: 10}}
-		k, err := templateKey(base, "Firecracker v1.18.0", f)
+		g, err := loadGuestboot(src, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := templateKey(f, "Firecracker v1.18.0", g.id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return k
 	}
-	if key(a, "a") == key(b, "b") {
-		t.Error("two guest images gave the same key")
+	k := key()
+	if key() != k {
+		t.Fatal("same guestboot gave different keys")
 	}
-	if key(a, "a") != key(a, "a") {
-		t.Error("same image gave different keys")
-	}
-	if templateFile("tpl", node.VMFile{Image: "a"}).Image != "a" {
-		t.Error("template file lost the image")
+	for _, n := range []string{"observatory-init", "vmlinux"} {
+		if err := os.WriteFile(filepath.Join(src, n), []byte("newer "+n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if next := key(); next == k {
+			t.Errorf("changed %s gave the same key", n)
+		} else {
+			k = next
+		}
 	}
 }
 

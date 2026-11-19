@@ -473,27 +473,31 @@ func (a *Agent) boot(ctx context.Context, e *vmEntry, f VMFile, prepare bool) {
 
 // prepare sets f.Image to the image it prepared from, which Start needs again for a cold-boot fallback.
 func (a *Agent) prepare(ctx context.Context, e *vmEntry, f *VMFile) error {
-	if _, ok := a.Provider.(GuestImages); ok && f.Image == "" {
+	_, pulls := a.Provider.(GuestImages)
+	if pulls && f.Image == "" {
 		img, err := a.waitImage(ctx, e)
 		if err != nil {
 			return err
 		}
-		f.Image = img
+		f.Image, f.ImageConfig = img.Version, img.Config
+	}
+	if pulls && legacyRuntime(*f) {
+		return ErrLegacyRuntime
 	}
 	if err := a.Provider.Prepare(ctx, *f, VMDir(a.VMsDir, f.Spec.ID)); err != nil {
 		return err
 	}
 	a.mu.Lock()
 	e.file.NeedsPrepare = false
-	e.file.Image = f.Image
+	e.file.Image, e.file.ImageConfig = f.Image, f.ImageConfig
 	saved := e.file
 	a.mu.Unlock()
 	// Booting without the cleared flag on disk would re-prepare (wipe the disks) on the next restart.
 	return SaveVM(a.VMsDir, saved)
 }
 
-// waitImage waits for the guest image (or the previous one while it builds) and returns its version, or "" for a custom image; it never settles for the stock image.
-func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
+// waitImage waits for the guest image to be ready.
+func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (proto.ImageStatus, error) {
 	var shown string
 	for {
 		a.mu.Lock()
@@ -501,17 +505,13 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
 		a.mu.Unlock()
 		switch {
 		case img != nil && img.State == proto.ImageReady:
-			return img.Version, nil
-		case img != nil && img.State == proto.ImageCustom:
-			return "", nil
-		case img != nil && img.Fallback != "":
-			return img.Fallback, nil
+			return *img, nil
 		case newer:
-			return "", errNewerDesired
+			return proto.ImageStatus{}, errNewerDesired
 		}
 		msg := PreparingImage
 		if img != nil && img.State == proto.ImageFailed {
-			msg += ": build failed: " + img.Error
+			msg += ": pull failed: " + img.Error
 			if img.RetryAt != nil {
 				msg += "; next try " + img.RetryAt.Format(time.RFC3339)
 			}
@@ -523,7 +523,7 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (string, error) {
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return proto.ImageStatus{}, ctx.Err()
 		}
 	}
 }
@@ -551,6 +551,9 @@ func (a *Agent) wakeImageWaitersLocked() {
 
 // start boots f from its memory state if it has one; a state that fails to load is discarded for a cold boot, whose status carries note.
 func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (inst Instance, note string, err error) {
+	if _, pulls := a.Provider.(GuestImages); pulls && legacyRuntime(f) {
+		return nil, "", ErrLegacyRuntime
+	}
 	if testHookBeforeEgressUp != nil {
 		testHookBeforeEgressUp()
 	}

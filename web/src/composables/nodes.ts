@@ -20,10 +20,8 @@ export interface NodeInfo {
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
   quarantined: boolean
   image: {
-    state: 'building' | 'ready' | 'failed' | 'custom'
+    state: 'pulling' | 'ready' | 'failed'
     version: string
-    fallback?: string
-    startedAt?: string
     builtAt?: string
     error?: string
     retryAt?: string
@@ -80,7 +78,7 @@ export interface VmInfo {
   autoSuspendMinutes: number
   canDelete: boolean
   image: string
-  stockImage: boolean
+  legacyRuntime: boolean
   usage?: { at: string; cpuPercent: number; memTotalMB: number; memUsedMB: number; diskUsedMB: number }
 }
 
@@ -112,27 +110,17 @@ export function relativeTime(iso: string, locale: string) {
   return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)
 }
 
-export function elapsed(iso: string, locale: string) {
-  const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
-  const [unit, n] = min >= 1440 ? ['day', Math.floor(min / 1440)] : min >= 60 ? ['hour', Math.floor(min / 60)] : ['minute', min]
-  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'short' }).format(n)
-}
-
-function fallback(img: NonNullable<NodeInfo['image']>, t: (k: string, p?: Record<string, unknown>) => string) {
-  return img.fallback ? ` · ${t('nodes.image.fallback', { version: img.fallback })}` : ''
-}
-
 export function imageLine(img: NodeInfo['image'], t: (k: string, p?: Record<string, unknown>) => string, locale: string) {
   if (!img) return '–'
   const v = img.version
   switch (img.state) {
     case 'ready':
       return `${v} · ${img.builtAt ? t('nodes.image.readyAt', { time: relativeTime(img.builtAt, locale) }) : t('nodes.image.ready')}`
-    case 'building':
-      return `${v} · ${img.startedAt ? t('nodes.image.buildingFor', { time: elapsed(img.startedAt, locale) }) : t('nodes.image.building')}${fallback(img, t)}`
+    case 'pulling':
+      return `${v} · ${t('nodes.image.pulling')}`
     case 'failed': {
       const error = img.error ?? ''
-      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}${fallback(img, t)}`
+      return `${v} · ${img.retryAt ? t('nodes.image.failedRetry', { error, time: relativeTime(img.retryAt, locale) }) : t('nodes.image.failed', { error })}`
     }
     default: return ''
   }

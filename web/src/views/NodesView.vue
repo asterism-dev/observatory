@@ -150,8 +150,7 @@ watch(
         <Meter :label="t('usage.cpu')" :percent="n.state === 'pending' ? null : pct(n.usedCPUs, n.cpus)" />
         <Meter :label="t('usage.mem')" :percent="n.state === 'pending' ? null : pct(n.usedMemoryMB, n.memoryMB)" />
         <span class="mono image">
-          <i18n-t v-if="n.image?.state === 'custom'" keypath="nodes.image.custom" tag="span"><template #key><code>imageURL</code></template></i18n-t>
-          <template v-else>{{ imageLine(n.image, t, locale) }}</template>
+          {{ imageLine(n.image, t, locale) }}
         </span>
         <template v-if="can('node:update') && selectableIds.length" #actions>
           <Checkbox

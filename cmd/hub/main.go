@@ -95,7 +95,7 @@ func run() error {
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
 	api.StorageEndpoints(mux, dh)
-	nodeAssets(mux, cfg.NodeBinary)
+	nodeAssets(mux, cfg.NodeBinary, cfg.Guestboot)
 	oauth := &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}
 	go f.RefreshIntegrations(ctx, oauth, time.Minute)
 	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth}

@@ -74,10 +74,15 @@ dl -o "$TMP/observatory-node" "$HUB/node/observatory-node" || die "downloading o
 dl -o "$TMP/SHA256SUMS" "$HUB/node/SHA256SUMS" || die "downloading SHA256SUMS failed"
 grep '  observatory-node$' "$TMP/SHA256SUMS" >"$TMP/sums" || die "observatory-node is missing from SHA256SUMS"
 (cd "$TMP" && sha256_check sums >/dev/null) || die "checksum mismatch in the downloaded node binary"
+dl -o "$TMP/guestboot.tar" "$HUB/node/guestboot.tar" || die "downloading guestboot.tar failed"
+grep '  guestboot.tar$' "$TMP/SHA256SUMS" >"$TMP/sums" || die "guestboot.tar is missing from SHA256SUMS"
+(cd "$TMP" && sha256_check sums >/dev/null) || die "checksum mismatch in the downloaded guestboot.tar"
 
 say "installing packages"
 $SUDO apt-get update -qq
-$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openvswitch-switch ovn-host wireguard-tools qemu-utils nftables >/dev/null
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openvswitch-switch ovn-host wireguard-tools qemu-utils nftables e2fsprogs >/dev/null
+# mke2fs -d (populating a filesystem from a directory) arrived in e2fsprogs 1.43.
+mke2fs -V 2>&1 | head -1 | awk '{split($2, v, "."); exit !(v[1] > 1 || (v[1] == 1 && v[2] >= 43))}' || die "e2fsprogs 1.43 or newer is required (mke2fs -d)"
 
 fc_installed=$(firecracker --version 2>/dev/null | head -1)
 # Memory states of another Firecracker version cannot be loaded, so the restart shuts VMs down instead of hibernating.
@@ -98,6 +103,11 @@ if [ "$fc_installed" != "Firecracker $FIRECRACKER_VERSION" ] ||
 	$SUDO install -m 0755 "$TMP/release-$FIRECRACKER_VERSION-x86_64/firecracker-$FIRECRACKER_VERSION-x86_64" /usr/local/bin/firecracker
 	$SUDO install -m 0755 "$TMP/release-$FIRECRACKER_VERSION-x86_64/jailer-$FIRECRACKER_VERSION-x86_64" /usr/local/bin/jailer
 fi
+
+say "installing the guest boot files"
+$SUDO rm -rf /usr/local/lib/observatory/guestboot
+$SUDO mkdir -p /usr/local/lib/observatory/guestboot
+$SUDO tar -xf "$TMP/guestboot.tar" -C /usr/local/lib/observatory/guestboot
 
 say "preparing the host network (bridge vmm0, NAT for 192.168.64.0/24)"
 $SUDO modprobe nbd

@@ -9,7 +9,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
 
-const bootArgs = "console=ttyS0 reboot=k panic=1 root=LABEL=cloudimg-rootfs ro"
+const bootArgs = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw rdinit=/init"
 
 const (
 	guestCID  = 3

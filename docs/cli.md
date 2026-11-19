@@ -71,8 +71,8 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `whoami` | show the user, orgs and session |
 | `version` | print the CLI version |
 | `help [noun]` | show the help |
-| `ssh <vm> [--user ubuntu] [-- args...]` | ssh into a VM |
-| `desktop <vm> [--user ubuntu]` | start the VM desktop and attach with xpra |
+| `ssh <vm> [--user dev] [-- args...]` | ssh into a VM |
+| `desktop <vm> [--user dev]` | start the VM desktop and attach with xpra |
 | `ssh-key list` / `ssh-key add [FILE] [--name N]` / `ssh-key delete <key>` | your SSH public keys (default `~/.ssh/id_ed25519.pub`, then `id_ecdsa.pub`, `id_rsa.pub`) |
 | `device list` / `device create <name> [--out FILE\|-]` / `device delete <device>` | WireGuard devices |
 
@@ -212,12 +212,12 @@ node), `node delete`,
    `--out -` for stdout), mode 0600, and never overwrites a file. The private key exists only in that file. Bring it up
    with `sudo wg-quick up ./laptop.conf` or import it in the WireGuard app; the CLI does not manage the tunnel. See
    [network.md](network.md#devices).
-3. **SSH:** `observatory ssh dev` runs `ssh ubuntu@dev.internal` as your system `ssh`, so `~/.ssh/config`,
+3. **SSH:** `observatory ssh dev` runs `ssh dev@dev.internal` as your system `ssh`, so `~/.ssh/config`,
    `known_hosts` and agent forwarding work as usual. Arguments after `--` go to `ssh`, e.g.
    `observatory ssh dev -- uptime`. A stopped, paused or hibernated VM is refused with a hint to start it; a suspended
    VM wakes on the first packet. Without a device in the org the CLI warns but still runs `ssh`.
 4. **Desktop:** `observatory desktop dev` runs `vmm-desktop start` over SSH and then `xpra attach
-   ssh://ubuntu@dev.internal/100`. The xpra 6 client is looked up in `PATH`, then
+   ssh://dev@dev.internal/100`. The xpra 6 client is looked up in `PATH`, then
    `/Applications/Xpra.app/Contents/MacOS/Xpra`; install it as in [guest.md](guest.md#installing-the-xpra-client).
 
 The CLI never generates, stores or forwards a private key.

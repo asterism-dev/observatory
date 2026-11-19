@@ -25,8 +25,15 @@ type GuestRequest struct {
 	Certs map[string]string `json:"certs,omitempty"`
 }
 
+// GuestReply is the agent's answer; Version is set on ping.
+type GuestReply struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error"`
+	Version string `json:"version"`
+}
+
 // CallGuest sends req to the guest agent through Firecracker's vsock uds and waits for its reply.
-func CallGuest(ctx context.Context, uds string, req GuestRequest) error {
+func CallGuest(ctx context.Context, uds string, req GuestRequest) (GuestReply, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, 2*time.Minute)
@@ -34,7 +41,7 @@ func CallGuest(ctx context.Context, uds string, req GuestRequest) error {
 	}
 	c, err := dialUnix(ctx, uds)
 	if err != nil {
-		return err
+		return GuestReply{}, err
 	}
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
@@ -43,37 +50,34 @@ func CallGuest(ctx context.Context, uds string, req GuestRequest) error {
 	c.SetDeadline(d)
 	b, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return GuestReply{}, err
 	}
 	if _, err := fmt.Fprintf(c, "CONNECT %d\n", GuestAgentPort); err != nil {
-		return err
+		return GuestReply{}, err
 	}
 	r := bufio.NewReader(c)
 	line, err := r.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))
+		return GuestReply{}, fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))
 	}
 	if !strings.HasPrefix(line, "OK ") {
-		return errors.New("guest agent: vsock connect refused")
+		return GuestReply{}, errors.New("guest agent: vsock connect refused")
 	}
 	if _, err := c.Write(append(b, '\n')); err != nil {
-		return err
+		return GuestReply{}, err
 	}
 	line, err = r.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))
+		return GuestReply{}, fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))
 	}
-	var reply struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
+	var reply GuestReply
 	if err := json.Unmarshal([]byte(line), &reply); err != nil {
-		return fmt.Errorf("guest agent: %w", err)
+		return GuestReply{}, fmt.Errorf("guest agent: %w", err)
 	}
 	if !reply.OK {
-		return fmt.Errorf("guest agent %s: %s", req.Op, reply.Error)
+		return reply, fmt.Errorf("guest agent %s: %s", req.Op, reply.Error)
 	}
-	return nil
+	return reply, nil
 }
 
 // dialUnix reaches a long jail path through its directory's fd, held open only for the dial, as unix socket paths are limited to 107 bytes.

@@ -16,7 +16,7 @@ const busy = ref(false)
 const error = ref('')
 const warning = ref('')
 
-const nameInvalid = computed(() => !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name.value))
+const nameInvalid = computed(() => !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(name.value))
 const ownerOptions = computed(() => [
   { value: 'user', label: t('vms.ownerMe') },
   ...teams.value.map((x) => ({ value: x.id, label: t('vms.ownerTeam', { name: x.name }) })),

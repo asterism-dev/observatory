@@ -2,9 +2,9 @@
 
 Observatory is a hub for teams that work in cloud VMs. It manages organisations, teams and permissions, runs VMs on
 Firecracker nodes you add yourself, and connects them over a private network: every person reaches their VMs from
-their own machine through WireGuard, with `ssh ubuntu@<vm>.internal`.
+their own machine through WireGuard, with `ssh dev@<vm>.internal`.
 
-- **VMs** with pause, hibernate, snapshots, forks and auto-suspend, a guest image with the usual developer tools, and
+- **VMs** with pause, hibernate, snapshots, forks and auto-suspend, a standard image with the usual developer tools (or any OCI image), and
   an optional desktop and browser.
 - **Disks** that outlive their VM, **networks** between VMs, and **devices** that connect people to them.
 - **Secrets** that never enter a VM in plain form: an egress proxy adds them to outgoing requests, and integrations for

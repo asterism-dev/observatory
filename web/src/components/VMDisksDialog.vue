@@ -18,8 +18,8 @@ interface Disk {
 
 const maxDisks = 8
 const mountPattern = /^(\/[A-Za-z0-9._-]+)+$/
-const reservedTrees = ['/bin', '/boot', '/dev', '/etc', '/lib', '/proc', '/run', '/sbin', '/sys', '/usr', '/var/lib/cloud', '/home/ubuntu/.ssh']
-const reservedPaths = ['/home', '/home/ubuntu', '/root', '/var', '/var/lib']
+const reservedTrees = ['/bin', '/boot', '/dev', '/etc', '/lib', '/proc', '/run', '/sbin', '/sys', '/usr', '/var/lib/cloud', '/home/dev/.ssh']
+const reservedPaths = ['/home', '/home/dev', '/root', '/var', '/var/lib']
 
 const props = defineProps<{ open: boolean; orgId: string; vm: VmInfo }>()
 const emit = defineEmits<{ 'update:open': [boolean]; saved: [] }>()

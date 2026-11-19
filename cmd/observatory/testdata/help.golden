@@ -1,13 +1,13 @@
 usage: observatory <command> [args] [flags]
 
-  login                                  log in with your browser (device flow)
-  logout                                 revoke this CLI session
-  whoami                                 show the user, orgs and session
-  version                                print the CLI version
-  update                                 update the CLI to the latest release
-  help [noun]                            show this help
-  ssh <vm> [--user ubuntu] [-- args...]  ssh into a VM
-  desktop <vm> [--user ubuntu]           start the VM desktop and attach with xpra
+  login                               log in with your browser (device flow)
+  logout                              revoke this CLI session
+  whoami                              show the user, orgs and session
+  version                             print the CLI version
+  update                              update the CLI to the latest release
+  help [noun]                         show this help
+  ssh <vm> [--user dev] [-- args...]  ssh into a VM
+  desktop <vm> [--user dev]           start the VM desktop and attach with xpra
 
 org:
   org list           list your orgs

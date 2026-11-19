@@ -2,7 +2,6 @@ package firecracker
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/node"
@@ -44,7 +43,7 @@ func TestVMConfig(t *testing.T) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Boot.Kernel != "/k/vmlinux" || c.Boot.Initrd != "/k/initrd.img" || !strings.Contains(c.Boot.Args, "console=ttyS0") || !strings.Contains(c.Boot.Args, "root=LABEL=cloudimg-rootfs") {
+	if c.Boot.Kernel != "/k/vmlinux" || c.Boot.Initrd != "/k/initrd.img" || c.Boot.Args != "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw rdinit=/init" {
 		t.Errorf("boot = %+v", c.Boot)
 	}
 	if c.Machine.VCPUs != 2 || c.Machine.Mem != 2048 {
