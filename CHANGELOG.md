@@ -1,3 +1,9 @@
+## v0.5.0 (2026-11-19)
+
+### Feat
+
+- update nodes from the hub (#22)
+
 ## v0.4.0 (2026-11-19)
 
 ### Feat
