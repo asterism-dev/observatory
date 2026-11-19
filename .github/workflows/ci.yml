@@ -43,6 +43,7 @@ jobs:
           node-version: 22
       - run: go vet ./...
       - run: go test ./...
+      - run: node --test web/src/composables/*.test.ts
       - run: make web
       # A hub built without the GUI would serve an empty page.
       - run: test -n "$(ls web/dist/assets)"
