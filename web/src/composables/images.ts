@@ -21,6 +21,12 @@ export interface Image {
   createdAt: string
   canEdit: boolean
   canBuild: boolean
+  autoSchedule: '' | 'daily' | 'weekly'
+  autoOnBaseChange: boolean
+  autoError: string
+  autoLastAt: string | null
+  autoRevision: number | null
+  autoNeedsApproval: boolean
 }
 
 export interface RecipeRef {
@@ -48,6 +54,7 @@ export interface Build {
   revision: number
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   startedBy: string
+  automatic: boolean
   queuedAt: string
   startedAt: string | null
   finishedAt: string | null
@@ -75,6 +82,18 @@ type Translate = (key: string) => string
 export const buildTones = { queued: 'warning', running: 'warning', succeeded: 'success', failed: 'danger', cancelled: 'muted' } as const
 export const buildActive = (b: Pick<Build, 'state'>) => b.state === 'queued' || b.state === 'running'
 export const shortDigest = (d: string) => d.replace(/^sha256:/, '').slice(0, 12)
+
+const autoOn = (schedule: string, onBaseChange: boolean) => (schedule !== '' && schedule !== 'off') || onBaseChange
+
+// Turning automation on approves the revision on screen; later revisions by others need their own approval.
+export function autoSettingsBody(image: Pick<Image, 'autoSchedule' | 'autoOnBaseChange' | 'recipeRevision'>, schedule: string, onBaseChange: boolean) {
+  const body: { autoSchedule: string; autoOnBaseChange: boolean; approveRevision?: number } = {
+    autoSchedule: schedule === 'off' ? '' : schedule,
+    autoOnBaseChange: onBaseChange,
+  }
+  if (!autoOn(image.autoSchedule, image.autoOnBaseChange) && autoOn(schedule, onBaseChange) && image.recipeRevision !== null) body.approveRevision = image.recipeRevision
+  return body
+}
 
 export function refLabel(ref: RecipeRef, teamNames: Record<string, string>) {
   const scope = ref.scope === 'team' ? `team:${teamNames[ref.teamId ?? ''] ?? ref.teamId}` : ref.scope === 'user' ? 'private' : 'org'

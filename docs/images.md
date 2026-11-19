@@ -151,6 +151,42 @@ The hub copies its tags into the registry whenever one changes (a build moves `l
 tag gets the version the image page shows. A tag deleted on the hub stays in the registry until the next push of that
 tag; pull by digest when that matters.
 
+### Automatic rebuilds
+
+An image with a recipe can rebuild itself so updates of its base images arrive without anyone remembering. Both are off
+by default; turn them on in the image settings (Automatic rebuilds) or with
+`observatory image auto <ref> [--schedule off|daily|weekly] [--on-base-change=true|false] [--approve]`:
+
+- **Schedule:** daily or weekly, counted from the last successful build, manual or automatic.
+- **When a base image changes:** every build records the `linux/amd64` digest each `FROM` resolved to (`ARG` defaults
+  declared before the first `FROM` are expanded; stage names, `scratch` and `FROM <image>@<digest>` are left out). The
+  hub resolves those references again at most once an hour (observatory images from its own tags, public images
+  anonymously, only on public addresses) and rebuilds when one differs from what `latest` was built from. A pushed
+  `latest` has no recorded bases, and neither has a version built before automatic rebuilds existed: such an image
+  reacts to base changes only after its next build.
+
+The hub looks every 10 minutes. It never starts an automatic build while a build of the image is queued or running, and
+at most one automatic build every 6 hours per image. Automatic builds use the normal queue and limits, are marked
+automatic in the build history and run as the person who last changed the settings: changing them needs the right to
+edit and to build the image, and that person's right to build and to use every reference is checked at each automatic
+build. When it is missing, the build fails with the reason and automation stays on.
+
+Turning automation on approves the recipe revision shown at that moment. A later revision saved by someone else is only
+built automatically when its author may build the image and use every reference too; otherwise automatic builds fail
+until someone with the right to edit and build reviews it and approves it: the button "Approve revision N for automatic
+builds" in the image settings, or `observatory image auto <ref> --approve`. An approval names the revision that was
+shown and is refused when a newer one was saved meanwhile; whoever approves becomes the person automatic builds run
+as. Other changes of the settings approve nothing. After an approval the next automatic build may start at once, without
+waiting out the 6 hours since the last one.
+
+`latest` only moves when a build succeeds. When an automatic build fails, or the base images cannot be looked up (for
+example the registry is down; nothing is built then and the next pass tries again), the image shows "automatic rebuild
+failed" with the reason in the web UI and in `observatory image show`; the next successful automatic build or a change
+of the settings clears it. A failed build's reason is not replaced by a later failed lookup. With a schedule, a recipe
+that keeps failing is retried every 6 hours, because the schedule counts from the last successful build.
+A rebuilt base image triggers the images built on it through their own base check, one level per pass. Rebuilt images
+are not propagated to existing VMs, only VMs created afterwards use them.
+
 ## Pushing
 
 Build locally with `docker build` and push:
@@ -186,4 +222,4 @@ in `starting` while the image is pulled; the next one starts without pulling.
 
 ## Not supported
 
-Automatic rebuilds, base-image tracking, vulnerability scans, images shared across orgs, public images and arm64.
+Vulnerability scans, images shared across orgs, public images and arm64.

@@ -32,6 +32,9 @@ const (
 	VersionFromBuild = "build"
 	VersionFromPush  = "push"
 
+	AutoDaily  = "daily"
+	AutoWeekly = "weekly"
+
 	buildLogKeep      = 5 << 20
 	buildLogMarker    = "\n--- log truncated ---\n"
 	BuildLogLiveCap   = 64 << 20
@@ -50,6 +53,15 @@ type Image struct {
 	PushError      string
 	CreatedBy      uuid.UUID
 	CreatedAt      time.Time
+
+	AutoSchedule     string // "", AutoDaily or AutoWeekly
+	AutoOnBaseChange bool
+	AutoBy           *uuid.UUID // automatic builds run as this user
+	AutoRevision     *int       // the newest recipe revision approved for automatic builds
+	AutoApprovedAt   *time.Time
+	AutoError        string
+	AutoLastAt       *time.Time
+	AutoCheckedAt    *time.Time // last base-image check that resolved every base
 }
 
 type RecipeFile struct {
@@ -86,6 +98,13 @@ type ImageVersion struct {
 	CreatedBy      *uuid.UUID
 	CreatedAt      time.Time
 	Layers         []ImageLayer
+	BaseDigests    []BaseDigest
+}
+
+// BaseDigest is a FROM reference of a build and the linux/amd64 manifest digest it resolved to.
+type BaseDigest struct {
+	Ref    string `json:"ref"`
+	Digest string `json:"digest"`
 }
 
 type ImageLayer struct {
@@ -99,6 +118,7 @@ type ImageBuild struct {
 	State                 string
 	NodeID, VMID          *uuid.UUID
 	StartedBy             uuid.UUID
+	Automatic             bool
 	QueuedAt              time.Time
 	StartedAt, FinishedAt *time.Time
 	Digest, Error         string
@@ -112,10 +132,12 @@ type ImageDefault struct {
 	Tag, Digest string
 }
 
-const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at"
+const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, " +
+	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_approved_at, auto_error, auto_last_at, auto_checked_at"
 
 func scanImage(r pgx.Row) (v Image, err error) {
-	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt)
+	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt,
+		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoApprovedAt, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -214,6 +236,96 @@ func (s *Store) UpdateImage(ctx context.Context, v Image) (Image, error) {
 	return out, err
 }
 
+// SetImageAuto changes the settings and clears the error; by becomes the user automatic builds run as, keeping an approval only if it was by's.
+func (s *Store) SetImageAuto(ctx context.Context, image uuid.UUID, schedule string, onBaseChange bool, by uuid.UUID) error {
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_schedule = $2, auto_on_base_change = $3, auto_by = $4, auto_error = '',
+		auto_revision = CASE WHEN auto_by IS NOT DISTINCT FROM $4 THEN auto_revision END,
+		auto_approved_at = CASE WHEN auto_by IS NOT DISTINCT FROM $4 THEN auto_approved_at END WHERE id = $1`,
+		image, schedule, onBaseChange, by)
+	return err
+}
+
+// ApproveImageRevision lets automatic builds run revision as by; ErrConflict when it is no longer the current revision.
+func (s *Store) ApproveImageRevision(ctx context.Context, image uuid.UUID, revision int, by uuid.UUID) error {
+	tag, err := s.q.Exec(ctx, `UPDATE images SET auto_revision = $2, auto_by = $3, auto_approved_at = now(), auto_error = ''
+		WHERE id = $1 AND recipe_revision = $2`, image, revision, by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// RecipeRevisionAuthor returns who saved revision n of image.
+func (s *Store) RecipeRevisionAuthor(ctx context.Context, image uuid.UUID, n int) (uuid.UUID, error) {
+	var by uuid.UUID
+	err := s.q.QueryRow(ctx, "SELECT created_by FROM recipe_revisions WHERE image_id = $1 AND number = $2", image, n).Scan(&by)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return by, ErrNotFound
+	}
+	return by, err
+}
+
+// AutoBuildState sums up an image's builds for the automatic rebuild checks.
+func (s *Store) AutoBuildState(ctx context.Context, image uuid.UUID) (active bool, lastAutomatic, lastSuccess *time.Time, err error) {
+	err = s.q.QueryRow(ctx, `SELECT coalesce(bool_or(state IN ('queued', 'running')), false),
+		max(queued_at) FILTER (WHERE automatic), max(finished_at) FILTER (WHERE state = 'succeeded')
+		FROM image_builds WHERE image_id = $1`, image).Scan(&active, &lastAutomatic, &lastSuccess)
+	return
+}
+
+// CreateFailedImageBuild records an automatic build that may not run as failed at once, so no scheduler ever sees it queued.
+func (s *Store) CreateFailedImageBuild(ctx context.Context, b ImageBuild, msg string, at time.Time) (ImageBuild, error) {
+	err := s.InTx(ctx, func(tx *Store) error {
+		var err error
+		if b, err = tx.CreateImageBuild(ctx, b); err != nil {
+			return err
+		}
+		if b, err = tx.FinishImageBuild(ctx, b.ID, BuildFailed, "", msg, at); err != nil {
+			return err
+		}
+		if err := tx.FinishBuildLog(ctx, b.ID); err != nil {
+			return err
+		}
+		if b.Automatic {
+			return tx.SetImageAutoResult(ctx, b.ImageID, msg, at)
+		}
+		return nil
+	})
+	return b, err
+}
+
+// AutoImages lists the org images with automatic rebuilds on and a recipe, grouped by org.
+func (s *Store) AutoImages(ctx context.Context) ([]Image, error) {
+	rows, err := s.q.Query(ctx, "SELECT "+imageCols+` FROM images
+		WHERE NOT platform AND recipe_revision IS NOT NULL AND (auto_schedule <> '' OR auto_on_base_change) ORDER BY org_id, id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Image, error) { return scanImage(r) })
+}
+
+// SetImageAutoResult records the outcome of an automatic rebuild; an empty msg clears the error.
+func (s *Store) SetImageAutoResult(ctx context.Context, image uuid.UUID, msg string, at time.Time) error {
+	_, err := s.q.Exec(ctx, "UPDATE images SET auto_error = $2, auto_last_at = $3 WHERE id = $1", image, msg, at)
+	return err
+}
+
+// SetImageAutoCheckError shows a failed base-image check unless a failed build's error is showing; errors of checks start with checkPrefix.
+func (s *Store) SetImageAutoCheckError(ctx context.Context, image uuid.UUID, msg, checkPrefix string) error {
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_error = $2 WHERE id = $1 AND (auto_error = '' OR starts_with(auto_error, $3))`, image, msg, checkPrefix)
+	return err
+}
+
+// SetImageAutoChecked records a base-image check that resolved every base and clears an error starting with checkPrefix.
+func (s *Store) SetImageAutoChecked(ctx context.Context, image uuid.UUID, at time.Time, checkPrefix string) error {
+	_, err := s.q.Exec(ctx, `UPDATE images SET auto_checked_at = $2,
+		auto_error = CASE WHEN starts_with(auto_error, $3) THEN '' ELSE auto_error END WHERE id = $1`, image, at, checkPrefix)
+	return err
+}
+
 func (s *Store) DeleteImage(ctx context.Context, org, id uuid.UUID) error {
 	tag, err := s.q.Exec(ctx, "DELETE FROM images WHERE org_id = $1 AND id = $2", org, id)
 	if err != nil {
@@ -310,14 +422,36 @@ func layerColumns(layers []ImageLayer) (digests []string, sizes []int64) {
 	return digests, sizes
 }
 
-const versionColumns = "image_id, digest, COALESCE(platform_digest, ''), source, revision, build_id, size_bytes, created_by, created_at"
+const versionColumns = "image_id, digest, COALESCE(platform_digest, ''), source, revision, build_id, size_bytes, created_by, created_at, base_digests"
 
 func scanVersion(r pgx.Row) (v ImageVersion, err error) {
-	err = r.Scan(&v.ImageID, &v.Digest, &v.PlatformDigest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt)
+	var bases []byte
+	err = r.Scan(&v.ImageID, &v.Digest, &v.PlatformDigest, &v.Source, &v.Revision, &v.BuildID, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt, &bases)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrNotFound
+		return v, ErrNotFound
+	} else if err != nil {
+		return v, err
 	}
-	return
+	return v, json.Unmarshal(bases, &v.BaseDigests)
+}
+
+// SetVersionBaseDigests records the base images the build of a version resolved.
+func (s *Store) SetVersionBaseDigests(ctx context.Context, image uuid.UUID, digest string, bases []BaseDigest) error {
+	if bases == nil {
+		bases = []BaseDigest{}
+	}
+	raw, err := json.Marshal(bases)
+	if err != nil {
+		return err
+	}
+	tag, err := s.q.Exec(ctx, "UPDATE image_versions SET base_digests = $3 WHERE image_id = $1 AND digest = $2", image, digest, raw)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ImageWithVersion returns the version digest of an image of org, the oldest first, else ErrNotFound.
@@ -413,10 +547,10 @@ func (s *Store) ResolveImageTag(ctx context.Context, image uuid.UUID, tag string
 	return digest, err
 }
 
-const buildCols = "id, image_id, revision, state, node_id, vm_id, started_by, queued_at, started_at, finished_at, digest, error"
+const buildCols = "id, image_id, revision, state, node_id, vm_id, started_by, automatic, queued_at, started_at, finished_at, digest, error"
 
 func scanBuild(r pgx.Row) (b ImageBuild, err error) {
-	err = r.Scan(&b.ID, &b.ImageID, &b.Revision, &b.State, &b.NodeID, &b.VMID, &b.StartedBy, &b.QueuedAt, &b.StartedAt, &b.FinishedAt, &b.Digest, &b.Error)
+	err = r.Scan(&b.ID, &b.ImageID, &b.Revision, &b.State, &b.NodeID, &b.VMID, &b.StartedBy, &b.Automatic, &b.QueuedAt, &b.StartedAt, &b.FinishedAt, &b.Digest, &b.Error)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -425,7 +559,7 @@ func scanBuild(r pgx.Row) (b ImageBuild, err error) {
 
 func (s *Store) CreateImageBuild(ctx context.Context, b ImageBuild) (ImageBuild, error) {
 	b, err := scanBuild(s.q.QueryRow(ctx, `
-		INSERT INTO image_builds (image_id, revision, started_by) VALUES ($1, $2, $3) RETURNING `+buildCols, b.ImageID, b.Revision, b.StartedBy))
+		INSERT INTO image_builds (image_id, revision, started_by, automatic) VALUES ($1, $2, $3, $4) RETURNING `+buildCols, b.ImageID, b.Revision, b.StartedBy, b.Automatic))
 	if isUniqueViolation(err) {
 		return ImageBuild{}, ErrBuildRunning
 	}

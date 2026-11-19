@@ -75,15 +75,16 @@ func (a *Agent) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if err := os.MkdirAll(a.Dir, 0o700); err != nil {
-		return a.postResult(ctx, "", err.Error())
+		return a.postResult(ctx, "", nil, err.Error())
 	}
 	defer os.RemoveAll(filepath.Join(a.Dir, "secrets"))
 	secrets, values, err := a.writeSecrets(ctx)
 	log := NewMasker(append(values, []byte(a.Secret)))
 	shipped := a.shipLog(ctx, log)
 	var digest, failure string
+	var bases []BaseDigest
 	if err == nil {
-		digest, err = a.build(ctx, log, secrets)
+		digest, bases, err = a.build(ctx, log, secrets)
 	}
 	if err != nil {
 		failure = log.MaskString(err.Error())
@@ -92,7 +93,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	log.Close()
 	cancel()
 	<-shipped
-	return a.postResult(context.Background(), digest, failure)
+	return a.postResult(context.Background(), digest, bases, failure)
 }
 
 // writeSecrets writes one file per reference and returns the --secret flags and the values to mask, which are also returned on failure.
@@ -139,23 +140,24 @@ func (a *Agent) writeSecrets(ctx context.Context) ([]string, [][]byte, error) {
 	return flags, values, nil
 }
 
-func (a *Agent) build(ctx context.Context, log io.Writer, secretFlags []string) (string, error) {
+func (a *Agent) build(ctx context.Context, log io.Writer, secretFlags []string) (string, []BaseDigest, error) {
 	hub, err := url.Parse(a.Hub)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := a.startBuildkitd(ctx, hub); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	fmt.Fprintln(log, "fetching the recipe")
 	recipe := filepath.Join(a.Dir, "recipe")
 	if err := a.fetchRecipe(ctx, recipe); err != nil {
-		return "", fmt.Errorf("recipe: %w", err)
+		return "", nil, fmt.Errorf("recipe: %w", err)
 	}
+	bases := a.resolveBases(ctx, log, recipe, hub)
 	dockerConfig := filepath.Join(a.Dir, "docker")
 	defer os.RemoveAll(dockerConfig)
 	if err := a.writeDockerConfig(dockerConfig, hub.Host); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	meta := filepath.Join(a.Dir, "metadata.json")
 	args := []string{"build", "--progress", "plain",
@@ -172,19 +174,19 @@ func (a *Agent) build(ctx context.Context, log io.Writer, secretFlags []string) 
 	cmd.Env = append(os.Environ(), "DOCKER_CONFIG="+dockerConfig)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("buildctl: %w", err)
+		return "", nil, fmt.Errorf("buildctl: %w", err)
 	}
 	raw, err := os.ReadFile(meta)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var m struct {
 		Digest string `json:"containerimage.digest"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil || m.Digest == "" {
-		return "", fmt.Errorf("no image digest in the build metadata: %s", raw)
+		return "", nil, fmt.Errorf("no image digest in the build metadata: %s", raw)
 	}
-	return m.Digest, nil
+	return m.Digest, bases, nil
 }
 
 // startBuildkitd starts the daemon for the lifetime of ctx and waits until buildctl reaches it.
@@ -332,11 +334,15 @@ func (a *Agent) shipLog(ctx context.Context, log *Masker) <-chan struct{} {
 	return done
 }
 
-// postResult reports the digest, or failure when it is not empty; failure must already be masked.
-func (a *Agent) postResult(ctx context.Context, digest, failure string) error {
-	result := map[string]string{"digest": digest}
+// postResult reports the digest and bases, or failure when it is not empty; failure must already be masked.
+func (a *Agent) postResult(ctx context.Context, digest string, bases []BaseDigest, failure string) error {
+	result := struct {
+		Digest string       `json:"digest,omitempty"`
+		Bases  []BaseDigest `json:"bases,omitempty"`
+		Error  string       `json:"error,omitempty"`
+	}{digest, bases, failure}
 	if failure != "" {
-		result = map[string]string{"error": failure}
+		result.Digest, result.Bases = "", nil
 	}
 	body, err := json.Marshal(result)
 	if err != nil {

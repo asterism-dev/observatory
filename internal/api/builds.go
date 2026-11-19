@@ -23,7 +23,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-const maxBuildLogPost = 8 << 20
+const (
+	maxBuildLogPost = 8 << 20
+	maxBases        = 100
+)
 
 var (
 	digestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
@@ -37,6 +40,7 @@ type buildJSON struct {
 	Revision   int        `json:"revision"`
 	State      string     `json:"state"`
 	StartedBy  uuid.UUID  `json:"startedBy"`
+	Automatic  bool       `json:"automatic"`
 	QueuedAt   time.Time  `json:"queuedAt"`
 	StartedAt  *time.Time `json:"startedAt"`
 	FinishedAt *time.Time `json:"finishedAt"`
@@ -45,7 +49,7 @@ type buildJSON struct {
 }
 
 func toBuildJSON(b store.ImageBuild) buildJSON {
-	return buildJSON{b.ID, b.ImageID, b.Revision, b.State, b.StartedBy, b.QueuedAt, b.StartedAt, b.FinishedAt, b.Digest, b.Error}
+	return buildJSON{b.ID, b.ImageID, b.Revision, b.State, b.StartedBy, b.Automatic, b.QueuedAt, b.StartedAt, b.FinishedAt, b.Digest, b.Error}
 }
 
 func buildAudit(r *http.Request, action string, img store.Image, b store.ImageBuild) store.AuditEntry {
@@ -103,39 +107,55 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 
 // checkRefUse requires the caller's use right on every reference and that each still exists.
 func (h *api) checkRefUse(w http.ResponseWriter, r *http.Request, img store.Image, refs []store.RecipeRef) bool {
-	envs, err := h.store.EnvVars(r.Context(), img.OrgID)
-	if err != nil {
-		serverError(w, "env", err)
-		return false
+	denied := false
+	msg, err := refsUsable(r.Context(), h.store, img.OrgID, refs, func(obj, act string) bool {
+		denied = !h.authorize(w, r, img.OrgID, obj, act)
+		return !denied
+	})
+	switch {
+	case denied:
+	case err != nil:
+		serverError(w, "recipe references", err)
+	case msg != "":
+		writeError(w, http.StatusUnprocessableEntity, msg)
+	default:
+		return true
 	}
-	igs, err := h.store.Integrations(r.Context(), img.OrgID)
+	return false
+}
+
+// refsUsable returns why refs cannot be used in a build: a use right allowed denies or a reference that no longer exists.
+func refsUsable(ctx context.Context, s *store.Store, org uuid.UUID, refs []store.RecipeRef, allowed func(obj, act string) bool) (string, error) {
+	envs, err := s.EnvVars(ctx, org)
 	if err != nil {
-		serverError(w, "integrations", err)
-		return false
+		return "", err
+	}
+	igs, err := s.Integrations(ctx, org)
+	if err != nil {
+		return "", err
 	}
 	for _, ref := range refs {
 		var found bool
 		if ref.Kind == "secret" {
-			if !h.authorize(w, r, img.OrgID, envObject(ref.Scope, ref.OwnerID), "env:use") {
-				return false
+			if !allowed(envObject(ref.Scope, ref.OwnerID), "env:use") {
+				return "no right to use " + describeRef(ref), nil
 			}
 			for _, v := range envs {
 				found = found || v.Scope == ref.Scope && sameOwner(v.OwnerID, ref.OwnerID) && v.Name == ref.Name
 			}
 		} else {
-			if !h.authorize(w, r, img.OrgID, integrationObject(ref.Scope, ref.OwnerID), "integration:use") {
-				return false
+			if !allowed(integrationObject(ref.Scope, ref.OwnerID), "integration:use") {
+				return "no right to use " + describeRef(ref), nil
 			}
 			for _, v := range igs {
 				found = found || v.Scope == ref.Scope && sameOwner(v.OwnerID, ref.OwnerID) && string(v.Kind) == ref.Name
 			}
 		}
 		if !found {
-			writeError(w, http.StatusUnprocessableEntity, "the recipe references "+describeRef(ref)+", which no longer exists")
-			return false
+			return "the recipe references " + describeRef(ref) + ", which no longer exists", nil
 		}
 	}
-	return true
+	return "", nil
 }
 
 func (h *api) listBuilds(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +413,10 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct{ Digest, Error string }
+	var body struct {
+		Digest, Error string
+		Bases         []store.BaseDigest
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
@@ -404,6 +427,9 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 	case !digestPattern.MatchString(body.Digest):
 		writeError(w, http.StatusBadRequest, "invalid digest")
 		return
+	case !validBases(body.Bases):
+		writeError(w, http.StatusBadRequest, "invalid bases")
+		return
 	default:
 		var err error
 		if msg, err = a.recordVersion(r.Context(), b, body.Digest); err != nil {
@@ -412,6 +438,10 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 		}
 		if msg == "" {
 			state, digest = store.BuildSucceeded, body.Digest
+			if err := a.store.SetVersionBaseDigests(r.Context(), b.ImageID, digest, body.Bases); err != nil {
+				serverError(w, "base digests", err)
+				return
+			}
 		}
 	}
 	if _, err := a.builds.Finish(r.Context(), b.ID, state, digest, msg); errors.Is(err, store.ErrConflict) {
@@ -425,6 +455,18 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 		a.events.tags.Kick(b.ImageID)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validBases(bases []store.BaseDigest) bool {
+	if len(bases) > maxBases {
+		return false
+	}
+	for _, b := range bases {
+		if b.Ref == "" || len(b.Ref) > 512 || !digestPattern.MatchString(b.Digest) {
+			return false
+		}
+	}
+	return true
 }
 
 // recordVersion ingests the pushed digest as the registry's push event would, so it does not matter which arrives first; it returns why the push was refused.

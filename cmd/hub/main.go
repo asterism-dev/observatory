@@ -137,6 +137,7 @@ func run() error {
 		f.BootBuildersWith(sched.BootEnv)
 		api.BuildEndpoints(mux, s, sched, client, tags)
 		go sched.Run(ctx, 10*time.Second)
+		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
