@@ -421,6 +421,9 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "finish build", err)
 		return
 	}
+	if state == store.BuildSucceeded {
+		mirrorTags(r.Context(), a.store, a.events.manifests, b.ImageID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

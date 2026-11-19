@@ -519,6 +519,9 @@ func TestBuildResultLinksVersion(t *testing.T) {
 	if tags, _ := e.store.ImageTags(ctx, img); tags["latest"] != second {
 		t.Fatalf("latest after result: %v", tags)
 	}
+	if got := e.manifests.tag(imageRepo(img), "latest"); got != second {
+		t.Fatalf("registry latest %s, want %s", got, second)
+	}
 
 	// Failures move nothing.
 	b3, secret3 := e.running(aliceTok, org, img)

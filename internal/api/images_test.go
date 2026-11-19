@@ -23,6 +23,27 @@ type fakeManifests struct {
 	mu        sync.Mutex
 	deleted   []string
 	manifests map[string]registry.Manifest
+	tags      map[string]string // repo:tag -> digest, as mirrored by PutTag
+	putErr    error
+}
+
+func (f *fakeManifests) PutTag(_ context.Context, repo, tag, digest string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.putErr != nil {
+		return f.putErr
+	}
+	if f.tags == nil {
+		f.tags = map[string]string{}
+	}
+	f.tags[repo+":"+tag] = digest
+	return nil
+}
+
+func (f *fakeManifests) tag(repo, tag string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tags[repo+":"+tag]
 }
 
 func (f *fakeManifests) Manifest(_ context.Context, repo, digest string) (registry.Manifest, error) {
@@ -486,6 +507,7 @@ func TestPlatformImageReadOnly(t *testing.T) {
 
 func TestImageTagsAndVersions(t *testing.T) {
 	e := newEnv(t)
+	fm := e.withManifests()
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
@@ -494,6 +516,9 @@ func TestImageTagsAndVersions(t *testing.T) {
 	tags := imagePath(org, id) + "/tags/"
 	if rec := e.send("PUT", tags+"stable", tok, `{"digest":"`+d1+`"}`); rec.Code != 204 {
 		t.Fatalf("set tag: %d %s", rec.Code, rec.Body.String())
+	}
+	if fm.tag(imageRepo(id), "stable") != d1 || fm.tag(imageRepo(id), "latest") != d2 {
+		t.Fatalf("registry tags %v", fm.tags)
 	}
 	for _, c := range []struct{ method, tag, body string }{
 		{"PUT", "latest", `{"digest":"` + d1 + `"}`},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -17,10 +18,34 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// RegistryManifests inspects and removes manifests in the registry.
+// RegistryManifests inspects and removes manifests in the registry and mirrors the hub's tags into it.
 type RegistryManifests interface {
 	ManifestDeleter
+	TagMirror
 	Manifest(ctx context.Context, repo, digest string) (registry.Manifest, error)
+}
+
+// TagMirror points a registry tag at a digest, so pulls by tag (FROM <hub>/i/<id>:latest) see the hub's tags.
+type TagMirror interface {
+	PutTag(ctx context.Context, repo, tag, digest string) error
+}
+
+// mirrorTags copies every hub tag of image into the registry, logging failures for the next tag change to retry; deleted tags stay (no delete by tag).
+func mirrorTags(ctx context.Context, s *store.Store, m any, image uuid.UUID) {
+	tm, ok := m.(TagMirror)
+	if !ok {
+		return
+	}
+	tags, err := s.ImageTags(ctx, image)
+	if err != nil {
+		slog.Error("mirror image tags", "image", image, "err", err)
+		return
+	}
+	for tag, digest := range tags {
+		if err := tm.PutTag(ctx, imageRepo(image), tag, digest); err != nil {
+			slog.Error("mirror image tag", "image", image, "tag", tag, "err", err)
+		}
+	}
 }
 
 const maxEventsBody = 4 << 20
@@ -58,6 +83,10 @@ func (h *registryEvents) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, ev := range env.Events {
+		// The hub's own pushes are tag mirrors of versions it already has.
+		if ev.Actor.Name == registry.HubSubject {
+			continue
+		}
 		// ponytail: untagged pushes (index children, digest-only pushes) are skipped; digest-only blobs stay uncounted until a usage reconciliation, and they need the push right.
 		if ev.Action != "push" || !manifestMediaTypes[ev.Target.MediaType] || ev.Target.Tag == "" {
 			continue
@@ -118,7 +147,7 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 		// latest moves when the build reports success, not when its push lands.
 		tags = slices.DeleteFunc(tags, func(t string) bool { return t == latestTag })
 	}
-	return h.store.InTx(ctx, func(tx *store.Store) error {
+	err = h.store.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.AddImageVersion(ctx, v); err != nil {
 			return err
 		}
@@ -129,6 +158,10 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 		}
 		return tx.SetImagePushError(ctx, img.ID, "")
 	})
+	if err == nil {
+		mirrorTags(ctx, h.store, h.manifests, img.ID)
+	}
+	return err
 }
 
 // overLimit returns the error message when the new layers would push the org past its image storage limit.

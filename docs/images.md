@@ -141,6 +141,10 @@ the host of the hub URL, as in `observatory login`). A build may pull the observ
 (at the building image's level or broader) and that the person who started the build may use. Anything else is denied by
 the registry.
 
+The hub copies its tags into the registry whenever one changes (a build moves `latest`, a push, `image tag`), so a pull by
+tag gets the version the image page shows. A tag deleted on the hub stays in the registry until the next push of that
+tag; pull by digest when that matters.
+
 ## Pushing
 
 Build locally with `docker build` and push:

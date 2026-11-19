@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,8 @@ type Manifest struct {
 var ErrNotFound = errors.New("not found in the registry")
 
 const (
-	hubSubject    = "hub"
+	// HubSubject is the registry actor of the hub's own requests, such as tag updates.
+	HubSubject    = "hub"
 	maxDocument   = 4 << 20
 	manifestTypes = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, " +
 		"application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"
@@ -141,18 +143,57 @@ func (c Client) getJSON(ctx context.Context, repo, path, accept string, v any) e
 	return json.NewDecoder(io.LimitReader(resp.Body, maxDocument)).Decode(v)
 }
 
+// PutTag points tag at the manifest digest, re-uploading the manifest under the tag unless the tag already resolves to digest.
+func (c Client) PutTag(ctx context.Context, repo, tag, digest string) error {
+	head, err := c.do(ctx, http.MethodHead, repo, "/manifests/"+tag, manifestTypes, "pull")
+	if err != nil {
+		return err
+	}
+	head.Body.Close()
+	if head.StatusCode == http.StatusOK && head.Header.Get("Docker-Content-Digest") == digest {
+		return nil
+	}
+	get, err := c.do(ctx, http.MethodGet, repo, "/manifests/"+digest, manifestTypes, "pull")
+	if err != nil {
+		return err
+	}
+	defer get.Body.Close()
+	if get.StatusCode != http.StatusOK {
+		return fmt.Errorf("get manifest %s@%s: %s", repo, digest, get.Status)
+	}
+	raw, err := io.ReadAll(io.LimitReader(get.Body, maxDocument))
+	if err != nil {
+		return err
+	}
+	put, err := c.send(ctx, http.MethodPut, repo, "/manifests/"+tag, http.Header{"Content-Type": {get.Header.Get("Content-Type")}}, bytes.NewReader(raw), "pull", "push")
+	if err != nil {
+		return err
+	}
+	put.Body.Close()
+	if put.StatusCode != http.StatusCreated {
+		return fmt.Errorf("put tag %s:%s: %s", repo, tag, put.Status)
+	}
+	return nil
+}
+
 func (c Client) do(ctx context.Context, method, repo, path, accept, action string) (*http.Response, error) {
-	tok, err := c.Issuer.Token(hubSubject, []Access{{Type: "repository", Name: repo, Actions: []string{action}}}, TokenTTL)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.URL, "/")+"/v2/"+repo+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
+	h := http.Header{}
 	if accept != "" {
-		req.Header.Set("Accept", accept)
+		h.Set("Accept", accept)
 	}
+	return c.send(ctx, method, repo, path, h, nil, action)
+}
+
+func (c Client) send(ctx context.Context, method, repo, path string, h http.Header, body io.Reader, actions ...string) (*http.Response, error) {
+	tok, err := c.Issuer.Token(HubSubject, []Access{{Type: "repository", Name: repo, Actions: actions}}, TokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.URL, "/")+"/v2/"+repo+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = h
+	req.Header.Set("Authorization", "Bearer "+tok)
 	return httpClient.Do(req)
 }

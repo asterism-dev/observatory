@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -89,6 +90,9 @@ func TestPushEventCreatesVersionAndLatest(t *testing.T) {
 	if e.pushError(img) != "" {
 		t.Fatal("push error not cleared")
 	}
+	if fm.tag(repo, "latest") != digestN(1) || fm.tag(repo, "v1") != digestN(1) {
+		t.Fatalf("registry tags %v", fm.tags)
+	}
 
 	// Redelivery is harmless and a second push moves latest.
 	for range 2 {
@@ -126,6 +130,37 @@ func TestPushEventCreatesVersionAndLatest(t *testing.T) {
 	}
 	if len(fm.deleted) != 0 {
 		t.Fatalf("deleted %v", fm.deleted)
+	}
+	if fm.tag(repo, "latest") != digestN(2) {
+		t.Fatalf("registry latest %s, want %s", fm.tag(repo, "latest"), digestN(2))
+	}
+}
+
+func TestPushEventIgnoresHubTagMirror(t *testing.T) {
+	e := newEnv(t)
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	fm := &fakeManifests{manifests: map[string]registry.Manifest{digestN(1): amd64Manifest()}}
+	if code := pushEvent(t, e.eventsHandler(fm), eventsSecret, "i/"+img.String(), digestN(1), "v1", registry.HubSubject); code != 200 {
+		t.Fatalf("push: %d", code)
+	}
+	if _, err := e.store.ImageVersion(context.Background(), img, digestN(1)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("hub push became a version: %v", err)
+	}
+}
+
+func TestPushEventKeepsVersionWhenMirrorFails(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	fm := &fakeManifests{manifests: map[string]registry.Manifest{digestN(1): amd64Manifest()}, putErr: errors.New("registry down")}
+	if code := pushEvent(t, e.eventsHandler(fm), eventsSecret, "i/"+img.String(), digestN(1), "v1", "user:"+alice.ID.String()); code != 200 {
+		t.Fatalf("push: %d", code)
+	}
+	if tags, _ := e.store.ImageTags(context.Background(), img); tags["latest"] != digestN(1) {
+		t.Fatalf("tags %v", tags)
 	}
 }
 
