@@ -670,6 +670,25 @@ func TestAgentPullsUserImage(t *testing.T) {
 	}
 }
 
+func TestAgentGoneUserImage(t *testing.T) {
+	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
+	digest := "sha256:" + strings.Repeat("b", 64)
+	vm := env.hub.createWith("dev", func(v *hubVM) { v.Spec.Image = &proto.ImageRef{Digest: digest, Gone: true} })
+	eventually(t, "gone error", func() bool {
+		v, _ := env.hub.vm(vm.ID)
+		return v.State == proto.StateError && v.Error == "image no longer available"
+	})
+	pulled := slices.ContainsFunc(env.provider.gotEvents(), func(e string) bool { return strings.HasPrefix(e, "pull:") })
+	if pulled || len(env.provider.gotPrepared()) != 0 {
+		t.Fatalf("events = %v", env.provider.gotEvents())
+	}
+	env.hub.mu.Lock()
+	env.hub.vmsByID[vm.ID].Spec.Image = &proto.ImageRef{Repo: "hub.example/i/img1", Digest: digest, PullToken: "t1"}
+	env.hub.mu.Unlock()
+	env.hub.push()
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+}
+
 func TestPullTokenNotPersisted(t *testing.T) {
 	env, _ := startImageEnv(t, proto.ImageStatus{Version: testImage, State: proto.ImageReady})
 	vm := env.hub.createWith("dev", func(v *hubVM) {

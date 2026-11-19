@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,11 +37,12 @@ type Fleet struct {
 	stop    context.CancelFunc
 	updates sync.WaitGroup
 
-	mu       sync.Mutex
-	conns    map[uuid.UUID]*conn
-	diskErrs map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
-	metrics  map[uuid.UUID][]MetricSample
-	retrying map[uuid.UUID]bool // orgs with a pending integrationRetry push
+	mu           sync.Mutex
+	conns        map[uuid.UUID]*conn
+	diskErrs     map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
+	metrics      map[uuid.UUID][]MetricSample
+	retrying     map[uuid.UUID]bool       // orgs with a pending integrationRetry push
+	imageRetries map[uuid.UUID]imageRetry // by node
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
@@ -56,7 +58,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{},
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
@@ -143,6 +145,41 @@ func (f *Fleet) retryIntegrations(org uuid.UUID) {
 		f.mu.Unlock()
 		f.NotifyOrg(org)
 	})
+}
+
+type imageRetry struct {
+	delay   time.Duration
+	pending bool
+}
+
+// retryImages pushes to node again with backoff while it has VMs whose image is not prepared yet; a list without any resets the backoff.
+func (f *Fleet) retryImages(node uuid.UUID, waiting bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.imageRetries[node]
+	switch {
+	case !waiting && !r.pending:
+		delete(f.imageRetries, node)
+		return
+	case !waiting:
+		r.delay = 0
+	case r.pending:
+		return
+	default:
+		r.delay = min(max(r.delay*2, imageRetryMin), imageRetryMax)
+		r.pending = true
+		time.AfterFunc(r.delay, func() {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			r := f.imageRetries[node]
+			r.pending = false
+			f.imageRetries[node] = r
+			if c := f.conns[node]; c != nil {
+				c.kick()
+			}
+		})
+	}
+	f.imageRetries[node] = r
 }
 
 func (f *Fleet) Disconnect(node uuid.UUID) {
@@ -248,6 +285,8 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		rank[n.ID] = i
 	}
 	out := make([]proto.DesiredVM, 0, len(vms))
+	waiting := false
+	defer func() { f.retryImages(node, waiting) }()
 	for _, v := range vms {
 		plan := plans[v.ID]
 		if plan.Hold {
@@ -277,6 +316,7 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 		if err != nil {
 			return nil, nil, err
 		}
+		waiting = waiting || img != nil
 		out = append(out, proto.DesiredVM{
 			Spec:  proto.VMSpec{ID: v.ID.String(), Name: v.Name, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, NICs: nics, Attachments: atts[v.ID], Image: img},
 			Power: v.Power, StopMode: v.StopMode, Generation: v.Generation, Provisioned: v.Provisioned, Boot: boot,
@@ -288,26 +328,25 @@ func (f *Fleet) desired(ctx context.Context, org, node uuid.UUID) ([]proto.Desir
 	return out, releasing, nil
 }
 
-// desiredImage is nil for the platform image; one the hub cannot locate goes without repo, so the node fails instead of booting the platform image.
+// desiredImage is set until the node reports the VM's own image (Provisioned flips before the pull): with a fresh pull token, or Gone if the hub cannot locate it.
 func (f *Fleet) desiredImage(ctx context.Context, v store.VM) (*proto.ImageRef, error) {
-	if v.ImageDigest == "" || v.ImageRef == platformImageRef {
+	if v.ImageDigest == "" || v.ImageRef == platformImageRef || v.Provisioned && strings.HasSuffix(v.Image, "@"+v.ImageDigest) {
 		return nil, nil
 	}
-	ref := &proto.ImageRef{Digest: v.ImageDigest}
+	gone := &proto.ImageRef{Digest: v.ImageDigest, Gone: true}
 	if f.issuer == nil {
 		slog.Error("vm image without a registry", "vm", v.ID)
-		return ref, nil
+		return gone, nil
 	}
 	id, err := f.store.ImageWithVersion(ctx, v.OrgID, v.ImageDigest)
 	if errors.Is(err, store.ErrNotFound) {
-		slog.Error("vm image not found", "vm", v.ID, "digest", v.ImageDigest)
-		return ref, nil
+		return gone, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	repo := "i/" + id.String()
-	ref.Repo = f.registryHost + "/" + repo
+	ref := &proto.ImageRef{Repo: f.registryHost + "/" + repo, Digest: v.ImageDigest}
 	if ref.PullToken, err = f.issuer.NodePullToken(v.OrgID, []string{repo}); err != nil {
 		slog.Error("node pull token", "vm", v.ID, "err", err)
 	}

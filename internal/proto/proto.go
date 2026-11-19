@@ -41,6 +41,7 @@ type ImageRef struct {
 	Repo      string `json:"repo"` // <registry host>/i/<image id>
 	Digest    string `json:"digest"`
 	PullToken string `json:"pullToken,omitempty"` // node memory only, like Boot
+	Gone      bool   `json:"gone,omitempty"`      // the hub no longer has the image
 }
 
 type Boot struct {

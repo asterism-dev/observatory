@@ -79,9 +79,11 @@ func (p *Provider) pull(ctx context.Context, ref string, auth authn.Authenticato
 	return pinned(ref, pulled.Digest), pulled.Config, nil
 }
 
-// prune keeps inFlight, which a VM is about to be prepared from, besides keptImages.
+// prune keeps inFlight, which a VM is about to be prepared from, besides keptImages; it skips while pulls run, which a waiting writer would stall.
 func (p *Provider) prune(inFlight ...string) {
-	p.storeMu.Lock()
+	if !p.storeMu.TryLock() {
+		return
+	}
 	defer p.storeMu.Unlock()
 	keep, err := p.keptImages()
 	if err == nil {

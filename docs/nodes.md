@@ -102,7 +102,9 @@ the hub together with the node binary, so they always match the node.
   the node keeps the 10 most recently used, fewer while less than 20% of its images filesystem is free.
 - **Own images:** a VM created from an image of the org pulls it by digest through the hub's registry proxy
   (`<hub host>/i/<image id>`), with a 15-minute pull token the hub sends with the VM and the node keeps only in
-  memory. A failed pull shows `image pull failed: …` on the VM and is retried when the hub next sends the VM.
+  memory. A failed pull shows `image pull failed: …` on the VM; the hub sends the VM again with a fresh token after
+  30 s, doubling up to 5 minutes, until the node reports the image. An image deleted meanwhile shows
+  `image no longer available`.
 - **VMs:** each VM's root disk is a clone of that file (reflink where the filesystem has it, e.g. XFS or Btrfs;
   otherwise a copy of the used blocks) grown to the VM's size, so a VM cannot be smaller than the image. Existing VMs
   keep their disk and the tools they were created with. Templates are keyed by the image digest.

@@ -1792,15 +1792,20 @@ func TestDesiredVMImage(t *testing.T) {
 	e.vm(e.org.ID, n.ID, "plain", &e.owner, nil)
 	gone := e.vm(e.org.ID, n.ID, "gone", &e.owner, nil)
 	setImage(gone, "org/gone", unknown)
+	prepared := e.vm(e.org.ID, n.ID, "prepared", &e.owner, nil)
+	setImage(prepared, "org/tools", digest)
+	if err := e.s.SetVMStatus(ctx, n.ID, proto.VMStatus{ID: prepared.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + digest}); err != nil {
+		t.Fatal(err)
+	}
 
 	got := map[string]*proto.ImageRef{}
 	for _, d := range e.connect(cred).desired().Desired {
 		got[d.Spec.Name] = d.Spec.Image
 	}
-	if got["platform"] != nil || got["plain"] != nil {
-		t.Fatalf("platform image sent: %+v %+v", got["platform"], got["plain"])
+	if got["platform"] != nil || got["plain"] != nil || got["prepared"] != nil {
+		t.Fatalf("image sent: platform %+v, plain %+v, prepared %+v", got["platform"], got["plain"], got["prepared"])
 	}
-	if g := got["gone"]; g == nil || g.Repo != "" || g.PullToken != "" || g.Digest != unknown {
+	if g := got["gone"]; g == nil || !g.Gone || g.Repo != "" || g.PullToken != "" || g.Digest != unknown {
 		t.Fatalf("gone image = %+v", g)
 	}
 	u := got["user"]
@@ -1813,5 +1818,54 @@ func TestDesiredVMImage(t *testing.T) {
 	}
 	if c.Subject != "node-org:"+e.org.ID.String() || len(c.Access) != 1 || c.Access[0].Name != "i/"+img.ID.String() || !slices.Equal(c.Access[0].Actions, []string{"pull"}) {
 		t.Fatalf("claims = %+v", c)
+	}
+}
+
+func TestImagePullRetried(t *testing.T) {
+	ctx := context.Background()
+	old := *fleet.ImageRetryMin
+	*fleet.ImageRetryMin = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.ImageRetryMin = old })
+	e := newEnv(t)
+	iss, err := registry.LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.f.PullImagesFrom("hub.test", iss)
+	img, err := e.s.CreateImage(ctx, store.Image{OrgID: e.org.ID, Scope: store.EnvScopeOrg, Name: "tools", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: digest, Source: store.VersionFromPush, CreatedBy: &e.owner}); err != nil {
+		t.Fatal(err)
+	}
+	n, cred := e.node(e.org.ID, "a")
+	v := e.vm(e.org.ID, n.ID, "user", &e.owner, nil)
+	if _, err := e.pool.Exec(ctx, "UPDATE vms SET image_ref = 'org/tools', image_digest = $2 WHERE id = $1", v.ID, digest); err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	token := func(m proto.Message) string {
+		t.Helper()
+		if len(m.Desired) != 1 || m.Desired[0].Spec.Image == nil {
+			t.Fatalf("desired = %+v", m.Desired)
+		}
+		return m.Desired[0].Spec.Image.PullToken
+	}
+	first := token(node.desired())
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateError, Error: "image pull failed: UNAUTHORIZED"}})
+	// Nothing changed on the hub: only the retry pushes again, with a new token.
+	if second := token(node.desired()); second == "" || second == first {
+		t.Fatalf("retry token %q after %q", second, first)
+	}
+	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning, Image: "hub.test/i/x@" + digest}})
+	// Retries go on until a list finds the image prepared; then the pushes stop.
+	for m := node.desired(); m.Desired[0].Spec.Image != nil; m = node.desired() {
+	}
+	select {
+	case m := <-node.msgs:
+		t.Fatalf("push after the image was prepared: %+v", m)
+	case <-time.After(400 * time.Millisecond):
 	}
 }

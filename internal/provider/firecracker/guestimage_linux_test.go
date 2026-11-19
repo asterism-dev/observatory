@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -190,5 +191,32 @@ func TestPruneKeepsReferenced(t *testing.T) {
 	slices.Sort(got)
 	if want := []string{digest("a"), digest("b"), digest("c"), digest("e")}; !slices.Equal(got, want) {
 		t.Fatalf("kept %v, want %v", got, want)
+	}
+}
+
+func TestPruneSkipsWhilePulling(t *testing.T) {
+	p := &Provider{VMsDir: t.TempDir(), store: ociimage.Store{Dir: t.TempDir()}}
+	orphan := filepath.Join(p.store.Dir, "blobs", "sha256", strings.Repeat("a", 64))
+	if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orphan, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.storeMu.RLock()
+	done := make(chan struct{})
+	go func() { p.prune(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("prune waited for the pull")
+	}
+	p.storeMu.RUnlock()
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatalf("pruned while pulling: %v", err)
+	}
+	p.prune()
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan left after prune: %v", err)
 	}
 }

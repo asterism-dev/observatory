@@ -535,7 +535,7 @@ func (a *Agent) waitImage(ctx context.Context, e *vmEntry) (proto.ImageStatus, e
 	}
 }
 
-// pullImage pulls the VM's own image; after a failure it retries when the next desired brings a fresh token.
+// pullImage pulls the VM's own image; after a failure it retries when the next desired (the hub retries with backoff) brings a fresh token.
 func (a *Agent) pullImage(ctx context.Context, e *vmEntry, gi GuestImages) (string, proto.ImageConfig, error) {
 	var shown string
 	for {
@@ -545,14 +545,18 @@ func (a *Agent) pullImage(ctx context.Context, e *vmEntry, gi GuestImages) (stri
 		if newer {
 			return "", proto.ImageConfig{}, errNewerDesired
 		}
-		ref, cfg, err := gi.PullImage(ctx, img)
-		if err == nil {
-			return ref, cfg, nil
+		msg := "image no longer available"
+		if !img.Gone {
+			ref, cfg, err := gi.PullImage(ctx, img)
+			if err == nil {
+				return ref, cfg, nil
+			}
+			if ctx.Err() != nil {
+				return "", proto.ImageConfig{}, ctx.Err()
+			}
+			msg = fmt.Sprintf("image pull failed: %v", err)
 		}
-		if ctx.Err() != nil {
-			return "", proto.ImageConfig{}, ctx.Err()
-		}
-		if msg := fmt.Sprintf("image pull failed: %v", err); msg != shown {
+		if msg != shown {
 			a.reportEntry(e, proto.VMStatus{ID: id, State: proto.StateError, Error: msg})
 			shown = msg
 		}
