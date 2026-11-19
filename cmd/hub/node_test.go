@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -51,5 +52,22 @@ func TestInstallTokenStdinRefusesPipedScript(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "--token-stdin needs the script as a file") {
 		t.Fatalf("err = %v, out = %s", err, out)
+	}
+}
+
+func TestFirecrackerVersion(t *testing.T) {
+	script, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := regexp.MustCompile(`FIRECRACKER_VERSION=(v[0-9.]+)\n`).FindSubmatch(script)
+	if want == nil {
+		t.Fatal("install.sh has no FIRECRACKER_VERSION")
+	}
+	if got := firecrackerVersion(string(installScript)); got != string(want[1]) {
+		t.Fatalf("got %q, want %q", got, want[1])
+	}
+	if got := firecrackerVersion("echo hi"); got != "" {
+		t.Fatalf("no version: got %q", got)
 	}
 }

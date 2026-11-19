@@ -6,6 +6,7 @@ FIRECRACKER_VERSION=v1.18.0
 
 usage() {
 	echo "usage: install.sh --hub http://HOST[:PORT] --token TOKEN|--token-stdin [--memory-mb N]" >&2
+	echo "       install.sh --hub http://HOST[:PORT] --update" >&2
 	exit 2
 }
 die() {
@@ -14,7 +15,7 @@ die() {
 }
 say() { echo "==> $*"; }
 
-HUB='' TOKEN='' MEMORY_MB=''
+HUB='' TOKEN='' MEMORY_MB='' UPDATE=''
 while [ $# -gt 0 ]; do
 	case $1 in
 	--hub | --token | --memory-mb)
@@ -32,6 +33,10 @@ while [ $# -gt 0 ]; do
 		IFS= read -r TOKEN || true
 		shift
 		;;
+	--update)
+		UPDATE=1
+		shift
+		;;
 	*) usage ;;
 	esac
 done
@@ -39,7 +44,12 @@ case $MEMORY_MB in
 *[!0-9]*) die "--memory-mb must be a number, got '$MEMORY_MB'" ;;
 esac
 [ -n "$HUB" ] || usage
-[ -n "$TOKEN" ] || usage
+if [ -n "$UPDATE" ]; then
+	[ -z "$TOKEN$MEMORY_MB" ] || usage
+	[ -f /etc/observatory-node/node.json ] || die "--update needs an enrolled node (/etc/observatory-node/node.json missing)"
+else
+	[ -n "$TOKEN" ] || usage
+fi
 case $HUB in
 http://?* | https://?*) ;;
 *) die "--hub must be http(s)://HOST[:PORT], got '$HUB'" ;;
@@ -51,7 +61,10 @@ SUDO=''
 [ -c /dev/kvm ] || die "/dev/kvm is missing: nodes need KVM (enable virtualization or nested virtualization)"
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+# Set while the shutdown marker must not outlive a failed run: the next unrelated restart would shut VMs down.
+marker=''
+trap 'rm -rf "$TMP"; [ -z "$marker" ] || $SUDO rm -f "$marker"' EXIT
+trap 'exit 1' HUP INT TERM
 dl() { curl -fsSL --connect-timeout 10 --max-time 600 "$@"; }
 sha256_check() { sha256sum -c "$@"; }
 
@@ -65,7 +78,13 @@ say "installing packages"
 $SUDO apt-get update -qq
 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openvswitch-switch ovn-host wireguard-tools qemu-utils nftables >/dev/null
 
-if [ "$(firecracker --version 2>/dev/null | head -1)" != "Firecracker $FIRECRACKER_VERSION" ] ||
+fc_installed=$(firecracker --version 2>/dev/null | head -1)
+# Memory states of another Firecracker version cannot be loaded, so the restart shuts VMs down instead of hibernating.
+if [ -n "$UPDATE" ] && [ "$fc_installed" != "Firecracker $FIRECRACKER_VERSION" ]; then
+	marker=/etc/observatory-node/shutdown-vms
+	$SUDO touch "$marker"
+fi
+if [ "$fc_installed" != "Firecracker $FIRECRACKER_VERSION" ] ||
 	[ "$(jailer --version 2>/dev/null | head -1)" != "Jailer $FIRECRACKER_VERSION" ]; then
 	say "installing Firecracker $FIRECRACKER_VERSION"
 	fc=firecracker-$FIRECRACKER_VERSION-x86_64.tgz
@@ -117,11 +136,13 @@ $SUDO nft -f /etc/nftables.d/observatory-node.nft
 $SUDO systemctl enable --now openvswitch-switch ovn-controller >/dev/null 2>&1
 
 chmod +x "$TMP/observatory-node"
-say "enrolling the node"
-set -- -config /etc/observatory-node/node.json -hub "$HUB" -token-stdin
-[ -z "$MEMORY_MB" ] || set -- "$@" -memory-mb "$MEMORY_MB"
-# The token goes in on stdin: sudo logs command lines.
-printf '%s\n' "$TOKEN" | $SUDO "$TMP/observatory-node" enroll "$@"
+if [ -z "$UPDATE" ]; then
+	say "enrolling the node"
+	set -- -config /etc/observatory-node/node.json -hub "$HUB" -token-stdin
+	[ -z "$MEMORY_MB" ] || set -- "$@" -memory-mb "$MEMORY_MB"
+	# The token goes in on stdin: sudo logs command lines.
+	printf '%s\n' "$TOKEN" | $SUDO "$TMP/observatory-node" enroll "$@"
+fi
 $SUDO install -m 0755 "$TMP/observatory-node" /usr/local/bin/observatory-node
 
 $SUDO tee /etc/systemd/system/observatory-node.service >/dev/null <<'UNIT'
@@ -148,6 +169,8 @@ UNIT
 cursor=$($SUDO journalctl -u observatory-node -n 0 --show-cursor 2>/dev/null | sed -n 's/^-- cursor: //p')
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable observatory-node >/dev/null 2>&1
+# The stopping node reads the marker and the new one deletes it.
+marker=''
 $SUDO systemctl restart observatory-node
 
 node_journal() {
