@@ -213,7 +213,7 @@ watch(() => props.image.id, load, { immediate: true })
             />
             <p v-else class="muted">
               {{ current.upload ? t('images.uploadPending', { name: current.upload.name }) : t('images.binary') }}
-              <a v-if="!current.upload" :href="`${base}/recipe/files/${current.path}`" :download="current.path.split('/').at(-1)">{{ t('images.download') }}</a>
+              <a v-if="!current.upload" :href="`${base}/recipe/files/${current.path.split('/').map(encodeURIComponent).join('/')}`" :download="current.path.split('/').at(-1)">{{ t('images.download') }}</a>
             </p>
           </template>
           <p v-else class="muted">{{ t('images.pickFile') }}</p>
