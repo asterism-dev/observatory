@@ -32,6 +32,9 @@ type Manifest struct {
 
 var ErrNotFound = errors.New("not found in the registry")
 
+// ErrInvalid marks a manifest or config that can never be read, unlike a registry or network failure.
+var ErrInvalid = errors.New("invalid manifest or config")
+
 const (
 	// HubSubject is the registry actor of the hub's own requests, such as tag updates.
 	HubSubject    = "hub"
@@ -140,7 +143,17 @@ func (c Client) getJSON(ctx context.Context, repo, path, accept string, v any) e
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("get %s%s: %s", repo, path, resp.Status)
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, maxDocument)).Decode(v)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDocument+1))
+	if err != nil {
+		return err
+	}
+	if len(b) > maxDocument {
+		return fmt.Errorf("get %s%s: larger than %d bytes: %w", repo, path, maxDocument, ErrInvalid)
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		return fmt.Errorf("get %s%s: %v: %w", repo, path, err, ErrInvalid)
+	}
+	return nil
 }
 
 // PutTag points tag at the manifest digest, re-uploading the manifest under the tag unless the tag already resolves to digest.

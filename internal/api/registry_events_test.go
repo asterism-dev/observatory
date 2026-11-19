@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -326,5 +327,45 @@ func TestPushEventIndexCountsEveryChild(t *testing.T) {
 	}
 	if got := e.pushError(img); got != "image storage limit exceeded (1 GB)" || !slices.Equal(fm.deleted, []string{repo + "@" + digestN(2)}) {
 		t.Fatalf("push error %q, deleted %v", got, fm.deleted)
+	}
+}
+
+func TestPushEventUndecodableConfig(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	repo := "i/" + img.String()
+	fm := &fakeManifests{errs: map[string]error{
+		digestN(1): fmt.Errorf("get %s/blobs/sha256:c: invalid character 'x': %w", repo, registry.ErrInvalid),
+		digestN(2): errors.New("registry down"),
+	}}
+	h := e.eventsHandler(fm)
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(1), "v1", "user:"+alice.ID.String()); code != 200 {
+		t.Fatalf("push: %d", code)
+	}
+	if !slices.Equal(fm.deleted, []string{repo + "@" + digestN(1)}) {
+		t.Fatalf("deleted %v", fm.deleted)
+	}
+	if got := e.pushError(img); !strings.HasPrefix(got, "unreadable image: ") {
+		t.Fatalf("push error %q", got)
+	}
+	// A registry outage is retried by redelivery instead.
+	if code := pushEvent(t, h, eventsSecret, repo, digestN(2), "v2", "user:"+alice.ID.String()); code != 500 {
+		t.Fatalf("outage: %d", code)
+	}
+}
+
+func TestEventsUnreadableBatchAccepted(t *testing.T) {
+	e := newEnv(t)
+	h := e.eventsHandler(&fakeManifests{})
+	for _, body := range []string{"{not json", `{"events":[` + strings.Repeat(" ", maxEventsBody) + `]}`} {
+		req := httptest.NewRequest("POST", "/internal/registry/events", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+eventsSecret)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("code %d", rec.Code)
+		}
 	}
 }

@@ -2,8 +2,10 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -63,4 +65,34 @@ func ref(t *testing.T, s string) name.Reference {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestManifestInvalidDocuments(t *testing.T) {
+	big := `{"layers":[` + strings.Repeat(" ", maxDocument) + `]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/i/x/manifests/sha256:badcfg":
+			io.WriteString(w, `{"config":{"digest":"sha256:cfg"},"layers":[]}`)
+		case "/v2/i/x/blobs/sha256:cfg":
+			io.WriteString(w, "not json")
+		case "/v2/i/x/manifests/sha256:big":
+			io.WriteString(w, big)
+		default:
+			http.Error(w, "down", http.StatusServiceUnavailable)
+		}
+	}))
+	defer srv.Close()
+	iss, err := LoadIssuer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Client{URL: srv.URL, Issuer: iss}
+	for _, d := range []string{"sha256:badcfg", "sha256:big"} {
+		if _, err := c.Manifest(context.Background(), "i/x", d); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", d, err)
+		}
+	}
+	if _, err := c.Manifest(context.Background(), "i/x", "sha256:down"); err == nil || errors.Is(err, ErrInvalid) {
+		t.Errorf("outage: %v", err)
+	}
 }

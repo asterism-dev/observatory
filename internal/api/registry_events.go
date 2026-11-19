@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,7 +56,9 @@ func (h *registryEvents) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	var env struct{ Events []registryEvent }
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxEventsBody)).Decode(&env); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid events")
+		// The registry would redeliver a refused batch forever and hold back every later event.
+		slog.Error("registry events: dropped an unreadable batch", "err", err)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	for _, ev := range env.Events {
@@ -92,6 +95,8 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 	m, err := h.manifests.Manifest(ctx, repo, digest)
 	if errors.Is(err, registry.ErrNotFound) {
 		return nil
+	} else if errors.Is(err, registry.ErrInvalid) {
+		return h.reject(ctx, img, repo, digest, "unreadable image: "+err.Error())
 	} else if err != nil {
 		return err
 	}

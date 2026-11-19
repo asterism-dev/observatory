@@ -23,6 +23,7 @@ type fakeManifests struct {
 	mu        sync.Mutex
 	deleted   []string
 	manifests map[string]registry.Manifest
+	errs      map[string]error // Manifest fails for these digests
 	tags      map[string]string // repo:tag -> digest, as mirrored by PutTag
 	putErr    error
 	block     chan struct{} // PutTag waits for it when set
@@ -56,6 +57,9 @@ func (f *fakeManifests) tag(repo, tag string) string {
 }
 
 func (f *fakeManifests) Manifest(_ context.Context, repo, digest string) (registry.Manifest, error) {
+	if err := f.errs[digest]; err != nil {
+		return registry.Manifest{}, err
+	}
 	if m, ok := f.manifests[digest]; ok {
 		return m, nil
 	}
