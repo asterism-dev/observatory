@@ -42,6 +42,7 @@ type fakeHub struct {
 	cpus     int // CPUs of VMs from create; zero means 1
 	metrics  []proto.Message
 	images   []proto.ImageStatus
+	updates  []proto.UpdateReport
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -120,6 +121,11 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 		if m.Type == "image" && m.Image != nil {
 			h.mu.Lock()
 			h.images = append(h.images, *m.Image)
+			h.mu.Unlock()
+		}
+		if m.Type == "update" && m.Update != nil {
+			h.mu.Lock()
+			h.updates = append(h.updates, *m.Update)
 			h.mu.Unlock()
 		}
 		if m.Type == "status" && m.Status != nil {
@@ -238,4 +244,12 @@ func (h *fakeHub) gotImages() []proto.ImageStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.images)
+}
+
+func (h *fakeHub) sendUpdate() { h.send(proto.Message{Type: "update"}) }
+
+func (h *fakeHub) gotUpdates() []proto.UpdateReport {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.updates)
 }

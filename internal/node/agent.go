@@ -55,8 +55,12 @@ type Agent struct {
 	ChassisCSR                         string // OVN client cert request, sent in Register
 	OVNKeyFile                         string
 	Version                            string
+	Updater                            Updater
+	ShutdownMarker                     string
 	// Egress runs the per-VM egress proxies; nil runs none.
 	Egress EgressHost
+
+	updating atomic.Bool
 
 	diskRefresh  time.Duration // zero means defaultDiskRefresh
 	metricsEvery time.Duration // zero means the package default
@@ -117,6 +121,9 @@ type vmEntry struct {
 func (a *Agent) Run(ctx context.Context) error {
 	a.vms = map[string]*vmEntry{}
 	a.imageChanged = make(chan struct{})
+	if err := os.Remove(a.ShutdownMarker); a.ShutdownMarker != "" && err != nil && !os.IsNotExist(err) {
+		log.Printf("shutdown marker: %v", err)
+	}
 	if ts, ok := a.Provider.(TokenServer); ok {
 		ts.SetTokenLookup(a.integrationToken)
 	}
@@ -214,6 +221,17 @@ func (a *Agent) connect(ctx context.Context) error {
 			a.reconcile(ctx, m.Seq, m.Desired)
 		case m.Type == "underlay" && m.Underlay != nil:
 			go a.startChassis(ctx, *m.Underlay)
+		case m.Type == "update":
+			// The installer touches networking, so a failure may only be reportable on a later connection.
+			go a.runUpdate(ctx, func(m proto.Message) error {
+				a.mu.Lock()
+				send := a.send
+				a.mu.Unlock()
+				if send == nil {
+					return errors.New("not connected")
+				}
+				return send(m)
+			})
 		}
 	}
 }
@@ -962,7 +980,12 @@ func (a *Agent) stopAll() {
 	}
 	a.mu.Unlock()
 	a.releaseSnapshots()
-	fits := a.hibernateFits(entries)
+	var fits map[*vmEntry]bool
+	if _, err := os.Stat(a.ShutdownMarker); err == nil {
+		log.Printf("%s present: stopping VMs instead of hibernating", a.ShutdownMarker)
+	} else {
+		fits = a.hibernateFits(entries)
+	}
 	var expired atomic.Bool
 	kill := func(id string, e *vmEntry, inst Instance) {
 		e.stopRequested.Store(true)
