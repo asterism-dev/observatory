@@ -80,9 +80,10 @@ function onStarted(runId: string) {
 }
 
 async function cancelRun() {
+  if (!org.value) return
   cancelling.value = true
   try {
-    await api(`/api/orgs/${org.value?.id}/node-updates/current/cancel`, { method: 'POST' })
+    await api(`/api/orgs/${org.value.id}/node-updates/current/cancel`, { method: 'POST' })
     await reload()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -90,6 +91,8 @@ async function cancelRun() {
     cancelling.value = false
   }
 }
+
+watch(runActive, (active) => active && (selected.value = []))
 
 const timer = window.setInterval(() => document.visibilityState === 'visible' && reload(), 5000)
 onBeforeUnmount(() => window.clearInterval(timer))

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
 import { HardDrive } from '@lucide/vue'
-import { computed, ref, watch, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -106,6 +106,9 @@ const remove = () =>
     }
     router.replace(`/orgs/${org.value?.id}/nodes`)
   })
+
+const timer = window.setInterval(() => node.value?.updating && document.visibilityState === 'visible' && load(), 5000)
+onBeforeUnmount(() => window.clearInterval(timer))
 
 watch(
   () => [org.value?.id, nodeId.value],
