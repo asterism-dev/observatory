@@ -31,6 +31,13 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil || cfg.Listen != ":8090" || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
 		t.Fatalf("%+v, %v", cfg, err)
 	}
+	if cfg.DocsURL != "https://asterism-dev.github.io/observatory/" {
+		t.Fatalf("docs url default: %q", cfg.DocsURL)
+	}
+	env["OBSERVATORY_DOCS_URL"] = "https://docs.example/"
+	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.DocsURL != "https://docs.example/" {
+		t.Fatalf("docs url override: %+v", cfg)
+	}
 	env["OBSERVATORY_NODE_BINARY"] = "/x"
 	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.NodeBinary != "/x" {
 		t.Fatalf("node binary override: %+v", cfg)

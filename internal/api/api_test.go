@@ -58,7 +58,7 @@ func newEnv(t *testing.T) *env {
 	}
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo := &fakeVerifier{}, &fakeOAuth{}
-	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo})
+	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo}, "https://docs.test/")
 	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler, verifier: fv, oauth: fo}
 }
 
@@ -135,8 +135,12 @@ func TestMe(t *testing.T) {
 			ID, Name, Role string
 			Personal       bool
 		}
+		DocsURL string
 	}
 	decode(t, rec, &got)
+	if got.DocsURL != "https://docs.test/" {
+		t.Fatalf("docsURL: %q", got.DocsURL)
+	}
 	if got.User.ID != u.ID.String() || got.User.Email != "alice@x.io" || !got.User.PlatformAdmin {
 		t.Fatalf("user: %+v", got.User)
 	}
@@ -277,7 +281,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}))
+	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, ""))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

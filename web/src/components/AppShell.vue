@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { List, ListItem } from '@asterism-dev/lumen'
-import { Box, HardDrive, KeyRound, Laptop, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
+import { BookOpen, Box, HardDrive, KeyRound, Laptop, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -85,6 +85,9 @@ const activePath = computed(() => navItems.value.find((i) => route.path === i.pa
       <UserMenu @switch="switchOrg" @create="creating = true" />
     </aside>
     <main class="content">
+      <header v-if="me?.docsURL" class="topbar">
+        <a :href="me.docsURL" target="_blank" rel="noopener" class="docs"><BookOpen :size="16" :stroke-width="1.75" />{{ t('nav.docs') }}</a>
+      </header>
       <p v-if="orgError" role="alert">{{ orgError }}</p>
       <slot />
     </main>
@@ -117,6 +120,21 @@ const activePath = computed(() => navItems.value.find((i) => route.path === i.pa
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.docs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  text-decoration: none;
+}
+.docs:hover {
+  color: var(--accent);
 }
 .content {
   flex: 1;

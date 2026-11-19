@@ -38,6 +38,7 @@ web:
 
 test:
 	OBSERVATORY_TEST_DATABASE_URL=$${OBSERVATORY_TEST_DATABASE_URL:-postgres://observatory:observatory@localhost:55432/observatory?sslmode=disable} go test ./...
+	node --test web/src/composables/*.test.ts
 
 run:
 	set -a; . deploy/dev/hub.env; set +a; go run ./cmd/hub
