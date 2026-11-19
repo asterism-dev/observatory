@@ -181,9 +181,6 @@
     "personal": "Persönlich",
     "platformAdmin": "Plattform-Admin"
   },
-  "placeholder": {
-    "empty": "Hier gibt es noch nichts."
-  },
   "env": {
     "subtitle": "Variablen und Secrets, die in deine VMs injiziert werden.",
     "add": "Hinzufügen",
@@ -533,5 +530,31 @@
     "delete": "Löschen",
     "deleteTitle": "Snapshot löschen",
     "deleteBody": "Snapshot {name} löschen?"
+  },
+  "dashboard": {
+    "guide": {
+      "title": "Erste Schritte",
+      "hide": "Ausblenden"
+    },
+    "step": {
+      "node": "Node hinzufügen",
+      "nodeAsk": "Bitte einen Admin, eine Node hinzuzufügen",
+      "sshKey": "SSH-Key hinzufügen",
+      "device": "Gerät verbinden",
+      "vm": "VM starten",
+      "ssh": "Per SSH verbinden",
+      "sshHint": "Erst eine VM starten und ein Gerät verbinden"
+    },
+    "tile": {
+      "running": "laufen",
+      "stopped": "gestoppt",
+      "other": "sonstige",
+      "online": "online",
+      "offline": "offline",
+      "attached": "angehängt",
+      "connected": "verbunden",
+      "total": "gesamt"
+    },
+    "loadFailed": "Konnte nicht geladen werden"
   }
 }

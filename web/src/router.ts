@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
+import DashboardView from '@/views/DashboardView.vue'
 import DisksView from '@/views/DisksView.vue'
 import DevicesView from '@/views/DevicesView.vue'
 import NetworksView from '@/views/NetworksView.vue'
@@ -25,7 +26,6 @@ import TeamsView from '@/views/org/TeamsView.vue'
 import MembersView from '@/views/org/MembersView.vue'
 import OrgSettingsLayout from '@/views/org/OrgSettingsLayout.vue'
 import OrgSettingsView from '@/views/org/OrgSettingsView.vue'
-import PlaceholderView from '@/views/PlaceholderView.vue'
 import ProfileView from '@/views/ProfileView.vue'
 import VMDetailView from '@/views/VMDetailView.vue'
 import VMsView from '@/views/VMsView.vue'
@@ -42,7 +42,7 @@ export const router = createRouter({
     { path: '/', component: ProfileView },
     { path: '/login', component: LoginView, meta: { public: true } },
     { path: '/profile', component: ProfileView },
-    { path: '/orgs/:orgId/dashboard', component: PlaceholderView, meta: { title: 'nav.dashboard' } },
+    { path: '/orgs/:orgId/dashboard', component: DashboardView, meta: { title: 'nav.dashboard' } },
     { path: '/orgs/:orgId/nodes', component: NodesView, meta: { title: 'nav.nodes' } },
     { path: '/orgs/:orgId/nodes/:nodeId', component: NodeDetailView },
     { path: '/orgs/:orgId/vms', component: VMsView, meta: { title: 'nav.vms' } },

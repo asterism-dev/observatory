@@ -181,9 +181,6 @@
     "personal": "Personal",
     "platformAdmin": "Platform admin"
   },
-  "placeholder": {
-    "empty": "Nothing here yet."
-  },
   "env": {
     "subtitle": "Variables and secrets injected into your VMs.",
     "add": "Add",
@@ -533,5 +530,31 @@
     "delete": "Delete",
     "deleteTitle": "Delete snapshot",
     "deleteBody": "Delete snapshot {name}?"
+  },
+  "dashboard": {
+    "guide": {
+      "title": "Get started",
+      "hide": "Hide"
+    },
+    "step": {
+      "node": "Add a node",
+      "nodeAsk": "Ask an admin to add a node",
+      "sshKey": "Add your SSH key",
+      "device": "Connect a device",
+      "vm": "Start a VM",
+      "ssh": "Connect over SSH",
+      "sshHint": "Start a VM and connect a device first"
+    },
+    "tile": {
+      "running": "running",
+      "stopped": "stopped",
+      "other": "other",
+      "online": "online",
+      "offline": "offline",
+      "attached": "attached",
+      "connected": "connected",
+      "total": "total"
+    },
+    "loadFailed": "Could not load"
   }
 }
