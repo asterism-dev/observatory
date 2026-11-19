@@ -263,7 +263,7 @@ func TestNodeJSONHypervisor(t *testing.T) {
 		t.Fatal("hypervisor before report")
 	}
 	node, _ := uuid.Parse(id)
-	if err := e.store.SetNodeHypervisor(context.Background(), node, &proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}); err != nil {
+	if err := e.store.UpdateNodeInfo(context.Background(), node, 2, 2048, nil, "", &proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}); err != nil {
 		t.Fatal(err)
 	}
 	if h := read().Hypervisor; h == nil || h.Version != "v1.18.0" {
@@ -281,7 +281,7 @@ func TestNodeJSONOutdated(t *testing.T) {
 	id := e.enrolledNode(tok, org, "n1")
 	node, _ := uuid.Parse(id)
 	for v, want := range map[string]bool{"v0.2.0": true, "v0.3.0": false, "": false, "dev": false} {
-		if err := e.store.UpdateNodeInfo(context.Background(), node, 2, 2048, nil, v); err != nil {
+		if err := e.store.UpdateNodeInfo(context.Background(), node, 2, 2048, nil, v, nil); err != nil {
 			t.Fatal(err)
 		}
 		var n struct{ Outdated bool }

@@ -179,10 +179,7 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 			return err
 		}
 	}
-	if err := f.store.UpdateNodeInfo(ctx, node, reg.CPUs, reg.MemoryMB, machine, reg.Version); err != nil {
-		return err
-	}
-	if err := f.store.SetNodeHypervisor(ctx, node, reg.Hypervisor); err != nil {
+	if err := f.store.UpdateNodeInfo(ctx, node, reg.CPUs, reg.MemoryMB, machine, reg.Version, reg.Hypervisor); err != nil {
 		return err
 	}
 	if reg.Image != nil {

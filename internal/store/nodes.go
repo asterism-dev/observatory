@@ -147,10 +147,11 @@ func (s *Store) RegenerateNodeCredential(ctx context.Context, org, id uuid.UUID)
 	return token, nil
 }
 
-func (s *Store) UpdateNodeInfo(ctx context.Context, id uuid.UUID, cpus, memoryMB int, machine json.RawMessage, version string) error {
+// UpdateNodeInfo stores what the node registered with; a nil hypervisor clears it.
+func (s *Store) UpdateNodeInfo(ctx context.Context, id uuid.UUID, cpus, memoryMB int, machine json.RawMessage, version string, hv *proto.Hypervisor) error {
 	tag, err := s.q.Exec(ctx, `
-		UPDATE nodes SET cpus = $2, memory_mb = $3, machine = $4, version = $5, last_seen = now() WHERE id = $1`,
-		id, cpus, memoryMB, machine, version)
+		UPDATE nodes SET cpus = $2, memory_mb = $3, machine = $4, version = $5, hypervisor = $6, last_seen = now() WHERE id = $1`,
+		id, cpus, memoryMB, machine, version, hv)
 	if err != nil {
 		return err
 	}
@@ -195,18 +196,6 @@ func (s *Store) QuarantineNodes(ctx context.Context, ids []uuid.UUID) ([]uuid.UU
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-}
-
-// SetNodeHypervisor stores what the node reported; nil clears it.
-func (s *Store) SetNodeHypervisor(ctx context.Context, id uuid.UUID, h *proto.Hypervisor) error {
-	tag, err := s.q.Exec(ctx, "UPDATE nodes SET hypervisor = $2 WHERE id = $1", id, h)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 func (s *Store) SetNodeImage(ctx context.Context, id uuid.UUID, img proto.ImageStatus) error {

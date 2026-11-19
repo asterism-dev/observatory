@@ -68,10 +68,11 @@ func TestNodeLifecycle(t *testing.T) {
 		t.Fatalf("cross-org regenerate: %v", err)
 	}
 
-	if err := s.UpdateNodeInfo(ctx, n.ID, 8, 16384, []byte(`{"arch":"amd64"}`), "v1"); err != nil {
+	hv := &proto.Hypervisor{Type: "firecracker", Version: "v1.18.0"}
+	if err := s.UpdateNodeInfo(ctx, n.ID, 8, 16384, []byte(`{"arch":"amd64"}`), "v1", hv); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.CPUs != 8 || got.MemoryMB != 16384 || got.Version != "v1" || got.LastSeen == nil || !strings.Contains(string(got.Machine), "amd64") {
+	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.CPUs != 8 || got.MemoryMB != 16384 || got.Version != "v1" || got.LastSeen == nil || !strings.Contains(string(got.Machine), "amd64") || got.Hypervisor == nil || *got.Hypervisor != *hv {
 		t.Fatalf("info: %+v", got)
 	}
 }
