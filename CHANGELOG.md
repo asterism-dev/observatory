@@ -1,3 +1,9 @@
+## v0.11.0 (2026-11-19)
+
+### Feat
+
+- **images**: automatic rebuilds on a schedule and on base image changes (#30)
+
 ## v0.10.0 (2026-11-19)
 
 ### Feat
