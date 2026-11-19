@@ -1,3 +1,9 @@
+## v0.7.1 (2026-11-19)
+
+### Fix
+
+- **deploy**: retry guest image downloads on transient errors (#25)
+
 ## v0.7.0 (2026-11-19)
 
 ### Feat
