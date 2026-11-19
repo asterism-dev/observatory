@@ -1,0 +1,11 @@
+(tls-acme) {
+}
+
+(tls-internal) {
+	tls internal
+}
+
+{$OBSERVATORY_DOMAIN} {
+	import tls-{$OBSERVATORY_TLS}
+	reverse_proxy hub:8090
+}
