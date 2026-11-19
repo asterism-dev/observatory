@@ -1,6 +1,7 @@
 package guestinit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -85,6 +86,7 @@ func Run() error {
 	}
 	agent.SetSSH(startSSH(root, agent, hostKeys, img))
 	agent.SetReady()
+	startIntegrations(root, agent, img)
 	go announceReadyWhenAddressed(seed.NICs)
 
 	var imageDone <-chan struct{}
@@ -99,6 +101,27 @@ func Run() error {
 		shutdown(img, img.shutdownCmd())
 	}
 	return nil
+}
+
+// startIntegrations syncs at boot, every 5 minutes and on takeoff; claude runs inside the image as dev.
+func startIntegrations(root Root, agent *Agent, img *Image) {
+	trigger := make(chan struct{}, 1)
+	agent.Sync = func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
+		}
+	}
+	startIn := func(cmd *exec.Cmd) error {
+		if img == nil {
+			return errors.New("the image is not running")
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: devID, Gid: devID, Groups: root.devGroups()}}
+		return img.Exec(cmd)
+	}
+	go runIntegrationSync(context.Background(), integrationsInterval, trigger, func(ctx context.Context) error {
+		return root.SyncIntegrations(ctx, startIn, agent.Env())
+	})
 }
 
 func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHServer {

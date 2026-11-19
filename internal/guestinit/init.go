@@ -16,9 +16,9 @@ var stdout io.Writer = os.Stdout
 var handlers = map[string]func(args []string) int{
 	"init":               func([]string) int { return runInit() },
 	"observatory-init":   runSubcommand,
-	"vmm-token":          notImplemented("vmm-token"),
-	"git-credential-vmm": notImplemented("git-credential-vmm"),
-	"gh":                 notImplemented("gh"),
+	"vmm-token":          tokenMain,
+	"git-credential-vmm": credentialMain,
+	"gh":                 ghMain,
 	"agent-browser":      notImplemented("agent-browser"),
 	"vmm-desktop":        notImplemented("vmm-desktop"),
 }

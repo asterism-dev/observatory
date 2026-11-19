@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -203,14 +202,6 @@ func setupCgroups() error {
 		return fmt.Errorf("enable cgroup controllers: %w", err)
 	}
 	return nil
-}
-
-func envList(env map[string]string) []string {
-	var out []string
-	for _, n := range slices.Sorted(maps.Keys(env)) {
-		out = append(out, n+"="+env[n])
-	}
-	return out
 }
 
 // runNsinit is PID 1 of an image without systemd: it mounts /proc, reaps orphans and supervises Entrypoint+Cmd until SIGTERM.

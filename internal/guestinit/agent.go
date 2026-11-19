@@ -105,6 +105,9 @@ func (a *Agent) setSeedKeys(keys []string) {
 
 // applyEnv writes the guest environment and makes it the one SSH sessions get; a failed write is logged and the merged env still used.
 func (a *Agent) applyEnv(seed proto.GuestSeed) map[string]string {
+	if err := a.Root.WriteContext(seed.Context); err != nil {
+		fmt.Fprintln(os.Stderr, "agent: context:", err)
+	}
 	env, err := a.Root.WriteEnv(seed.Env, seed.Image.Env)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agent: environment:", err)

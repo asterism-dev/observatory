@@ -128,3 +128,11 @@ func (r Root) writeSystemdEnv(env map[string]string) error {
 func shellQuote(v string) string {
 	return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
 }
+
+func envList(env map[string]string) []string {
+	var out []string
+	for _, n := range slices.Sorted(maps.Keys(env)) {
+		out = append(out, n+"="+env[n])
+	}
+	return out
+}
