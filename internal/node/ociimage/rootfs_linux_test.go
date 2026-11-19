@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -200,6 +201,43 @@ func TestDiskIdempotent(t *testing.T) {
 	got, err := s.Disk(context.Background(), digest)
 	if err != nil || got != path {
 		t.Fatalf("cached Disk: %q %v", got, err)
+	}
+}
+
+func TestDiskStopsWhenHostFull(t *testing.T) {
+	needRoot(t)
+	for _, tc := range []struct {
+		name, want  string
+		free, ffree int64
+	}{
+		{name: "bytes", free: spaceReserve + 100*4096, ffree: 1 << 30, want: "not enough space on node"},
+		{name: "inodes", free: 1 << 40, ffree: 100_050, want: "not enough inodes on node"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dirs []*tar.Header
+			for i := range 500 {
+				dirs = append(dirs, &tar.Header{Name: fmt.Sprintf("d%d/", i), Typeflag: tar.TypeDir, Mode: 0o755})
+			}
+			s := Store{Dir: storeDir(t)}
+			img, err := mutate.AppendLayers(empty.Image, tarLayer(t, dirs...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := pullLocal(s, img); err != nil {
+				t.Fatal(err)
+			}
+			free, ffree := tc.free, tc.ffree
+			orig := hostFree
+			hostFree = func(string) (int64, int64, int64, error) {
+				free, ffree = free-4096, ffree-1
+				return free, ffree, 1_000_000, nil
+			}
+			t.Cleanup(func() { hostFree = orig })
+			h, _ := img.Digest()
+			if _, err := s.Disk(context.Background(), h.String()); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+		})
 	}
 }
 

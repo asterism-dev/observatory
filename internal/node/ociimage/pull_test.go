@@ -2,6 +2,7 @@ package ociimage
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -142,6 +144,33 @@ func TestPullConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Config, want) {
 		t.Fatalf("config %+v, want %+v", got.Config, want)
+	}
+}
+
+type rawManifest struct {
+	raw []byte
+	mt  types.MediaType
+}
+
+func (r rawManifest) RawManifest() ([]byte, error)        { return r.raw, nil }
+func (r rawManifest) MediaType() (types.MediaType, error) { return r.mt, nil }
+
+func TestPullRejectsHugeConfig(t *testing.T) {
+	ref := testRegistry(t) + "/guest:1"
+	img := platformImage(t, "amd64", v1.Config{})
+	if err := remote.Write(mustRef(t, ref), img); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := img.Manifest()
+	m = m.DeepCopy()
+	m.Config.Size = 5 << 20
+	raw, _ := json.Marshal(m)
+	if err := remote.Put(mustRef(t, ref), rawManifest{raw, m.MediaType}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Store{Dir: t.TempDir()}.Pull(context.Background(), ref, authn.Anonymous)
+	if err == nil || !strings.Contains(err.Error(), "image config of 5242880 bytes exceeds 4194304") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

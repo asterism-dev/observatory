@@ -17,14 +17,33 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"golang.org/x/sys/unix"
-
-	"github.com/asterism-dev/observatory/internal/node"
 )
 
 var mke2fs = "mke2fs"
 
-// spaceReserve stays free on the node while unpacking an image, so a huge image fails instead of filling the disk.
-const spaceReserve = 256 << 20
+// hostFree reports free bytes, free inodes and total inodes of dir's filesystem; tests replace it.
+var hostFree = func(dir string) (bytes, inodes, totalInodes int64, err error) {
+	var st unix.Statfs_t
+	if err := unix.Statfs(dir, &st); err != nil {
+		return 0, 0, 0, err
+	}
+	return int64(st.Bavail) * st.Frsize, int64(st.Ffree), int64(st.Files), nil
+}
+
+// checkHost fails when bytes and inodes would eat into the reserves; btrfs-style dynamic inodes report zero total.
+func checkHost(dir string, bytes, inodes int64) error {
+	free, ffree, files, err := hostFree(dir)
+	if err != nil {
+		return err
+	}
+	if need := bytes + spaceReserve; free < need {
+		return fmt.Errorf("not enough space on node: %d MiB free, %d MiB needed", free>>20, need>>20)
+	}
+	if need := inodes + files/10; files > 0 && ffree < need {
+		return fmt.Errorf("not enough inodes on node: %d free, %d needed", ffree, need)
+	}
+	return nil
+}
 
 // Disk returns the ext4 root disk for a pulled image, building it on first use.
 func (s Store) Disk(ctx context.Context, digest string) (string, error) {
@@ -66,7 +85,7 @@ func (s Store) Disk(ctx context.Context, digest string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("unpack %s: %w", digest, err)
 	}
-	if err := node.CheckSpace(dir, used.bytes+spaceReserve); err != nil {
+	if err := checkHost(dir, used.bytes, 1); err != nil {
 		return "", err
 	}
 	size := diskSize(used.bytes)
@@ -155,22 +174,27 @@ func unpack(ctx context.Context, img v1.Image, root string) (usage, error) {
 		if hdr.Name == "." {
 			continue
 		}
+		var need int64
 		switch hdr.Typeflag {
 		case tar.TypeLink:
 			links = append(links, hdr)
 			continue
 		case tar.TypeDir:
 			dirs = append(dirs, hdr)
-			u.bytes += 4096
+			need = 4096
 		case tar.TypeReg:
-			u.bytes += (hdr.Size + 4095) &^ 4095
+			need = (hdr.Size + 4095) &^ 4095
 		case tar.TypeSymlink:
 			if len(hdr.Linkname) >= 60 { // shorter targets live in the inode
-				u.bytes += 4096
+				need = (int64(len(hdr.Linkname)) + 4095) &^ 4095
 			}
 		}
+		u.bytes += need
 		u.inodes++
-		if err := create(rootFd, root, hdr, tr); err != nil {
+		if err := checkHost(root, need, 1); err != nil {
+			return u, err
+		}
+		if err := create(rootFd, hdr, tr); err != nil {
 			return u, fmt.Errorf("%s: %w", hdr.Name, err)
 		}
 	}
@@ -232,7 +256,7 @@ func openDir(dirfd int, name string) (int, error) {
 	return unix.Openat(dirfd, name, unix.O_DIRECTORY|unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 }
 
-func create(rootFd int, root string, hdr *tar.Header, r io.Reader) error {
+func create(rootFd int, hdr *tar.Header, r io.Reader) error {
 	return withParent(rootFd, hdr.Name, func(pfd int, name string) error {
 		perm := uint32(hdr.Mode) & 0o7777
 		switch hdr.Typeflag {
@@ -248,9 +272,6 @@ func create(rootFd int, root string, hdr *tar.Header, r io.Reader) error {
 				return err
 			}
 		case tar.TypeReg:
-			if err := node.CheckSpace(root, hdr.Size+spaceReserve); err != nil {
-				return err
-			}
 			fd, err := unix.Openat(pfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 			if err != nil {
 				return err

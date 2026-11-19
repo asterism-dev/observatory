@@ -24,6 +24,12 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
+// spaceReserve stays free on the node while pulling and unpacking, so a huge image fails instead of filling the disk.
+const spaceReserve = 256 << 20
+
+// metadataLimit caps manifests and configs, which are read into memory whole.
+const metadataLimit = 4 << 20
+
 // Store keeps manifests, configs and layers in Dir/blobs/sha256/ and built disks in Dir/disks/.
 type Store struct{ Dir string }
 
@@ -42,9 +48,19 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 	if err != nil {
 		return Pulled{}, err
 	}
+	if desc.Size > metadataLimit {
+		return Pulled{}, fmt.Errorf("manifest of %d bytes exceeds %d", desc.Size, metadataLimit)
+	}
 	img, err := amd64Image(desc)
 	if err != nil {
 		return Pulled{}, err
+	}
+	manifest, err := img.Manifest()
+	if err != nil {
+		return Pulled{}, err
+	}
+	if manifest.Config.Size > metadataLimit {
+		return Pulled{}, fmt.Errorf("image config of %d bytes exceeds %d", manifest.Config.Size, metadataLimit)
 	}
 	cfg, err := img.ConfigFile()
 	if err != nil {
@@ -54,10 +70,6 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 		return Pulled{}, fmt.Errorf("image platform %s/%s is not linux/amd64", cfg.OS, cfg.Architecture)
 	}
 	digest, err := img.Digest()
-	if err != nil {
-		return Pulled{}, err
-	}
-	manifest, err := img.Manifest()
 	if err != nil {
 		return Pulled{}, err
 	}
@@ -71,7 +83,7 @@ func (s Store) Pull(ctx context.Context, ref string, auth authn.Authenticator) (
 	if err := os.MkdirAll(s.blobDir(), 0o700); err != nil {
 		return Pulled{}, err
 	}
-	if err := node.CheckSpace(s.blobDir(), missing); err != nil {
+	if err := node.CheckSpace(s.blobDir(), missing+spaceReserve); err != nil {
 		return Pulled{}, err
 	}
 	for _, l := range manifest.Layers {
@@ -133,6 +145,9 @@ func amd64Image(desc *remote.Descriptor) (v1.Image, error) {
 			continue
 		}
 		if m.Platform.OS == "linux" && m.Platform.Architecture == "amd64" {
+			if m.Size > metadataLimit {
+				return nil, fmt.Errorf("manifest of %d bytes exceeds %d", m.Size, metadataLimit)
+			}
 			return idx.Image(m.Digest)
 		}
 		// Attestation manifests carry unknown/unknown.
