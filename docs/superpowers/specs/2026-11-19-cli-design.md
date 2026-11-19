@@ -211,7 +211,7 @@ The API's `{"error": "…"}` message is shown as is. `ssh` and `desktop` exit wi
 - **Golden output** for every list/show table and the help text in `cmd/observatory/testdata/*.golden`, regenerated with `go test ./cmd/observatory -update`.
 - **Must-haves**: secret values never in argv-derived output, errors or the request log; `config.json` 0600 / dir 0700 even when a looser file existed; `--json` equals the API body; every exit code in the table; destructive command without terminal and `--yes` makes no request; `--wait` timeout → 6 and `error` state → 1; device config written once with 0600 and never overwritten; `ssh` argv for running, suspended and stopped VMs; org selection precedence; read-modify-write of disks/networks keeps the other entries.
 - Run with `make test`.
-- **Real run** against the dev hub (`http://100.114.108.108:8091`, test users with dummy credentials, nodes on test VMs 108 = org A and 107 = org B): the full lifecycle by CLI (see the plan's last task) and `docs/cli.md`.
+- **Real run** against a dev hub (test users with dummy credentials, nodes on test VMs 108 = org A and 107 = org B): the full lifecycle by CLI (see the plan's last task) and `docs/cli.md`.
 
 ## Left to the builder
 
