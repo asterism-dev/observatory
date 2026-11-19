@@ -22,6 +22,7 @@ Success for A: a node joins and has no image build step; the first VM on it take
 - **The agent and the integrations move to Go.** No Python in the guest path.
 - **SSH server built into the init binary.** SFTP is wanted as a feature later; the design must leave room for it.
 - **Login user renamed from `ubuntu` to `dev`.**
+- **`USER` and `EXPOSE` of the image are ignored completely.**
 - **No root login over SSH** for now; root only via `sudo` inside the image.
 - **Clean cut:** the old boot path (cloud-init, netplan, partitioned Ubuntu disk, kernel from the guest disk, Python scripts, image build on the node) is removed. Existing VMs are recreated, not migrated. Data on separate disks survives as usual.
 - **`CMD`/`ENTRYPOINT` of the image runs as a supervised service** (restarted when it exits). For images with systemd, systemd is the init and `CMD` is ignored.
@@ -104,8 +105,9 @@ The binaries the init needs that are not Go (`mkfs.ext4`, `resize2fs`, `blkid`-e
 ### Image config (from the OCI config)
 
 - `Env`: applied to SSH sessions and services, below the platform variables (org/VM variables and secrets win on conflict).
-- `Entrypoint` + `Cmd`: run as a supervised service when the image has no systemd: as root unless `User` says otherwise *(Our call: `User` is honoured for the service, ignored for login)*, with `WorkingDir`, restarted with backoff when it exits, stdout/stderr to a log file in the image (`/var/log/observatory/cmd.log`, rotated) *(Our call)*.
-- `WorkingDir`, `User` (for login), `ExposedPorts`, `Volumes`, `Healthcheck`, `StopSignal`: ignored for login; `StopSignal` is honoured when stopping the service on shutdown *(Our call)*.
+- `Entrypoint` + `Cmd`: run as a supervised service when the image has no systemd: as root, with `WorkingDir`, restarted with backoff when it exits, stdout/stderr to a log file in the image (`/var/log/observatory/cmd.log`, rotated) *(Our call)*.
+- `User` and `ExposedPorts`: ignored completely (decided with the user) — login is always `dev`, the service runs as root, ports are the network configuration's business.
+- `Volumes`, `Healthcheck`: ignored; `WorkingDir` applies to the service only, login lands in `/home/dev`; `StopSignal` is honoured when stopping the service on shutdown *(Our call)*.
 - An image with systemd: `CMD` ignored, systemd is the init in the namespace.
 
 ### Agent (vsock 1050)
