@@ -11,6 +11,8 @@ import (
 
 const debBundleAbs = "/" + debBundle
 
+var withPath = []string{trustBlock[0], trustBlock[1], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[2], trustBlock[3]}
+
 var trustBlock = []string{
 	`CURL_CA_BUNDLE="` + debBundleAbs + `"`, `NODE_EXTRA_CA_CERTS="` + debBundleAbs + `"`,
 	`REQUESTS_CA_BUNDLE="` + debBundleAbs + `"`, `SSL_CERT_FILE="` + debBundleAbs + `"`,
@@ -60,7 +62,7 @@ func TestWriteEnvRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(environment, "PATH=\"/usr/bin\"\n") {
 		t.Fatalf("/etc/environment lost its own lines:\n%s", environment)
 	}
-	if got, want := vmmBlock(t, environment), append([]string{`B="` + env["B"] + `"`, `C=""`}, trustBlock...); !slices.Equal(got, want) {
+	if got, want := vmmBlock(t, environment), append([]string{`B="` + env["B"] + `"`, `C=""`}, withPath...); !slices.Equal(got, want) {
 		t.Fatalf("managed block = %q, want %q", got, want)
 	}
 	for _, p := range []string{"etc/observatory/env.sh", "etc/environment", "etc/profile.d/observatory.sh"} {
@@ -78,7 +80,7 @@ func TestWriteEnvRoundTrip(t *testing.T) {
 	if got := sourcedEnv(t, r); got != strings.Repeat("unset\x00", 5) {
 		t.Fatalf("env.sh after second write sets %q", got)
 	}
-	if got, want := get(t, r, "etc/environment"), "PATH=\"/usr/bin\"\n# BEGIN vmm\n"+strings.Join(trustBlock, "\n")+"\n# END vmm\n"; got != want {
+	if got, want := get(t, r, "etc/environment"), "PATH=\"/usr/bin\"\n# BEGIN vmm\n"+strings.Join(withPath, "\n")+"\n# END vmm\n"; got != want {
 		t.Fatalf("/etc/environment after second write:\n%s", got)
 	}
 }
@@ -91,7 +93,7 @@ func TestWriteEnvTrustVars(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"SSL_CERT_FILE": "/x", "NODE_EXTRA_CA_CERTS": "/img", "REQUESTS_CA_BUNDLE": debBundleAbs, "CURL_CA_BUNDLE": debBundleAbs, "PATH": "/opt/bin:/usr/bin",
+		"SSL_CERT_FILE": "/x", "NODE_EXTRA_CA_CERTS": "/img", "REQUESTS_CA_BUNDLE": debBundleAbs, "CURL_CA_BUNDLE": debBundleAbs, "PATH": "/.observatory/bin:/opt/bin:/usr/bin",
 	}
 	for k, v := range want {
 		if merged[k] != v {
@@ -163,7 +165,7 @@ func TestWriteEnvRejectsBadNames(t *testing.T) {
 			t.Fatalf("env.sh contains %q", leak)
 		}
 	}
-	if merged["A"] != "1" || merged["C"] != "3" || len(merged) != 2+len(trustBlock) {
+	if merged["A"] != "1" || merged["C"] != "3" || len(merged) != 3+len(trustBlock) {
 		t.Fatalf("merged = %v", merged)
 	}
 	if strings.Contains(err.Error(), "=") {
@@ -178,4 +180,39 @@ func modeOf(t *testing.T, r Root, rel string) os.FileMode {
 		t.Fatal(err)
 	}
 	return fi.Mode().Perm()
+}
+
+func TestWriteEnvPlatformDirFirstOnEveryPath(t *testing.T) {
+	for name, image := range map[string][]string{"with image PATH": {"PATH=/opt/bin:/usr/bin"}, "without image PATH": nil} {
+		r := envRoot(t)
+		merged, err := r.WriteEnv(nil, image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "/.observatory/bin:" + defaultPath
+		if image != nil {
+			want = "/.observatory/bin:/opt/bin:/usr/bin"
+		}
+		if merged["PATH"] != want {
+			t.Errorf("%s: merged PATH = %q", name, merged["PATH"])
+		}
+		if !strings.Contains(get(t, r, "etc/observatory/env.sh"), "export PATH='"+want+"'\n") {
+			t.Errorf("%s: env.sh lacks PATH", name)
+		}
+		if !slices.Contains(vmmBlock(t, get(t, r, "etc/environment")), `PATH="`+want+`"`) {
+			t.Errorf("%s: /etc/environment lacks PATH", name)
+		}
+	}
+	r := envRoot(t)
+	merged, _ := r.WriteEnv(map[string]string{"PATH": "/seed"}, []string{"PATH=/img"})
+	if merged["PATH"] != "/.observatory/bin:/seed" {
+		t.Errorf("seed PATH = %q", merged["PATH"])
+	}
+}
+
+func TestWriteEnvErrorDoesNotLeakImageEntry(t *testing.T) {
+	_, err := envRoot(t).WriteEnv(nil, []string{"sekrit-value"})
+	if err == nil || strings.Contains(err.Error(), "sekrit") {
+		t.Fatalf("err = %v", err)
+	}
 }

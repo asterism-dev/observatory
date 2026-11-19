@@ -37,10 +37,10 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 		}
 		env[n] = v
 	}
-	for _, kv := range image {
+	for i, kv := range image {
 		n, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			bad = append(bad, fmt.Sprintf("%q", n))
+			bad = append(bad, fmt.Sprintf("image entry #%d", i))
 			continue
 		}
 		set(n, v)
@@ -49,6 +49,14 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 		set(n, v)
 	}
 	slices.Sort(bad)
+	path := env["PATH"]
+	if path == "" {
+		path = defaultPath
+	}
+	if !slices.Contains(strings.Split(path, ":"), platformBin) {
+		path = platformBin + ":" + path
+	}
+	env["PATH"] = path
 
 	names := slices.Sorted(maps.Keys(env))
 	var envSh, block strings.Builder
@@ -98,14 +106,7 @@ func (r Root) writeEnvironmentBlock(block string) error {
 }
 
 func (r Root) writeSystemdEnv(env map[string]string) error {
-	path := env["PATH"]
-	if path == "" {
-		path = defaultPath
-	}
-	if !slices.Contains(strings.Split(path, ":"), platformBin) {
-		path = platformBin + ":" + path
-	}
-	vars := map[string]string{"PATH": path}
+	vars := map[string]string{"PATH": env["PATH"]}
 	for _, n := range trustVars {
 		if v, ok := env[n]; ok {
 			vars[n] = v
