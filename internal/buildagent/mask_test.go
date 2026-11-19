@@ -34,3 +34,10 @@ func TestMaskerHoldsOnlyPossibleSecretTail(t *testing.T) {
 		t.Errorf("Take = %q, want the text before a possible secret", got)
 	}
 }
+
+func TestMaskerMasksTrimmedSecret(t *testing.T) {
+	m := NewMasker([][]byte{[]byte("hunter2\n"), []byte(" ab \n")})
+	if got, want := maskAll(m, "pw=hunter2 and pw=hunter2\n ab "), "pw=*** and pw=*** ab "; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

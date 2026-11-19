@@ -23,8 +23,11 @@ type Masker struct {
 func NewMasker(secrets [][]byte) *Masker {
 	m := &Masker{}
 	for _, s := range secrets {
-		if len(s) >= minSecretLen {
-			m.secrets = append(m.secrets, slices.Clone(s))
+		// A value read from a file often carries a trailing newline that the printed form lacks.
+		for _, v := range [][]byte{s, bytes.TrimSpace(s)} {
+			if len(v) >= minSecretLen && !slices.ContainsFunc(m.secrets, func(o []byte) bool { return bytes.Equal(o, v) }) {
+				m.secrets = append(m.secrets, slices.Clone(v))
+			}
 		}
 	}
 	// Longest first, so a secret containing another is masked as a whole.
