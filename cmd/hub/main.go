@@ -19,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
 )
@@ -63,7 +64,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID}
+	nh, err := network.Load(ctx, s, z, network.Config{GatewayHost: cfg.GatewayHost, GatewayToken: cfg.GatewayToken})
+	if err != nil {
+		return err
+	}
+	filled, err := s.BackfillMgmtIPs(ctx)
+	if err != nil {
+		return err
+	}
+	slog.Info("management addresses backfilled", "vms", filled)
+	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload}
 
 	dist, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
@@ -71,10 +81,11 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	f := fleet.New(s, z)
+	f := fleet.New(s, z, nh)
 	api.NodeEndpoints(mux, s, f)
+	api.GatewayEndpoints(mux, nh)
 	nodeAssets(mux, cfg.NodeBinary)
-	mux.Handle("/api/", api.New(s, a, z, f))
+	mux.Handle("/api/", api.New(s, a, z, f, nh))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

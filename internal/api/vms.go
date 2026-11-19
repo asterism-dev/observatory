@@ -28,33 +28,45 @@ type ownerJSON struct {
 }
 
 type vmJSON struct {
-	ID        uuid.UUID      `json:"id"`
-	Name      string         `json:"name"`
-	Owner     ownerJSON      `json:"owner"`
-	Node      refJSON        `json:"node"`
-	State     proto.VMState  `json:"state"`
-	Power     proto.Power    `json:"power"`
-	StopMode  proto.StopMode `json:"stopMode,omitempty"`
-	Error     string         `json:"error,omitempty"`
-	IP        string         `json:"ip,omitempty"`
-	CPUs      int            `json:"cpus"`
-	MemoryMB  int            `json:"memoryMB"`
-	DiskGB    int            `json:"diskGB"`
-	CreatedAt time.Time      `json:"createdAt"`
-	CanPower  bool           `json:"canPower"`
-	CanDelete bool           `json:"canDelete"`
+	ID         uuid.UUID      `json:"id"`
+	Name       string         `json:"name"`
+	Owner      ownerJSON      `json:"owner"`
+	Node       refJSON        `json:"node"`
+	State      proto.VMState  `json:"state"`
+	Power      proto.Power    `json:"power"`
+	StopMode   proto.StopMode `json:"stopMode,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	IP         string         `json:"ip,omitempty"`
+	MgmtIP     string         `json:"mgmtIP,omitempty"`
+	DNSName    string         `json:"dnsName"`
+	Networks   []vmNICJSON    `json:"networks"`
+	CPUs       int            `json:"cpus"`
+	MemoryMB   int            `json:"memoryMB"`
+	DiskGB     int            `json:"diskGB"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	CanPower   bool           `json:"canPower"`
+	CanDelete  bool           `json:"canDelete"`
+	CanNetwork bool           `json:"canNetwork"`
+}
+
+type vmNICJSON struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	IP      string    `json:"ip"`
+	DNSName string    `json:"dnsName"`
 }
 
 // vmNames holds the org's display names for VM owners and nodes.
 type vmNames struct {
-	users, teams, nodes map[uuid.UUID]string
-	teamList            []store.Team
-	nodeList            []store.Node
+	users, teams, nodes, networks map[uuid.UUID]string
+	nics                          map[uuid.UUID][]store.VMNIC
+	teamList                      []store.Team
+	nodeList                      []store.Node
 }
 
 func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	ctx := r.Context()
-	n := vmNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}}
+	n := vmNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}, networks: map[uuid.UUID]string{}, nics: map[uuid.UUID][]store.VMNIC{}}
 	members, err := h.store.Members(ctx, org)
 	if err != nil {
 		return n, err
@@ -74,6 +86,20 @@ func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	for _, nd := range n.nodeList {
 		n.nodes[nd.ID] = nd.Name
 	}
+	nets, err := h.store.Networks(ctx, org)
+	if err != nil {
+		return n, err
+	}
+	for _, nw := range nets {
+		n.networks[nw.ID] = nw.Name
+	}
+	nics, err := h.store.OrgVMNetworks(ctx, org)
+	if err != nil {
+		return n, err
+	}
+	for _, nic := range nics {
+		n.nics[nic.VMID] = append(n.nics[nic.VMID], nic)
+	}
 	return n, nil
 }
 
@@ -83,7 +109,15 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
 		StopMode: v.StopMode, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, CreatedAt: v.CreatedAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
-		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete)}
+		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
+		DNSName: v.Name + ".internal", Networks: []vmNICJSON{}}
+	if v.MgmtIP.IsValid() {
+		j.MgmtIP = v.MgmtIP.String()
+	}
+	for _, nic := range names.nics[v.ID] {
+		nn := names.networks[nic.NetworkID]
+		j.Networks = append(j.Networks, vmNICJSON{nic.NetworkID, nn, nic.IP.String(), v.Name + "." + nn + ".internal"})
+	}
 	if v.UserID != nil {
 		j.Owner = ownerJSON{"user", *v.UserID, names.users[*v.UserID]}
 	} else if v.TeamID != nil {
@@ -290,4 +324,66 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}
 	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.vmFromPath(w, r, store.ActionVMNetwork)
+	if !ok {
+		return
+	}
+	var body struct {
+		NetworkIDs     []uuid.UUID
+		RestartAllowed bool
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	current, err := h.store.VMNetworks(r.Context(), v.ID)
+	if err != nil {
+		serverError(w, "vm networks", err)
+		return
+	}
+	attached := map[uuid.UUID]bool{}
+	for _, n := range current {
+		attached[n.NetworkID] = true
+	}
+	for _, id := range body.NetworkIDs {
+		if !attached[id] && !h.authorize(w, r, v.OrgID, authz.NetworkObject(id), "network:use") {
+			return
+		}
+	}
+	if !h.commit(w, r, func(tx *store.Store) error {
+		updated, err := tx.SetVMNetworks(r.Context(), v.OrgID, v.ID, body.NetworkIDs, body.RestartAllowed)
+		if err != nil {
+			return err
+		}
+		if updated.Generation == v.Generation {
+			v = updated
+			return nil
+		}
+		v = updated
+		nets, err := tx.Networks(r.Context(), v.OrgID)
+		if err != nil {
+			return err
+		}
+		nics, err := tx.VMNetworks(r.Context(), v.ID)
+		if err != nil {
+			return err
+		}
+		names := []string{}
+		for _, nic := range nics {
+			for _, n := range nets {
+				if n.ID == nic.NetworkID {
+					names = append(names, n.Name)
+				}
+			}
+		}
+		e := vmAudit(r, store.ActionVMNetwork, v)
+		e.Details["networks"] = names
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	h.writeVM(w, r, http.StatusOK, v)
 }

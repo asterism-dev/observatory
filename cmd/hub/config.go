@@ -1,16 +1,20 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
 type config struct {
-	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary string
-	SecretsKey                                                                   seal.Key
+	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, GatewayToken, GatewayHost string
+	SecretsKey                                                                                              seal.Key
 }
+
+const minGatewayTokenLen = 32
 
 func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{Listen: getenv("OBSERVATORY_LISTEN")}
@@ -32,6 +36,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	required(&cfg.Issuer, "OBSERVATORY_OIDC_ISSUER")
 	required(&cfg.WebClientID, "OBSERVATORY_OIDC_WEB_CLIENT_ID")
 	required(&cfg.CLIClientID, "OBSERVATORY_OIDC_CLI_CLIENT_ID")
+	required(&cfg.GatewayToken, "OBSERVATORY_GATEWAY_TOKEN")
 	secretsKey := getenv("OBSERVATORY_SECRETS_KEY")
 	if secretsKey == "" {
 		missing = append(missing, "OBSERVATORY_SECRETS_KEY")
@@ -42,6 +47,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 	var err error
 	if cfg.SecretsKey, err = seal.ParseKey(secretsKey); err != nil {
 		return config{}, fmt.Errorf("OBSERVATORY_SECRETS_KEY: %w", err)
+	}
+	if len(cfg.GatewayToken) < minGatewayTokenLen {
+		return config{}, fmt.Errorf("OBSERVATORY_GATEWAY_TOKEN must be at least %d characters", minGatewayTokenLen)
+	}
+	if cfg.GatewayHost = getenv("OBSERVATORY_GATEWAY_HOST"); cfg.GatewayHost == "" {
+		u, err := url.Parse(cfg.PublicURL)
+		if err != nil || u.Hostname() == "" {
+			return config{}, errors.New("OBSERVATORY_PUBLIC_URL must be an absolute URL")
+		}
+		cfg.GatewayHost = u.Hostname()
 	}
 	return cfg, nil
 }

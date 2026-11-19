@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -43,7 +45,7 @@ func tokenOf(cmd string) string { return cmd[strings.LastIndex(cmd, " ")+1:] }
 
 func (e *env) enroll(token string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	NodeEndpoints(mux, e.store, fleet.New(e.store, e.z))
+	NodeEndpoints(mux, e.store, fleet.New(e.store, e.z, e.net))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/nodes/enroll", strings.NewReader(`{"token":"`+token+`"}`)))
 	return rec
@@ -177,5 +179,50 @@ func TestNodePermissionsAndIsolation(t *testing.T) {
 		if rec := e.send(c[0], nodesPath(other)+"/"+id+c[1], eveTok, `{"name":"x"}`); rec.Code != 404 {
 			t.Fatalf("other org node %s%s: %d", c[0], c[1], rec.Code)
 		}
+	}
+}
+
+func TestNodeJSONShowsUnderlay(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.enrolledNode(tok, org, "n1")
+	read := func() (n struct{ Underlay *underlayJSON }) {
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+		return
+	}
+	if read().Underlay != nil {
+		t.Fatal("underlay before enrollment")
+	}
+	node, _ := uuid.Parse(id)
+	ip, err := e.store.EnrollChassis(context.Background(), node, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.net.SetStatus(context.Background(), proto.GatewayStatus{Chassis: []string{id}}); err != nil {
+		t.Fatal(err)
+	}
+	if u := read().Underlay; u == nil || u.IP != ip.String() || !u.Registered || u.LastHandshake != nil {
+		t.Fatalf("%+v", u)
+	}
+}
+
+func TestNodeJSONShowsQuarantine(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.enrolledNode(tok, org, "n1")
+	read := func() (n struct{ Quarantined bool }) {
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+		return
+	}
+	if read().Quarantined {
+		t.Fatal("quarantined from the start")
+	}
+	if err := e.net.SetStatus(context.Background(), proto.GatewayStatus{Quarantined: []string{id}}); err != nil {
+		t.Fatal(err)
+	}
+	if !read().Quarantined {
+		t.Fatal("quarantine not shown")
 	}
 }

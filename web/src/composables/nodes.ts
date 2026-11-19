@@ -12,6 +12,8 @@ export interface NodeInfo {
   usedMemoryMB: number
   canUpdate: boolean
   canDelete: boolean
+  underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
+  quarantined: boolean
 }
 
 export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const
@@ -26,6 +28,10 @@ export interface VmInfo {
   state: 'pending' | 'starting' | 'running' | 'stopped' | 'error' | 'unknown'
   error?: string
   ip?: string
+  mgmtIP?: string
+  dnsName: string
+  networks: { id: string; name: string; ip: string; dnsName: string }[]
+  canNetwork: boolean
   cpus: number
   memoryMB: number
   diskGB: number

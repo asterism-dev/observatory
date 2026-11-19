@@ -29,19 +29,20 @@ type hubVM struct {
 }
 
 type fakeHub struct {
-	mu      sync.Mutex
-	srv     *httptest.Server
-	vmsByID map[string]*hubVM
-	regs    []proto.Register
-	auth    []string
-	conn    *json.Encoder
-	connMu  sync.Mutex
-	seq     uint64
-	nextID  int
+	mu       sync.Mutex
+	srv      *httptest.Server
+	vmsByID  map[string]*hubVM
+	regs     []proto.Register
+	auth     []string
+	conn     *json.Encoder
+	connMu   sync.Mutex
+	seq      uint64
+	nextID   int
+	underlay *proto.Underlay
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
-	h := &fakeHub{vmsByID: map[string]*hubVM{}}
+	h := &fakeHub{vmsByID: map[string]*hubVM{}, underlay: &proto.Underlay{Address: "10.198.0.11/16", HubKey: "hub-key", Endpoint: "gw.test:51820", SBRemote: "ssl:10.198.0.1:6642", CACert: "CA PEM", Cert: "CERT PEM"}}
 	h.srv = httptest.NewServer(http.HandlerFunc(h.serve))
 	t.Cleanup(h.srv.Close)
 	return h
@@ -100,6 +101,9 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 	h.conn = enc
 	h.connMu.Unlock()
 	h.push()
+	if m.Register.ChassisKey != "" {
+		h.send(proto.Message{Type: "underlay", Underlay: h.underlay})
+	}
 	for {
 		var m proto.Message
 		if err := dec.Decode(&m); err != nil {

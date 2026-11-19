@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -33,12 +34,15 @@ func TestBuiltinRoles(t *testing.T) {
 	}})
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
-		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs}}
-	// No built-in role reaches other members' private env scopes.
-	userEnv := func(p Permission) bool { return p.Object == ObjUserEnv+"/*" }
+		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
+		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}}
+	// No built-in role reaches other members' private env scopes, connects to VMs or creates others' devices.
+	notBuiltin := func(p Permission) bool {
+		return p.Object == ObjUserEnv+"/*" || p.Action == "vm:connect" || p.Action == "device:create"
+	}
 	want := map[uuid.UUID]func(p Permission) bool{
-		owner:  func(p Permission) bool { return !userEnv(p) },
-		admin:  func(p Permission) bool { return p.Action != "member:set-role" && !userEnv(p) },
+		owner:  func(p Permission) bool { return !notBuiltin(p) },
+		admin:  func(p Permission) bool { return p.Action != "member:set-role" && !notBuiltin(p) },
 		member: func(p Permission) bool { return slices.Contains(memberPerms, p) },
 	}
 	names := map[uuid.UUID]string{owner: "owner", admin: "admin", member: "member"}
@@ -221,7 +225,7 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("audit:read"); !reflect.DeepEqual(got, []string{"audit:read"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete"}) {
+	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network"}) {
 		t.Errorf("vm:*: got %v", got)
 	}
 	if got := ExpandActions("vm:ssh"); len(got) != 0 {
@@ -508,6 +512,12 @@ func TestVMPermissions(t *testing.T) {
 		{"member powers own vm", user(member), org, VMObject(ownVM), "vm:power", true},
 		{"member deletes own vm", user(member), org, VMObject(ownVM), "vm:delete", true},
 		{"admin deletes own vm", user(admin), org, VMObject(adminVM), "vm:delete", true},
+		{"member changes own vm networks", user(member), org, VMObject(ownVM), "vm:network", true},
+		{"member connects own vm", user(member), org, VMObject(ownVM), "vm:connect", true},
+		{"team member connects team vm", user(teamMember), org, VMObject(teamVM), "vm:connect", true},
+		{"team member changes team vm networks", user(teamMember), org, VMObject(teamVM), "vm:network", false},
+		{"team admin changes team vm networks", user(teamAdmin), org, VMObject(teamVM), "vm:network", true},
+		{"other team admin connects team vm", user(otherAdmin), org, VMObject(teamVM), "vm:connect", false},
 		// team VMs: read, power
 		{"team member reads team vm", user(teamMember), org, VMObject(teamVM), "vm:read", true},
 		{"team member powers team vm", user(teamMember), org, VMObject(teamVM), "vm:power", true},
@@ -549,6 +559,178 @@ func TestVMPermissions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		if got := e.Allowed(tt.sub, tt.org, tt.obj, tt.act); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+}
+
+// vmFixture is an org with an owner, an admin, two members (a owns userVM), a team with member tm and teamVM.
+type vmFixture struct {
+	org, owner, admin, a, b, tm, team, userVM, teamVM uuid.UUID
+}
+
+func newVMFixture() vmFixture {
+	return vmFixture{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+}
+
+func (f vmFixture) policy() Policy {
+	return Policy{
+		Memberships: []MemberRole{
+			{OrgID: f.org, UserID: f.owner, Role: "owner"},
+			{OrgID: f.org, UserID: f.admin, Role: "admin"},
+			{OrgID: f.org, UserID: f.a, Role: "member"},
+			{OrgID: f.org, UserID: f.b, Role: "member"},
+			{OrgID: f.org, UserID: f.tm, Role: "member"},
+		},
+		TeamMembers: []TeamMember{{OrgID: f.org, TeamID: f.team, UserID: f.tm}},
+		Teams:       []TeamRef{{OrgID: f.org, ID: f.team}},
+		VMs:         []VMRef{f.userRef(), f.teamRef()},
+	}
+}
+
+func (f vmFixture) userRef() VMRef { return VMRef{OrgID: f.org, ID: f.userVM, UserID: &f.a} }
+func (f vmFixture) teamRef() VMRef { return VMRef{OrgID: f.org, ID: f.teamVM, TeamID: &f.team} }
+
+func TestAdminHasNoConnect(t *testing.T) {
+	f := newVMFixture()
+	e := mustNew(t, f.policy())
+	for _, u := range []uuid.UUID{f.owner, f.admin} {
+		for _, vm := range []uuid.UUID{f.userVM, f.teamVM} {
+			if e.Allowed(UserSubject(u), f.org, VMObject(vm), "vm:connect") {
+				t.Errorf("%s holds vm:connect on %s", u, vm)
+			}
+			for _, act := range []string{"vm:power", "vm:network"} {
+				if !e.Allowed(UserSubject(u), f.org, VMObject(vm), act) {
+					t.Errorf("%s lacks %s on %s", u, act, vm)
+				}
+			}
+		}
+	}
+}
+
+func TestNoWildcardVMGrants(t *testing.T) {
+	f := newVMFixture()
+	teamAdmin := uuid.New()
+	p := f.policy()
+	p.Memberships = append(p.Memberships, MemberRole{OrgID: f.org, UserID: teamAdmin, Role: "member"})
+	p.TeamMembers = append(p.TeamMembers, TeamMember{OrgID: f.org, TeamID: f.team, UserID: teamAdmin, Admin: true})
+	e := mustNew(t, p)
+	for _, c := range []struct{ sub, vm uuid.UUID }{{f.a, f.userVM}, {f.tm, f.teamVM}, {teamAdmin, f.teamVM}, {f.admin, f.userVM}, {f.owner, f.teamVM}} {
+		if e.Allowed(UserSubject(c.sub), f.org, VMObject(c.vm), "vm:share") {
+			t.Errorf("%s: vm:share allowed on %s", c.sub, c.vm)
+		}
+	}
+	if e.Allowed(UserSubject(f.admin), f.org, TeamVMsObject(f.team), "vm:share") {
+		t.Error("admin: vm:share on team vms allowed")
+	}
+}
+
+func TestCanConnect(t *testing.T) {
+	f := newVMFixture()
+	role := uuid.New()
+	p := f.policy()
+	p.Roles = []CustomRole{{ID: role, OrgID: f.org, Name: "connect-a", Rules: []Rule{{Allow, VMObject(f.userVM), "vm:connect"}}}}
+	p.Bindings = []Binding{{OrgID: f.org, Subject: UserSubject(f.b), RoleID: role}}
+	e := mustNew(t, p)
+	tests := []struct {
+		name string
+		user uuid.UUID
+		vm   VMRef
+		want bool
+	}{
+		{"owner", f.a, f.userRef(), true},
+		{"other member on user vm", f.b, f.userRef(), false},
+		{"admin on user vm", f.admin, f.userRef(), false},
+		{"org owner on user vm", f.owner, f.userRef(), false},
+		{"team member", f.tm, f.teamRef(), true},
+		{"non-member on team vm", f.a, f.teamRef(), false},
+		{"admin on team vm", f.admin, f.teamRef(), false},
+	}
+	for _, tt := range tests {
+		if got := e.CanConnect(tt.user, tt.vm); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+	if !e.Allowed(UserSubject(f.b), f.org, VMObject(f.userVM), "vm:connect") {
+		t.Error("custom grant should show in Allowed, only CanConnect ignores it")
+	}
+}
+
+func TestDenyConnectBlocksOwner(t *testing.T) {
+	f := newVMFixture()
+	role := uuid.New()
+	p := f.policy()
+	p.Roles = []CustomRole{{ID: role, OrgID: f.org, Name: "no-connect", Rules: []Rule{{Deny, ObjVMs + "/*", "vm:connect"}}}}
+	p.Bindings = []Binding{{OrgID: f.org, Subject: UserSubject(f.a), RoleID: role}, {OrgID: f.org, Subject: TeamSubject(f.team), RoleID: role}}
+	e := mustNew(t, p)
+	if e.CanConnect(f.a, f.userRef()) {
+		t.Error("deny should block the owner")
+	}
+	if e.CanConnect(f.tm, f.teamRef()) {
+		t.Error("deny should block the team member")
+	}
+}
+
+func TestCustomConnectGrantEscalates(t *testing.T) {
+	f := newVMFixture()
+	e := mustNew(t, f.policy())
+	for _, u := range []uuid.UUID{f.admin, f.owner} {
+		if err := e.CanGrant(UserSubject(u), f.org, true, []Rule{{Allow, ObjVMs + "/*", "vm:connect"}}); !errors.Is(err, ErrEscalation) {
+			t.Errorf("%s: got %v, want ErrEscalation", u, err)
+		}
+	}
+}
+
+func TestDevicePermissions(t *testing.T) {
+	f := newVMFixture()
+	e := mustNew(t, f.policy())
+	tests := []struct {
+		name    string
+		sub, of uuid.UUID
+		act     string
+		want    bool
+	}{
+		{"member creates own", f.a, f.a, "device:create", true},
+		{"member lists own", f.a, f.a, "device:list", true},
+		{"member deletes own", f.a, f.a, "device:delete", true},
+		{"member creates other's", f.a, f.b, "device:create", false},
+		{"member lists other's", f.a, f.b, "device:list", false},
+		{"member deletes other's", f.a, f.b, "device:delete", false},
+		{"admin lists other's", f.admin, f.a, "device:list", true},
+		{"admin deletes other's", f.admin, f.a, "device:delete", true},
+		{"admin creates other's", f.admin, f.a, "device:create", false},
+		{"owner creates other's", f.owner, f.a, "device:create", false},
+		{"admin creates own", f.admin, f.admin, "device:create", true},
+	}
+	for _, tt := range tests {
+		if got := e.Allowed(UserSubject(tt.sub), f.org, UserDevicesObject(tt.of), tt.act); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
+	}
+	if e.Allowed(UserSubject(f.a), uuid.New(), UserDevicesObject(f.a), "device:create") {
+		t.Error("cross-org device:create allowed")
+	}
+}
+
+func TestNetworkPermissions(t *testing.T) {
+	f := newVMFixture()
+	e := mustNew(t, f.policy())
+	net := NetworkObject(uuid.New())
+	tests := []struct {
+		name     string
+		sub      uuid.UUID
+		obj, act string
+		want     bool
+	}{
+		{"member reads", f.a, ObjNetworks, "network:read", true},
+		{"member creates", f.a, ObjNetworks, "network:create", true},
+		{"member uses", f.a, net, "network:use", true},
+		{"member deletes", f.a, net, "network:delete", false},
+		{"admin deletes", f.admin, net, "network:delete", true},
+		{"owner deletes", f.owner, net, "network:delete", true},
+	}
+	for _, tt := range tests {
+		if got := e.Allowed(UserSubject(tt.sub), f.org, tt.obj, tt.act); got != tt.want {
 			t.Errorf("%s: got %v", tt.name, got)
 		}
 	}

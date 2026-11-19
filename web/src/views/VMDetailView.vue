@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
+import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
 import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useOrg } from '@/composables/useOrg'
 
@@ -18,6 +19,8 @@ const vm = ref<VmInfo | null>(null)
 const error = ref('')
 const busy = ref(false)
 const confirmDelete = ref(false)
+const networksOpen = ref(false)
+const copyFailed = ref(false)
 
 const base = () => `/api/orgs/${org.value?.id}/vms/${vmId.value}`
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -58,6 +61,15 @@ const remove = () =>
     router.replace(`/orgs/${org.value?.id}/vms`)
   })
 
+async function copySsh() {
+  copyFailed.value = false
+  try {
+    await navigator.clipboard.writeText(`ssh ubuntu@${vm.value?.dnsName}`)
+  } catch {
+    copyFailed.value = true
+  }
+}
+
 const timer = window.setInterval(() => document.visibilityState === 'visible' && !busy.value && load(), 5000)
 onBeforeUnmount(() => window.clearInterval(timer))
 
@@ -92,9 +104,27 @@ watch(
         <dd>{{ vm.diskGB }} GB</dd>
         <dt>{{ t('vms.ip') }}</dt>
         <dd>{{ vm.ip || '–' }} <small v-if="vm.ip">({{ t('vms.ipHint') }})</small></dd>
+        <dt>{{ t('networks.mgmt') }}</dt>
+        <dd>{{ vm.mgmtIP || '–' }}</dd>
+        <dt>{{ t('networks.dns') }}</dt>
+        <dd>
+          <template v-if="vm.dnsName">
+            <code>ssh ubuntu@{{ vm.dnsName }}</code>
+            <Button size="sm" @click="copySsh">{{ t('networks.copy') }}</Button>
+            <small v-if="copyFailed" role="alert">{{ t('networks.copyFailed') }}</small>
+          </template>
+          <template v-else>–</template>
+        </dd>
         <dt>{{ t('vms.created') }}</dt>
         <dd>{{ d(new Date(vm.createdAt), { dateStyle: 'short', timeStyle: 'short' }) }}</dd>
       </dl>
+      <h2>{{ t('networks.section') }}</h2>
+      <ul v-if="vm.networks.length">
+        <li v-for="n in vm.networks" :key="n.id">{{ n.name }}: {{ n.ip }} ({{ n.dnsName }})</li>
+      </ul>
+      <p v-else>{{ t('networks.none') }}</p>
+      <p v-if="vm.canNetwork"><Button :disabled="busy" @click="networksOpen = true">{{ t('networks.change') }}</Button></p>
+      <VMNetworksDialog v-model:open="networksOpen" :org-id="org.id" :vm="vm" @saved="load" />
       <p v-if="vm.canPower || vm.canDelete" class="row">
         <template v-if="vm.canPower">
           <Button v-for="a in powerActions(vm.state)" :key="a" :disabled="busy" @click="power(a)">{{ t(`vms.${a}`) }}</Button>

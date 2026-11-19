@@ -19,7 +19,20 @@ npm --prefix web ci                # first time only
 npm --prefix web run dev           # Vite on :5173, proxies /api and /auth
 ```
 
-An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -base64 32)` appended.
+An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -base64 32)` appended, and
+`OBSERVATORY_GATEWAY_TOKEN=$(openssl rand -hex 32)` (at least 32 characters; the gateway authenticates to the hub with it).
+`OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.
+
+For VM networking, start the WireGuard/OVN gateway in Docker (it needs `OBSERVATORY_GATEWAY_TOKEN`, added by
+`make gateway-token` if missing, and reaches the hub at `HUB_URL`, default `http://host.docker.internal:8090`):
+
+```sh
+make gateway-up      # gateway-down stops it
+```
+
+Nodes and devices reach the gateway on UDP 51820/51821 at `OBSERVATORY_GATEWAY_HOST`, so use a LAN address rather
+than `localhost` in `OBSERVATORY_PUBLIC_URL` then. [docs/network.md](docs/network.md) covers the address plan, the
+gateway, devices, networks and the isolation model.
 
 Open <http://localhost:5173>. The first user to log in becomes platform admin.
 With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.

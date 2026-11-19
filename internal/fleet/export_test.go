@@ -1,3 +1,7 @@
 package fleet
 
-var DesiredRetry = &desiredRetry
+var (
+	DesiredRetry        = &desiredRetry
+	UnderlayCheck       = &underlayCheck
+	UnderlayRenewBefore = &underlayRenewBefore
+)

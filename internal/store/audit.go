@@ -67,6 +67,11 @@ const (
 	ActionVMCreate            = "vm:create"
 	ActionVMPower             = "vm:power"
 	ActionVMDelete            = "vm:delete"
+	ActionVMNetwork           = "vm:network"
+	ActionDeviceCreate        = "device:create"
+	ActionDeviceDelete        = "device:delete"
+	ActionNetworkCreate       = "network:create"
+	ActionNetworkDelete       = "network:delete"
 	ActionSSHKeyAdd           = "sshkey:add"
 	ActionSSHKeyDelete        = "sshkey:delete"
 )

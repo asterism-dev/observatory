@@ -133,7 +133,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role
 	})
 }
 
-// RemoveMember also drops the user's team memberships, role bindings, limits and private variables in the org.
+// RemoveMember also drops the user's team memberships, role bindings, limits and private variables in the org; devices go by cascade.
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		current, err := tx.LockMember(ctx, orgID, userID)

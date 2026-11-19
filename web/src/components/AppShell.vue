@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { List, ListItem } from '@asterism-dev/lumen'
-import { Box, KeyRound, LayoutDashboard, Server } from '@lucide/vue'
+import { Box, KeyRound, Laptop, LayoutDashboard, Network, Server } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -61,6 +61,8 @@ const navItems = computed(() => {
     { path: `/orgs/${id}/dashboard`, label: t('nav.dashboard'), icon: LayoutDashboard },
     { path: `/orgs/${id}/nodes`, label: t('nav.nodes'), icon: Server },
     { path: `/orgs/${id}/vms`, label: t('nav.vms'), icon: Box },
+    { path: `/orgs/${id}/networks`, label: t('nav.networks'), icon: Network },
+    { path: `/orgs/${id}/devices`, label: t('nav.devices'), icon: Laptop },
     { path: `/orgs/${id}/env`, label: t('nav.env'), icon: KeyRound },
   ]
 })

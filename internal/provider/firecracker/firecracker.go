@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
@@ -151,6 +152,14 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	}
 	return proc, filepath.Join(jailRoot(dir), "fc.sock"), err
 }
+
+func (p *Provider) StartChassis(_ context.Context, c chassisconf.Config) error {
+	_, err := chassisconf.Apply(c, "/", chassisconf.Run)
+	return err
+}
+
+// StopChassis leaves OVS/OVN running: they belong to the host, not to this node process.
+func (p *Provider) StopChassis() error { return nil }
 
 type instance struct {
 	*linuxvm.Process

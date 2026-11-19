@@ -3,9 +3,14 @@ package fleet_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,15 +29,19 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/netaddr"
+	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 type env struct {
 	t     *testing.T
 	s     *store.Store
 	z     *authz.Service
+	h     *network.Hub
 	f     *fleet.Fleet
 	srv   *httptest.Server
 	owner uuid.UUID
@@ -55,10 +64,14 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fleet.New(s, z)
+	h, err := network.Load(ctx, s, z, network.Config{GatewayHost: "gw.test", GatewayToken: "0123456789abcdef0123456789abcdef"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fleet.New(s, z, h)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
-	return &env{t: t, s: s, z: z, f: f, srv: srv, owner: u.User.ID, org: org}
+	return &env{t: t, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
 }
 
 func (e *env) node(org uuid.UUID, name string) (store.Node, string) {
@@ -153,12 +166,32 @@ func (e *env) dial(cred string) (*fakeNode, *http.Response, error) {
 
 func (e *env) connect(cred string, vms ...proto.VMStatus) *fakeNode {
 	e.t.Helper()
+	return e.register(cred, proto.Register{VMs: vms})
+}
+
+// register fills in the fixed node facts; NodeID is deliberately bogus, the hub must use the credential.
+func (e *env) register(cred string, reg proto.Register) *fakeNode {
+	e.t.Helper()
 	n, _, err := e.dial(cred)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	n.send(proto.Message{Type: "register", Register: &proto.Register{NodeID: "whatever", Hostname: "h", CPUs: 4, MemoryMB: 4096, VMs: vms, Version: "v1"}})
+	reg.NodeID, reg.Hostname, reg.CPUs, reg.MemoryMB, reg.Version = "whatever", "h", 4, 4096, "v1"
+	n.send(proto.Message{Type: "register", Register: &reg})
 	return n
+}
+
+func chassisCSR(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "spoofed"}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
 }
 
 func (n *fakeNode) send(m proto.Message) {
@@ -168,12 +201,27 @@ func (n *fakeNode) send(m proto.Message) {
 	}
 }
 
-func (n *fakeNode) desired() proto.Message {
+func (n *fakeNode) next() proto.Message {
 	n.t.Helper()
 	select {
 	case m, ok := <-n.msgs:
 		if !ok {
 			n.t.Fatal("connection closed")
+		}
+		return m
+	case <-time.After(5 * time.Second):
+		n.t.Fatal("no message")
+	}
+	return proto.Message{}
+}
+
+// desired skips underlay messages.
+func (n *fakeNode) desired() proto.Message {
+	n.t.Helper()
+	for {
+		m := n.next()
+		if m.Type == "underlay" {
+			continue
 		}
 		if m.Type != "desired" {
 			n.t.Fatalf("got %q message", m.Type)
@@ -184,10 +232,7 @@ func (n *fakeNode) desired() proto.Message {
 			}
 		}
 		return m
-	case <-time.After(5 * time.Second):
-		n.t.Fatal("no desired list")
 	}
-	return proto.Message{}
 }
 
 func (n *fakeNode) closed() bool {
@@ -508,4 +553,171 @@ func TestTeamVMNeverGetsPrivateVariable(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDesiredCarriesNICs(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	if !v.MgmtIP.IsValid() {
+		t.Fatal("vm has no management address")
+	}
+	node := e.connect(cred)
+	first := node.desired().Desired[0]
+	want := []proto.NIC{{Network: "mgmt", MAC: netaddr.MAC(v.MgmtIP), IP: v.MgmtIP.String(), Port: v.ID.String() + "-mgmt"}}
+	if !slices.Equal(first.Spec.NICs, want) {
+		t.Fatalf("NICs = %+v, want %+v", first.Spec.NICs, want)
+	}
+
+	zeta, err := e.s.CreateNetwork(ctx, store.Network{OrgID: e.org.ID, Name: "zeta", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha, err := e.s.CreateNetwork(ctx, store.Network{OrgID: e.org.ID, Name: "alpha", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.SetVMNetworks(ctx, e.org.ID, v.ID, []uuid.UUID{zeta.ID, alpha.ID}, true); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	second := node.desired().Desired[0]
+	if second.Generation <= first.Generation {
+		t.Errorf("generation %d after %d", second.Generation, first.Generation)
+	}
+	nics := second.Spec.NICs
+	if len(nics) != 3 || nics[0] != want[0] || nics[1].Network != alpha.ID.String() || nics[2].Network != zeta.ID.String() {
+		t.Fatalf("NICs = %+v", nics)
+	}
+
+	// Every NIC must bind to exactly the port the gateway creates for it.
+	st, err := e.h.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := map[string]proto.GatewayPort{}
+	for _, o := range st.Orgs {
+		for _, p := range o.Ports {
+			ports[p.Name] = p
+		}
+		for _, gn := range o.Networks {
+			for _, p := range gn.Ports {
+				ports[p.Name] = p
+			}
+		}
+	}
+	for _, nic := range nics {
+		p, ok := ports[nic.Port]
+		if !ok || p.MAC != nic.MAC || p.IP != nic.IP || p.Chassis != n.ID.String() {
+			t.Errorf("NIC %+v has gateway port %+v (found %v)", nic, p, ok)
+		}
+	}
+}
+
+func TestUnderlayOnRegister(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	_, pub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
+	m := node.next()
+	if m.Type != "underlay" || m.Underlay == nil {
+		t.Fatalf("first message %q", m.Type)
+	}
+	if cn := certCN(t, m.Underlay.Cert); cn != n.ID.String() {
+		t.Errorf("cert CN = %q, want %s", cn, n.ID)
+	}
+	if m.Underlay.CACert == "" || m.Underlay.Address == "" {
+		t.Errorf("incomplete underlay %+v", m.Underlay)
+	}
+	if m := node.next(); m.Type != "desired" {
+		t.Fatalf("second message %q", m.Type)
+	}
+	node.sess.Close()
+	waitFor(t, func() bool { return !e.f.Online(n.ID) })
+
+	for _, reg := range []proto.Register{{}, {ChassisKey: pub}, {ChassisCSR: chassisCSR(t)}, {ChassisKey: "bogus", ChassisCSR: chassisCSR(t)}} {
+		node := e.register(cred, reg)
+		if m := node.next(); m.Type != "desired" {
+			t.Errorf("register %+v: first message %q", reg, m.Type)
+		}
+		node.sess.Close()
+		waitFor(t, func() bool { return !e.f.Online(n.ID) })
+	}
+}
+
+func TestUnderlayRenewed(t *testing.T) {
+	check, before := *fleet.UnderlayCheck, *fleet.UnderlayRenewBefore
+	*fleet.UnderlayCheck, *fleet.UnderlayRenewBefore = 50*time.Millisecond, 400*24*time.Hour
+	t.Cleanup(func() { *fleet.UnderlayCheck, *fleet.UnderlayRenewBefore = check, before })
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	_, pub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
+	first := node.next()
+	if first.Type != "underlay" {
+		t.Fatalf("first message %q", first.Type)
+	}
+	for {
+		m := node.next()
+		if m.Type != "underlay" {
+			continue
+		}
+		if m.Underlay.Cert == first.Underlay.Cert || certCN(t, m.Underlay.Cert) != n.ID.String() {
+			t.Fatalf("renewed cert not fresh or wrong CN")
+		}
+		return
+	}
+}
+
+func TestUnderlayRetriedAfterFailure(t *testing.T) {
+	old := *fleet.DesiredRetry
+	*fleet.DesiredRetry = 50 * time.Millisecond
+	t.Cleanup(func() { *fleet.DesiredRetry = old })
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred := e.node(e.org.ID, "n")
+	other, _ := e.node(e.org.ID, "other")
+	_, pub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another node holding the key makes enrollment fail until it lets go.
+	if _, err := e.s.EnrollChassis(ctx, other.ID, pub); err != nil {
+		t.Fatal(err)
+	}
+	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
+	if m := node.next(); m.Type != "desired" {
+		t.Fatalf("first message %q", m.Type)
+	}
+	_, otherPub, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.EnrollChassis(ctx, other.ID, otherPub); err != nil {
+		t.Fatal(err)
+	}
+	for m := node.next(); m.Type != "underlay"; m = node.next() {
+	}
+}
+
+func certCN(t *testing.T, certPEM string) string {
+	t.Helper()
+	b, _ := pem.Decode([]byte(certPEM))
+	if b == nil {
+		t.Fatal("no PEM cert")
+	}
+	c, err := x509.ParseCertificate(b.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Subject.CommonName
 }

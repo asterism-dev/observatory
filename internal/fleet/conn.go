@@ -2,7 +2,9 @@ package fleet
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
@@ -18,8 +20,14 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// desiredRetry is how long a node waits for another desired list after building one failed.
+// desiredRetry is how long a node waits for another desired list or underlay after building one failed.
 var desiredRetry = 5 * time.Second
+
+// The chassis cert is re-signed from the node's start-up CSR when less than underlayRenewBefore is left, checked every underlayCheck.
+var (
+	underlayCheck       = 24 * time.Hour
+	underlayRenewBefore = 30 * 24 * time.Hour
+)
 
 type conn struct {
 	node, org uuid.UUID
@@ -88,7 +96,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("node connected", "node", node.ID, "vms", len(m.Register.VMs))
 	defer slog.Info("node disconnected", "node", node.ID)
-	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl))
+	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), node, *m.Register)
 	c.kick()
 	for {
 		var m proto.Message
@@ -124,12 +132,49 @@ func (f *Fleet) register(ctx context.Context, node uuid.UUID, reg proto.Register
 }
 
 // pushLoop is the connection's only writer, so a slow node blocks nothing but itself.
-func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder) {
+// node comes from the credential, never from reg, so a node can only get a chassis cert for itself.
+func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node store.Node, reg proto.Register) {
+	chassis := f.net != nil && reg.ChassisKey != "" && reg.ChassisCSR != ""
+	var certExpiry, lastErrLog time.Time
+	renew := time.NewTicker(underlayCheck)
+	defer renew.Stop()
+	// Only a failed write ends the loop; without an underlay the node still runs, and the next check retries.
+	sendUnderlay := func() error {
+		u, expiry, err := f.underlay(ctx, node, reg)
+		if err != nil {
+			// The short retry would otherwise log every few seconds.
+			if time.Since(lastErrLog) >= 5*time.Minute {
+				slog.Error("node underlay", "node", node.ID, "err", err)
+				lastErrLog = time.Now()
+			}
+			if certExpiry.IsZero() {
+				renew.Reset(desiredRetry)
+			}
+			return nil
+		}
+		certExpiry = expiry
+		renew.Reset(underlayCheck)
+		return enc.Encode(proto.Message{Type: "underlay", Underlay: u})
+	}
+	if chassis {
+		if err := sendUnderlay(); err != nil {
+			c.sess.Close()
+			return
+		}
+	}
 	var seq uint64
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-renew.C:
+			if chassis && time.Until(certExpiry) < underlayRenewBefore {
+				if err := sendUnderlay(); err != nil {
+					c.sess.Close()
+					return
+				}
+			}
+			continue
 		case <-c.wake:
 		}
 		desired, err := f.desired(ctx, c.org, c.node)
@@ -144,4 +189,20 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder) {
 			return
 		}
 	}
+}
+
+func (f *Fleet) underlay(ctx context.Context, node store.Node, reg proto.Register) (*proto.Underlay, time.Time, error) {
+	u, err := f.net.Underlay(ctx, node, reg.ChassisKey, reg.ChassisCSR)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	b, _ := pem.Decode([]byte(u.Cert))
+	if b == nil {
+		return nil, time.Time{}, errors.New("chassis cert is not PEM")
+	}
+	cert, err := x509.ParseCertificate(b.Bytes)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return u, cert.NotAfter, nil
 }

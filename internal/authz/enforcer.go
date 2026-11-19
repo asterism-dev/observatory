@@ -9,6 +9,7 @@ import (
 
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
+	"github.com/casbin/casbin/v3/util"
 	"github.com/google/uuid"
 )
 
@@ -69,7 +70,13 @@ type Policy struct {
 type Enforcer struct {
 	policy Policy
 	ce     *casbin.Enforcer
+	vms    map[uuid.UUID]VMRef
+	teams  map[teamMember]bool
 }
+
+type teamMember struct{ org, team, user uuid.UUID }
+
+type userOrg struct{ user, org uuid.UUID }
 
 func New(p Policy) (*Enforcer, error) {
 	if err := validate(p); err != nil {
@@ -96,6 +103,9 @@ func New(p Policy) (*Enforcer, error) {
 		// Users may do everything with their own resources; org deny rules still win.
 		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
 		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
+		for _, act := range []string{"device:create", "device:list", "device:delete"} {
+			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
+		}
 	}
 	for _, tm := range p.TeamMembers {
 		u, org := UserSubject(tm.UserID), tm.OrgID.String()
@@ -117,17 +127,18 @@ func New(p Policy) (*Enforcer, error) {
 	}
 	for _, vm := range p.VMs {
 		obj, org := VMObject(vm.ID), vm.OrgID.String()
+		grant := func(sub string, acts ...string) {
+			for _, act := range acts {
+				rules = append(rules, []string{sub, org, obj, act, string(Allow)})
+			}
+		}
 		switch {
 		case vm.UserID != nil:
-			rules = append(rules, []string{UserSubject(*vm.UserID), org, obj, "vm:*", string(Allow)})
+			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:connect")
 		case vm.TeamID != nil:
-			sub := TeamSubject(*vm.TeamID)
-			rules = append(rules,
-				[]string{sub, org, obj, "vm:read", string(Allow)},
-				[]string{sub, org, obj, "vm:power", string(Allow)},
-			)
+			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect")
 			for _, admin := range teamAdmins[*vm.TeamID] {
-				rules = append(rules, []string{UserSubject(admin), org, obj, "vm:*", string(Allow)})
+				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network")
 			}
 		}
 	}
@@ -157,7 +168,14 @@ func New(p Policy) (*Enforcer, error) {
 			return nil, err
 		}
 	}
-	return &Enforcer{policy: p, ce: ce}, nil
+	e := &Enforcer{policy: p, ce: ce, vms: make(map[uuid.UUID]VMRef, len(p.VMs)), teams: make(map[teamMember]bool, len(p.TeamMembers))}
+	for _, vm := range p.VMs {
+		e.vms[vm.ID] = vm
+	}
+	for _, tm := range p.TeamMembers {
+		e.teams[teamMember{tm.OrgID, tm.TeamID, tm.UserID}] = true
+	}
+	return e, nil
 }
 
 func (e *Enforcer) Allowed(sub string, org uuid.UUID, obj, act string) bool {
@@ -168,6 +186,62 @@ func (e *Enforcer) Allowed(sub string, org uuid.UUID, obj, act string) bool {
 	}
 	return ok
 }
+
+// CanConnect holds only through the owner relation (user VM owner, owning team's members) of a VM this enforcer knows, never custom grants; denies still cut.
+func (e *Enforcer) CanConnect(user uuid.UUID, vm VMRef) bool {
+	return e.ConnectChecker().CanConnect(user, vm)
+}
+
+// ConnectChecker answers CanConnect for many pairs, reading each user's deny rules once; use one per batch.
+type ConnectChecker struct {
+	e      *Enforcer
+	denies map[userOrg][]Rule
+}
+
+func (e *Enforcer) ConnectChecker() *ConnectChecker {
+	return &ConnectChecker{e: e, denies: map[userOrg][]Rule{}}
+}
+
+func (c *ConnectChecker) CanConnect(user uuid.UUID, vm VMRef) bool {
+	known, ok := c.e.vms[vm.ID]
+	if !ok || known.OrgID != vm.OrgID || !sameOwner(known.UserID, vm.UserID) || !sameOwner(known.TeamID, vm.TeamID) {
+		return false
+	}
+	switch {
+	case vm.UserID != nil:
+		if *vm.UserID != user {
+			return false
+		}
+	case vm.TeamID != nil:
+		if !c.e.teams[teamMember{vm.OrgID, *vm.TeamID, user}] {
+			return false
+		}
+	default:
+		return false
+	}
+	// The owner relation implies the generated vm:connect grant, so only denies remain; they match exactly as the casbin matcher does.
+	obj := VMObject(vm.ID)
+	return !slices.ContainsFunc(c.denyRules(user, vm.OrgID), func(d Rule) bool {
+		return util.KeyMatch(obj, d.Object) && util.KeyMatch("vm:connect", d.Action)
+	})
+}
+
+// denyRules caches DenyRulesFor per user and org; on error it returns a deny-all rule so the check fails closed.
+func (c *ConnectChecker) denyRules(user, org uuid.UUID) []Rule {
+	key := userOrg{user, org}
+	rules, ok := c.denies[key]
+	if !ok {
+		var err error
+		if rules, err = c.e.DenyRulesFor(UserSubject(user), org); err != nil {
+			slog.Error("authz deny rules", "user", user, "org", org, "err", err)
+			rules = []Rule{{Effect: Deny, Object: "*", Action: "*"}}
+		}
+		c.denies[key] = rules
+	}
+	return rules
+}
+
+func sameOwner(a, b *uuid.UUID) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
 
 // DenyRulesFor returns the deny rules of sub and of every team and role it reaches in org.
 func (e *Enforcer) DenyRulesFor(sub string, org uuid.UUID) ([]Rule, error) {

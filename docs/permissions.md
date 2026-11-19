@@ -44,7 +44,10 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
-| `vm:read`, `vm:power`, `vm:delete` | `org/vms/*` |
+| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:connect` | `org/vms/*` |
+| `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
+| `network:read`, `network:create` | `org/networks` |
+| `network:use`, `network:delete` | `org/networks/*` |
 
 ## Built-in roles
 
@@ -62,7 +65,14 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
-| `vm:*` on `org/vms`, `org/vms/*` and `org/team-vms/*` | | yes | yes |
+| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network` on `org/vms/*` | | yes | yes |
+| `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
+| `network:delete` on `org/networks/*` | | yes | yes |
+| `device:list`, `device:delete` on `org/user-devices/*` | | yes | yes |
+
+No built-in role holds `vm:connect` or `device:create` on others' objects; those come only from the
+generated rules below. VM actions are always granted as explicit lists, never `vm:*`, so a new VM action
+is never granted by accident.
 
 ## Custom roles and bindings
 
@@ -125,16 +135,33 @@ each member's private scope (`org/user-env/<user>`).
 Every VM object is org-scoped (`org/vms/<id>`), whether a user or a team owns it, so org-wide rules such
 as `deny vm:delete@org/vms/*` also cover a member's own VMs. Owner rights come from generated rules:
 
-- A user VM gives its user `vm:*` on that VM.
-- A team VM gives the team subject `vm:read` and `vm:power` on it, and each admin of that team `vm:*`.
+- A user VM gives its user `vm:read`, `vm:power`, `vm:delete`, `vm:network` and `vm:connect` on that VM.
+- A team VM gives the team subject `vm:read`, `vm:power` and `vm:connect` on it, and each admin of that
+  team `vm:read`, `vm:power`, `vm:delete` and `vm:network`.
 - Team admins also get `vm:create` on `org/team-vms/<team>`, so they create VMs for their own team only.
 
-Org admins and owners see, power and delete every VM through `vm:*` on `org/vms/*`; no action lets them
-look inside a VM. Members see every node and may place VMs on it (`node:use`); only admins and owners
+Org admins and owners see, power, delete and re-network every VM (`vm:read`, `vm:power`, `vm:delete`,
+`vm:network` on `org/vms/*`); they never get `vm:connect`, so no action lets them look inside a VM.
+
+**Connect check.** Whether a person's devices may reach a VM is decided by `CanConnect`, not by
+`vm:connect` alone: a user VM admits only its owner, a team VM only members of the owning team, and then
+`vm:connect` must still be allowed, so an org deny such as `deny vm:connect@org/vms/*` cuts even the owner
+off. A custom role granting `vm:connect` has no effect on connecting in this version, and since nobody
+holds `vm:connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`node:use`); only admins and owners
 add, rename or delete nodes.
 
 A member who still owns VMs cannot be removed from the org or leave it, and a team that owns VMs cannot be
 deleted (`409` "owns VMs").
+
+## Devices and networks
+
+A device is a person's WireGuard peer in one org, kept under `org/user-devices/<user>`. Every member gets
+`device:create`, `device:list` and `device:delete` on their own object (a generated rule); admins and
+owners list and delete everyone's devices but never create devices for others.
+
+Networks (`org/networks/<id>`) connect VMs of one org to each other. Members read, create and use
+(attach VMs to) networks; only admins and owners delete them. Attaching a VM also needs `vm:network` on
+that VM. The connect check does not apply to network traffic: every VM on a network reaches the others.
 
 ## Limits
 

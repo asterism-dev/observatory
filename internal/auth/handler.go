@@ -33,6 +33,8 @@ type Handler struct {
 	PublicURL   *url.URL
 	Issuer      string
 	CLIClientID string
+	// Reload refreshes permissions after a login created a user or personal org.
+	Reload func(context.Context) error
 }
 
 type oidcState struct {
@@ -111,6 +113,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) startSession(ctx context.Context, id store.Identity, kind store.SessionKind, ttl time.Duration, action, ip, ua string) (string, time.Time, error) {
 	var token string
 	var expires time.Time
+	created := false
 	err := h.Store.InTx(ctx, func(tx *store.Store) error {
 		res, err := tx.Login(ctx, id)
 		if err != nil {
@@ -128,6 +131,7 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, kind stor
 			}
 		}
 		expires = sess.ExpiresAt
+		created = res.Created || res.PersonalOrg != nil
 		entries := []store.AuditEntry{entry(action, "session/"+sess.ID.String(), nil)}
 		if res.Created && res.PersonalOrg != nil {
 			entries = append(entries, entry(store.ActionOrgCreate, "org/"+res.PersonalOrg.ID.String(), &res.PersonalOrg.ID))
@@ -142,6 +146,11 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, kind stor
 		}
 		return nil
 	})
+	if err == nil && created && h.Reload != nil {
+		if rerr := h.Reload(context.WithoutCancel(ctx)); rerr != nil {
+			slog.Error("reload permissions after login", "err", rerr)
+		}
+	}
 	return token, expires, err
 }
 

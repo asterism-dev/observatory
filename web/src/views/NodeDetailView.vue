@@ -111,7 +111,9 @@ watch(
     <p><router-link :to="`/orgs/${org.id}/nodes`">{{ t('nav.nodes') }}</router-link></p>
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="node">
-      <h1>{{ node.name }} <Badge :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Badge></h1>
+      <h1>{{ node.name }} <Badge :tone="stateTones[node.state]">{{ t(`nodes.states.${node.state}`) }}</Badge>
+        <Badge v-if="node.quarantined" tone="danger">{{ t('nodes.quarantined') }}</Badge></h1>
+      <p v-if="node.quarantined" role="alert">{{ t('nodes.quarantinedHelp') }}</p>
       <form v-if="node.canUpdate" class="row" @submit.prevent="rename">
         <TextInput v-model="name" :aria-label="t('nodes.name')" />
         <Button type="submit" :disabled="busy || !name.trim() || name.trim() === node.name">{{ t('nodes.rename') }}</Button>
@@ -125,6 +127,14 @@ watch(
         <dd>{{ gb(node.usedMemoryMB) }} / {{ gb(node.memoryMB) }} GB</dd>
         <dt>{{ t('nodes.lastSeen') }}</dt>
         <dd>{{ node.lastSeen ? d(new Date(node.lastSeen), { dateStyle: 'short', timeStyle: 'short' }) : '–' }}</dd>
+        <template v-if="node.underlay">
+          <dt>{{ t('nodes.underlay') }}</dt>
+          <dd>{{ node.underlay.ip }}</dd>
+          <dt>{{ t('nodes.registered') }}</dt>
+          <dd>{{ node.underlay.registered ? t('nodes.yes') : t('nodes.no') }}</dd>
+          <dt>{{ t('nodes.handshake') }}</dt>
+          <dd>{{ node.underlay.lastHandshake ? d(new Date(node.underlay.lastHandshake), { dateStyle: 'short', timeStyle: 'short' }) : t('nodes.never') }}</dd>
+        </template>
         <template v-for="[k, v] in machine" :key="k">
           <dt>{{ k }}</dt>
           <dd>{{ v }}</dd>
