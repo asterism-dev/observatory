@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -95,6 +97,22 @@ func (r Root) executable(p string) bool {
 		p = filepath.Clean(target)
 	}
 	return false
+}
+
+// devGroups is dev's primary group plus every group in etc/group that lists dev.
+func (r Root) devGroups() []uint32 {
+	lines, _ := readLines(r.join("etc/group"))
+	gids := []uint32{devID}
+	for _, line := range lines {
+		f := strings.Split(line, ":")
+		if len(f) != 4 || !slices.Contains(strings.Split(f[3], ","), devName) {
+			continue
+		}
+		if gid, err := strconv.ParseUint(f[2], 10, 32); err == nil && gid != devID {
+			gids = append(gids, uint32(gid))
+		}
+	}
+	return gids
 }
 
 // editPasswd returns the old name and home of uid 1000 and the new name of a conflicting "dev" account, "" if none.

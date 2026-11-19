@@ -15,6 +15,7 @@ var stdout io.Writer = os.Stdout
 // handlers maps the argv[0] basename to its tool; later tasks replace the placeholders.
 var handlers = map[string]func(args []string) int{
 	"init":               func([]string) int { return runInit() },
+	"observatory-init":   runSubcommand,
 	"vmm-token":          notImplemented("vmm-token"),
 	"git-credential-vmm": notImplemented("git-credential-vmm"),
 	"gh":                 notImplemented("gh"),
@@ -27,6 +28,15 @@ func notImplemented(name string) func([]string) int {
 		fmt.Fprintln(os.Stderr, name+": not implemented")
 		return 1
 	}
+}
+
+// runSubcommand serves the internal commands of the binary under its own name, such as the image's nsinit shim.
+func runSubcommand(args []string) int {
+	if len(args) > 0 && args[0] == "nsinit" {
+		return runNsinit(args[1:])
+	}
+	fmt.Fprintln(os.Stderr, "usage: observatory-init nsinit [-dir DIR] [-stop-signal SIG] -- ARGV...")
+	return 2
 }
 
 func runInit() int {

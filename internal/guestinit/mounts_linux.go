@@ -13,6 +13,7 @@ func mountBase() error {
 		{"proc", "/proc", "proc"},
 		{"sysfs", "/sys", "sysfs"},
 		{"devtmpfs", "/dev", "devtmpfs"},
+		{"devpts", "/dev/pts", "devpts"},
 		{"cgroup2", "/sys/fs/cgroup", "cgroup2"},
 	} {
 		if err := os.MkdirAll(m.target, 0o755); err != nil {

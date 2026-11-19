@@ -6,6 +6,7 @@ require (
 	github.com/casbin/casbin/v3 v3.11.0
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/creack/pty v1.1.24
 	github.com/diskfs/go-diskfs v1.9.4
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/yamux v0.1.2

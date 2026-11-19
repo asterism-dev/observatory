@@ -3,10 +3,14 @@ package guestinit
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -58,7 +62,8 @@ func Run() error {
 	if err := root.WriteResolv(seed.NICs); err != nil {
 		fmt.Fprintln(os.Stderr, "init: resolv.conf:", err)
 	}
-	if _, err := root.HostKeys(false); err != nil {
+	hostKeys, err := root.HostKeys(false)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "init: host keys:", err)
 	}
 	if err := MountDisks(root, seed.Disks); err != nil {
@@ -68,16 +73,63 @@ func Run() error {
 	if _, err := root.InstallCAs(seed.EgressCAs); err != nil {
 		fmt.Fprintln(os.Stderr, "init: egress CAs:", err)
 	}
-	if _, err := root.WriteEnv(seed.Env, seed.Image.Env); err != nil {
+	env, err := root.WriteEnv(seed.Env, seed.Image.Env)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "init: environment:", err)
 	}
+	if env == nil {
+		env = map[string]string{"PATH": platformBin + ":" + defaultPath}
+	}
 
+	// Without the image the guest still serves SSH port forwarding and the agent, so a failed start is not fatal.
+	img, err := StartImage(root, seed.Image, env)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "init: image:", err)
+	}
+	startSSH(root, seed.SSHKeys, hostKeys, img, env)
 	go announceReadyWhenAddressed(seed.NICs)
 
+	var imageDone <-chan struct{}
+	if img != nil {
+		imageDone = img.Done()
+	}
 	// The kernel signals PID 1 only for ctrl-alt-del (SIGINT); the image's own poweroff/restart reaches us as its exit status.
-	sig := <-sigs
-	shutdown(shutdownFor(sig.(syscall.Signal)))
+	select {
+	case sig := <-sigs:
+		shutdown(img, shutdownFor(sig.(syscall.Signal)))
+	case <-imageDone:
+		shutdown(img, img.shutdownCmd())
+	}
 	return nil
+}
+
+func startSSH(root Root, seedKeys []string, hostKeys []ssh.Signer, img *Image, env map[string]string) {
+	l, err := net.Listen("tcp", ":22")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "init: ssh:", err)
+		return
+	}
+	srv := &SSHServer{
+		Keys:     func() []ssh.PublicKey { return root.AuthorizedKeys(seedKeys) },
+		HostKeys: hostKeys,
+		Spawn: func(cmd *exec.Cmd) error {
+			if img == nil {
+				return errors.New("the image is not running")
+			}
+			return img.Exec(cmd)
+		},
+		Env: func() map[string]string { return env },
+		Shell: func() string {
+			if sh := root.DevShell(); sh != "/bin/false" {
+				return sh
+			}
+			return ""
+		},
+		Root: root,
+	}
+	go func() {
+		fmt.Fprintln(os.Stderr, "init: ssh:", srv.Serve(l))
+	}()
 }
 
 // announceReadyWhenAddressed writes the ready marker once the primary NIC has an IPv4 address, giving up after 300 s like /run/vmm-ready.sh did.
@@ -105,9 +157,11 @@ func shutdownFor(sig syscall.Signal) int {
 	return syscall.LINUX_REBOOT_CMD_POWER_OFF
 }
 
-// shutdown stops the image (Task 7 hook), unmounts /newroot and powers off or reboots; it only returns on failure.
-func shutdown(cmd int) {
-	// Task 7: stop the image process here.
+// shutdown stops the image, unmounts /newroot and powers off or reboots; it only returns on failure.
+func shutdown(img *Image, cmd int) {
+	if img != nil {
+		img.Stop(imageStopTimeout)
+	}
 	if err := unmountRoot(); err != nil {
 		fmt.Fprintln(os.Stderr, "init:", err)
 	}
