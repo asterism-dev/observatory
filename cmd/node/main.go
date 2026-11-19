@@ -88,6 +88,9 @@ func runEnroll(args []string, home string) error {
 	if !*tokenStdin {
 		return errors.New("-token-stdin is required")
 	}
+	if err := node.CheckEnrollMemory(o.Path, o.MemoryMB); err != nil {
+		return err
+	}
 	token, err := node.ReadSecret(os.Stdin)
 	if err != nil {
 		return err
