@@ -17,7 +17,7 @@ const name = ref('')
 const memory = ref(false)
 const busy = ref(false)
 const error = ref('')
-const nameInvalid = computed(() => !/^[a-z][a-z0-9-]{0,30}$/.test(name.value))
+const nameInvalid = computed(() => !/^[a-z]([a-z0-9-]{0,29}[a-z0-9])?$/.test(name.value))
 
 watch(
   () => props.open,
