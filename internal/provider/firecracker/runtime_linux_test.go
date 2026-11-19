@@ -49,6 +49,10 @@ func TestAlpineImageBoots(t *testing.T) {
 	if got := sshVM(t, key, ip, "id -un; grep ^dev: /etc/passwd | cut -d: -f7; readlink -f /proc/$$/exe"); got != "dev\n/bin/sh\n/bin/busybox" {
 		t.Fatalf("login = %q, want dev with /bin/sh (busybox)", got)
 	}
+	// Container runtimes in the image (the builder's BuildKit) need the image's own cgroup2 mount.
+	if got := sshVM(t, key, ip, "awk '$2==\"/sys/fs/cgroup\"{print $3}' /proc/mounts"); got != "cgroup2" {
+		t.Fatalf("/sys/fs/cgroup mounted as %q, want cgroup2", got)
+	}
 	bundle := sshVM(t, key, ip, "cat /etc/ssl/certs/ca-certificates.crt")
 	if !strings.Contains(bundle, "# BEGIN observatory egress\n"+ca+"# END observatory egress") {
 		t.Fatalf("CA bundle lacks the egress block:\n%s", bundle[max(0, len(bundle)-2000):])
