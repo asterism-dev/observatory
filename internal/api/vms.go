@@ -61,6 +61,8 @@ type vmJSON struct {
 	CanRestore         bool `json:"canRestore"`
 	CanFork            bool `json:"canFork"`
 	Restoring          bool `json:"restoring"`
+
+	Usage *metricJSON `json:"usage,omitempty"` // latest sample, so lists need no request per VM
 }
 
 type vmDiskJSON struct {
@@ -149,6 +151,10 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
 		Restoring: v.RestoreState == "node" || v.RestoreState == "storage",
 		DNSName:   v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
+	if s := h.fleet.Metrics(v.ID); len(s) > 0 {
+		u := metricJSON(s[len(s)-1])
+		j.Usage = &u
+	}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
 	}
@@ -431,6 +437,7 @@ type metricJSON struct {
 	CPUPercent float64   `json:"cpuPercent"`
 	MemTotalMB int       `json:"memTotalMB"`
 	MemUsedMB  int       `json:"memUsedMB"`
+	DiskUsedMB int       `json:"diskUsedMB"`
 }
 
 func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {

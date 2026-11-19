@@ -1,6 +1,8 @@
 package node
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -41,5 +43,26 @@ func TestMetricsLoopSendsRunningOnly(t *testing.T) {
 	m := env.hub.metrics[0]
 	if len(m.Metrics) != 1 || m.Metrics[0].ID != running.ID || m.Metrics[0].CPUPercent != 100 || m.Metrics[0].MemTotalMB != 1024 || m.Metrics[0].MemUsedMB != 256 {
 		t.Fatalf("metrics = %+v", m.Metrics)
+	}
+}
+
+func TestAllocatedMBCountsBlocksNotSize(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "root.img")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 3<<20)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(1 << 30); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if got := allocatedMB(p); got < 3 || got > 100 {
+		t.Fatalf("allocated = %d MB", got)
+	}
+	if got := allocatedMB(p + ".missing"); got != 0 {
+		t.Fatalf("missing = %d", got)
 	}
 }

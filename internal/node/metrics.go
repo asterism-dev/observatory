@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -37,6 +39,15 @@ func parseProcStatTicks(stat string) (uint64, error) {
 		return 0, err
 	}
 	return u + s, nil
+}
+
+// allocatedMB is the host footprint of a sparse image, not its apparent size; 0 when it cannot be read.
+func allocatedMB(path string) int {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return 0
+	}
+	return int(st.Blocks * 512 >> 20)
 }
 
 // ProcTicks returns the CPU ticks of a host process.
@@ -102,7 +113,7 @@ func (a *Agent) sendMetrics(marks map[string]cpuMark, every time.Duration) {
 			continue
 		}
 		cpu := float64(ticks-prev.ticks) / (clockTicks * every.Seconds() * float64(r.cpus)) * 100
-		m := proto.VMMetrics{ID: r.id, CPUPercent: cpu}
+		m := proto.VMMetrics{ID: r.id, CPUPercent: cpu, DiskUsedMB: allocatedMB(filepath.Join(VMDir(a.VMsDir, r.id), "root.img"))}
 		if total, used, err := r.inst.Memory(); err == nil {
 			m.MemTotalMB, m.MemUsedMB = total, used
 		}

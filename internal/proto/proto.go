@@ -211,6 +211,7 @@ type VMMetrics struct {
 	CPUPercent float64 `json:"cpuPercent"`
 	MemTotalMB int     `json:"memTotalMB"`
 	MemUsedMB  int     `json:"memUsedMB"`
+	DiskUsedMB int     `json:"diskUsedMB"` // allocated host blocks of the root disk image
 }
 
 type Message struct {

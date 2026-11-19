@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const metricsKept = 60
@@ -16,6 +17,7 @@ type MetricSample struct {
 	At                    time.Time
 	CPUPercent            float64
 	MemTotalMB, MemUsedMB int
+	DiskUsedMB            int
 }
 
 // Metrics returns the VM's samples, oldest first; the slice is a copy.
@@ -41,21 +43,23 @@ func (f *Fleet) NoteMetrics(ctx context.Context, node uuid.UUID, ms []proto.VMMe
 		slog.Error("metrics: vms on node", "node", node, "err", err)
 		return
 	}
-	memory := make(map[uuid.UUID]int, len(vms))
+	sizes := make(map[uuid.UUID]store.VM, len(vms))
 	for _, v := range vms {
-		memory[v.ID] = v.MemoryMB
+		sizes[v.ID] = v
 	}
 	now := time.Now()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, m := range ms {
 		id, err := uuid.Parse(m.ID)
-		limit, ok := memory[id]
+		v, ok := sizes[id]
 		if err != nil || !ok {
 			continue
 		}
+		limit := v.MemoryMB
 		s := MetricSample{At: now, CPUPercent: min(max(m.CPUPercent, 0), 100),
-			MemTotalMB: min(max(m.MemTotalMB, 0), limit), MemUsedMB: min(max(m.MemUsedMB, 0), limit)}
+			MemTotalMB: min(max(m.MemTotalMB, 0), limit), MemUsedMB: min(max(m.MemUsedMB, 0), limit),
+			DiskUsedMB: min(max(m.DiskUsedMB, 0), v.DiskGB*1024)}
 		f.metrics[id] = append(f.metrics[id], s)
 		if n := len(f.metrics[id]) - metricsKept; n > 0 {
 			f.metrics[id] = f.metrics[id][n:]

@@ -10,6 +10,7 @@ interface Sample {
   cpuPercent: number
   memTotalMB: number
   memUsedMB: number
+  diskUsedMB: number
 }
 
 const props = defineProps<{ orgId: string; vm: VmInfo }>()
@@ -17,19 +18,34 @@ const { t } = useI18n()
 const samples = ref<Sample[]>([])
 const error = ref('')
 
-const W = 240
-const H = 40
+const W = 300
+const H = 100
 const now = ref(Date.now())
 const last = computed(() => samples.value.at(-1))
 const live = computed(() => !!last.value && now.value - Date.parse(last.value.at) < 30000)
-const hasRam = computed(() => !!last.value?.memTotalMB)
+const minutes = computed(() => {
+  const first = samples.value[0]
+  return first && last.value && first !== last.value ? Math.max(1, Math.round((Date.parse(last.value.at) - Date.parse(first.at)) / 60000)) : 0
+})
 
 function line(values: number[], max: number) {
-  if (values.length < 2) return ''
-  return values.map((v, i) => `${((i / (values.length - 1)) * W).toFixed(1)},${(H - (Math.min(v, max) / max) * H).toFixed(1)}`).join(' ')
+  if (values.length < 2 || !max) return ''
+  return values.map((v, i) => `${((i / (values.length - 1)) * W).toFixed(1)},${(H - (Math.min(v, max) / max) * (H - 2) - 1).toFixed(1)}`).join(' ')
 }
-const cpuLine = computed(() => line(samples.value.map((s) => s.cpuPercent), 100))
-const ramLine = computed(() => line(samples.value.map((s) => s.memUsedMB), last.value?.memTotalMB || 1))
+const pct = (v: number, max: number) => (max ? (v / max) * 100 : null)
+
+const cards = computed(() => {
+  const s = samples.value
+  const l = last.value
+  const diskMB = props.vm.diskGB * 1024
+  return [
+    { key: 'cpu', label: t('usage.cpu'), detail: l ? `${((l.cpuPercent / 100) * props.vm.cpus).toFixed(1)} / ${props.vm.cpus} vCPU` : '', percent: l ? l.cpuPercent : null, points: line(s.map((x) => x.cpuPercent), 100) },
+    l?.memTotalMB
+      ? { key: 'mem', label: t('usage.mem'), detail: `${gb(l.memUsedMB)} / ${gb(l.memTotalMB)} GB`, percent: pct(l.memUsedMB, l.memTotalMB), points: line(s.map((x) => x.memUsedMB), l.memTotalMB) }
+      : { key: 'mem', label: t('usage.mem'), detail: l ? t('usage.noRam') : '', percent: null, points: '' },
+    { key: 'dsk', label: t('usage.dsk'), detail: l ? `${gb(l.diskUsedMB)} / ${props.vm.diskGB} GB` : '', percent: l ? pct(l.diskUsedMB, diskMB) : null, points: line(s.map((x) => x.diskUsedMB), diskMB) },
+  ]
+})
 
 async function load() {
   const id = props.vm.id
@@ -63,32 +79,98 @@ watch(
 </script>
 
 <template>
-  <h2>{{ t('usage.section') }}</h2>
-  <p v-if="error" role="alert">{{ error }}</p>
-  <p v-else-if="!last">{{ t('usage.none') }}</p>
-  <p v-else-if="!live">{{ t('usage.stale') }}</p>
-  <div v-else class="usage">
-    <div>
-      <strong>{{ t('usage.cpu') }} {{ Math.round(last.cpuPercent) }} %</strong>
-      <svg :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" role="img" :aria-label="t('usage.cpu')"><polyline :points="cpuLine" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
+  <section>
+    <div class="section-head">
+      <h2>{{ t('usage.window', { n: minutes || 10 }) }}</h2>
+      <span v-if="live">{{ t('usage.live') }}</span>
     </div>
-    <div>
-      <strong>{{ t('usage.ram') }} <template v-if="hasRam">{{ gb(last.memUsedMB) }} / {{ gb(last.memTotalMB) }} GB</template><template v-else>–</template></strong>
-      <svg v-if="hasRam" :viewBox="`0 0 ${W} ${H}`" :width="W" :height="H" role="img" :aria-label="t('usage.ram')"><polyline :points="ramLine" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>
-      <small v-else>{{ t('usage.noRam') }}</small>
-    </div>
-  </div>
+    <p v-if="error" role="alert">{{ error }}</p>
+    <p v-else-if="!last" class="muted">{{ t('usage.none') }}</p>
+    <p v-else-if="!live" class="muted">{{ t('usage.stale') }}</p>
+    <template v-if="last">
+      <div class="cards">
+        <div v-for="c in cards" :key="c.key" class="card">
+          <div class="card-head">
+            <div>
+              <div class="mono">{{ c.label }}</div>
+              <div class="mono muted">{{ c.detail }}</div>
+            </div>
+            <strong>{{ c.percent === null ? '–' : `${Math.round(c.percent)}%` }}</strong>
+          </div>
+          <svg :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" role="img" :aria-label="c.label">
+            <line v-for="y in [25, 50, 75]" :key="y" x1="0" :x2="W" :y1="y" :y2="y" class="grid" />
+            <polyline v-if="c.points" :points="c.points" fill="none" class="plot" vector-effect="non-scaling-stroke" />
+          </svg>
+          <div class="axis mono muted">
+            <span>{{ t('usage.ago', { n: minutes || 10 }) }}</span>
+            <span>{{ t('usage.now') }}</span>
+          </div>
+        </div>
+      </div>
+      <p class="mono muted hint">{{ t('usage.diskHint') }}</p>
+    </template>
+  </section>
 </template>
 
 <style scoped>
-.usage {
+.section-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2rem;
+  justify-content: space-between;
+  align-items: baseline;
 }
-.usage > div {
+.section-head h2,
+.section-head span {
+  margin: 0 0 10px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+  font-weight: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px 8px;
+}
+.card-head {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+svg {
+  display: block;
+  width: 100%;
+  height: 100px;
+}
+.grid {
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+.plot {
+  stroke: var(--success);
+  stroke-width: 1.5;
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+}
+.muted {
+  color: var(--muted);
+}
+.hint {
+  margin-top: 10px;
 }
 </style>
