@@ -60,20 +60,20 @@ func (s *SSHServer) serveSession(sc *ssh.ServerConn, nc ssh.NewChannel) {
 			if req.Type != "shell" && ssh.Unmarshal(req.Payload, &arg) != nil {
 				break
 			}
+			var argv []string
 			if req.Type == "subsystem" {
-				h := subsystems[arg.Value]
-				if ok = h != nil; ok {
-					started = true
-					_ = req.Reply(true, nil)
-					go func() { h(ch); ch.Close() }()
-					continue
+				if argv = subsystems[arg.Value]; argv == nil {
+					break
 				}
-				break
 			}
 			started = true
 			// The reply must precede exit-status, or OpenSSH reports a failed request instead of the exit code.
 			_ = req.Reply(true, nil)
-			ss.start(arg.Value)
+			if argv != nil {
+				ss.run(argv[0], argv, ss.srv.Shell(), os.Stderr)
+			} else {
+				ss.start(arg.Value)
+			}
 			continue
 		}
 		if req.WantReply {
@@ -93,7 +93,12 @@ func (ss *session) start(command string) {
 	if command != "" {
 		args = []string{filepath.Base(shell), "-c", command}
 	}
-	cmd := &exec.Cmd{Path: shell, Args: args, Dir: devHome, Env: ss.environ(shell)}
+	ss.run(shell, args, shell, ss.ch.Stderr())
+}
+
+// run spawns path as dev in the image; stderr is used only without a pty.
+func (ss *session) run(path string, args []string, shell string, stderr io.Writer) {
+	cmd := &exec.Cmd{Path: path, Args: args, Dir: devHome, Env: ss.environ(shell)}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: devID, Gid: devID, Groups: ss.srv.Root.devGroups()}}
 	var stdin io.WriteCloser
 	if ss.tty != nil {
@@ -105,7 +110,7 @@ func (ss *session) start(command string) {
 			ss.fail(err)
 			return
 		}
-		cmd.Stdout, cmd.Stderr = ss.ch, ss.ch.Stderr()
+		cmd.Stdout, cmd.Stderr = ss.ch, stderr
 	}
 	if err := ss.srv.Spawn(cmd); err != nil {
 		ss.fail(err)

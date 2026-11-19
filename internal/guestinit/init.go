@@ -33,6 +33,8 @@ func runSubcommand(args []string) int {
 			return writePrivateMain(args[1:])
 		case "remove-private":
 			return removePrivateMain(args[1:])
+		case "sftp-server":
+			return sftpServerMain()
 		}
 	}
 	fmt.Fprintln(os.Stderr, "usage: observatory-init nsinit [-dir DIR] [-stop-signal SIG] -- ARGV...")

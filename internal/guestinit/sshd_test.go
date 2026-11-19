@@ -308,3 +308,46 @@ func TestSSHRemoteForward(t *testing.T) {
 		t.Fatal("privileged remote forward accepted")
 	}
 }
+
+func TestSSHSFTPSubsystemSpawnsHelperAsDev(t *testing.T) {
+	ts := startTestSSH(t, "", nil)
+	sess, err := ts.mustDial(t).NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RequestSubsystem("sftp"); err != nil {
+		t.Fatal(err)
+	}
+	// RequestSubsystem does not start the session for Wait; the channel's EOF marks the end.
+	_, _ = io.Copy(io.Discard, out)
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if len(ts.spawned) != 1 {
+		t.Fatalf("spawned %d commands", len(ts.spawned))
+	}
+	cmd := ts.spawned[0]
+	if cmd.Path != platformBin+"/observatory-init" || !slices.Equal(cmd.Args, []string{platformBin + "/observatory-init", "sftp-server"}) {
+		t.Fatalf("path %q args %v", cmd.Path, cmd.Args)
+	}
+	if c := cmd.SysProcAttr.Credential; c == nil || c.Uid != devID || c.Gid != devID {
+		t.Fatalf("credential = %+v", cmd.SysProcAttr.Credential)
+	}
+	if cmd.Dir != devHome || !slices.Contains(cmd.Env, "HOME="+devHome) {
+		t.Fatalf("dir %q env %v", cmd.Dir, cmd.Env)
+	}
+}
+
+func TestSSHRejectsUnknownSubsystem(t *testing.T) {
+	ts := startTestSSH(t, "/bin/sh", nil)
+	sess, err := ts.mustDial(t).NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RequestSubsystem("nope"); err == nil {
+		t.Fatal("unknown subsystem accepted")
+	}
+}
