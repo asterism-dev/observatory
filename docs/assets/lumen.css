@@ -1,0 +1,73 @@
+/* Colours, radius and fonts of the web app's design system (Lumen). */
+:root {
+  --lumen-accent: #c98a00;
+  --lumen-radius: 6px;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f7f7f8;
+  --md-default-fg-color: #1d1f27;
+  --md-default-fg-color--light: #6b6f7b;
+  --md-default-fg-color--lightest: #e2e3e8;
+  --md-primary-fg-color: #ffffff;
+  --md-primary-fg-color--light: #ffffff;
+  --md-primary-fg-color--dark: #ececf1;
+  --md-primary-bg-color: #1d1f27;
+  --md-primary-bg-color--light: #6b6f7b;
+  --md-accent-fg-color: var(--lumen-accent);
+  /* The accent itself is too light for body text on white (contrast below 4.5:1). */
+  --md-typeset-a-color: #8a5f00;
+  --md-code-bg-color: #ececf1;
+  --md-accent-fg-color--transparent: #ececf1;
+  --lumen-border: #e2e3e8;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #16171d;
+  --md-default-fg-color: #e6e7eb;
+  --md-default-fg-color--light: #8b8f9a;
+  --md-default-fg-color--lightest: #2c2f3a;
+  --md-primary-fg-color: #1d1f27;
+  --md-primary-fg-color--light: #1d1f27;
+  --md-primary-fg-color--dark: #16171d;
+  --md-primary-bg-color: #e6e7eb;
+  --md-primary-bg-color--light: #8b8f9a;
+  --md-accent-fg-color: var(--lumen-accent);
+  --md-typeset-a-color: #e0a420;
+  --md-code-bg-color: #1d1f27;
+  --md-hue: 230;
+  --md-accent-fg-color--transparent: #2a2d38;
+  --lumen-border: #2c2f3a;
+}
+
+body {
+  --md-text-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --md-code-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.md-header,
+.md-tabs {
+  border-bottom: 1px solid var(--lumen-border);
+  box-shadow: none;
+}
+
+.md-typeset pre > code,
+.md-typeset code,
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset table:not([class]),
+.md-search__form {
+  border-radius: var(--lumen-radius);
+}
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--lumen-border);
+}
+
+.md-nav--primary .md-nav__item--section > .md-nav__link {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

@@ -1,0 +1,63 @@
+[project]
+site_name = "Observatory"
+site_description = "A hub for organisations, VMs on Firecracker nodes, and the network, disks and secrets around them."
+site_url = "https://asterism-dev.github.io/observatory/"
+repo_url = "https://github.com/asterism-dev/observatory"
+repo_name = "asterism-dev/observatory"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+# Design notes and plans stay in the repository but are not part of the docs.
+exclude_docs = """
+/superpowers/
+"""
+extra_css = ["assets/lumen.css"]
+nav = [
+  { "Overview" = "index.md" },
+  { "Getting started" = [
+    { "Deploy with Docker Compose" = "deploy.md" },
+    { "Identity provider" = "idp.md" },
+    { "Nodes" = "nodes.md" },
+  ] },
+  { "Using it" = [
+    { "CLI" = "cli.md" },
+    { "VM lifecycle" = "vm-lifecycle.md" },
+    { "Network" = "network.md" },
+    { "Disks" = "disks.md" },
+    { "Guest image" = "guest.md" },
+    { "Integrations" = "integrations.md" },
+    { "Egress proxy" = "egress.md" },
+  ] },
+  { "Operating" = [
+    { "Permissions" = "permissions.md" },
+    { "Releasing" = "releasing.md" },
+  ] },
+]
+
+[project.theme]
+# System fonts, like the web app, and no request to a font CDN.
+font = false
+features = [
+  "navigation.instant",
+  "navigation.sections",
+  "navigation.top",
+  "toc.follow",
+  "search.highlight",
+  "content.code.copy",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "material/brightness-4"
+toggle.name = "Dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "material/brightness-7"
+toggle.name = "Light mode"
