@@ -89,6 +89,7 @@ func (h *api) setMemberRole(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -148,6 +149,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, action, "org/members/"+target.String(), denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

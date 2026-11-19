@@ -143,6 +143,13 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 		if err := tx.checkNotLastOwner(ctx, orgID, current); err != nil {
 			return err
 		}
+		var owns bool
+		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND user_id = $2)", orgID, userID).Scan(&owns); err != nil {
+			return err
+		}
+		if owns {
+			return ErrOwnsResources
+		}
 		if _, err := tx.q.Exec(ctx, `
 			DELETE FROM team_members WHERE user_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`, orgID, userID); err != nil {
 			return err

@@ -13,6 +13,8 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -20,14 +22,18 @@ type api struct {
 	store     *store.Store
 	z         *authz.Service
 	publicURL *url.URL
+	fleet     *fleet.Fleet
 }
 
-func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
-	h := &api{store: s, z: z, publicURL: a.PublicURL}
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet) http.Handler {
+	h := &api{store: s, z: z, publicURL: a.PublicURL, fleet: f}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
+	mux.HandleFunc("GET /api/me/ssh-keys", h.listSSHKeys)
+	mux.HandleFunc("POST /api/me/ssh-keys", h.addSSHKey)
+	mux.HandleFunc("DELETE /api/me/ssh-keys/{id}", h.deleteSSHKey)
 	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
 	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
 	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
@@ -67,6 +73,19 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service) http.Handler {
 	mux.HandleFunc("PATCH /api/orgs/{org}/env/{id}", h.updateEnv)
 	mux.HandleFunc("POST /api/orgs/{org}/env/{id}/move", h.moveEnv)
 	mux.HandleFunc("DELETE /api/orgs/{org}/env/{id}", h.deleteEnv)
+	mux.HandleFunc("GET /api/orgs/{org}/nodes", h.listNodes)
+	mux.HandleFunc("POST /api/orgs/{org}/nodes", h.createNode)
+	mux.HandleFunc("GET /api/orgs/{org}/nodes/{id}", h.getNode)
+	mux.HandleFunc("PATCH /api/orgs/{org}/nodes/{id}", h.renameNode)
+	mux.HandleFunc("POST /api/orgs/{org}/nodes/{id}/credential", h.regenerateNodeCredential)
+	mux.HandleFunc("DELETE /api/orgs/{org}/nodes/{id}", h.deleteNode)
+	mux.HandleFunc("GET /api/orgs/{org}/vms", h.listVMs)
+	mux.HandleFunc("POST /api/orgs/{org}/vms", h.createVM)
+	mux.HandleFunc("GET /api/orgs/{org}/vms/{id}", h.getVM)
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/start", h.powerVM(proto.PowerRunning, ""))
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/shutdown", h.powerVM(proto.PowerStopped, proto.StopGraceful))
+	mux.HandleFunc("POST /api/orgs/{org}/vms/{id}/stop", h.powerVM(proto.PowerStopped, proto.StopHard))
+	mux.HandleFunc("DELETE /api/orgs/{org}/vms/{id}", h.deleteVM)
 	return a.Require(mux)
 }
 

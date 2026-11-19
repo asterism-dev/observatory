@@ -185,6 +185,7 @@ func (h *api) createRole(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleCreate, authz.ObjRoles, denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	writeJSON(w, http.StatusCreated, toRoleJSON(role))
 }
 
@@ -232,6 +233,7 @@ func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleUpdate, obj, denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -265,6 +267,7 @@ func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleDelete, obj, denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -327,6 +330,7 @@ func (h *api) bind(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleBind, obj, denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	writeJSON(w, http.StatusCreated, bindingJSON(b))
 }
 
@@ -370,6 +374,7 @@ func (h *api) unbind(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionRoleUnbind, authz.RoleObject(b.RoleID), denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

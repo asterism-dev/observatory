@@ -26,8 +26,12 @@ func TestLoadConfig(t *testing.T) {
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	}
 	cfg, err := loadConfig(func(k string) string { return env[k] })
-	if err != nil || cfg.Listen != ":8090" || cfg.WebClientID != "w" {
+	if err != nil || cfg.Listen != ":8090" || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
 		t.Fatalf("%+v, %v", cfg, err)
+	}
+	env["OBSERVATORY_NODE_BINARY"] = "/x"
+	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.NodeBinary != "/x" {
+		t.Fatalf("node binary override: %+v", cfg)
 	}
 	env["OBSERVATORY_LISTEN"] = ":1"
 	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.Listen != ":1" {

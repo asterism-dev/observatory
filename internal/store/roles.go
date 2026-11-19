@@ -67,6 +67,18 @@ func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
 		return p, err
 	}
 
+	rows, err = q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM vms`)
+	if err != nil {
+		return p, err
+	}
+	p.VMs, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (v authz.VMRef, err error) {
+		err = r.Scan(&v.OrgID, &v.ID, &v.UserID, &v.TeamID)
+		return
+	})
+	if err != nil {
+		return p, err
+	}
+
 	if p.Roles, err = readRoles(ctx, q, nil); err != nil {
 		return p, err
 	}

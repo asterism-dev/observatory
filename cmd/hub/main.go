@@ -18,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db"
+	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/web"
 )
@@ -70,7 +71,10 @@ func run() error {
 	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", api.New(s, a, z))
+	f := fleet.New(s, z)
+	api.NodeEndpoints(mux, s, f)
+	nodeAssets(mux, cfg.NodeBinary)
+	mux.Handle("/api/", api.New(s, a, z, f))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

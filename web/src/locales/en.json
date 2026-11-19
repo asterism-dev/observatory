@@ -54,7 +54,16 @@
     "idpNote": "Passkeys and password are managed in your account at the identity provider.",
     "idpLink": "Open identity provider",
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "sshKeys": "SSH keys",
+    "keyName": "Name",
+    "fingerprint": "Fingerprint",
+    "added": "Added",
+    "addKey": "Add key",
+    "publicKey": "Public key",
+    "deleteKey": "Delete",
+    "deleteKeyTitle": "Delete SSH key?",
+    "deleteKeyBody": "New VMs will no longer get this key; running VMs keep it until their next boot."
   },
   "audit": {
     "actor": "Actor",
@@ -198,6 +207,80 @@
       "org": "Org",
       "teams": "Teams",
       "private": "Private"
+    }
+  },
+  "nodes": {
+    "subtitle": "Machines that run your VMs.",
+    "add": "Add node",
+    "addTitle": "Add node",
+    "create": "Create",
+    "name": "Name",
+    "state": "State",
+    "version": "Version",
+    "cpu": "vCPUs used",
+    "memory": "Memory used",
+    "vms": "VMs",
+    "open": "Open",
+    "empty": "No nodes yet.",
+    "noVms": "No VMs on this node.",
+    "copy": "Copy command",
+    "done": "Done",
+    "installHint": "Run this command as root on the machine that should become a node.",
+    "tokenNote": "The token is single use and valid for 24 hours.",
+    "installTitle": "Install command",
+    "rename": "Rename",
+    "lastSeen": "Last seen",
+    "regenerate": "Regenerate credential",
+    "regenerateTitle": "Regenerate credential",
+    "regenerateBody": "The node disconnects until it is re-installed with the new command.",
+    "delete": "Delete",
+    "deleteTitle": "Delete node",
+    "deleteBody": "Delete {name}? This cannot be undone. Nodes that still host VMs cannot be deleted.",
+    "states": {
+      "pending": "Pending",
+      "online": "Online",
+      "offline": "Offline"
+    }
+  },
+  "vms": {
+    "subtitle": "Virtual machines running on your nodes.",
+    "create": "Create VM",
+    "createTitle": "Create VM",
+    "name": "Name",
+    "owner": "Owner",
+    "node": "Node",
+    "state": "State",
+    "cpu": "vCPUs",
+    "memory": "Memory",
+    "disk": "Disk",
+    "ip": "IP address",
+    "ipHint": "reachable from the node only",
+    "created": "Created",
+    "ownerMe": "Me",
+    "ownerTeam": "Team {name}",
+    "hintUser": "The VM gets your SSH keys and variables.",
+    "hintTeam": "The VM gets the team members' SSH keys and the team variables.",
+    "invalidName": "Lowercase letters, digits and hyphens; must start with a letter or digit; max 63 characters.",
+    "invalidRange": "Between {min} and {max}.",
+    "start": "Start",
+    "shutdown": "Shut down",
+    "stop": "Stop",
+    "delete": "Delete",
+    "deleteTitle": "Delete VM",
+    "deleteBody": "Delete {name}? Its disk is removed and this cannot be undone.",
+    "empty": "No VMs yet.",
+    "tab": {
+      "all": "All",
+      "mine": "Mine",
+      "teams": "Teams"
+    },
+    "states": {
+      "pending": "Pending",
+      "starting": "Starting",
+      "running": "Running",
+      "stopped": "Stopped",
+      "error": "Error",
+      "unknown": "Unknown"
     }
   }
 }

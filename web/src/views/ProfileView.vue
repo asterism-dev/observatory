@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Badge, Button, Dialog, Table, type TableColumn } from '@asterism-dev/lumen'
+import { Badge, Button, Dialog, Table, Textarea, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -15,6 +15,13 @@ interface Session {
   lastUsedAt: string
   expiresAt: string
   current: boolean
+}
+
+interface SshKey {
+  id: string
+  name: string
+  fingerprint: string
+  createdAt: string
 }
 
 const { t, d } = useI18n()
@@ -35,6 +42,20 @@ const columns = computed<TableColumn[]>(() => [
   { key: 'actions', label: '' },
 ])
 
+const keys = ref<SshKey[]>([])
+const keyPending = ref<SshKey | null>(null)
+const adding = ref(false)
+const keyName = ref('')
+const keyValue = ref('')
+const keyError = ref('')
+
+const keyColumns = computed<TableColumn[]>(() => [
+  { key: 'name', label: t('profile.keyName') },
+  { key: 'fingerprint', label: t('profile.fingerprint') },
+  { key: 'createdAt', label: t('profile.added') },
+  { key: 'actions', label: '' },
+])
+
 const fmt = (v: string) => d(new Date(v), { dateStyle: 'short', timeStyle: 'short' })
 
 function fail(e: unknown) {
@@ -48,6 +69,53 @@ async function loadSessions() {
   } catch (e) {
     fail(e)
   }
+}
+
+async function loadKeys() {
+  try {
+    keys.value = await api<SshKey[]>('/api/me/ssh-keys')
+  } catch (e) {
+    fail(e)
+  }
+}
+
+function openAdd() {
+  keyName.value = ''
+  keyValue.value = ''
+  keyError.value = ''
+  adding.value = true
+}
+
+async function addKey() {
+  busy.value = true
+  keyError.value = ''
+  try {
+    await api('/api/me/ssh-keys', {
+      method: 'POST',
+      body: JSON.stringify({ name: keyName.value.trim(), publicKey: keyValue.value.trim() }),
+    })
+    adding.value = false
+    await loadKeys()
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return expire()
+    keyError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function removeKey() {
+  if (!keyPending.value) return
+  busy.value = true
+  try {
+    await api(`/api/me/ssh-keys/${keyPending.value.id}`, { method: 'DELETE' })
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 404)) fail(e)
+  } finally {
+    keyPending.value = null
+    busy.value = false
+  }
+  await loadKeys()
 }
 
 async function revoke() {
@@ -71,6 +139,7 @@ async function revoke() {
 
 onMounted(async () => {
   loadSessions()
+  loadKeys()
   try {
     issuer.value = (await api<{ issuer: string }>('/api/auth/config')).issuer
   } catch {
@@ -113,6 +182,37 @@ onMounted(async () => {
     <template #actions>
       <Button :disabled="busy" @click="pending = null">{{ t('profile.cancel') }}</Button>
       <Button variant="danger" :disabled="busy" @click="revoke">{{ t('profile.revoke') }}</Button>
+    </template>
+  </Dialog>
+
+  <h2>{{ t('profile.sshKeys') }}</h2>
+  <p><Button variant="accent" size="sm" @click="openAdd">{{ t('profile.addKey') }}</Button></p>
+  <Table :columns="keyColumns" :rows="keys" row-key="id">
+    <template #cell-createdAt="{ row }">{{ fmt(row.createdAt) }}</template>
+    <template #cell-actions="{ row }">
+      <Button variant="danger" size="sm" @click="keyPending = row">{{ t('profile.deleteKey') }}</Button>
+    </template>
+  </Table>
+
+  <Dialog :open="adding" :title="t('profile.addKey')" @update:open="(o) => !busy && (adding = o)">
+    <TextInput v-model="keyName" :aria-label="t('profile.keyName')" :placeholder="t('profile.keyName')" />
+    <Textarea v-model="keyValue" spellcheck="false" :aria-label="t('profile.publicKey')" :placeholder="t('profile.publicKey')" />
+    <p v-if="keyError" role="alert">{{ keyError }}</p>
+    <template #actions>
+      <Button :disabled="busy" @click="adding = false">{{ t('profile.cancel') }}</Button>
+      <Button variant="accent" :disabled="busy || !keyName.trim() || !keyValue.trim()" @click="addKey">{{ t('profile.addKey') }}</Button>
+    </template>
+  </Dialog>
+
+  <Dialog
+    :open="!!keyPending"
+    :title="t('profile.deleteKeyTitle')"
+    :description="t('profile.deleteKeyBody')"
+    @update:open="(o) => !o && !busy && (keyPending = null)"
+  >
+    <template #actions>
+      <Button :disabled="busy" @click="keyPending = null">{{ t('profile.cancel') }}</Button>
+      <Button variant="danger" :disabled="busy" @click="removeKey">{{ t('profile.deleteKey') }}</Button>
     </template>
   </Dialog>
 </template>

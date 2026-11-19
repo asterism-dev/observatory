@@ -32,7 +32,8 @@ func TestBuiltinRoles(t *testing.T) {
 		{OrgID: org, UserID: member, Role: "member"},
 	}})
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
-		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv}}
+		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
+		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs}}
 	// No built-in role reaches other members' private env scopes.
 	userEnv := func(p Permission) bool { return p.Object == ObjUserEnv+"/*" }
 	want := map[uuid.UUID]func(p Permission) bool{
@@ -174,6 +175,10 @@ func TestValidatePattern(t *testing.T) {
 		"org/*":                              true,
 		"org/vm/*":                           true,
 		"org/vm/abc":                         true,
+		ObjNodes + "/*":                      true,
+		ObjVMs + "/*":                        true,
+		TeamVMsObject(uuid.New()):            true,
+		ObjTeamVMs + "/*":                    true,
 		"user:" + id + "/*":                  true,
 		"user:" + id + "/vm/*":               true,
 		"user:" + id + "/vm/abc":             true,
@@ -206,8 +211,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-8 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-8)
+	if got := ExpandActions("*"); len(got) != len(Catalog)-10 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-10)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -216,7 +221,10 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("audit:read"); !reflect.DeepEqual(got, []string{"audit:read"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("vm:delete"); len(got) != 0 {
+	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete"}) {
+		t.Errorf("vm:*: got %v", got)
+	}
+	if got := ExpandActions("vm:ssh"); len(got) != 0 {
 		t.Errorf("unknown: got %v", got)
 	}
 }
@@ -418,5 +426,130 @@ func TestEnvPermissions(t *testing.T) {
 	}
 	if got := ExpandActions("env:*"); !reflect.DeepEqual(got, []string{"env:list", "env:set", "env:delete", "env:use"}) {
 		t.Errorf("env:*: got %v", got)
+	}
+}
+
+func TestVMPermissions(t *testing.T) {
+	org, otherOrg := uuid.New(), uuid.New()
+	owner, admin, member, teamMember, teamAdmin, otherAdmin, denied := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	team, otherTeam, denyRole := uuid.New(), uuid.New(), uuid.New()
+	ownVM, adminVM, teamVM, otherTeamVM, deniedVM, foreignVM := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{
+			{OrgID: org, UserID: owner, Role: "owner"},
+			{OrgID: org, UserID: admin, Role: "admin"},
+			{OrgID: org, UserID: member, Role: "member"},
+			{OrgID: org, UserID: teamMember, Role: "member"},
+			{OrgID: org, UserID: teamAdmin, Role: "member"},
+			{OrgID: org, UserID: otherAdmin, Role: "member"},
+			{OrgID: org, UserID: denied, Role: "owner"},
+			{OrgID: otherOrg, UserID: member, Role: "member"},
+		},
+		TeamMembers: []TeamMember{
+			{OrgID: org, TeamID: team, UserID: teamMember},
+			{OrgID: org, TeamID: team, UserID: teamAdmin, Admin: true},
+			{OrgID: org, TeamID: otherTeam, UserID: otherAdmin, Admin: true},
+		},
+		Teams: []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: otherTeam}},
+		VMs: []VMRef{
+			{OrgID: org, ID: ownVM, UserID: &member},
+			{OrgID: org, ID: adminVM, UserID: &admin},
+			{OrgID: org, ID: teamVM, TeamID: &team},
+			{OrgID: org, ID: otherTeamVM, TeamID: &otherTeam},
+			{OrgID: org, ID: deniedVM, UserID: &denied},
+			{OrgID: otherOrg, ID: foreignVM, UserID: &member},
+		},
+		Roles: []CustomRole{{ID: denyRole, OrgID: org, Name: "no-vm-delete", Rules: []Rule{
+			{Effect: Deny, Object: ObjVMs + "/*", Action: "vm:delete"},
+		}}},
+		Bindings: []Binding{{OrgID: org, Subject: UserSubject(denied), RoleID: denyRole}},
+	})
+	user := func(id uuid.UUID) string { return UserSubject(id) }
+	node := NodeObject(uuid.New())
+	tests := []struct {
+		name     string
+		sub      string
+		org      uuid.UUID
+		obj, act string
+		want     bool
+	}{
+		// see nodes, place VMs on them
+		{"member lists nodes", user(member), org, ObjNodes, "node:read", true},
+		{"member reads node", user(member), org, node, "node:read", true},
+		{"member uses node", user(member), org, node, "node:use", true},
+		{"team admin uses node", user(teamAdmin), org, node, "node:use", true},
+		{"admin uses node", user(admin), org, node, "node:use", true},
+		{"owner uses node", user(owner), org, node, "node:use", true},
+		// add, rename, delete nodes
+		{"member creates node", user(member), org, ObjNodes, "node:create", false},
+		{"member updates node", user(member), org, node, "node:update", false},
+		{"member deletes node", user(member), org, node, "node:delete", false},
+		{"team admin creates node", user(teamAdmin), org, ObjNodes, "node:create", false},
+		{"team admin deletes node", user(teamAdmin), org, node, "node:delete", false},
+		{"admin creates node", user(admin), org, ObjNodes, "node:create", true},
+		{"admin updates node", user(admin), org, node, "node:update", true},
+		{"admin deletes node", user(admin), org, node, "node:delete", true},
+		{"owner creates node", user(owner), org, ObjNodes, "node:create", true},
+		{"owner deletes node", user(owner), org, node, "node:delete", true},
+		// create own VMs
+		{"member creates own vm", user(member), org, ObjVMs, "vm:create", true},
+		{"team admin creates own vm", user(teamAdmin), org, ObjVMs, "vm:create", true},
+		{"admin creates own vm", user(admin), org, ObjVMs, "vm:create", true},
+		{"owner creates own vm", user(owner), org, ObjVMs, "vm:create", true},
+		// create team VMs
+		{"member creates team vm", user(member), org, TeamVMsObject(team), "vm:create", false},
+		{"team member creates team vm", user(teamMember), org, TeamVMsObject(team), "vm:create", false},
+		{"team admin creates team vm", user(teamAdmin), org, TeamVMsObject(team), "vm:create", true},
+		{"team admin creates other team vm", user(teamAdmin), org, TeamVMsObject(otherTeam), "vm:create", false},
+		{"admin creates any team vm", user(admin), org, TeamVMsObject(otherTeam), "vm:create", true},
+		{"owner creates any team vm", user(owner), org, TeamVMsObject(team), "vm:create", true},
+		// own VMs: all actions
+		{"member reads own vm", user(member), org, VMObject(ownVM), "vm:read", true},
+		{"member powers own vm", user(member), org, VMObject(ownVM), "vm:power", true},
+		{"member deletes own vm", user(member), org, VMObject(ownVM), "vm:delete", true},
+		{"admin deletes own vm", user(admin), org, VMObject(adminVM), "vm:delete", true},
+		// team VMs: read, power
+		{"team member reads team vm", user(teamMember), org, VMObject(teamVM), "vm:read", true},
+		{"team member powers team vm", user(teamMember), org, VMObject(teamVM), "vm:power", true},
+		{"team subject powers team vm", TeamSubject(team), org, VMObject(teamVM), "vm:power", true},
+		{"team admin reads team vm", user(teamAdmin), org, VMObject(teamVM), "vm:read", true},
+		{"team admin powers team vm", user(teamAdmin), org, VMObject(teamVM), "vm:power", true},
+		{"non-member reads team vm", user(member), org, VMObject(teamVM), "vm:read", false},
+		{"team member reads other team vm", user(teamMember), org, VMObject(otherTeamVM), "vm:read", false},
+		// team VMs: delete
+		{"team member deletes team vm", user(teamMember), org, VMObject(teamVM), "vm:delete", false},
+		{"team admin deletes team vm", user(teamAdmin), org, VMObject(teamVM), "vm:delete", true},
+		{"team admin deletes other team vm", user(teamAdmin), org, VMObject(otherTeamVM), "vm:delete", false},
+		{"other team admin deletes team vm", user(otherAdmin), org, VMObject(teamVM), "vm:delete", false},
+		{"admin deletes team vm", user(admin), org, VMObject(teamVM), "vm:delete", true},
+		{"owner deletes team vm", user(owner), org, VMObject(teamVM), "vm:delete", true},
+		// see, power and delete every VM in the org
+		{"member reads other's vm", user(teamMember), org, VMObject(ownVM), "vm:read", false},
+		{"member powers other's vm", user(teamMember), org, VMObject(ownVM), "vm:power", false},
+		{"member deletes other's vm", user(member), org, VMObject(adminVM), "vm:delete", false},
+		{"team admin deletes other's vm", user(teamAdmin), org, VMObject(ownVM), "vm:delete", false},
+		{"admin reads other's vm", user(admin), org, VMObject(ownVM), "vm:read", true},
+		{"admin powers other's vm", user(admin), org, VMObject(ownVM), "vm:power", true},
+		{"admin deletes other's vm", user(admin), org, VMObject(ownVM), "vm:delete", true},
+		{"owner reads other's vm", user(owner), org, VMObject(ownVM), "vm:read", true},
+		{"owner powers other's vm", user(owner), org, VMObject(ownVM), "vm:power", true},
+		{"owner deletes other's vm", user(owner), org, VMObject(ownVM), "vm:delete", true},
+		// deny wins over the generated owner rule
+		{"deny vm:delete blocks owner of vm", user(denied), org, VMObject(deniedVM), "vm:delete", false},
+		{"deny keeps vm:power", user(denied), org, VMObject(deniedVM), "vm:power", true},
+		{"deny blocks owner role on other vm", user(denied), org, VMObject(ownVM), "vm:delete", false},
+		// cross-org
+		{"cross-org own vm", user(member), otherOrg, VMObject(ownVM), "vm:delete", false},
+		{"cross-org team vm", user(teamAdmin), otherOrg, VMObject(teamVM), "vm:delete", false},
+		{"cross-org team subject", TeamSubject(team), otherOrg, VMObject(teamVM), "vm:read", false},
+		{"cross-org team vm create", user(teamAdmin), otherOrg, TeamVMsObject(team), "vm:create", false},
+		{"cross-org admin node", user(admin), otherOrg, ObjNodes, "node:create", false},
+		{"cross-org foreign vm in A", user(member), org, VMObject(foreignVM), "vm:delete", false},
+		{"foreign vm in its org", user(member), otherOrg, VMObject(foreignVM), "vm:delete", true},
+	}
+	for _, tt := range tests {
+		if got := e.Allowed(tt.sub, tt.org, tt.obj, tt.act); got != tt.want {
+			t.Errorf("%s: got %v", tt.name, got)
+		}
 	}
 }

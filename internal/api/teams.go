@@ -153,6 +153,7 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamDelete, authz.TeamObject(id), denied)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -211,6 +212,7 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamMemberSet, obj, guardErr)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -271,6 +273,7 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 		h.auditGuardDenial(r, m.Org.ID, auditAct, obj, guardErr)
 		return
 	}
+	h.fleet.NotifyOrg(m.Org.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
