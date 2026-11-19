@@ -92,5 +92,9 @@ git fetch --tags && git checkout v0.2.0          # compose file and docs of that
 docker compose -f deploy/compose.yaml up -d
 ```
 
+The hub checks GitHub for a newer release every 6 hours and shows platform admins a banner when one exists; nodes on
+an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDATE_CHECK=1` in `deploy/.env` turns the
+check off (air-gapped hosts). Builds that are not a release tag never check.
+
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs` and, with
 TLS, `caddy-data`.

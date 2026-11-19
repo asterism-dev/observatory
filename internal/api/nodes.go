@@ -13,6 +13,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
 type nodeJSON struct {
@@ -20,6 +21,7 @@ type nodeJSON struct {
 	Name         string             `json:"name"`
 	State        string             `json:"state"`
 	Version      string             `json:"version"`
+	Outdated     bool               `json:"outdated"`
 	CPUs         int                `json:"cpus"`
 	MemoryMB     int                `json:"memoryMB"`
 	Machine      any                `json:"machine"`
@@ -50,7 +52,7 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 	if err != nil {
 		return nodeJSON{}, err
 	}
-	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, CPUs: n.CPUs, MemoryMB: n.MemoryMB,
+	j := nodeJSON{ID: n.ID, Name: n.Name, State: "pending", Version: n.Version, Outdated: version.Older(n.Version, version.Version), CPUs: n.CPUs, MemoryMB: n.MemoryMB,
 		LastSeen: n.LastSeen, VMCount: len(vms), Quarantined: n.Quarantined, Image: n.Image}
 	if len(n.Machine) > 0 {
 		j.Machine = n.Machine
