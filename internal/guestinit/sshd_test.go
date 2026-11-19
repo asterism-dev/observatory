@@ -160,7 +160,7 @@ func TestSSHAcceptsAuthorizedKeysFile(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	line := "# mine\nno-pty " + string(ssh.MarshalAuthorizedKey(ts.client.PublicKey()))
+	line := "# mine\n" + string(ssh.MarshalAuthorizedKey(ts.client.PublicKey()))
 	if err := os.WriteFile(filepath.Join(dir, "authorized_keys"), []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +170,33 @@ func TestSSHAcceptsAuthorizedKeysFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		c.Close()
+	}
+}
+
+// Options are not enforced, so a restricted key must not become a full login.
+func TestSSHRejectsKeysWithOptions(t *testing.T) {
+	for _, opts := range []string{`command="x" `, `from="10.0.0.0/8" `, `restrict `} {
+		root := Root{Path: t.TempDir()}
+		key := newTestSigner(t).PublicKey()
+		writeAuthorizedKeys(t, root, opts+string(ssh.MarshalAuthorizedKey(key)))
+		if keys := root.AuthorizedKeys(nil); len(keys) != 0 {
+			t.Errorf("%q: accepted %d keys", opts, len(keys))
+		}
+		writeAuthorizedKeys(t, root, string(ssh.MarshalAuthorizedKey(key)))
+		if keys := root.AuthorizedKeys(nil); len(keys) != 1 {
+			t.Errorf("%q: plain key not accepted", opts)
+		}
+	}
+}
+
+func writeAuthorizedKeys(t *testing.T, r Root, content string) {
+	t.Helper()
+	dir := r.join(devHome + "/.ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "authorized_keys"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

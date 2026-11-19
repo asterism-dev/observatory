@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -32,16 +30,18 @@ type SSHServer struct {
 	Root Root
 }
 
-// AuthorizedKeys returns the seed keys plus the keys in dev's own authorized_keys; key options are not enforced.
+// AuthorizedKeys returns the seed keys plus the keys in dev's own authorized_keys; keys with options are skipped because they are not enforced.
 func (r Root) AuthorizedKeys(seed []string) []ssh.PublicKey {
 	rest := append([]byte(strings.Join(seed, "\n")+"\n"), r.readAuthorizedKeys()...)
 	var keys []ssh.PublicKey
 	for len(rest) > 0 {
-		key, _, _, next, err := ssh.ParseAuthorizedKey(rest)
+		key, _, options, next, err := ssh.ParseAuthorizedKey(rest)
 		if err != nil {
 			break
 		}
-		keys = append(keys, key)
+		if len(options) == 0 {
+			keys = append(keys, key)
+		}
 		rest = next
 	}
 	return keys
@@ -49,7 +49,7 @@ func (r Root) AuthorizedKeys(seed []string) []ssh.PublicKey {
 
 // readAuthorizedKeys refuses anything but a regular file, so a FIFO planted by the user cannot hang logins.
 func (r Root) readAuthorizedKeys() []byte {
-	f, err := os.OpenFile(r.join(devHome+"/.ssh/authorized_keys"), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := r.openAuthorizedKeys()
 	if err != nil {
 		return nil
 	}

@@ -75,3 +75,23 @@ func TestSSHOpenSSHClient(t *testing.T) {
 	})
 	roundTrip(t, conn)
 }
+
+func TestAuthorizedKeysSymlinkResolvesInRoot(t *testing.T) {
+	root := Root{Path: t.TempDir()}
+	key := newTestSigner(t).PublicKey()
+	if err := os.MkdirAll(root.join("elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root.join("elsewhere/keys"), ssh.MarshalAuthorizedKey(key), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root.join(devHome+"/.ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/elsewhere/keys", root.join(authorizedKeysFile)); err != nil {
+		t.Fatal(err)
+	}
+	if keys := root.AuthorizedKeys(nil); len(keys) != 1 {
+		t.Fatalf("got %d keys, want the one inside the root", len(keys))
+	}
+}
