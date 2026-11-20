@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -233,5 +236,37 @@ func TestTelemetryEndpointFromConnectURL(t *testing.T) {
 	defer stub.mu.Unlock()
 	if len(stub.urls) == 0 || stub.urls[0] != "https://hub.example/otlp/v1/logs" {
 		t.Fatalf("urls = %v", stub.urls)
+	}
+}
+
+func TestTelemetryRejectedExportNoFeedbackLoop(t *testing.T) {
+	var logPosts atomic.Int32
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/otlp/v1/logs" {
+			logPosts.Add(1)
+		}
+		http.NotFound(w, r)
+	}))
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Info("once")
+	time.Sleep(4500 * time.Millisecond)
+	_ = tel.Shutdown(context.Background())
+
+	if n := logPosts.Load(); n > 2 {
+		t.Fatalf("log exports = %d, want <= 2 (export errors must not be re-logged into the exporter)", n)
+	}
+}
+
+func TestOTelErrorHandlerThrottles(t *testing.T) {
+	var buf bytes.Buffer
+	h := newOTelErrorHandler(&buf)
+	for range 5 {
+		h.Handle(errors.New("failed to upload logs: 404 Not Found"))
+	}
+	h.Handle(errors.New("other"))
+	if n := strings.Count(buf.String(), "\n"); n != 2 {
+		t.Fatalf("lines = %d, want 2:\n%s", n, buf.String())
 	}
 }

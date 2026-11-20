@@ -3,12 +3,15 @@ package node
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
@@ -22,6 +25,7 @@ const (
 	telemetryTimeout   = 10 * time.Second
 	telemetryLogQueue  = 10000
 	telemetryMeterName = "observatory-node"
+	otelErrorInterval  = 5 * time.Minute
 )
 
 type Telemetry struct {
@@ -73,6 +77,7 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp, sdkmetric.WithInterval(10*time.Second), sdkmetric.WithTimeout(telemetryTimeout))),
 	)
 
+	otel.SetErrorHandler(newOTelErrorHandler(os.Stderr))
 	otelHandler := defaultSource{Handler: otelslog.NewHandler(telemetryMeterName, otelslog.WithLoggerProvider(logProvider))}
 	slog.SetDefault(slog.New(slog.NewMultiHandler(slog.NewTextHandler(os.Stderr, nil), otelHandler)))
 
@@ -118,4 +123,30 @@ func (h defaultSource) WithGroup(name string) slog.Handler {
 	h.hasSource = true
 	h.Handler = h.Handler.WithGroup(name)
 	return h
+}
+
+// otelErrorHandler logs SDK errors to stderr only: the default handler's log.Print would feed them back into the log exporter.
+type otelErrorHandler struct {
+	log  *slog.Logger
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func newOTelErrorHandler(w io.Writer) *otelErrorHandler {
+	return &otelErrorHandler{log: slog.New(slog.NewTextHandler(w, nil)), last: map[string]time.Time{}}
+}
+
+func (h *otelErrorHandler) Handle(err error) {
+	msg := err.Error()
+	h.mu.Lock()
+	if t, ok := h.last[msg]; ok && time.Since(t) < otelErrorInterval {
+		h.mu.Unlock()
+		return
+	}
+	if len(h.last) >= 100 {
+		clear(h.last)
+	}
+	h.last[msg] = time.Now()
+	h.mu.Unlock()
+	h.log.Warn("telemetry export error", "err", err)
 }
