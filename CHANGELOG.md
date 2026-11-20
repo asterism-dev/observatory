@@ -1,3 +1,9 @@
+## v0.16.0 (2026-11-20)
+
+### Feat
+
+- **integrations**: gcloud integration via egress placeholders (#37)
+
 ## v0.15.0 (2026-11-20)
 
 ### Feat
