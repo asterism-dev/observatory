@@ -54,6 +54,7 @@ type vmJSON struct {
 	ImageSource   string         `json:"imageSource"`
 	LegacyRuntime bool           `json:"legacyRuntime"`
 	CreatedAt     time.Time      `json:"createdAt"`
+	DeleteAt      *time.Time     `json:"deleteAt"`
 	CanPower      bool           `json:"canPower"`
 	CanDelete     bool           `json:"canDelete"`
 	CanNetwork    bool           `json:"canNetwork"`
@@ -148,7 +149,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
-		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageDigest: v.ImageDigest, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt,
+		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageDigest: v.ImageDigest, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt, DeleteAt: v.DeleteAt,
 		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
@@ -286,6 +287,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		NodeID                 uuid.UUID
 		CPUs, MemoryMB, DiskGB int
 		Image                  string
+		DeleteAfter            string
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -308,6 +310,14 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid owner")
 		return
 	}
+	if body.DeleteAfter != "" {
+		at, err := parseDeleteAfter(body.DeleteAfter, time.Now())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		v.DeleteAt = &at
+	}
 	if !h.authorize(w, r, m.Org.ID, obj, store.ActionVMCreate) || !h.authorize(w, r, m.Org.ID, authz.NodeObject(v.NodeID), "node:use") {
 		return
 	}
@@ -324,6 +334,9 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		e.Details["owner"] = vmOwnerSubject(v)
 		e.Details["node"] = v.NodeID
 		e.Details["cpus"], e.Details["memoryMB"], e.Details["diskGB"] = v.CPUs, v.MemoryMB, v.DiskGB
+		if v.DeleteAt != nil {
+			e.Details["deleteAt"] = v.DeleteAt
+		}
 		return tx.Audit(r.Context(), e)
 	}) {
 		return

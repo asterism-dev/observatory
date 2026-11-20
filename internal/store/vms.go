@@ -47,7 +47,7 @@ type VM struct {
 	ImageID     *uuid.UUID
 	ImageSource string
 	// Kind is VMKindBuilder for the hidden VMs that run image builds.
-	Kind string
+	Kind     string
 	DeleteAt *time.Time
 }
 
