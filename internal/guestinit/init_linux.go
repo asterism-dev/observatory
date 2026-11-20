@@ -82,7 +82,8 @@ func Run() error {
 	if err != nil {
 		logf("init: image: %v", err)
 	} else {
-		go followServiceLog(context.Background(), telemetry, root.systemd() != "", cmdLogStart)
+		// In the image's PID namespace and exec cgroup, the image's journalctl cannot reach the init and dies with the image.
+		go followServiceLog(context.Background(), telemetry, root.systemd() != "", img.Exec, cmdLogStart)
 	}
 	mounts := []string{"/"}
 	for _, d := range seed.Disks {

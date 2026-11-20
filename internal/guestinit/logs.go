@@ -71,8 +71,8 @@ func stringValue(s string) *commonpb.AnyValue {
 	return &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: strings.ToValidUTF8(s, "")}}
 }
 
-// followServiceLog sends the image's output to stream service: its journal under systemd, else what nsinit writes to cmd.log from cmdLogStart on.
-func followServiceLog(ctx context.Context, sink *Sink, systemd bool, cmdLogStart int64) {
+// followServiceLog sends the image's output to stream service: under systemd its journal, read by a journalctl that startInImage starts, else what nsinit writes to cmd.log from cmdLogStart on.
+func followServiceLog(ctx context.Context, sink *Sink, systemd bool, startInImage func(*exec.Cmd) error, cmdLogStart int64) {
 	emit := func(lines []string) {
 		now := time.Now()
 		recs := make([]*logspb.LogRecord, len(lines))
@@ -85,7 +85,12 @@ func followServiceLog(ctx context.Context, sink *Sink, systemd bool, cmdLogStart
 		followFile(ctx, serviceLog, cmdLogStart, time.Second, emit)
 		return
 	}
-	followJournal(ctx, func(recs []*logspb.LogRecord) { sink.Logs("service", recs) })
+	bin := journalctl()
+	if bin == "" {
+		logf("init: service log: the image has no journalctl")
+		return
+	}
+	followJournal(ctx, bin, startInImage, func(recs []*logspb.LogRecord) { sink.Logs("service", recs) })
 }
 
 // followFile emits the lines appended to path from offset on, every poll, following a rename (rotation) and truncation of path until ctx ends.
@@ -174,25 +179,20 @@ func journalctl() string {
 	return ""
 }
 
-// followJournal runs the image's journalctl and emits its entries, restarting it after the last cursor with backoff whenever it exits.
-func followJournal(ctx context.Context, emit func([]*logspb.LogRecord)) {
-	bin := journalctl()
-	if bin == "" {
-		logf("init: service log: the image has no journalctl")
-		return
-	}
+// followJournal runs journalctl through start and emits its entries, restarting it after the last cursor with backoff whenever it exits.
+func followJournal(ctx context.Context, bin string, start func(*exec.Cmd) error, emit func([]*logspb.LogRecord)) {
 	cursor := ""
 	backoff := time.Second
 	for ctx.Err() == nil {
-		args := []string{"-f", "-o", "json", "--no-tail", "-b"}
+		args := []string{"-f", "-o", "json", "--all", "--no-tail", "-b"}
 		if cursor != "" {
-			args = []string{"-f", "-o", "json", "--after-cursor=" + cursor}
+			args = []string{"-f", "-o", "json", "--all", "--after-cursor=" + cursor}
 		}
-		start := time.Now()
+		started := time.Now()
 		cmd := exec.CommandContext(ctx, bin, args...)
 		out, err := cmd.StdoutPipe()
 		if err == nil {
-			err = cmd.Start()
+			err = start(cmd)
 		}
 		if err == nil {
 			cursor = readJournal(out, cursor, emit)
@@ -201,8 +201,10 @@ func followJournal(ctx context.Context, emit func([]*logspb.LogRecord)) {
 		if ctx.Err() != nil {
 			return
 		}
-		logf("init: service log: journalctl: %v", err)
-		if time.Since(start) >= time.Minute {
+		if err != nil {
+			logf("init: service log: journalctl: %v", err)
+		}
+		if time.Since(started) >= time.Minute {
 			backoff = time.Second
 		}
 		select {

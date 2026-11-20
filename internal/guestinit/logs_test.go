@@ -3,10 +3,12 @@ package guestinit
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,5 +100,35 @@ func TestJournalEntryToRecord(t *testing.T) {
 	rec, _, ok = journalRecord([]byte(`{"MESSAGE":[104,105]}`))
 	if !ok || rec.GetBody().GetStringValue() != "hi" {
 		t.Fatalf("binary message = %v", rec)
+	}
+}
+
+func TestFollowJournalStartsInImage(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "journalctl")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + filepath.Join(dir, "args") + "\necho '{\"__CURSOR\":\"c1\",\"MESSAGE\":\"hi\"}'\nsleep 5\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var started atomic.Bool
+	got := make(chan string, 1)
+	go followJournal(ctx, bin, func(cmd *exec.Cmd) error {
+		started.Store(true)
+		return cmd.Start()
+	}, func(recs []*logspb.LogRecord) { got <- recs[0].GetBody().GetStringValue() })
+	select {
+	case msg := <-got:
+		if msg != "hi" || !started.Load() {
+			t.Fatalf("msg %q, started through the image %v", msg, started.Load())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no entry")
+	}
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	// Without --all, journalctl writes fields over 4 096 bytes as null.
+	if !slices.Contains(strings.Fields(string(args)), "--all") {
+		t.Fatalf("journalctl args = %q", args)
 	}
 }
