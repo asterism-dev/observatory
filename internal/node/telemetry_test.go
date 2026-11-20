@@ -28,6 +28,8 @@ type logCollector struct {
 	mu      sync.Mutex
 	reqs    []*collogs.ExportLogsServiceRequest
 	headers http.Header
+	// reject, if set, returns a non-zero status to refuse a request instead of recording it.
+	reject func(*collogs.ExportLogsServiceRequest) int
 }
 
 func (c *logCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,12 @@ func (c *logCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(body)
 	req := &collogs.ExportLogsServiceRequest{}
 	if r.URL.Path == "/otlp/v1/logs" && proto.Unmarshal(raw, req) == nil {
+		if c.reject != nil {
+			if code := c.reject(req); code != 0 {
+				w.WriteHeader(code)
+				return
+			}
+		}
 		c.mu.Lock()
 		c.reqs = append(c.reqs, req)
 		c.headers = r.Header.Clone()
@@ -281,7 +289,7 @@ func TestTelemetryKeepsLogsWhileHubDown(t *testing.T) {
 	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if down.Load() {
 			refused.Add(1)
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		c.ServeHTTP(w, r)
@@ -313,11 +321,14 @@ func TestTelemetryKeepsLogsWhileHubDown(t *testing.T) {
 
 type flakyExporter struct {
 	fail   bool
+	code   int32
+	status *atomic.Int32
 	bodies []string
 }
 
 func (f *flakyExporter) Export(_ context.Context, records []sdklog.Record) error {
 	if f.fail {
+		f.status.Store(f.code)
 		return errors.New("down")
 	}
 	for _, r := range records {
@@ -328,16 +339,74 @@ func (f *flakyExporter) Export(_ context.Context, records []sdklog.Record) error
 func (f *flakyExporter) Shutdown(context.Context) error   { return nil }
 func (f *flakyExporter) ForceFlush(context.Context) error { return nil }
 
-func TestRetryingLogExporterDropsOldestBeyondBound(t *testing.T) {
-	inner := &flakyExporter{fail: true}
-	e := &retryingLogExporter{Exporter: inner, limit: 3}
-	export := func(bodies ...string) error {
+func newFlakyRetrying(code int32) (*retryingLogExporter, *flakyExporter, func(...string) error) {
+	e := &retryingLogExporter{limit: 3}
+	inner := &flakyExporter{fail: true, code: code, status: &e.status}
+	e.Exporter = inner
+	return e, inner, func(bodies ...string) error {
 		recs := make([]sdklog.Record, len(bodies))
 		for i, b := range bodies {
 			recs[i].SetBody(attribute.StringValue(b))
 		}
 		return e.Export(context.Background(), recs)
 	}
+}
+
+func TestRetryingLogExporterDropsPermanentFailures(t *testing.T) {
+	e, _, export := newFlakyRetrying(http.StatusNotFound)
+	for range 5 {
+		if export("1", "2") == nil {
+			t.Fatal("failing export must return an error")
+		}
+	}
+	if len(e.pending) != 0 {
+		t.Fatalf("pending = %d, want 0", len(e.pending))
+	}
+}
+
+func TestRetryingLogExporterKeepsTransportFailures(t *testing.T) {
+	e, _, export := newFlakyRetrying(0)
+	if export("1") == nil || len(e.pending) != 1 {
+		t.Fatalf("pending = %d, want 1", len(e.pending))
+	}
+}
+
+func TestTelemetryRejectedBatchDoesNotBlockLaterLogs(t *testing.T) {
+	var posts atomic.Int32
+	c := &logCollector{reject: func(req *collogs.ExportLogsServiceRequest) int {
+		posts.Add(1)
+		for _, rl := range req.ResourceLogs {
+			for _, sl := range rl.ScopeLogs {
+				for _, r := range sl.LogRecords {
+					if r.Body.GetStringValue() == "big" {
+						return http.StatusRequestEntityTooLarge
+					}
+				}
+			}
+		}
+		return 0
+	}}
+	hub := httptest.NewServer(c)
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Info("big")
+	for deadline := time.Now().Add(5 * time.Second); posts.Load() == 0; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no export attempted")
+		}
+	}
+	slog.Info("next")
+	shutdownTelemetry(t, tel)
+
+	recs := c.records()
+	if len(recs) != 1 || recs[0].Body.GetStringValue() != "next" {
+		t.Fatalf("records = %v, want only next", recs)
+	}
+}
+
+func TestRetryingLogExporterDropsOldestBeyondBound(t *testing.T) {
+	_, inner, export := newFlakyRetrying(http.StatusServiceUnavailable)
 	if export("1", "2") == nil || export("3", "4", "5") == nil {
 		t.Fatal("failing export must return an error")
 	}

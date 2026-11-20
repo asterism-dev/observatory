@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -56,15 +57,24 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 		otlpmetrichttp.WithCompression(otlpmetrichttp.GzipCompression),
 		otlpmetrichttp.WithTimeout(telemetryTimeout),
 	}
+	logTransport := http.DefaultTransport
 	if client != nil {
-		logOpts = append(logOpts, otlploghttp.WithHTTPClient(client))
 		metricOpts = append(metricOpts, otlpmetrichttp.WithHTTPClient(client))
+		if client.Transport != nil {
+			logTransport = client.Transport
+		}
 	}
+	retrying := &retryingLogExporter{limit: telemetryLogQueue}
+	logOpts = append(logOpts, otlploghttp.WithHTTPClient(&http.Client{
+		Transport: statusRecorder{RoundTripper: logTransport, status: &retrying.status},
+		Timeout:   telemetryTimeout,
+	}))
 
 	logExp, err := otlploghttp.New(ctx, logOpts...)
 	if err != nil {
 		return nil, err
 	}
+	retrying.Exporter = logExp
 	metricExp, err := otlpmetrichttp.New(ctx, metricOpts...)
 	if err != nil {
 		return nil, err
@@ -73,7 +83,7 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 	logProvider := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(
-			&retryingLogExporter{Exporter: logExp, limit: telemetryLogQueue},
+			retrying,
 			sdklog.WithMaxQueueSize(telemetryLogQueue),
 			sdklog.WithExportTimeout(telemetryTimeout),
 		)),
@@ -177,16 +187,21 @@ func (h *otelErrorHandler) Handle(err error) {
 	h.log.Warn("telemetry export error", "err", err)
 }
 
-// retryingLogExporter resends failed records with the next batch (the processor drops them), keeping at most limit.
+// retryingLogExporter resends records that failed retryably with the next batch (the processor drops them), keeping at most limit.
 type retryingLogExporter struct {
 	sdklog.Exporter
 	limit   int
+	mu      sync.Mutex
 	pending []sdklog.Record
+	// status is the HTTP status of the last request, 0 if it got no response.
+	status atomic.Int32
 }
 
 const telemetryLogChunk = 512
 
 func (e *retryingLogExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for i := range records {
 		e.pending = append(e.pending, records[i].Clone())
 	}
@@ -194,13 +209,32 @@ func (e *retryingLogExporter) Export(ctx context.Context, records []sdklog.Recor
 		clear(e.pending[:over])
 		e.pending = e.pending[over:]
 	}
+	var errs []error
 	for len(e.pending) > 0 {
 		n := min(len(e.pending), telemetryLogChunk)
+		e.status.Store(0)
 		if err := e.Exporter.Export(ctx, e.pending[:n]); err != nil {
-			return err
+			errs = append(errs, err)
+			// Mirrors the SDK's retryable set; anything else would be rejected again, so the chunk is dropped.
+			if code := e.status.Load(); code == 0 || code == http.StatusTooManyRequests || code >= 500 {
+				return errors.Join(errs...)
+			}
 		}
 		clear(e.pending[:n])
 		e.pending = e.pending[n:]
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+type statusRecorder struct {
+	http.RoundTripper
+	status *atomic.Int32
+}
+
+func (s statusRecorder) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := s.RoundTripper.RoundTrip(r)
+	if err == nil {
+		s.status.Store(int32(resp.StatusCode))
+	}
+	return resp, err
 }
