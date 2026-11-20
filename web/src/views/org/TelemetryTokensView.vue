@@ -91,10 +91,19 @@ function openCreate() {
   creating.value = true
 }
 
+watch(creating, (open) => {
+  if (!open) {
+    created.value = null
+    name.value = dialogError.value = ''
+  }
+})
+
 watch(
   () => org.value?.id,
   () => {
     error.value = ''
+    created.value = null
+    name.value = ''
     tokens.value = []
     creating.value = false
     refresh()

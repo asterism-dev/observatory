@@ -46,8 +46,8 @@ seconds and then answers 401.
 
 - 20 requests per second per token, with bursts of 100 (else 429).
 - Queries run for at most 60 seconds.
-- A live tail ends after 15 minutes at most. A tail that is quiet for a long time, or whose token was revoked, ends
-  with a 502.
+- A live tail ends after 15 minutes at most. If no data has arrived yet when a tail is quiet too long or is revoked,
+  it ends with a 502; once rows are streaming, the connection simply closes.
 - Request bodies up to 1 MiB.
 - Only the query endpoints are available; everything else answers 404, and LogsQL constructs that could reach other
   organizations answer 400.
