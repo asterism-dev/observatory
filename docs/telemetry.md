@@ -27,6 +27,9 @@ The VM page has a Metrics tab with usage graphs, the live process list and log s
 telemetry; a VM started before this feature sends none until it reboots. Builder VMs send it too, but the hub rejects
 it, so it is never stored or shown (the node logs this once per VM).
 
+Upgrading: update the hub before the nodes. An older hub ignores `X-Observatory-VM` and stores a newer node's VM data as
+the node's own.
+
 Usage, every 10 seconds, with the node's `system.*` names minus paging: `system.cpu.time`, `system.cpu.load_average.1m`,
 `.5m` and `.15m`, `system.memory.usage`, `system.filesystem.usage` and `system.filesystem.limit`, and `system.network.io`.
 
@@ -79,6 +82,12 @@ For development, `make telemetry-up` and `make telemetry-down` start and stop th
 `POST /otlp/v1/metrics` and `POST /otlp/v1/logs` take OTLP/HTTP protobuf (`application/x-protobuf`, gzip allowed) with
 a bearer node credential; in this version nothing else is accepted. The body limit is 4 MiB. The hub sets
 `observatory.org/node/node_name` and drops any sender-supplied attributes starting with `observatory`.
+
+A node sends a VM's data with `X-Observatory-VM: <vm id>` and `X-Observatory-Stream`: `service`, `console`, `app`,
+`system` or `egress` for logs, `usage` or `app` for metrics (else 400). The VM must exist in the node's org and be
+assigned to that node, and must not be a builder VM (else 403). The hub then also sets `observatory.vm` and
+`observatory.vm_name`, and on logs `observatory.stream`; VM logs are stored under the stream fields
+`observatory.org,observatory.vm,observatory.stream`, apart from the node's own logs.
 
 `GET /api/orgs/{org}/vms/{id}/processes` (needs `vm:metrics`) returns the running VM's live process list, at most 500
 entries. `cpuPercent` is percent of one core over a 200 ms sample, like `top`, so it can exceed 100 on a multi-core VM.
