@@ -529,13 +529,13 @@ const refreshAhead = 60 * time.Minute
 
 var clock = time.Now
 
-// RefreshIntegrations refreshes Claude sign-ins due within refreshAhead and pushes the new access tokens; failures back off per integration from 1 to 15 minutes. It returns when ctx ends.
+// RefreshIntegrations refreshes Claude sign-ins due within refreshAhead and pushes the new access tokens; failures back off per account from 1 to 15 minutes. It returns when ctx ends.
 func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, every time.Duration) {
 	type backoff struct {
 		until time.Time
 		wait  time.Duration
 	}
-	backoffs := map[store.IntegrationRef]backoff{}
+	backoffs := map[store.AccountRef]backoff{}
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -552,7 +552,7 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 			}
 			continue
 		}
-		maps.DeleteFunc(backoffs, func(r store.IntegrationRef, _ backoff) bool { return !slices.Contains(refs, r) })
+		maps.DeleteFunc(backoffs, func(r store.AccountRef, _ backoff) bool { return !slices.Contains(refs, r) })
 		for _, ref := range refs {
 			b := backoffs[ref]
 			now := clock()

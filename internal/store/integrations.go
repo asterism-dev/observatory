@@ -26,8 +26,8 @@ const (
 // ErrIntegrationRefresh is checked before sealing so a CHECK violation, whose detail would carry the row, never surfaces.
 var ErrIntegrationRefresh = errors.New("a refresh token is required for oauth sign-ins and not allowed otherwise")
 
-// IntegrationRef names an oauth account; an integration's first account shares its id.
-type IntegrationRef struct{ OrgID, ID uuid.UUID }
+// AccountRef names an oauth account; an integration's first account shares its id.
+type AccountRef struct{ OrgID, ID uuid.UUID }
 
 // Integration is the metadata of a connected provider account; the token and placeholder never leave the store this way.
 type Integration struct {
@@ -268,17 +268,17 @@ func (s *Store) replaceActiveAccountToken(ctx context.Context, key seal.Key, old
 }
 
 // DueOAuthRefreshes lists working oauth accounts whose access token expires before before.
-func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]IntegrationRef, error) {
+func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]AccountRef, error) {
 	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM integration_accounts
 		WHERE source = 'oauth' AND status = 'ok' AND access_expires_at < $1 ORDER BY access_expires_at`, before)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowToStructByPos[IntegrationRef])
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[AccountRef])
 }
 
 // RefreshIntegration runs refresh under the row lock, since the provider rotates refresh tokens; false, nil when the row is locked elsewhere or no longer due.
-func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, before time.Time,
+func (s *Store) RefreshIntegration(ctx context.Context, ref AccountRef, before time.Time,
 	refresh func(ctx context.Context, refreshToken string) (integrations.OAuthTokens, error)) (bool, error) {
 	var refreshed bool
 	var refreshErr error

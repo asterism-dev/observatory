@@ -2015,3 +2015,35 @@ func TestDesiredImageNodeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshInactiveAccount(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	far := time.Now().Add(8 * time.Hour)
+	in := e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &far})
+	soon := time.Now().Add(10 * time.Minute)
+	acc, err := e.s.AddIntegrationAccount(context.Background(), in, store.IntegrationAccount{Account: "two@example.com", Source: integrations.SourceOAuth, CreatedBy: e.owner},
+		store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0001", Refresh: intRefresh, AccessExpiresAt: &soon})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	node.desired()
+	newExp := time.Now().Add(8 * time.Hour).Truncate(time.Second)
+	oauth := &fakeOAuth{exp: newExp}
+	e.runRefresh(oauth)
+	node.desired()
+	if n := oauth.n(); n != 1 {
+		t.Fatalf("refresh called %d times, want 1", n)
+	}
+	accs, err := e.s.IntegrationAccounts(context.Background(), e.org.ID, in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range accs {
+		if a.ID == acc.ID && (a.Active || a.AccessExpiresAt == nil || !a.AccessExpiresAt.Equal(newExp)) {
+			t.Fatalf("inactive account after refresh: %+v", a)
+		}
+	}
+}

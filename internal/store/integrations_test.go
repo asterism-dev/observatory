@@ -461,12 +461,12 @@ func (f *fakeRefresh) calls() []string {
 	return slices.Clone(f.got)
 }
 
-func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.IntegrationRef {
+func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.AccountRef {
 	t.Helper()
 	exp := time.Now().Add(in)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &uid),
 		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
-	return store.IntegrationRef{OrgID: org.ID, ID: v.ID}
+	return store.AccountRef{OrgID: org.ID, ID: v.ID}
 }
 
 func TestRefreshIntegrationRotates(t *testing.T) {
