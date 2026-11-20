@@ -218,6 +218,28 @@ resume and takeoff:
 | `/etc/claude-code/CLAUDE.md` | Claude Code's managed memory, a link to the file above; read in addition to your `~/.claude/CLAUDE.md`. A file or link an admin put there is kept. |
 | `~/.codex/AGENTS.md` | Codex; written by the integrations sync only if missing or still the one it wrote; your own file is never touched. |
 
+## Sending telemetry from apps
+
+The guest init listens on `127.0.0.1:14318` for OTLP/HTTP metrics and logs (protobuf or JSON, gzip allowed, at most
+1 MiB per request; traces answer 404). There is no gRPC endpoint. Data lands on the VM page as stream `app`; limits are in
+[telemetry.md](telemetry.md#vms).
+
+For the command, SSH sessions and systemd units the init sets `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318` and
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, unless the image or seed sets them. An SDK needs no code for the endpoint:
+
+```python
+# pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+metrics.set_meter_provider(MeterProvider([PeriodicExportingMetricReader(OTLPMetricExporter())]))
+metrics.get_meter("app").create_counter("jobs").add(1)
+```
+
+Apps hard-wired to gRPC cannot send.
+
 ## Known limits
 
 - **No nested KVM:** nested virtualization is not supported. Depending on the node's CPU, `/dev/kvm` may exist in

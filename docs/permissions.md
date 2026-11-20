@@ -69,6 +69,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
+| `vm:metrics` on `org/vms/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
 | `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:snapshot`, `vm:restore` on `org/vms/*` | | yes | yes |
 | `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
@@ -186,7 +187,7 @@ disks cannot be deleted (`409` "owns VMs or disks").
 ## VM lifecycle
 
 Pause, hibernate, resume and the auto-suspend setting are power actions (`vm:power`). Snapshots are VM sub-resources,
-so their actions are on the VM object; listing snapshots and reading metrics need `vm:read`
+so their actions are on the VM object; listing snapshots needs `vm:read`
 ([vm-lifecycle.md](vm-lifecycle.md)).
 
 | Action | Allows |

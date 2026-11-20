@@ -164,17 +164,9 @@ SSH host keys and machine id, entropy mixed into its RNG.
 
 ## Metrics
 
-The VM page shows CPU % and RAM used of total with a 10-minute sparkline, polled every 10 s
-(`GET …/vms/{id}/metrics`, needs `vm:read`).
-
-- **RAM** comes from Firecracker's balloon device statistics (total and available memory as the guest kernel reports
-  them, no agent needed). "Used" is total minus available, which is what `free -m` shows as `used` in current
-  Ubuntu images. VMs started before this feature have no balloon until their
-  next cold boot and show "—".
-- **CPU** is the host's view of the Firecracker process (user + system time) over the 10 s interval divided by the
-  vCPU count, so 100 % means every vCPU busy. It includes some VMM overhead, e.g. for heavy disk or network I/O.
-- The hub keeps the last 60 samples per VM in memory only; a restart of the hub starts empty. Samples older than 30 s
-  are not shown as live values (e.g. for a stopped VM).
+The VM page's Metrics tab shows usage graphs (CPU, memory, disk, network), the live process list and log streams, read
+from the hub's telemetry stores. It needs `vm:metrics`; see [telemetry.md](telemetry.md#vms). The VM list and VM page
+show current CPU % and RAM from the latest usage sample, omitted if the store is slow or has none.
 
 ## Node restart
 
@@ -204,4 +196,3 @@ cold-boot. A crash of the node service or a power loss still cold-boots them.
 - **Template build RAM** (one VM of the shape's RAM while the template boots, under a minute) is not counted against
   the node's capacity.
 - The under-2-s template boot is a bare-metal target; nested or loaded hosts are slower.
-- Metrics history is 10 minutes and lives only in the hub's memory.

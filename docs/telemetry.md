@@ -1,6 +1,7 @@
 # Telemetry
 
-Nodes send host metrics and logs to the hub, which stores them and shows usage graphs and logs on the node page.
+Nodes send host metrics and logs to the hub, which stores them and shows usage graphs and logs on the node page. The
+same pipeline carries each VM's usage, logs and app telemetry to the VM page ([VMs](#vms)).
 
 ## What nodes send
 
@@ -17,13 +18,45 @@ Logs, from two sources:
 - `observatory-node`: the node agent's own log, with structured fields such as `vm`, `disk`, `image` and `err`.
 - `firecracker`: Firecracker's own log per VM, at level Warning and above.
 
-The guest's serial console (`console.log`) is not shipped. It is VM-internal output, and org admins must not see inside
-VMs.
+The guest's serial console (`console.log`) never appears on the node page. It is VM-internal output and is shown only on
+the VM page under `vm:metrics` (stream `console`, see below).
+
+## VMs
+
+The VM page has a Metrics tab with usage graphs, the live process list and log streams. VMs on the new guest init send
+telemetry; builder VMs never do, and a VM started before this feature sends none until it reboots.
+
+Usage, every 10 seconds, with the same `system.*` names as nodes (CPU, load, memory, paging, filesystems, network).
+
+Log streams:
+
+- `service`: the VM's main process (`cmd.log`), or the image's journal for systemd images.
+- `system`: the guest init's own messages after it connects.
+- `app`: logs sent by apps to the local endpoint.
+- `console`: the serial console, added by the node.
+- `egress`: the egress proxy's requests for the VM, added by the node, with `vars=` and `account=` values removed.
+
+Apps send metrics and logs to the guest's local endpoint ([guest.md](guest.md#sending-telemetry-from-apps)).
+
+Limits, per VM and enforced on the node. Over a limit the data is dropped and the VM page shows what was dropped:
+
+| Limit | Value |
+|---|---|
+| Logs | 100 lines/s, burst 500 |
+| App metric series | 2 000 per hour |
+| Usage | only the 8 `system.*` names, 2 000 series |
+| Request body | 1 MiB, at most 128 attributes per resource, scope, point or record |
+| Connections | 2 concurrent |
+| Bytes | 256 KiB/s, burst 2 MiB |
+
+The process list is live only (not stored), at most 500 entries. `cpuPercent` is percent of one core, like `top`, so it
+can exceed 100.
 
 ## Access
 
 `node:metrics` gates the usage graphs and logs on the node page. Admins and owners have it; members only through a
-custom role ([permissions.md](permissions.md)). VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
+custom role ([permissions.md](permissions.md)). `vm:metrics` gates a VM's usage, processes and logs: the owner, team
+members of a team VM, team admins and org admins and owners have it. Admins read VM telemetry but never connect. VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
 
 ## Configuration
 
