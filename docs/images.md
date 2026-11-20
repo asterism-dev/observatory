@@ -103,7 +103,8 @@ Every build keeps its log, succeeded, failed or cancelled, until the image is de
 and log. Follow the running build live in the web UI or with `observatory image build <ref> --follow`; list builds with
 `observatory image builds <ref>` and print any log with `observatory image log <build-id> [--follow]`. The web UI also
 downloads a log as text. Values of the referenced secrets and integrations are masked in logs. A log above 10 MB keeps
-its start and end and cuts the middle with a marker.
+its start and end and cuts the middle with a marker. With telemetry on, logs of org and team image builds are also copied to
+the log store, where org Grafana tokens can read them; private image builds are not ([Telemetry](telemetry.md#build-logs)).
 
 ### Build secrets
 

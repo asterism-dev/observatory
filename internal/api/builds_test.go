@@ -22,6 +22,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
 var builderRef = "ghcr.io/asterism-dev/observatory-builder@" + digestN(0xb0)
@@ -34,7 +35,9 @@ type buildEnv struct {
 }
 
 // withBuilds wires a scheduler whose nodes are all online, and the agent and registry endpoints.
-func (e *env) withBuilds() *buildEnv {
+func (e *env) withBuilds() *buildEnv { return e.withBuildLogs(nil) }
+
+func (e *env) withBuildLogs(logs *telemetry.LogWriter) *buildEnv {
 	e.t.Helper()
 	m := e.withManifests()
 	m.manifests = map[string]registry.Manifest{}
@@ -46,7 +49,7 @@ func (e *env) withBuilds() *buildEnv {
 		e.t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	BuildEndpoints(mux, e.store, sched, m, e.api.tags)
+	BuildEndpoints(mux, e.store, sched, m, e.api.tags, logs)
 	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: &url.URL{Scheme: "http", Host: "registry.invalid"}, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"},
 		Issuer: iss, Builds: e.store, Manifests: m, Tags: e.api.tags, EventsSecret: eventsSecret})
 	be.sched, be.agent = sched, mux

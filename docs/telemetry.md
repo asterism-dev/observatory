@@ -60,6 +60,19 @@ A new unit, scope or bucket layout under the same name and attributes counts as 
 The process list is live only (not stored), at most 500 entries. `cpuPercent` is percent of one core, like `top`, so it
 can exceed 100.
 
+## Build logs
+
+With telemetry on, the hub also copies the log of every build of an **org** or **team** image to the log store as it
+arrives, one record per line, with stream `build`. Builds of private (user) images are never copied. Postgres stays the
+record: the build log API and the web UI read from it and do not change, and the copy is best effort. If the store is
+down the queue holds at most 10 000 lines (the oldest are dropped) and the build is never slowed or failed. Lines are cut
+at 16 KiB. A builder agent that retries a chunk can leave duplicate lines in the copy but not in the build log.
+
+Records carry `observatory.org`, `observatory.image`, `observatory.image_name`, `observatory.image_scope` (`org` or
+`team`), `observatory.build`, `observatory.stream=build` and `service.name=observatory-builder`, and no node or VM
+attribute, so they never show on a node or VM page. Your Grafana reads them with the org's tokens ([Grafana](grafana.md)),
+for example `{observatory.stream="build"} observatory.image:"<image id>"`.
+
 ## Access
 
 `node:metrics` gates the usage graphs and logs on the node page. Admins and owners have it; members only through a
