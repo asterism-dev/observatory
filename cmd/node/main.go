@@ -34,6 +34,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if tel, err := node.StartTelemetry(context.Background(), cfg.Hub.URL, cfg.Hub.Credential, version.Version); err != nil {
+		log.Printf("telemetry disabled: %v", err)
+	} else {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tel.Shutdown(ctx); err != nil {
+				log.Printf("telemetry shutdown: %v", err)
+			}
+		}()
+	}
 	provider, err := newProvider(cfg)
 	if err != nil {
 		log.Fatal(err)
