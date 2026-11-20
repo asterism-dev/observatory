@@ -521,16 +521,36 @@ func (f *Fleet) NoteUsage(ctx context.Context, node store.Node, obs []proto.Usag
 			slog.Debug("usage report ignored", "node", node.ID)
 			continue
 		}
-		sw, err := f.store.RecordUsage(ctx, store.UsageObservation{Account: account, FiveHourPct: o.FiveHourPct, WeekPct: o.WeekPct,
-			FiveHourResetsAt: o.FiveHourResetsAt, WeekResetsAt: o.WeekResetsAt, LimitedUntil: o.LimitedUntil, Source: "proxy", ObservedAt: o.ObservedAt}, time.Now())
-		if err != nil {
-			slog.Error("record usage", "node", node.ID, "account", account, "err", err)
-			continue
+		// Nodes are untrusted: a future ObservedAt would freeze the stored usage and a far LimitedUntil would park the account.
+		now := time.Now()
+		o.ObservedAt = minTime(o.ObservedAt, now)
+		if o.LimitedUntil != nil {
+			until := minTime(*o.LimitedUntil, now.Add(maxLimit))
+			o.LimitedUntil = &until
 		}
-		if sw != nil {
-			slog.Info("integration account switched", "integration", sw.IntegrationID, "from", sw.From, "to", sw.To, "limitedUntil", sw.LimitedUntil)
-			f.NotifyOrg(sw.OrgID)
-		}
+		f.recordUsage(ctx, store.UsageObservation{Account: account, FiveHourPct: o.FiveHourPct, WeekPct: o.WeekPct,
+			FiveHourResetsAt: o.FiveHourResetsAt, WeekResetsAt: o.WeekResetsAt, LimitedUntil: o.LimitedUntil, Source: "proxy", ObservedAt: o.ObservedAt}, now)
+	}
+}
+
+const maxLimit = 7 * 24 * time.Hour
+
+func minTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return b
+	}
+	return a
+}
+
+func (f *Fleet) recordUsage(ctx context.Context, obs store.UsageObservation, now time.Time) {
+	sw, err := f.store.RecordUsage(ctx, obs, now)
+	if err != nil {
+		slog.Error("record usage", "account", obs.Account, "source", obs.Source, "err", err)
+		return
+	}
+	if sw != nil {
+		slog.Info("integration account switched", "integration", sw.IntegrationID, "from", sw.From, "to", sw.To, "limitedUntil", sw.LimitedUntil)
+		f.NotifyOrg(sw.OrgID)
 	}
 }
 
@@ -624,6 +644,85 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 				delete(backoffs, ref)
 				slog.Info("integration refreshed", "id", ref.ID)
 				f.NotifyOrg(ref.OrgID)
+			}
+		}
+	}
+}
+
+const inactiveEvery = 15
+
+// limitedUntil is the later reset of the windows at 100 % or more, if in the future.
+func limitedUntil(u integrations.Usage, now time.Time) *time.Time {
+	var until *time.Time
+	for _, w := range []struct {
+		pct *float64
+		at  *time.Time
+	}{{u.FiveHourPct, u.FiveHourResetsAt}, {u.WeekPct, u.WeekResetsAt}} {
+		if w.pct != nil && *w.pct >= 100 && w.at != nil && w.at.After(now) && (until == nil || w.at.After(*until)) {
+			until = w.at
+		}
+	}
+	return until
+}
+
+// PollUsage polls Claude usage: active accounts every tick, others every inactiveEvery ticks; failures back off per account from 1 to 15 minutes. It returns when ctx ends.
+func (f *Fleet) PollUsage(ctx context.Context, u integrations.ClaudeUsage, every time.Duration) {
+	type backoff struct {
+		until time.Time
+		wait  time.Duration
+	}
+	backoffs := map[store.AccountRef]backoff{}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for tick := 0; ; tick++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if sws, err := f.store.ResumeLimited(ctx, clock()); err != nil {
+			if ctx.Err() == nil {
+				slog.Error("resume limited accounts", "err", err)
+			}
+		} else {
+			for _, sw := range sws {
+				slog.Info("integration account switched", "integration", sw.IntegrationID, "from", sw.From, "to", sw.To, "limitedUntil", sw.LimitedUntil)
+				f.NotifyOrg(sw.OrgID)
+			}
+		}
+		accounts, err := f.store.PollableAccounts(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("list pollable accounts", "err", err)
+			}
+			continue
+		}
+		maps.DeleteFunc(backoffs, func(r store.AccountRef, _ backoff) bool {
+			return !slices.ContainsFunc(accounts, func(a store.PollAccount) bool { return a.AccountRef == r })
+		})
+		for _, a := range accounts {
+			now := clock()
+			b := backoffs[a.AccountRef]
+			if (!a.Active && tick%inactiveEvery != 0) || now.Before(b.until) {
+				continue
+			}
+			pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			usage, err := u.Usage(pctx, a.Token)
+			cancel()
+			switch {
+			case errors.Is(err, integrations.ErrRejected) && a.Source == integrations.SourceSetupToken:
+				// Setup tokens may lack the scope the usage endpoint needs.
+				if err := f.store.MarkNoUsageData(ctx, a.AccountRef); err != nil {
+					slog.Error("mark no usage data", "id", a.ID, "err", err)
+				}
+			case err != nil:
+				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
+				backoffs[a.AccountRef] = backoff{until: now.Add(b.wait), wait: b.wait}
+				slog.Error("usage poll failed", "id", a.ID, "err", err)
+			default:
+				delete(backoffs, a.AccountRef)
+				f.recordUsage(ctx, store.UsageObservation{Account: a.ID, FiveHourPct: usage.FiveHourPct, WeekPct: usage.WeekPct,
+					FiveHourResetsAt: usage.FiveHourResetsAt, WeekResetsAt: usage.WeekResetsAt, LimitedUntil: limitedUntil(usage, now), Source: "poll", ObservedAt: now}, now)
 			}
 		}
 	}

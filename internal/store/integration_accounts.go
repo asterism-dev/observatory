@@ -437,3 +437,58 @@ func (s *Store) ResumeLimited(ctx context.Context, now time.Time) ([]Switch, err
 	}
 	return out, nil
 }
+
+// PollAccount is an account whose usage the hub polls, with its decrypted access token.
+type PollAccount struct {
+	AccountRef
+	Active bool
+	Source integrations.Source
+	Token  string
+}
+
+func (a PollAccount) String() string             { return fmt.Sprintf("PollAccount{%s}", a.ID) }
+func (a PollAccount) GoString() string           { return a.String() }
+func (PollAccount) MarshalJSON() ([]byte, error) { return []byte(`"redacted"`), nil }
+
+// PollableAccounts lists the working Claude accounts that may have usage data.
+func (s *Store) PollableAccounts(ctx context.Context) ([]PollAccount, error) {
+	rows, err := s.q.Query(ctx, `SELECT a.org_id, a.id, a.active, a.source, a.nonce, a.ciphertext FROM integration_accounts a
+		JOIN integrations i ON i.id = a.integration_id
+		WHERE i.kind = 'claude' AND a.status = 'ok' AND a.last_error <> 'no usage data' ORDER BY a.org_id, a.position`)
+	if err != nil {
+		return nil, err
+	}
+	type sealed struct {
+		Org, ID   uuid.UUID
+		Active    bool
+		Source    integrations.Source
+		Nonce, CT []byte
+	}
+	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[sealed])
+	if err != nil {
+		return nil, err
+	}
+	keys := map[uuid.UUID]seal.Key{}
+	out := make([]PollAccount, 0, len(list))
+	for _, a := range list {
+		key, ok := keys[a.Org]
+		if !ok {
+			if key, err = s.orgKey(ctx, a.Org); err != nil {
+				return nil, err
+			}
+			keys[a.Org] = key
+		}
+		plain, err := seal.Open(key, a.Nonce, a.CT, integrationAAD(a.Org, a.ID, "access"))
+		if err != nil {
+			return nil, fmt.Errorf("decrypt integration account %s: %w", a.ID, err)
+		}
+		out = append(out, PollAccount{AccountRef: AccountRef{OrgID: a.Org, ID: a.ID}, Active: a.Active, Source: a.Source, Token: string(plain)})
+	}
+	return out, nil
+}
+
+// MarkNoUsageData stops polling an account whose token the usage endpoint rejects, until its token is replaced.
+func (s *Store) MarkNoUsageData(ctx context.Context, ref AccountRef) error {
+	_, err := s.q.Exec(ctx, "UPDATE integration_accounts SET last_error = 'no usage data' WHERE org_id = $1 AND id = $2 AND last_error = ''", ref.OrgID, ref.ID)
+	return err
+}
