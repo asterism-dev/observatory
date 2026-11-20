@@ -25,8 +25,6 @@ type fakeInstance struct {
 	p       *fakeProvider
 	staleIP bool // simulates finding the previous boot's lease only after the VM already died
 	hang    bool // Stop and Kill do not end the instance
-
-	ticks, tickStep atomic.Uint64 // CPUTicks advances by tickStep per call
 }
 
 func (i *fakeInstance) WaitIP(context.Context) (string, error) {
@@ -73,9 +71,6 @@ func (i *fakeInstance) Kill() error {
 func (i *fakeInstance) Pause() error  { i.p.record("pause"); return nil }
 func (i *fakeInstance) Resume() error { i.p.record("resume"); return nil }
 func (i *fakeInstance) Flush() error  { i.p.record("flush"); return nil }
-
-func (i *fakeInstance) CPUTicks() (uint64, error) { return i.ticks.Add(i.tickStep.Load()), nil }
-func (i *fakeInstance) Memory() (int, int, error) { return 1024, 256, nil }
 
 func (i *fakeInstance) ReloadSeed() error { i.p.record("reload-seed"); return nil }
 

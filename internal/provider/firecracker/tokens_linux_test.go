@@ -59,7 +59,7 @@ func TestTokenSocketOwnerAndMode(t *testing.T) {
 	if _, err := buildJail(dir, 70007, nil); err != nil {
 		t.Fatal(err)
 	}
-	l, err := listenTokens(dir, 70007)
+	l, err := listenGuestPort(dir, 70007, node.TokenPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +79,25 @@ func TestTokenSocketOwnerAndMode(t *testing.T) {
 	}
 }
 
+func TestFirecrackerListensTelemetryPort(t *testing.T) {
+	dir := jailTestDir(t)
+	if _, err := buildJail(dir, 70007, nil); err != nil {
+		t.Fatal(err)
+	}
+	l, err := listenGuestPort(dir, 70007, node.TelemetryPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	st, err := os.Lstat(filepath.Join(jailRoot(dir), "v.sock_1052"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sys := st.Sys().(*syscall.Stat_t); sys.Uid != 70007 || sys.Gid != 70007 || st.Mode().String() != "Srw-------" {
+		t.Fatalf("socket uid %d gid %d mode %s", sys.Uid, sys.Gid, st.Mode())
+	}
+}
+
 func TestTokenSocketLongPath(t *testing.T) {
 	dir := filepath.Join(jailTestDir(t), strings.Repeat("d", 60), "vm")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -91,12 +110,12 @@ func TestTokenSocketLongPath(t *testing.T) {
 	if len(sock) <= 107 {
 		t.Fatalf("socket path only %d bytes", len(sock))
 	}
-	l, err := listenTokens(dir, 70007)
+	l, err := listenGuestPort(dir, 70007, node.TokenPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	serve(t, l)
-	// The fd number listenTokens used is free again; a decoy directory takes it.
+	// The fd number listenGuestPort used is free again; a decoy directory takes it.
 	decoyDir := t.TempDir()
 	decoy := filepath.Join(decoyDir, tokenSockName)
 	if err := os.WriteFile(decoy, nil, 0o600); err != nil {

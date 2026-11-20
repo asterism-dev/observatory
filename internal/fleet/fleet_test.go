@@ -2426,7 +2426,7 @@ func TestFleetIgnoresMetricsMessage(t *testing.T) {
 	n, cred := e.node(e.org.ID, "a")
 	v := e.vm(e.org.ID, n.ID, "dev", &e.owner, nil)
 	node := e.connect(cred)
-	node.send(proto.Message{Type: "metrics", Metrics: []proto.VMMetrics{{ID: v.ID.String(), CPUPercent: 10}}})
+	node.send(proto.Message{Type: "metrics"})
 	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning}})
 	waitFor(t, func() bool {
 		got, err := e.s.VM(context.Background(), e.org.ID, v.ID)

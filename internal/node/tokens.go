@@ -10,11 +10,15 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-// TokenPort is the guest-initiated vsock port of the token service.
-const TokenPort = 1051
+// TokenPort and TelemetryPort are the guest-initiated vsock ports of the token service and the telemetry sink.
+const (
+	TokenPort     = 1051
+	TelemetryPort = 1052
+)
 
 const (
 	TokenNotConnected = "not-connected"
@@ -34,6 +38,8 @@ type TokenLookup func(vmID, kind string) (proto.IntegrationToken, string)
 
 // TokenServer is a provider that serves each VM's token socket with the lookup.
 type TokenServer interface{ SetTokenLookup(TokenLookup) }
+
+type VMTelemetryServer interface{ SetVMTelemetry(*vmtelemetry.Sink) }
 
 // ServeTokens answers token requests on l, the listener of vmID only, until l is closed.
 func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {

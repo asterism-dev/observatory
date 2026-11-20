@@ -9,11 +9,14 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/asterism-dev/observatory/internal/node"
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 // SetTokenLookup sets the lookup every VM's token socket answers with; nil answers unavailable.
 func (p *Provider) SetTokenLookup(l node.TokenLookup) { p.tokens.Store(&l) }
+
+func (p *Provider) SetVMTelemetry(s *vmtelemetry.Sink) { p.telemetry.Store(s) }
 
 func (p *Provider) token(vmID, kind string) (proto.IntegrationToken, string) {
 	if l := p.tokens.Load(); l != nil && *l != nil {
@@ -22,15 +25,15 @@ func (p *Provider) token(vmID, kind string) (proto.IntegrationToken, string) {
 	return proto.IntegrationToken{}, node.TokenUnavailable
 }
 
-// listenTokens binds the socket Firecracker delivers guest connections to the token port to, via the jail root's fd past the 107-byte limit.
-func listenTokens(dir string, uid int) (net.Listener, error) {
+// listenGuestPort binds the socket Firecracker delivers guest connections to port to, via the jail root's fd past the 107-byte limit.
+func listenGuestPort(dir string, uid, port int) (net.Listener, error) {
 	d, err := os.Open(jailRoot(dir))
 	if err != nil {
 		return nil, err
 	}
 	defer d.Close()
 	fd := int(d.Fd())
-	name := vsockPath[1:] + "_" + strconv.Itoa(node.TokenPort)
+	name := vsockPath[1:] + "_" + strconv.Itoa(port)
 	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: fmt.Sprintf("/proc/self/fd/%d/%s", fd, name), Net: "unix"})
 	if err != nil {
 		return nil, err

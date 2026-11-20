@@ -42,8 +42,6 @@ type Instance interface {
 	GuestTrust(ctx context.Context, cas map[string]string) error
 	// ReloadSeed makes the VM read the seed Reseed last wrote, so a paused guest resumes with the current keys and variables.
 	ReloadSeed() error
-	CPUTicks() (uint64, error)
-	Memory() (totalMB, usedMB int, err error)
 }
 
 type RestoreFrom struct {

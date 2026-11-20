@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -59,12 +60,13 @@ type Agent struct {
 	ShutdownMarker                     string
 	// Egress runs the per-VM egress proxies; nil runs none.
 	Egress EgressHost
+	// VMTelemetry receives the VMs' telemetry; nil receives none.
+	VMTelemetry *vmtelemetry.Sink
 
 	updating     atomic.Bool
 	unsentUpdate *proto.UpdateReport // guarded by mu
 
-	diskRefresh  time.Duration // zero means defaultDiskRefresh
-	metricsEvery time.Duration // zero means the package default
+	diskRefresh time.Duration // zero means defaultDiskRefresh
 
 	chassisMu       sync.Mutex
 	chassisPending  *chassisconf.Config // newest config not yet applied; older ones are superseded
@@ -125,6 +127,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.removeShutdownMarker()
 	if ts, ok := a.Provider.(TokenServer); ok {
 		ts.SetTokenLookup(a.integrationToken)
+	}
+	if vs, ok := a.Provider.(VMTelemetryServer); ok && a.VMTelemetry != nil {
+		vs.SetVMTelemetry(a.VMTelemetry)
 	}
 	if gi, ok := a.Provider.(GuestImages); ok {
 		go gi.RunGuestImages(ctx, a.setImage)
@@ -204,7 +209,6 @@ func (a *Agent) connect(ctx context.Context) error {
 	slog.Info("connected to hub", "hub", a.HubURL)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
-	go a.metricsLoop(connCtx)
 	defer func() {
 		stopRefresh()
 		a.mu.Lock()

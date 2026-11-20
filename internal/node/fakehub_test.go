@@ -41,7 +41,6 @@ type fakeHub struct {
 	nextID   int
 	underlay *proto.Underlay
 	cpus     int // CPUs of VMs from create; zero means 1
-	metrics  []proto.Message
 	images   []proto.ImageStatus
 	updates  []proto.UpdateReport
 }
@@ -113,11 +112,6 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 		var m proto.Message
 		if err := dec.Decode(&m); err != nil {
 			return
-		}
-		if m.Type == "metrics" {
-			h.mu.Lock()
-			h.metrics = append(h.metrics, m)
-			h.mu.Unlock()
 		}
 		if m.Type == "image" && m.Image != nil {
 			h.mu.Lock()
