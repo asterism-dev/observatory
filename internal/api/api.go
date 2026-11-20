@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,7 +46,8 @@ type api struct {
 	telemetry   *telemetry.Client
 	now         func() time.Time
 	// tokenChecks maps a telemetry token ID to when its creator's access was last confirmed.
-	tokenChecks sync.Map
+	tokenChecks  sync.Map
+	grafanaLimit *rateLimiter
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
@@ -58,7 +60,7 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 
 func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -199,7 +201,14 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/copy", h.copyDisk)
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/grow", h.growDisk)
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/release", h.releaseDisk)
-	return h, a.Require(mux)
+	users := a.Require(mux)
+	return h, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/grafana/") {
+			h.promProxy(w, r)
+			return
+		}
+		users.ServeHTTP(w, r)
+	})
 }
 
 func (h *api) me(w http.ResponseWriter, r *http.Request) {
