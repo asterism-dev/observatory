@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,7 @@ type Proxy struct {
 // table is immutable once stored except for limited, the locally rejected accounts, which a new table forgets.
 type table struct {
 	bound  map[string][]proto.HostBoundSecret
+	wild   []proto.HostBoundSecret // secrets with a "*.<domain>" host; each appears once per such host
 	issuer *Issuer
 	scrub  [][]byte
 
@@ -54,6 +56,16 @@ func New(vmID string, l *log.Logger) *Proxy {
 	return p
 }
 
+func (t *table) secretsFor(host string) []proto.HostBoundSecret {
+	out := t.bound[host]
+	for _, s := range t.wild {
+		if boundTo(s, host) {
+			out = append(out[:len(out):len(out)], s)
+		}
+	}
+	return out
+}
+
 func (p *Proxy) SetTable(e proto.Egress) error {
 	iss, err := NewIssuer(e.CAs, time.Now)
 	if err != nil {
@@ -63,6 +75,10 @@ func (p *Proxy) SetTable(e proto.Egress) error {
 	for _, s := range e.Secrets {
 		for _, h := range s.Hosts {
 			h = NormalizeSNI(h)
+			if strings.HasPrefix(h, "*.") {
+				t.wild = append(t.wild, s)
+				continue
+			}
 			t.bound[h] = append(t.bound[h], s)
 		}
 		t.scrub = append(t.scrub, []byte(s.Value))
@@ -123,7 +139,7 @@ func (p *Proxy) handle(c net.Conn) {
 	if hello != nil {
 		sni = NormalizeSNI(hello.ServerName)
 	}
-	if hello != nil && len(p.table.Load().bound[sni]) > 0 && httpALPN(hello.SupportedProtos) {
+	if hello != nil && len(p.table.Load().secretsFor(sni)) > 0 && httpALPN(hello.SupportedProtos) {
 		p.terminate(c, raw, sni)
 		return
 	}

@@ -1621,11 +1621,11 @@ func (f *fakeOAuth) n() int {
 }
 
 // runRefresh starts the refresh loop and stops it, waiting for its exit, at test end.
-func (e *env) runRefresh(oauth integrations.ClaudeOAuth) {
+func (e *env) runRefresh(oauth integrations.ClaudeOAuth, google integrations.GoogleOAuth) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		e.f.RefreshIntegrations(ctx, oauth, 10*time.Millisecond)
+		e.f.RefreshIntegrations(ctx, oauth, google, 10*time.Millisecond)
 		close(done)
 	}()
 	e.t.Cleanup(func() { cancel(); <-done })
@@ -1642,7 +1642,7 @@ func TestRefreshIntegrationsPushes(t *testing.T) {
 			node := e.connect(cred)
 			before := desiredVM(t, node.desired(), v.ID)
 			newExp := time.Now().Add(8 * time.Hour).Truncate(time.Second)
-			e.runRefresh(&fakeOAuth{exp: newExp})
+			e.runRefresh(&fakeOAuth{exp: newExp}, &fakeGoogle{})
 			after := desiredVM(t, node.desired(), v.ID)
 			if mode == integrations.ModeProxy {
 				if after.Egress == nil || len(after.Egress.Secrets) != 1 || after.Egress.Secrets[0].Value != "at-new-dummy-0000" ||
@@ -1655,6 +1655,80 @@ func TestRefreshIntegrationsPushes(t *testing.T) {
 				t.Fatalf("vm after refresh: %#v", after.Integrations)
 			}
 		})
+	}
+}
+
+type fakeGoogle struct {
+	mu   sync.Mutex
+	adcs []string
+	err  error
+}
+
+func (f *fakeGoogle) Refresh(_ context.Context, adc string) (integrations.OAuthTokens, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adcs = append(f.adcs, adc)
+	if f.err != nil {
+		return integrations.OAuthTokens{}, f.err
+	}
+	return integrations.OAuthTokens{Access: "ya29.new-dummy-0000", Refresh: adc, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (*fakeGoogle) Email(context.Context, string) (string, error) { return "", errors.New("unused") }
+
+func (f *fakeGoogle) n() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.adcs)
+}
+
+func TestRefreshGcloud(t *testing.T) {
+	adc := integrations.ADC{ClientID: "cid", ClientSecret: "dummy-secret", RefreshToken: intRefresh}.Marshal()
+	t.Run("due", func(t *testing.T) {
+		e := newEnv(t)
+		n, cred := e.node(e.org.ID, "n")
+		v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+		exp := time.Now().Add(5 * time.Minute)
+		e.integration(integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &e.owner, integrations.ModeProxy,
+			store.IntegrationSecret{Token: "ya29.old-dummy-0000", Refresh: adc, AccessExpiresAt: &exp})
+		node := e.connect(cred)
+		before := desiredVM(t, node.desired(), v.ID)
+		g := &fakeGoogle{}
+		e.runRefresh(&fakeOAuth{}, g)
+		after := desiredVM(t, node.desired(), v.ID)
+		if after.Egress == nil || len(after.Egress.Secrets) != 1 || after.Egress.Secrets[0].Value != "ya29.new-dummy-0000" ||
+			after.Egress.Secrets[0].Placeholder != before.Egress.Secrets[0].Placeholder {
+			t.Fatalf("after refresh: %+v", after.Egress)
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if len(g.adcs) != 1 || g.adcs[0] != adc {
+			t.Fatalf("google refreshes: %d", len(g.adcs))
+		}
+	})
+	// Claude refreshes 60 minutes ahead, gcloud only 10.
+	t.Run("not due", func(t *testing.T) {
+		e := newEnv(t)
+		exp := time.Now().Add(15 * time.Minute)
+		e.integration(integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &e.owner, integrations.ModeProxy,
+			store.IntegrationSecret{Token: "ya29.old-dummy-0000", Refresh: adc, AccessExpiresAt: &exp})
+		g := &fakeGoogle{}
+		e.runRefresh(&fakeOAuth{}, g)
+		time.Sleep(50 * time.Millisecond)
+		if g.n() != 0 {
+			t.Fatalf("refreshed %d times", g.n())
+		}
+	})
+}
+
+func TestIntegrationEntriesProject(t *testing.T) {
+	res := []store.ResolvedIntegration{
+		{Integration: store.Integration{ID: uuid.New(), Kind: integrations.GCloud, Mode: integrations.ModeProxy, QuotaProject: "bna-trader-tf-state"}, Placeholder: "obsph_g", Token: "ya29.x"},
+		{Integration: store.Integration{ID: uuid.New(), Kind: integrations.GitHub, Mode: integrations.ModeProxy}, Placeholder: "obsph_h", Token: intToken},
+	}
+	_, tokens := fleet.IntegrationEntries(res)
+	if len(tokens) != 2 || tokens[0].Project != "bna-trader-tf-state" || tokens[0].Token != "obsph_g" || tokens[1].Project != "" {
+		t.Fatalf("tokens: %+v", tokens)
 	}
 }
 
@@ -1673,7 +1747,7 @@ func TestRefreshIntegrationsBackoff(t *testing.T) {
 	exp := base.Add(10 * time.Minute)
 	in := e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &exp})
 	oauth := &fakeOAuth{err: fmt.Errorf("%w: claude: HTTP 503", integrations.ErrUnreachable)}
-	e.runRefresh(oauth)
+	e.runRefresh(oauth, &fakeGoogle{})
 	waitFor(t, func() bool { return oauth.n() == 1 })
 	time.Sleep(30 * time.Millisecond)
 	if n := oauth.n(); n != 1 {
@@ -1700,6 +1774,30 @@ func TestRefreshIntegrationsBackoff(t *testing.T) {
 			t.Fatalf("token in log: %s", logs)
 		}
 	}
+}
+
+// gcloud refreshes only 10 minutes ahead, so its backoff stops at 2 minutes.
+func TestRefreshGcloudBackoffCap(t *testing.T) {
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+
+	e := newEnv(t)
+	exp := base.Add(5 * time.Minute)
+	adc := integrations.ADC{ClientID: "cid", ClientSecret: "dummy-secret", RefreshToken: intRefresh}.Marshal()
+	e.integration(integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &e.owner, integrations.ModeProxy,
+		store.IntegrationSecret{Token: "ya29.old-dummy-0000", Refresh: adc, AccessExpiresAt: &exp})
+	g := &fakeGoogle{err: fmt.Errorf("%w: gcloud: HTTP 503", integrations.ErrUnreachable)}
+	e.runRefresh(&fakeOAuth{}, g)
+	waitFor(t, func() bool { return g.n() == 1 })
+	offset.Store(int64(61 * time.Second))
+	waitFor(t, func() bool { return g.n() == 2 })
+	offset.Store(int64(182 * time.Second))
+	waitFor(t, func() bool { return g.n() == 3 })
+	offset.Store(int64(303 * time.Second))
+	waitFor(t, func() bool { return g.n() == 4 })
 }
 
 func TestDesiredIntegrationsUnresolvedKeepsOtherVMs(t *testing.T) {
@@ -2032,7 +2130,7 @@ func TestRefreshInactiveAccount(t *testing.T) {
 	node.desired()
 	newExp := time.Now().Add(8 * time.Hour).Truncate(time.Second)
 	oauth := &fakeOAuth{exp: newExp}
-	e.runRefresh(oauth)
+	e.runRefresh(oauth, &fakeGoogle{})
 	node.desired()
 	if n := oauth.n(); n != 1 {
 		t.Fatalf("refresh called %d times, want 1", n)

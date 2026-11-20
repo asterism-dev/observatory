@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -336,7 +337,8 @@ func (s *Scheduler) BootEnv(ctx context.Context, v store.VM) (map[string]string,
 			i := slices.IndexFunc(igs, func(g store.Integration) bool {
 				return g.Scope == ref.Scope && sameOwner(g.OwnerID, ref.OwnerID) && string(g.Kind) == ref.Name
 			})
-			if i < 0 {
+			// The real Google token must never reach a guest; the API refuses such recipes too.
+			if i < 0 || igs[i].Kind == integrations.GCloud {
 				continue
 			}
 			tok, err := s.store.IntegrationToken(ctx, igs[i])

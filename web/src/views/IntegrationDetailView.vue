@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, RadioGroup, Switch } from '@asterism-dev/lumen'
+import { Button, Dialog, RadioGroup, Switch, TextInput } from '@asterism-dev/lumen'
 import { ArrowLeft, Plus } from '@lucide/vue'
 import { computed, h, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -8,11 +8,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '@/api'
 import ClaudeAccounts from '@/components/ClaudeAccounts.vue'
 import ConnectIntegrationDialog from '@/components/ConnectIntegrationDialog.vue'
+import GcloudCommands from '@/components/GcloudCommands.vue'
 import IntegrationIcon from '@/components/IntegrationIcon.vue'
 import { scopeLabel } from '@/composables/envScopes'
 import {
   kindLabels,
   multiAccount,
+  quotaProjectPattern,
   shownAccount,
   statusLabel,
   statusTone,
@@ -59,6 +61,9 @@ const headerIcon = computed(() => {
   const kind = item.value?.kind
   return kind ? () => h(IntegrationIcon, { kind }) : undefined
 })
+const quotaDraft = ref('')
+const quotaInvalid = computed(() => !quotaProjectPattern.test(quotaDraft.value.trim()))
+const quotaChanged = computed(() => quotaDraft.value.trim() !== (item.value?.quotaProject ?? ''))
 const multipleAccounts = computed(() => (item.value?.accounts?.length ?? 0) > 1)
 
 watchEffect(() => {
@@ -72,6 +77,7 @@ async function refresh() {
     const res = await api<{ integrations: Integration[]; writableScopes: IntegrationScope[] }>(`/api/orgs/${orgId}/integrations`)
     if (orgId !== org.value?.id) return
     item.value = res.integrations.find((v) => v.id === id.value) ?? null
+    quotaDraft.value = item.value?.quotaProject ?? ''
     scopes.value = res.writableScopes
     loaded.value = true
   } catch (e) {
@@ -113,6 +119,8 @@ const saveMode = () =>
   modeTarget.value && newMode.value !== modeTarget.value.mode && mutate(() => api(base(), { method: 'PATCH', body: JSON.stringify({ mode: newMode.value }) }))
 
 const setAutoSwitch = (on: boolean) => mutate(() => api(base(), { method: 'PATCH', body: JSON.stringify({ autoSwitch: on }) }))
+
+const saveQuota = () => mutate(() => api(base(), { method: 'PATCH', body: JSON.stringify({ quotaProject: quotaDraft.value.trim() }) }))
 
 const removeAccount = () => {
   const account = accountRemove.value
@@ -178,7 +186,7 @@ watch(
         </Section>
         <Section v-else :label="t('integrations.account')">
           <template v-if="item.canEdit" #actions>
-            <Button size="sm" variant="ghost" @click="openDialog({ replacing: item })">{{ item.source === 'oauth' ? t('integrations.signInAgain') : t('integrations.replace') }}</Button>
+            <Button size="sm" variant="ghost" @click="openDialog({ replacing: item })">{{ item.source === 'oauth' && item.kind !== 'gcloud' ? t('integrations.signInAgain') : t('integrations.replace') }}</Button>
           </template>
           <Card>
             <KeyValueList>
@@ -186,6 +194,7 @@ watch(
               <KeyValue :label="t('integrations.scope')">{{ scopeLabel(item, t) }}</KeyValue>
               <KeyValue :label="t('integrations.status')">{{ statusLabel(item, t) }}</KeyValue>
             </KeyValueList>
+            <GcloudCommands v-if="item.kind === 'gcloud' && item.status === 'expired'" />
             <span v-if="soleUsage" class="usage">
               <Meter :label="t('integrations.fiveHour')" :percent="soleUsage.fiveHourPct" />
               <Meter :label="t('integrations.week')" :percent="soleUsage.weekPct" />
@@ -199,11 +208,17 @@ watch(
               <Switch :model-value="item.autoSwitch" :disabled="busy" @update:model-value="setAutoSwitch">{{ t('integrations.autoSwitch') }}</Switch>
               <span v-if="!item.autoSwitch" class="muted">{{ t('integrations.autoSwitchOff') }}</span>
             </template>
+            <div v-if="item.kind === 'gcloud'" class="row">
+              <TextInput v-model="quotaDraft" :disabled="!item.canEdit || busy" spellcheck="false" :aria-label="t('integrations.quotaProject')" :placeholder="t('integrations.quotaProject')" />
+              <Button v-if="item.canEdit" size="sm" :disabled="busy || !quotaChanged || quotaInvalid" @click="saveQuota">{{ t('env.save') }}</Button>
+            </div>
+            <span v-if="item.kind === 'gcloud' && quotaInvalid" role="alert">{{ t('integrations.quotaInvalid') }}</span>
+            <span v-if="item.kind === 'gcloud'" class="muted">{{ t('integrations.quotaHint') }}</span>
             <div class="row">
               <KeyValueList>
                 <KeyValue :label="t('integrations.delivery')">{{ t(`integrations.mode_${item.mode}`) }}</KeyValue>
               </KeyValueList>
-              <Button v-if="item.canEdit" size="sm" :disabled="multipleAccounts" :title="multipleAccounts ? t('integrations.modeMultiHint') : undefined" @click="openMode(item)">{{ t('integrations.mode') }}</Button>
+              <Button v-if="item.canEdit && item.kind !== 'gcloud'" size="sm" :disabled="multipleAccounts" :title="multipleAccounts ? t('integrations.modeMultiHint') : undefined" @click="openMode(item)">{{ t('integrations.mode') }}</Button>
             </div>
             <span v-if="item.canEdit && multipleAccounts" class="muted">{{ t('integrations.modeMultiHint') }}</span>
           </Card>

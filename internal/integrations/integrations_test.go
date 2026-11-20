@@ -49,6 +49,7 @@ func TestKindsTable(t *testing.T) {
 		GitHub: {"api.github.com", "github.com", "uploads.github.com"},
 		Claude: {"api.anthropic.com"},
 		Linear: {"api.linear.app", "mcp.linear.app"},
+		GCloud: {"*.googleapis.com"},
 	}
 	if len(Kinds) != len(want) {
 		t.Fatalf("kinds: %v", Kinds)
@@ -58,7 +59,7 @@ func TestKindsTable(t *testing.T) {
 		if !ok || !reflect.DeepEqual(spec.Hosts, hosts) || !reflect.DeepEqual(spec.Headers, []string{"Authorization"}) {
 			t.Errorf("%s: %+v", k, spec)
 		}
-		if norm, err := egress.NormalizeHosts(spec.Hosts); err != nil || !reflect.DeepEqual(norm, spec.Hosts) {
+		if norm, err := egress.NormalizeHostSet(spec.Hosts); err != nil || !reflect.DeepEqual(norm, spec.Hosts) {
 			t.Errorf("%s: normalized %v, %v", k, norm, err)
 		}
 		if !strings.HasPrefix(spec.TokenPage, "https://") {

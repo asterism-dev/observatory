@@ -240,7 +240,7 @@ func TestCAKeyNotPrinted(t *testing.T) {
 }
 
 func TestNewCARejectsBadHosts(t *testing.T) {
-	for _, h := range [][]string{nil, {}, {"*.a.test"}, {"127.1"}} {
+	for _, h := range [][]string{nil, {}, {"*.com"}, {"127.1"}} {
 		if _, err := NewCA(h, t0); err == nil {
 			t.Errorf("%v accepted", h)
 		}
@@ -335,5 +335,36 @@ func TestIssuerOldestCovering(t *testing.T) {
 	}
 	if err := verify(t, a, pool(t, ca2), "a.test", late); err != nil {
 		t.Fatalf("a.test after CA1 expiry not from CA2: %v", err)
+	}
+}
+
+func TestWildcardCA(t *testing.T) {
+	ca := mustCA(t, t0, "*.googleapis.com")
+	cert, _ := parseCA(t, ca)
+	if len(cert.PermittedDNSDomains) != 1 || cert.PermittedDNSDomains[0] != ".googleapis.com" {
+		t.Fatalf("permitted %v", cert.PermittedDNSDomains)
+	}
+	iss := issuerFor(t, t0, ca)
+	leaf, err := iss.Leaf("logging.googleapis.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(t, leaf, pool(t, ca), "logging.googleapis.com", t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := iss.Leaf("googleapis.com"); !errors.Is(err, ErrNoCA) {
+		t.Fatalf("apex: %v", err)
+	}
+}
+
+func TestLeafCacheBounded(t *testing.T) {
+	iss := issuerFor(t, t0, mustCA(t, t0, "*.googleapis.com"))
+	for n := 0; n < maxLeafCache+10; n++ {
+		if _, err := iss.Leaf(fmt.Sprintf("h%d.googleapis.com", n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(iss.cache) > maxLeafCache {
+		t.Fatalf("cache has %d entries", len(iss.cache))
 	}
 }

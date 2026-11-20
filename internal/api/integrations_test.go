@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -846,4 +848,257 @@ func TestAccountSignIn(t *testing.T) {
 		t.Fatalf("add to org: %d", c)
 	}
 	e.noSecretsInAudit()
+}
+
+const (
+	dummyGAccess = "ya29.dummyaccess0000"
+	dummyGSecret = "dummyclientsecret0000"
+	dummyGRefres = "1//dummygrefresh0000"
+)
+
+type fakeGoogle struct {
+	mu      sync.Mutex
+	adcs    []string
+	err     error
+	email   string
+	access  string
+	emailOf []string
+}
+
+func (f *fakeGoogle) Refresh(_ context.Context, adc string) (integrations.OAuthTokens, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adcs = append(f.adcs, adc)
+	if f.err != nil {
+		return integrations.OAuthTokens{}, f.err
+	}
+	access := f.access
+	if access == "" {
+		access = dummyGAccess
+	}
+	return integrations.OAuthTokens{Access: access, Refresh: adc, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (f *fakeGoogle) Email(_ context.Context, access string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.emailOf = append(f.emailOf, access)
+	if f.email == "" {
+		return "me@example.com", nil
+	}
+	return f.email, nil
+}
+
+func (f *fakeGoogle) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.adcs)
+}
+
+func adcJSON(typ, refresh, project string) string {
+	return `{"type":"` + typ + `","client_id":"cid.apps.googleusercontent.com","client_secret":"` + dummyGSecret + `","refresh_token":"` + refresh +
+		`","quota_project_id":"` + project + `"}`
+}
+
+func gcloudBody(scope, adc, extra string) string {
+	tok, _ := json.Marshal(adc)
+	return `{"kind":"gcloud","source":"adc","scope":"` + scope + `","token":` + string(tok) + extra + `}`
+}
+
+func noGcloudSecrets(t *testing.T, what, s string) {
+	t.Helper()
+	for _, bad := range []string{dummyGAccess, dummyGSecret, dummyGRefres, "ya29.", "obsph_"} {
+		if strings.Contains(s, bad) {
+			t.Fatalf("%s contains %q: %s", what, bad, s)
+		}
+	}
+}
+
+type gcloudListJSON struct {
+	Integrations []struct {
+		ID, Kind, Source, Scope, Mode, Account, Status string
+		QuotaProject                                   *string
+	}
+}
+
+func (e *env) gcloudList(tok string, org uuid.UUID) gcloudListJSON {
+	e.t.Helper()
+	rec := e.do("GET", integrationsPath(org), tok)
+	noGcloudSecrets(e.t, "list", rec.Body.String())
+	var got gcloudListJSON
+	decode(e.t, rec, &got)
+	return got
+}
+
+func (e *env) resolvedFor(u store.User, org uuid.UUID) []store.ResolvedIntegration {
+	e.t.Helper()
+	res, err := e.store.ResolveVMIntegrations(context.Background(), e.z.Enforcer(), org, authz.UserSubject(u.ID))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return res
+}
+
+func TestConnectGcloud(t *testing.T) {
+	logs := captureLogs(t)
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	adc := adcJSON("authorized_user", dummyGRefres, "bna-trader-tf-state")
+
+	rec := e.send("POST", integrationsPath(org), tok, gcloudBody("user", adc, `,"dryRun":true`))
+	noGcloudSecrets(t, "dry run", rec.Body.String())
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "me@example.com") {
+		t.Fatalf("dry run: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := e.gcloudList(tok, org); len(l.Integrations) != 0 {
+		t.Fatalf("dry run stored: %+v", l)
+	}
+
+	rec = e.send("POST", integrationsPath(org), tok, gcloudBody("user", adc, ""))
+	noGcloudSecrets(t, "connect", rec.Body.String())
+	var created struct{ ID, Account string }
+	decode(t, rec, &created)
+	if rec.Code != 201 || created.Account != "me@example.com" {
+		t.Fatalf("connect: %d %s", rec.Code, rec.Body.String())
+	}
+	want := integrations.ADC{ClientID: "cid.apps.googleusercontent.com", ClientSecret: dummyGSecret, RefreshToken: dummyGRefres}.Marshal()
+	if e.google.adcs[len(e.google.adcs)-1] != want || e.google.emailOf[len(e.google.emailOf)-1] != dummyGAccess {
+		t.Fatalf("google calls: %d refreshes, %d emails", len(e.google.adcs), len(e.google.emailOf))
+	}
+	l := e.gcloudList(tok, org)
+	if len(l.Integrations) != 1 || l.Integrations[0].Kind != "gcloud" || l.Integrations[0].Source != "adc" || l.Integrations[0].Mode != "proxy" ||
+		l.Integrations[0].QuotaProject == nil || *l.Integrations[0].QuotaProject != "bna-trader-tf-state" {
+		t.Fatalf("list: %+v", l)
+	}
+	res := e.resolvedFor(alice, org)
+	if len(res) != 1 || res[0].Token != dummyGAccess || res[0].AccessExpiresAt == nil || res[0].QuotaProject != "bna-trader-tf-state" {
+		t.Fatalf("resolved: %v", res)
+	}
+	es := e.audit(store.ActionIntegrationSet)
+	if len(es) != 1 || es[0].Details["created"] != true || es[0].Details["kind"] != "gcloud" || es[0].Details["account"] != "me@example.com" {
+		t.Fatalf("audit: %+v", es)
+	}
+	for _, a := range e.allAudit() {
+		noGcloudSecrets(t, "audit", strings.Join(detailStrings(a.Details), " "))
+	}
+	noGcloudSecrets(t, "logs", logs.String())
+}
+
+func TestConnectGcloudRejects(t *testing.T) {
+	logs := captureLogs(t)
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	adc := adcJSON("authorized_user", dummyGRefres, "")
+	for _, c := range []struct{ name, body, msg string }{
+		{"service account", gcloudBody("user", adcJSON("service_account", dummyGRefres, ""), ""), "invalid token"},
+		{"org scope", gcloudBody("org", adc, ""), "gcloud integrations are private only"},
+		{"vm mode", gcloudBody("user", adc, `,"mode":"vm"`), "gcloud integrations use proxy mode only"},
+		{"bad quota project", gcloudBody("user", adc, `,"quotaProject":"Bad"`), "invalid quota project"},
+		{"bad quota project in file", gcloudBody("user", adcJSON("authorized_user", dummyGRefres, "x"), ""), "invalid quota project"},
+	} {
+		rec := e.send("POST", integrationsPath(org), tok, c.body)
+		var got struct{ Error string }
+		decode(t, rec, &got)
+		if rec.Code != 400 || got.Error != c.msg {
+			t.Fatalf("%s: %d %s", c.name, rec.Code, rec.Body.String())
+		}
+	}
+	if n := e.google.calls(); n != 0 {
+		t.Fatalf("google called %d times", n)
+	}
+	e.google.err = fmt.Errorf("%w: gcloud: invalid_grant", integrations.ErrInvalidGrant)
+	rec := e.send("POST", integrationsPath(org), tok, gcloudBody("user", adc, ""))
+	var got struct{ Error string }
+	decode(t, rec, &got)
+	if rec.Code != 400 || got.Error != "verification failed: provider rejected the token" {
+		t.Fatalf("invalid grant: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := e.gcloudList(tok, org); len(l.Integrations) != 0 {
+		t.Fatalf("stored: %+v", l)
+	}
+	noGcloudSecrets(t, "logs", logs.String())
+}
+
+func TestReplaceGcloud(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.connect(tok, org, gcloudBody("user", adcJSON("authorized_user", dummyGRefres, "bna-trader-tf-state"), ""))
+	before := e.resolvedFor(alice, org)
+
+	e.google.email, e.google.access = "other@example.com", "ya29.dummyaccess1111"
+	newADC, _ := json.Marshal(adcJSON("authorized_user", "1//dummygrefresh1111", "ignored-project"))
+	rec := e.send("PUT", integrationsPath(org)+"/"+id+"/token", tok, `{"token":`+string(newADC)+`}`)
+	noGcloudSecrets(t, "replace", rec.Body.String())
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "other@example.com") {
+		t.Fatalf("replace: %d %s", rec.Code, rec.Body.String())
+	}
+	after := e.resolvedFor(alice, org)
+	if len(after) != 1 || after[0].Placeholder != before[0].Placeholder || after[0].Token != "ya29.dummyaccess1111" ||
+		after[0].Account != "other@example.com" || after[0].QuotaProject != "bna-trader-tf-state" {
+		t.Fatalf("after replace: %v %s %s", after, after[0].Account, after[0].QuotaProject)
+	}
+
+	rec = e.send("PUT", integrationsPath(org)+"/"+id+"/token", tok, `{"token":`+string(newADC)+`,"quotaProject":"other-project"}`)
+	if rec.Code != 200 {
+		t.Fatalf("replace with project: %d %s", rec.Code, rec.Body.String())
+	}
+	if p := e.gcloudList(tok, org).Integrations[0].QuotaProject; p == nil || *p != "other-project" {
+		t.Fatalf("quota project: %v", p)
+	}
+	n := e.google.calls()
+	if rec := e.send("PUT", integrationsPath(org)+"/"+id+"/token", tok, `{"token":`+string(newADC)+`,"quotaProject":"Bad"}`); rec.Code != 400 || e.google.calls() != n {
+		t.Fatalf("bad project: %d", rec.Code)
+	}
+}
+
+func TestPatchQuotaProject(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.connect(tok, org, gcloudBody("user", adcJSON("authorized_user", dummyGRefres, ""), ""))
+	path := integrationsPath(org) + "/" + id
+	if p := e.gcloudList(tok, org).Integrations[0].QuotaProject; p == nil || *p != "" {
+		t.Fatalf("initial: %v", p)
+	}
+	if rec := e.send("PATCH", path, tok, `{"quotaProject":"bna-trader-tf-state"}`); rec.Code != 204 {
+		t.Fatalf("set: %d %s", rec.Code, rec.Body.String())
+	}
+	if p := e.gcloudList(tok, org).Integrations[0].QuotaProject; p == nil || *p != "bna-trader-tf-state" {
+		t.Fatalf("after set: %v", p)
+	}
+	es := e.audit(store.ActionIntegrationSet)
+	if len(es) != 2 || es[0].Details["action"] != "quota-project" || es[0].Details["quotaProject"] != "bna-trader-tf-state" {
+		t.Fatalf("audit: %+v", es)
+	}
+	if rec := e.send("PATCH", path, tok, `{"quotaProject":"Bad"}`); rec.Code != 400 {
+		t.Fatalf("invalid: %d", rec.Code)
+	}
+	gh := e.connect(tok, org, githubBody("user", ""))
+	if rec := e.send("PATCH", integrationsPath(org)+"/"+gh, tok, `{"quotaProject":"bna-trader-tf-state"}`); rec.Code != 400 {
+		t.Fatalf("github: %d", rec.Code)
+	}
+	for _, v := range e.gcloudList(tok, org).Integrations {
+		if v.Kind == "github" && v.QuotaProject != nil {
+			t.Fatalf("github shows quota project: %+v", v)
+		}
+	}
+}
+
+func TestGcloudModeChangeRefused(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.connect(tok, org, gcloudBody("user", adcJSON("authorized_user", dummyGRefres, ""), ""))
+	for _, body := range []string{`{"mode":"vm"}`, `{"mode":"proxy"}`, `{"autoSwitch":true}`, `{"mode":"vm","quotaProject":"bna-trader-tf-state"}`} {
+		if rec := e.send("PATCH", integrationsPath(org)+"/"+id, tok, body); rec.Code != 400 {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	l := e.gcloudList(tok, org)
+	if l.Integrations[0].Mode != "proxy" || *l.Integrations[0].QuotaProject != "" {
+		t.Fatalf("changed: %+v", l)
+	}
 }

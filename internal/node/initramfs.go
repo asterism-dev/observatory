@@ -9,7 +9,7 @@ import (
 )
 
 // guestTools are the helper names the image runs from /.observatory/bin; the init dispatches on argv[0].
-var guestTools = []string{"vmm-token", "git-credential-vmm", "gh", "agent-browser", "vmm-desktop"}
+var guestTools = []string{"vmm-token", "git-credential-vmm", "gh", "agent-browser", "vmm-desktop", "gcloud"}
 
 // BuildInitramfs writes the guest's initramfs (newc cpio) from the installed guestboot dir to out.
 func BuildInitramfs(guestbootDir, out string) error {

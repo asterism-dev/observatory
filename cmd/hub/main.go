@@ -103,9 +103,10 @@ func run() error {
 	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary, cfg.Guestboot)
 	oauth := &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}
-	go f.RefreshIntegrations(ctx, oauth, time.Minute)
+	google := integrations.HTTPGoogleOAuth{}
+	go f.RefreshIntegrations(ctx, oauth, google, time.Minute)
 	go f.PollUsage(ctx, integrations.HTTPClaudeUsage{URL: cfg.DevClaudeUsageURL}, time.Minute)
-	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth}
+	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth, Google: google}
 	if cfg.DevSkipVerify {
 		ig.Verifier = integrations.SkipVerifier{}
 		slog.Warn("dev mode: integration verification skipped")

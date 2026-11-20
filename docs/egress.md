@@ -19,7 +19,7 @@ count toward the 100-host cap and the VM's CA, and the proxy log names them by k
 On the Environment page, check "secret" and fill in "Bind to hosts", or send `hosts` with `POST`/`PATCH
 /api/orgs/{org}/env[/{id}]`:
 
-- 1–10 exact DNS names, no wildcard, no IP literal, no port. Input is case-insensitive; names are stored lower-cased. Only secrets can be bound, and the value must
+- 1–10 exact DNS names, no wildcard (only built-in integration kinds bind one, see below), no IP literal, no port. Input is case-insensitive; names are stored lower-cased. Only secrets can be bound, and the value must
   be at least 12 bytes (shorter values would mask unrelated response bytes).
 - Scopes and resolution are unchanged: a user VM gets its owner's private scope, a team VM never a private one, the
   narrowest scope wins per name ([permissions.md](permissions.md#environment-variables)).
@@ -57,6 +57,19 @@ with the placeholder: no substitution, so nothing leaks, but those requests fail
 
 HTTP/1.1, HTTP/2 (including gRPC), WebSocket over HTTP/1.1, server-sent events and other streaming bodies work on
 bound hosts. A proxy handles up to 1 024 connections; terminated connections close after 5 min idle.
+
+### Wildcard bindings
+
+Only built-in integration kinds bind a wildcard host: `gcloud` binds `*.googleapis.com` (one or more labels;
+`googleapis.com` itself is not matched). The VM's CA permits `googleapis.com` and its subdomains, and leaves are still
+issued per concrete host (cached, at most 256). The proxy therefore terminates TLS for **every** `*.googleapis.com`
+connection of a VM with the integration, public hosts like `fonts.googleapis.com` included; only the placeholder in
+`Authorization` is replaced.
+
+For `oauth2.googleapis.com` the proxy answers `POST /token` itself, without forwarding it, when the form has
+`grant_type=refresh_token` and the integration's placeholder as `refresh_token`: `200` with the placeholder as
+`access_token` and `expires_in` 3600. Google clients then "refresh" against the proxy and send the placeholder, which
+the proxy replaces with the hub's current access token. Other requests to that host pass through normally.
 
 ### Substitution
 
@@ -124,7 +137,7 @@ issues 24 h leaves from the **oldest** valid CA covering the host, so processes 
   `trust` request. Go, curl, git, OpenSSL and Java (with `ca-certificates-java`) use the system store directly.
 - Constant variables, always set in every VM, point the other runtimes at the system bundle
   `/etc/ssl/certs/ca-certificates.crt`: `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
-  `CURL_CA_BUNDLE`. They are in the `/etc/environment` block, `/etc/vmm/env.sh` and `DefaultEnvironment=` in
+  `CURL_CA_BUNDLE`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` (gRPC ignores the others). They are in the `/etc/environment` block, `/etc/vmm/env.sh` and `DefaultEnvironment=` in
   `/etc/systemd/system.conf.d/` and `user.conf.d/`, so services get them too. They never change, so a VM's first bound
   secret needs no reboot.
 - Processes read trust at start. A process started before its VM got a CA for a new host does not trust that host

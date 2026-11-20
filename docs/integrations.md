@@ -1,7 +1,7 @@
-# Integrations (GitHub, Claude, Linear)
+# Integrations (GitHub, Claude, Linear, gcloud)
 
 An integration is a login a member connects once (on the org, a team or privately), so every VM they are entitled
-to has working `git`/`gh`, Claude Code and the Linear MCP server without any setup inside the guest. By default the
+to has working `git`/`gh`, Claude Code, the Linear MCP server and `gcloud` without any setup inside the guest. By default the
 VM holds only a placeholder and the egress proxy puts the real token into requests ([egress.md](egress.md)); per
 integration the owner can deliver the real token into the VM instead.
 
@@ -18,6 +18,7 @@ git clone git@github.com:me/private  # works: rewritten to HTTPS, the credential
 | `github` | `pat` (classic or fine-grained) | `GET api.github.com/user` | login, scopes, expiry when GitHub sends it | `github.com`, `api.github.com`, `uploads.github.com` |
 | `claude` | `setup-token` (`claude setup-token`, `sk-ant-oat…`), `oauth` (sign-in) | `GET api.anthropic.com/v1/models` | email after sign-in; none for setup tokens | `api.anthropic.com` |
 | `linear` | `api-key` | GraphQL `{ viewer { email } }` | email | `api.linear.app`, `mcp.linear.app` |
+| `gcloud` | `adc` (`authorized_user` ADC file of `gcloud auth application-default login`) | token refresh at `oauth2.googleapis.com`, email from the token | email | `*.googleapis.com` |
 
 The proxy substitutes the `Authorization` header only.
 
@@ -26,9 +27,55 @@ The proxy substitutes the `Authorization` header only.
   `objects.githubusercontent.com` with a short-lived token in the URL, so they need no binding.
 - **Claude:** Claude Code sends its token only to `api.anthropic.com`; `claude.ai` is not bound.
 - **Linear:** the GraphQL API and the remote MCP server.
+- **gcloud:** every `*.googleapis.com` host; see [gcloud](#gcloud).
 
 A token is verified before it is stored; if verification fails nothing changes. GitHub's expiry is shown as a warning
 7 days ahead. There is no periodic re-verification.
+
+## gcloud
+
+gcloud, Terraform and Google SDKs (Python and others, REST and gRPC) use your Google login in your VMs. It is a
+personal login: **private scope and proxy mode only**, one account; org and team scope and `vm` mode are refused.
+The token page is <https://myaccount.google.com/permissions>.
+
+Connect after your daily local login:
+
+```
+gcloud auth application-default login
+observatory integration connect gcloud [--quota-project P] [--from-file F]
+```
+
+The command sends the local ADC file to the hub (or pastes it on the Integrations page) and creates the integration or
+replaces its token, so the daily command is always the same. A quota project from `--quota-project` or the file is
+stored and can be edited on the integration page (`PATCH /api/orgs/{org}/integrations/{id}` `{"quotaProject": "…"}`,
+empty or a project id; audited as `integration:set`, action `quota-project`). The hub verifies the login by refreshing
+it and refreshes the access token 10 minutes before it expires; failures retry after 1, then every 2 minutes. If Google answers `invalid_grant` the status becomes
+`expired` ("sign in again"): run the two commands above.
+
+What the guest gets:
+
+- `~/.config/gcloud/application_default_credentials.json` with `type` `authorized_user`, the placeholder as
+  `client_id`, `client_secret` and `refresh_token`, and `quota_project_id` when set. Written only if missing or still
+  the file the sync wrote, removed only if still ours. Google libraries find it themselves; their refresh is answered
+  by the proxy ([egress.md](egress.md#wildcard-bindings)).
+- A `gcloud` wrapper in `/.observatory/bin` that sets `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` to that file and
+  `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE` to `$SSL_CERT_FILE`. It does so only when gcloud is connected, neither variable
+  is set already, the active gcloud configuration has no `[core] account` (no `gcloud auth login` in the VM), and the
+  ADC file is still ours; otherwise your `gcloud` runs unchanged. Set the project with `gcloud config set project`.
+- `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` among the system-wide trust variables, for gRPC clients.
+
+Known limits of gcloud:
+
+- **`revoke` on your computer** (`gcloud auth application-default revoke`, `gcloud auth revoke`) also kills the hub's
+  login, which is a copy of your refresh token. A plain new local login does not.
+- **`gcloud auth list`** shows no account while the override is active.
+- **Team VMs never get gcloud**, because it is private and team VMs never receive private integrations.
+- **Programs that call `gcloud` by absolute path** bypass the wrapper and get no override.
+- **The quota project** is used by SDKs (Python and others) only. gcloud sends its own project, and Terraform only with
+  `user_project_override`.
+- **After expiry** Google answers 401; the proxy sends no synthetic `invalid_grant`.
+- **A token in a query parameter** is not substituted (headers only).
+- **Not in the standard image:** gcloud and Terraform are yours to install.
 
 ## Scopes and resolution
 

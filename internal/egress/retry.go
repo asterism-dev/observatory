@@ -35,7 +35,7 @@ type accountTransport struct {
 
 // newAccountTransport returns nil unless the request carries the placeholder of a Claude secret with an account.
 func (p *Proxy) newAccountTransport(r *http.Request, host string, t *table) *accountTransport {
-	secrets := t.bound[host]
+	secrets := t.secretsFor(host)
 	for _, s := range secrets {
 		if s.Account == "" || s.Placeholder == "" || !carries(r.Header, s) {
 			continue

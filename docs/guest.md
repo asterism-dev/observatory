@@ -135,6 +135,7 @@ and try it locally with `docker build` and `docker run`. What the platform does:
   CA. Mount the VM's store:
   `docker run -v /etc/ssl/certs:/etc/ssl/certs:ro -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt …`.
   Containers get no credential helper, `gh` wrapper or token service ([integrations.md](integrations.md#known-limits)).
+  Pass `-e GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=/etc/ssl/certs/ca-certificates.crt` too for gRPC clients.
 - **No nested KVM:** nested virtualization is not supported (see Known limits).
 
 ## Desktop

@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -18,6 +21,7 @@ type integrationJSON struct {
 	Mode              string     `json:"mode"`
 	Account           string     `json:"account"`
 	Scopes            string     `json:"scopes"`
+	QuotaProject      string     `json:"quotaProject,omitempty"`
 	ProviderExpiresAt *time.Time `json:"providerExpiresAt"`
 	Status            string     `json:"status"`
 	LastError         string     `json:"lastError"`
@@ -33,12 +37,21 @@ var integrationKinds = map[string]struct{ source, title string }{
 	"github": {"pat", "GitHub"},
 	"linear": {"api-key", "Linear"},
 	"claude": {"setup-token", "Claude"},
+	"gcloud": {"adc", "gcloud"},
+}
+
+func adcPath() string {
+	if dir := os.Getenv("CLOUDSDK_CONFIG"); dir != "" {
+		return filepath.Join(dir, "application_default_credentials.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "gcloud", "application_default_credentials.json")
 }
 
 func defaultSource(kind string) (string, error) {
 	k, ok := integrationKinds[kind]
 	if !ok {
-		return "", usagef("unknown integration %q: use github, linear or claude", kind)
+		return "", usagef("unknown integration %q: use github, linear, claude or gcloud", kind)
 	}
 	return k.source, nil
 }
@@ -53,7 +66,7 @@ func checkMode(mode string) error {
 func integrationCommands() []command {
 	return []command{
 		{"integration list", "", "list integrations", cmdIntegrationList},
-		{"integration connect", "github|linear|claude [--scope S] [--team T] [--mode proxy|vm] [--from-file F]", "connect an integration (token from stdin or --from-file)", cmdIntegrationConnect},
+		{"integration connect", "github|linear|claude|gcloud [--scope S] [--team T] [--mode proxy|vm] [--from-file F] [--quota-project P]", "connect an integration (token from stdin or --from-file)", cmdIntegrationConnect},
 		{"integration sign-in", "claude [--scope S] [--team T] [--mode proxy|vm] [--replace]", "connect Claude by signing in with your browser", cmdIntegrationSignIn},
 		{"integration replace", "<kind> [--scope S] [--team T] [--from-file F]", "replace an integration's token (from stdin or --from-file)", cmdIntegrationReplace},
 		{"integration mode", "<kind> proxy|vm [--scope S] [--team T]", "change how the token reaches VMs", cmdIntegrationMode},
@@ -98,6 +111,9 @@ func (c *cli) findIntegration(kind string, s scopeFlags) (integrationJSON, error
 }
 
 func integrationStatus(now time.Time, v integrationJSON) string {
+	if v.Kind == "gcloud" && v.Status == "expired" {
+		return "expired: run gcloud auth application-default login, then observatory integration connect gcloud"
+	}
 	if v.Status != "ok" || v.ProviderExpiresAt == nil {
 		return v.Status
 	}
@@ -119,6 +135,9 @@ func cmdIntegrationList(c *cli, args []string) error {
 		if account == "" {
 			account = "—"
 		}
+		if v.QuotaProject != "" {
+			account += " (quota project " + v.QuotaProject + ")"
+		}
 		rows = append(rows, []string{v.Kind, v.scopeLabel(), account, v.Mode, integrationStatus(c.now(), v)})
 	}
 	return c.emit(raw, []string{"kind", "scope", "account", "delivery", "status"}, rows)
@@ -130,11 +149,15 @@ func cmdIntegrationConnect(c *cli, args []string) error {
 	addScopeFlags(fs, &s, "scope")
 	mode := fs.String("mode", "proxy", "how the token reaches VMs: proxy|vm")
 	fromFile := fs.String("from-file", "", "read the token from file `F` (- = stdin)")
+	quotaProject := fs.String("quota-project", "", "gcloud quota project `P` (default: from the login file)")
 	pos, err := c.parse(fs, args, 1, 1)
 	if err != nil {
 		return err
 	}
 	kind := pos[0]
+	if kind == "gcloud" {
+		return c.connectGcloud(s, *mode, *fromFile, *quotaProject)
+	}
 	source, err := defaultSource(kind)
 	if err != nil {
 		return err
@@ -170,6 +193,75 @@ func cmdIntegrationConnect(c *cli, args []string) error {
 		return err
 	}
 	return c.done(raw, "Connected %s as %s (%s, %s).", kind, res.Account, scopeLabel(apiScope, s.team), *mode)
+}
+
+func (c *cli) connectGcloud(s scopeFlags, mode, fromFile, quotaProject string) error {
+	if s.scope != "private" || s.team != "" || mode != "proxy" {
+		return usagef("gcloud is only available as a private integration in proxy mode")
+	}
+	if fromFile == "" {
+		fromFile = adcPath()
+		if _, err := os.Stat(fromFile); err != nil {
+			return fmt.Errorf("no gcloud login found at %s: run gcloud auth application-default login", fromFile)
+		}
+	}
+	token, err := c.secret("", fromFile)
+	if err != nil {
+		return err
+	}
+	var qp *string
+	if quotaProject != "" {
+		qp = &quotaProject
+	}
+	var raw json.RawMessage
+	existing, err := c.findIntegration("gcloud", s)
+	var nf *exitError
+	switch {
+	case err == nil:
+		path, perr := c.orgPath("/integrations/" + existing.ID + "/token")
+		if perr != nil {
+			return perr
+		}
+		err = c.call(http.MethodPut, path, struct {
+			Token        string  `json:"token"`
+			Source       string  `json:"source"`
+			QuotaProject *string `json:"quotaProject,omitempty"`
+		}{token, "adc", qp}, &raw)
+		if qp == nil {
+			quotaProject = existing.QuotaProject
+		}
+	case errors.As(err, &nf) && nf.code == 5:
+		path, perr := c.orgPath("/integrations")
+		if perr != nil {
+			return perr
+		}
+		err = c.call(http.MethodPost, path, struct {
+			Kind         string  `json:"kind"`
+			Source       string  `json:"source"`
+			Scope        string  `json:"scope"`
+			Mode         string  `json:"mode"`
+			Token        string  `json:"token"`
+			QuotaProject *string `json:"quotaProject,omitempty"`
+		}{"gcloud", "adc", "user", "proxy", token, qp}, &raw)
+	default:
+		return err
+	}
+	if err != nil {
+		var ae *apiError
+		if errors.As(err, &ae) && ae.Status == http.StatusBadRequest {
+			fmt.Fprintln(c.stderr, "Only files from gcloud auth application-default login (authorized_user) are supported, not service account files.")
+		}
+		return err
+	}
+	var res struct{ Account string }
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return err
+	}
+	detail := "private, proxy"
+	if quotaProject != "" {
+		detail += ", quota project " + quotaProject
+	}
+	return c.done(raw, "Connected gcloud as %s (%s).", res.Account, detail)
 }
 
 func cmdIntegrationSignIn(c *cli, args []string) error {

@@ -23,6 +23,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/images"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -620,6 +621,10 @@ func (h *api) checkRefs(w http.ResponseWriter, r *http.Request, img store.Image,
 		validScope := j.Scope == store.EnvScopeOrg || j.Scope == store.EnvScopeUser || (j.Scope == store.EnvScopeTeam && j.TeamID != nil)
 		if (j.Kind != "secret" && j.Kind != "integration") || !validScope || j.Name == "" {
 			writeError(w, http.StatusUnprocessableEntity, "invalid reference")
+			return nil, false
+		}
+		if j.Kind == "integration" && j.Name == string(integrations.GCloud) {
+			writeError(w, http.StatusUnprocessableEntity, "gcloud cannot be used in builds")
 			return nil, false
 		}
 		if !refAllowed(ref, img.Scope, img.OwnerID) {

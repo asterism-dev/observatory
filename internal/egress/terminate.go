@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,13 +125,15 @@ func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 		}
 		if NormalizeSNI(host) != sni {
 			fail(w, st, http.StatusMisdirectedRequest, "egress: host does not match the TLS server name")
+		} else if sni == googleTokenHost && answerGoogleRefresh(w, r, t.secretsFor(sni)) {
+			st.status = http.StatusOK
 		} else {
 			var sent []string
 			acct := p.newAccountTransport(r, sni, t)
 			if acct != nil && acct.retry {
 				names, sent = acct.sentValues(r.Header)
 			} else {
-				names, sent = substitute(r.Header, sni, t.bound[sni])
+				names, sent = substitute(r.Header, sni, t.secretsFor(sni))
 			}
 			r.Header.Set("Accept-Encoding", "identity")
 			r.Header.Del("Sec-WebSocket-Extensions")
@@ -156,16 +159,18 @@ func fail(w http.ResponseWriter, st *reqStats, code int, msg string) {
 
 // redactPath keeps the VM's own placeholders and values out of the log even when it puts them into a path; escaping stops log injection.
 func redactPath(path string, t *table) string {
+	all := slices.Clone(t.wild)
 	for _, secrets := range t.bound {
-		for _, s := range secrets {
-			vs := []string{s.Placeholder, s.Value}
-			for _, a := range s.Alternates {
-				vs = append(vs, a.Value)
-			}
-			for _, v := range vs {
-				if v != "" {
-					path = strings.ReplaceAll(path, v, "***")
-				}
+		all = append(all, secrets...)
+	}
+	for _, s := range all {
+		vs := []string{s.Placeholder, s.Value}
+		for _, a := range s.Alternates {
+			vs = append(vs, a.Value)
+		}
+		for _, v := range vs {
+			if v != "" {
+				path = strings.ReplaceAll(path, v, "***")
 			}
 		}
 	}

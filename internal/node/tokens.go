@@ -85,7 +85,8 @@ func serveToken(c net.Conn, vmID string, lookup TokenLookup) {
 			OK        bool       `json:"ok"`
 			Token     string     `json:"token"`
 			ExpiresAt *time.Time `json:"expiresAt"`
-		}{true, tok.Token, tok.ExpiresAt}
+			Project   string     `json:"project,omitempty"`
+		}{true, tok.Token, tok.ExpiresAt, tok.Project}
 		log.Printf("token vm=%s kind=%s result=ok", vmID, kind)
 	} else {
 		reply = struct {

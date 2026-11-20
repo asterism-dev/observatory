@@ -484,7 +484,7 @@ func IntegrationEntries(res []store.ResolvedIntegration) (bound []proto.HostBoun
 			}
 		}
 		bound = append(bound, b)
-		tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Placeholder})
+		tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Placeholder, Project: r.QuotaProject})
 	}
 	return bound, tokens
 }
@@ -597,17 +597,47 @@ func (f *Fleet) SweepEgressCAs(ctx context.Context, every time.Duration) {
 	}
 }
 
-const refreshAhead = 60 * time.Minute
+const (
+	refreshAhead       = 60 * time.Minute
+	gcloudRefreshAhead = 10 * time.Minute
+)
 
 var clock = time.Now
 
-// RefreshIntegrations refreshes Claude sign-ins due within refreshAhead and pushes the new access tokens; failures back off per account from 1 to 15 minutes. It returns when ctx ends.
-func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, every time.Duration) {
+// RefreshIntegrations refreshes Claude sign-ins and gcloud ADC integrations that are due and pushes the new access tokens; failures back off per account from 1 to 15 minutes (gcloud: 2). It returns when ctx ends.
+func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, google integrations.GoogleOAuth, every time.Duration) {
 	type backoff struct {
 		until time.Time
 		wait  time.Duration
 	}
 	backoffs := map[store.AccountRef]backoff{}
+	refresh := func(ref store.AccountRef, maxWait time.Duration, run func(context.Context, store.AccountRef, time.Time) (bool, error)) {
+		b := backoffs[ref]
+		now := clock()
+		if now.Before(b.until) {
+			return
+		}
+		// The provider call runs inside the row-locking tx; the timeout bounds both.
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ok, err := run(rctx, ref, now)
+		cancel()
+		switch {
+		case err != nil:
+			b.wait = min(max(2*b.wait, time.Minute), maxWait)
+			backoffs[ref] = backoff{until: now.Add(b.wait), wait: b.wait}
+			slog.Error("integration refresh failed", "id", ref.ID, "err", err)
+		case ok:
+			delete(backoffs, ref)
+			slog.Info("integration refreshed", "id", ref.ID)
+			f.NotifyOrg(ref.OrgID)
+		}
+	}
+	claude := func(ctx context.Context, ref store.AccountRef, now time.Time) (bool, error) {
+		return f.store.RefreshIntegration(ctx, ref, now.Add(refreshAhead), oauth.Refresh)
+	}
+	gcloud := func(ctx context.Context, ref store.AccountRef, now time.Time) (bool, error) {
+		return f.store.RefreshADCIntegration(ctx, ref, now.Add(gcloudRefreshAhead), google.Refresh)
+	}
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -618,33 +648,24 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 		}
 		now := clock()
 		refs, err := f.store.DueOAuthRefreshes(ctx, now.Add(refreshAhead))
+		var adcRefs []store.AccountRef
+		if err == nil {
+			adcRefs, err = f.store.DueADCRefreshes(ctx, now.Add(gcloudRefreshAhead))
+		}
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Error("list due integration refreshes", "err", err)
 			}
 			continue
 		}
-		maps.DeleteFunc(backoffs, func(r store.AccountRef, _ backoff) bool { return !slices.Contains(refs, r) })
+		maps.DeleteFunc(backoffs, func(r store.AccountRef, _ backoff) bool {
+			return !slices.Contains(refs, r) && !slices.Contains(adcRefs, r)
+		})
 		for _, ref := range refs {
-			b := backoffs[ref]
-			now := clock()
-			if now.Before(b.until) {
-				continue
-			}
-			// The provider call runs inside the row-locking tx; the timeout bounds both.
-			rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			ok, err := f.store.RefreshIntegration(rctx, ref, now.Add(refreshAhead), oauth.Refresh)
-			cancel()
-			switch {
-			case err != nil:
-				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
-				backoffs[ref] = backoff{until: now.Add(b.wait), wait: b.wait}
-				slog.Error("integration refresh failed", "id", ref.ID, "err", err)
-			case ok:
-				delete(backoffs, ref)
-				slog.Info("integration refreshed", "id", ref.ID)
-				f.NotifyOrg(ref.OrgID)
-			}
+			refresh(ref, 15*time.Minute, claude)
+		}
+		for _, ref := range adcRefs {
+			refresh(ref, 2*time.Minute, gcloud)
 		}
 	}
 }
