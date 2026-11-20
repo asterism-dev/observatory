@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -186,5 +187,31 @@ func TestTailLogs(t *testing.T) {
 	})
 	if err != nil || path != "/select/logsql/tail" || !strings.Contains(filters, testOrg.String()) || !slices.Equal(msgs, []string{"a", "b"}) {
 		t.Fatalf("%v %s %s %v", err, path, filters, msgs)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type closeTracker struct {
+	io.Reader
+	closed bool
+}
+
+func (b *closeTracker) Close() error { b.closed = true; return nil }
+
+func TestLogsCanceledClosesBody(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &closeTracker{Reader: strings.NewReader("")}
+	c := &Client{LogsURL: "http://store", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cancel()
+		return &http.Response{StatusCode: http.StatusOK, Body: body, Request: r}, nil
+	})}}
+	if _, err := c.Logs(ctx, LogQuery{Org: testOrg, Node: testNode}); err != context.Canceled {
+		t.Fatalf("err = %v", err)
+	}
+	if !body.closed {
+		t.Fatal("body not closed")
 	}
 }

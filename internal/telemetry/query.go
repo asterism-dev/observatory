@@ -197,13 +197,15 @@ func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q
 	form.Set("query", buildLogsQL(q))
 	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+" observatory.node:="+strconv.Quote(q.Node.String()))
 	resp, err := c.postForm(ctx, hc, c.LogsURL+path, form)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 	dec := json.NewDecoder(resp.Body)
 	for {
 		var rec map[string]string
