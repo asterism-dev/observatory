@@ -223,7 +223,9 @@ func (s *Store) activate(ctx context.Context, org, integration, id uuid.UUID, ma
 	if _, err := s.q.Exec(ctx, "UPDATE integration_accounts SET active = false WHERE integration_id = $1 AND active AND id <> $2", integration, id); err != nil {
 		return err
 	}
-	tag, err := s.q.Exec(ctx, `UPDATE integration_accounts SET active = true, activated_manually = $4, updated_by = $5, updated_at = now()
+	// by is uuid.Nil for an automatic switch, which keeps the last human editor.
+	tag, err := s.q.Exec(ctx, `UPDATE integration_accounts SET active = true, activated_manually = $4,
+		  updated_by = coalesce(nullif($5::uuid, '00000000-0000-0000-0000-000000000000'), updated_by), updated_at = now()
 		WHERE org_id = $1 AND integration_id = $2 AND id = $3`, org, integration, id, manual, by)
 	return s.guardedWriteResult(ctx, "integration_accounts", org, id, tag.RowsAffected(), err)
 }
@@ -234,7 +236,11 @@ func (s *Store) ActivateAccount(ctx context.Context, a IntegrationAccount, manua
 		if err := tx.lockIntegration(ctx, a.OrgID, a.IntegrationID); err != nil {
 			return err
 		}
-		return tx.activate(ctx, a.OrgID, a.IntegrationID, a.ID, manual, by)
+		if err := tx.activate(ctx, a.OrgID, a.IntegrationID, a.ID, manual, by); err != nil || !manual {
+			return err
+		}
+		_, err := tx.q.Exec(ctx, "UPDATE integrations SET last_switch_at = NULL, last_switch_from = NULL, last_switch_to = NULL WHERE id = $1", a.IntegrationID)
+		return err
 	})
 }
 
@@ -303,4 +309,126 @@ func (s *Store) DeleteIntegrationAccount(ctx context.Context, a IntegrationAccou
 		return tx.activate(ctx, a.OrgID, a.IntegrationID, next, false, a.UpdatedBy)
 	})
 	return last, err
+}
+
+// UsageObservation is one usage report for an account, from polling or the egress proxy.
+type UsageObservation struct {
+	Account                        uuid.UUID
+	FiveHourPct, WeekPct           *float64 // 0–100
+	FiveHourResetsAt, WeekResetsAt *time.Time
+	LimitedUntil                   *time.Time // set only for a confirmed limit or a 100 % window with a future reset
+	Source                         string     // "poll" | "proxy"
+	ObservedAt                     time.Time
+}
+
+// Switch is an automatic change of an integration's active account.
+type Switch struct {
+	OrgID, IntegrationID, From, To uuid.UUID
+	LimitedUntil                   time.Time
+}
+
+// autoSwitch moves the active account from to the next eligible one and records the switch; callers hold the integration lock.
+func (s *Store) autoSwitch(ctx context.Context, org, integration, from uuid.UUID, until, now time.Time) (*Switch, error) {
+	to, ok, err := nextEligibleAccount(ctx, s, integration, from, now)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if err := s.activate(ctx, org, integration, to, false, uuid.Nil); err != nil {
+		return nil, err
+	}
+	if _, err := s.q.Exec(ctx, "UPDATE integrations SET last_switch_at = $2, last_switch_from = $3, last_switch_to = $4 WHERE id = $1",
+		integration, now, from, to); err != nil {
+		return nil, err
+	}
+	return &Switch{OrgID: org, IntegrationID: integration, From: from, To: to, LimitedUntil: until}, nil
+}
+
+// RecordUsage stores obs if newer than the stored usage_at; when it limits the active, automatically activated account, it activates the next eligible one in the same tx.
+func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.Time) (*Switch, error) {
+	var org, integration uuid.UUID
+	err := s.q.QueryRow(ctx, "SELECT org_id, integration_id FROM integration_accounts WHERE id = $1", obs.Account).Scan(&org, &integration)
+	// Reports can arrive after the account was removed.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var sw *Switch
+	err = s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockIntegration(ctx, org, integration); err != nil {
+			return err
+		}
+		var active, manual bool
+		var limitedUntil, usageAt *time.Time
+		if err := tx.q.QueryRow(ctx, "SELECT active, activated_manually, limited_until, usage_at FROM integration_accounts WHERE id = $1 FOR UPDATE",
+			obs.Account).Scan(&active, &manual, &limitedUntil, &usageAt); err != nil {
+			return err
+		}
+		if usageAt != nil && !obs.ObservedAt.After(*usageAt) {
+			return nil
+		}
+		// Only time clears a limit, so an observation without one keeps the stored limited_until.
+		if _, err := tx.q.Exec(ctx, `UPDATE integration_accounts SET five_hour_pct = $2, week_pct = $3, five_hour_resets_at = $4, week_resets_at = $5,
+			usage_source = $6, usage_at = $7, limited_until = coalesce($8, limited_until) WHERE id = $1`,
+			obs.Account, obs.FiveHourPct, obs.WeekPct, obs.FiveHourResetsAt, obs.WeekResetsAt, obs.Source, obs.ObservedAt, obs.LimitedUntil); err != nil {
+			return err
+		}
+		wasLimited := limitedUntil != nil && limitedUntil.After(now)
+		if !active || manual || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {
+			return nil
+		}
+		var err error
+		sw, err = tx.autoSwitch(ctx, org, integration, obs.Account, *obs.LimitedUntil, now)
+		return err
+	})
+	if errors.Is(err, ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return sw, err
+}
+
+// ResumeLimited switches integrations whose active (non-manual) account is still limited to the first account whose limited_until has passed.
+func (s *Store) ResumeLimited(ctx context.Context, now time.Time) ([]Switch, error) {
+	rows, err := s.q.Query(ctx, `SELECT org_id, integration_id FROM integration_accounts a
+		WHERE active AND NOT activated_manually AND limited_until > $1
+		  AND EXISTS (SELECT 1 FROM integration_accounts o WHERE o.integration_id = a.integration_id AND o.id <> a.id
+		    AND o.status = 'ok' AND (o.limited_until IS NULL OR o.limited_until <= $1))`, now)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct{ Org, Integration uuid.UUID }
+	list, err := pgx.CollectRows(rows, pgx.RowToStructByPos[candidate])
+	if err != nil {
+		return nil, err
+	}
+	var out []Switch
+	for _, c := range list {
+		var sw *Switch
+		err := s.InTx(ctx, func(tx *Store) error {
+			if err := tx.lockIntegration(ctx, c.Org, c.Integration); err != nil {
+				return err
+			}
+			// Re-check under the lock: a manual activation or another switch may have run since the scan.
+			var from uuid.UUID
+			var until time.Time
+			err := tx.q.QueryRow(ctx, `SELECT id, limited_until FROM integration_accounts
+				WHERE integration_id = $1 AND active AND NOT activated_manually AND limited_until > $2`, c.Integration, now).Scan(&from, &until)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			sw, err = tx.autoSwitch(ctx, c.Org, c.Integration, from, until, now)
+			return err
+		})
+		if errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
+			return out, err
+		}
+		if sw != nil {
+			out = append(out, *sw)
+		}
+	}
+	return out, nil
 }

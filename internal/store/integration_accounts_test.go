@@ -397,3 +397,177 @@ func TestModeVMRefusedWithTwoAccounts(t *testing.T) {
 		t.Fatalf("two accounts: %v", err)
 	}
 }
+
+func pct(v float64) *float64 { return &v }
+
+func limitObs(id uuid.UUID, at time.Time, until time.Time) store.UsageObservation {
+	return store.UsageObservation{Account: id, FiveHourPct: pct(100), FiveHourResetsAt: &until, LimitedUntil: &until, Source: "proxy", ObservedAt: at}
+}
+
+// twoAccounts returns a claude integration with a active and b inactive.
+func twoAccounts(t *testing.T) (*store.Store, *pgxpool.Pool, uuid.UUID, store.Integration, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	a := mustAccounts(t, s, org.ID, cl.ID)[0].ID
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	return s, pool, uid, cl, a, b
+}
+
+func activeID(t *testing.T, s *store.Store, cl store.Integration) uuid.UUID {
+	t.Helper()
+	for _, x := range mustAccounts(t, s, cl.OrgID, cl.ID) {
+		if x.Active {
+			return x.ID
+		}
+	}
+	t.Fatal("no active account")
+	return uuid.Nil
+}
+
+func lastSwitch(t *testing.T, pool *pgxpool.Pool, integration uuid.UUID) (from, to *uuid.UUID) {
+	t.Helper()
+	if err := pool.QueryRow(context.Background(), "SELECT last_switch_from, last_switch_to FROM integrations WHERE id = $1", integration).Scan(&from, &to); err != nil {
+		t.Fatal(err)
+	}
+	return from, to
+}
+
+func TestRecordUsageNewerWins(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cl, _, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	if _, err := s.RecordUsage(ctx, store.UsageObservation{Account: b, FiveHourPct: pct(40), WeekPct: pct(10), Source: "poll", ObservedAt: now}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RecordUsage(ctx, store.UsageObservation{Account: b, FiveHourPct: pct(90), Source: "proxy", ObservedAt: now.Add(-time.Minute)}, now); err != nil {
+		t.Fatal(err)
+	}
+	u := mustAccounts(t, s, cl.OrgID, cl.ID)[1].Usage
+	if u.FiveHourPct == nil || *u.FiveHourPct != 40 || u.WeekPct == nil || *u.WeekPct != 10 || u.Source != "poll" || u.At == nil || !u.At.Equal(now) {
+		t.Fatalf("usage %+v", u)
+	}
+}
+
+func TestRecordUsageLimitSwitches(t *testing.T) {
+	ctx := context.Background()
+	s, pool, _, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	until := now.Add(time.Hour)
+	sw, err := s.RecordUsage(ctx, limitObs(a, now, until), now)
+	if err != nil || sw == nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	if sw.OrgID != cl.OrgID || sw.IntegrationID != cl.ID || sw.From != a || sw.To != b || !sw.LimitedUntil.Equal(until) {
+		t.Fatalf("switch %+v", sw)
+	}
+	got := mustAccounts(t, s, cl.OrgID, cl.ID)
+	if got[0].Active || !got[1].Active || got[1].ActivatedManually || got[0].LimitedUntil == nil || !got[0].LimitedUntil.Equal(until) {
+		t.Fatalf("accounts %+v", got)
+	}
+	if from, to := lastSwitch(t, pool, cl.ID); from == nil || *from != a || to == nil || *to != b {
+		t.Fatalf("last switch %v → %v", from, to)
+	}
+	// A poll without a limit does not clear the future limit.
+	if _, err := s.RecordUsage(ctx, store.UsageObservation{Account: a, FiveHourPct: pct(20), Source: "poll", ObservedAt: now.Add(time.Second)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if l := mustAccounts(t, s, cl.OrgID, cl.ID)[0].LimitedUntil; l == nil || !l.Equal(until) {
+		t.Fatalf("limited until %v", l)
+	}
+}
+
+func TestRecordUsageAlreadyLimitedNoSecondSwitch(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now, now.Add(time.Hour)), now); err != nil || sw == nil {
+		t.Fatalf("first: %v %v", sw, err)
+	}
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now.Add(time.Second), now.Add(2*time.Hour)), now); err != nil || sw != nil {
+		t.Fatalf("second: %v %v", sw, err)
+	}
+	if id := activeID(t, s, cl); id != b {
+		t.Fatalf("active %v", id)
+	}
+}
+
+func TestRecordUsageManualActiveNoSwitch(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, cl, a, _ := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	execSQL(t, pool, "UPDATE integrations SET last_switch_at = now(), last_switch_from = $2, last_switch_to = $2 WHERE id = $1", cl.ID, a)
+	if err := s.ActivateAccount(ctx, mustAccounts(t, s, cl.OrgID, cl.ID)[0], true, uid); err != nil {
+		t.Fatal(err)
+	}
+	if from, to := lastSwitch(t, pool, cl.ID); from != nil || to != nil {
+		t.Fatalf("manual activation kept last switch %v → %v", from, to)
+	}
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now, now.Add(time.Hour)), now); err != nil || sw != nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	if id := activeID(t, s, cl); id != a {
+		t.Fatalf("active %v", id)
+	}
+}
+
+func TestAutoSwitchSkipsExpiredAndDeleted(t *testing.T) {
+	ctx := context.Background()
+	s, pool, _, cl, a, b := twoAccounts(t)
+	execSQL(t, pool, "UPDATE integration_accounts SET status = 'expired' WHERE id = $1", b)
+	c := insertAccount(t, pool, cl, "c@example.com", "c", store.IntegrationOK)
+	execSQL(t, pool, "DELETE FROM integration_accounts WHERE id = $1", c)
+	now := time.Now().Truncate(time.Second)
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now, now.Add(time.Hour)), now); err != nil || sw != nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	if id := activeID(t, s, cl); id != a {
+		t.Fatalf("active %v", id)
+	}
+	if sw, err := s.RecordUsage(ctx, limitObs(c, now, now.Add(time.Hour)), now); err != nil || sw != nil {
+		t.Fatalf("deleted account: %v %v", sw, err)
+	}
+}
+
+func TestRecordUsageInactiveAccountNoSwitch(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	until := now.Add(time.Hour)
+	if sw, err := s.RecordUsage(ctx, limitObs(b, now, until), now); err != nil || sw != nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	got := mustAccounts(t, s, cl.OrgID, cl.ID)
+	if !got[0].Active || got[0].ID != a || got[1].LimitedUntil == nil || !got[1].LimitedUntil.Equal(until) {
+		t.Fatalf("accounts %+v", got)
+	}
+}
+
+func TestResumeLimited(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	execSQL(t, pool, "UPDATE integration_accounts SET limited_until = $2 WHERE id = $1", a, now.Add(time.Hour))
+	execSQL(t, pool, "UPDATE integration_accounts SET limited_until = $2 WHERE id = $1", b, now.Add(time.Minute))
+	if sws, err := s.ResumeLimited(ctx, now); err != nil || len(sws) != 0 {
+		t.Fatalf("b still limited: %v %v", sws, err)
+	}
+	later := now.Add(2 * time.Minute)
+	sws, err := s.ResumeLimited(ctx, later)
+	if err != nil || len(sws) != 1 || sws[0].From != a || sws[0].To != b || sws[0].IntegrationID != cl.ID || !sws[0].LimitedUntil.Equal(now.Add(time.Hour)) {
+		t.Fatalf("switches %+v: %v", sws, err)
+	}
+	if from, to := lastSwitch(t, pool, cl.ID); from == nil || *from != a || to == nil || *to != b {
+		t.Fatalf("last switch %v → %v", from, to)
+	}
+
+	if err := s.ActivateAccount(ctx, mustAccounts(t, s, cl.OrgID, cl.ID)[0], true, uid); err != nil {
+		t.Fatal(err)
+	}
+	if sws, err := s.ResumeLimited(ctx, later); err != nil || len(sws) != 0 {
+		t.Fatalf("manual a: %v %v", sws, err)
+	}
+	if id := activeID(t, s, cl); id != a {
+		t.Fatalf("active %v", id)
+	}
+}
