@@ -44,7 +44,8 @@
     "orgSettingsSubtitle": "Mitglieder, Teams, Rollen, Limits und Audit deiner Organisation.",
     "platformSettingsSubtitle": "Organisationen, Benutzer und Audit der gesamten Plattform.",
     "images": "Images",
-    "builders": "Builder-VMs"
+    "builders": "Builder-VMs",
+    "adminRegistry": "Registry"
   },
   "theme": {
     "system": "System",
@@ -790,5 +791,27 @@
     },
     "logTruncated": "— gekürzt, lade das vollständige Log herunter —",
     "logStreamFailed": "Das Live-Log konnte nicht geladen werden. Lade die Seite neu oder das Log herunter."
+  },
+  "registryGC": {
+    "title": "Registry-Bereinigung",
+    "explain": "Gelöschte Versionen und Images belegen Speicher, bis die Registry bereinigt wird. Währenddessen sind Pushes für einige Minuten gesperrt, neue Builds warten; Pulls und VMs laufen weiter.",
+    "unmanaged": "Dieser Hub bereinigt die Registry nicht selbst (OBSERVATORY_REGISTRY_CONFIG ist nicht gesetzt).",
+    "state": "Status",
+    "schedule": "Zeitplan",
+    "daily": "Täglich um {time}",
+    "manual": "Nur manuell",
+    "next": "Nächster Lauf",
+    "last": "Letzter Lauf",
+    "failed": "Fehlgeschlagen",
+    "ok": "Erfolgreich",
+    "error": "Fehler",
+    "summary": "Ergebnis",
+    "run": "Jetzt bereinigen",
+    "states": {
+      "open": "Bereit",
+      "draining": "Wartet auf laufende Builds",
+      "closed": "Pushes gesperrt, wartet auf ausgegebene Tokens",
+      "collecting": "Bereinigt"
+    }
   }
 }

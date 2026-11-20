@@ -29,13 +29,18 @@ func (f fakeBuilds) BuildBySecret(_ context.Context, secret string) (store.Image
 
 func (e *env) registryHandler(upstream string, builds BuildCredentials) http.Handler {
 	e.t.Helper()
+	return e.registryHandlerGC(upstream, builds, nil)
+}
+
+func (e *env) registryHandlerGC(upstream string, builds BuildCredentials, gc *registry.GC) http.Handler {
+	e.t.Helper()
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	up, _ := url.Parse(upstream)
 	mux := http.NewServeMux()
-	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: up, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Builds: builds})
+	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: up, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Builds: builds, GC: gc})
 	return mux
 }
 
@@ -180,6 +185,69 @@ func TestTokenOverStorageLimitDropsPush(t *testing.T) {
 		if _, got := grant(t, h, "observatory", secret, repoScope(a, "pull,push")); !slices.Equal(got["i/"+a.String()], []string{"pull"}) {
 			t.Fatalf("%s at limit: %v", secret, got)
 		}
+	}
+}
+
+func TestTokenRefusesPushDuringGC(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	gc := registry.NewGC([]string{"true"}, "", func(context.Context) (int, error) { return 1, nil }, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go gc.Run(ctx)
+	h := e.registryHandlerGC("http://registry.invalid", fakeBuilds{"build-a": {ID: uuid.New(), ImageID: a}}, gc)
+	cred := e.registryCredential(e.cliSession(alice))
+	if err := gc.Trigger(); err != nil {
+		t.Fatal(err)
+	}
+	for gc.Status().State != registry.GCDraining {
+		time.Sleep(time.Millisecond)
+	}
+	if code, _ := grant(t, h, "observatory", cred, repoScope(a, "pull,push")); code != http.StatusServiceUnavailable {
+		t.Fatalf("user push while draining: %d", code)
+	}
+	if _, got := grant(t, h, "observatory", cred, repoScope(a, "pull")); !slices.Equal(got["i/"+a.String()], []string{"pull"}) {
+		t.Fatalf("user pull while draining: %v", got)
+	}
+	if _, got := grant(t, h, "observatory", "build-a", repoScope(a, "pull,push")); !slices.Equal(got["i/"+a.String()], []string{"pull", "push"}) {
+		t.Fatalf("running build push while draining: %v", got)
+	}
+}
+
+func TestAdminRegistryGC(t *testing.T) {
+	e := newEnv(t)
+	admin, adminTok := e.user("root")
+	_, userTok := e.user("bob")
+	if err := e.store.SetPlatformAdmin(context.Background(), admin.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("GET", "/api/admin/registry-gc", adminTok); rec.Code != 404 {
+		t.Fatalf("without gc: %d", rec.Code)
+	}
+	gc := registry.NewGC([]string{"true"}, "04:00", func(context.Context) (int, error) { return 1, nil }, nil)
+	e.api.registryGC = gc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go gc.Run(ctx)
+	if rec := e.do("POST", "/api/admin/registry-gc", userTok); rec.Code != 403 {
+		t.Fatalf("non-admin run: %d", rec.Code)
+	}
+	rec := e.do("GET", "/api/admin/registry-gc", adminTok)
+	var st registry.GCStatus
+	decode(t, rec, &st)
+	if rec.Code != 200 || st.State != registry.GCOpen || st.Schedule != "04:00" || st.Next == nil {
+		t.Fatalf("status: %d %+v", rec.Code, st)
+	}
+	if rec := e.do("POST", "/api/admin/registry-gc", adminTok); rec.Code != 202 {
+		t.Fatalf("run: %d %s", rec.Code, rec.Body.String())
+	}
+	for gc.Status().State == registry.GCOpen {
+		time.Sleep(time.Millisecond)
+	}
+	if rec := e.do("POST", "/api/admin/registry-gc", adminTok); rec.Code != 409 {
+		t.Fatalf("second run: %d", rec.Code)
 	}
 }
 

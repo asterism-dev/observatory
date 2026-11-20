@@ -608,3 +608,23 @@ func TestBuildRenamesOnVMNameConflict(t *testing.T) {
 		t.Fatalf("builder VM: %+v %v", v, err)
 	}
 }
+
+func TestQueuedBuildWaitsWhileHeld(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "tools", `[]`)
+	held := true
+	e.sched.MayStart = func() bool { return !held }
+	id := e.startBuild(aliceTok, org, img)
+	e.tick()
+	if b := e.build(id); b.State != store.BuildQueued {
+		t.Fatalf("held build state %s", b.State)
+	}
+	held = false
+	e.tick()
+	if b := e.build(id); b.State != store.BuildRunning {
+		t.Fatalf("released build state %s", b.State)
+	}
+}

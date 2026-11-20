@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/builds"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
@@ -17,6 +18,8 @@ type config struct {
 	Dev, DevSkipVerify                                                                                                               bool
 	DevClaudeTokenURL, DocsURL                                                                                                       string
 	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
+	// RegistryConfig is the registry's config file the hub runs garbage-collect with; RegistryGCTime is "HH:MM" or empty for manual runs.
+	RegistryConfig, RegistryGCTime string
 	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
 	BuilderImage, BuilderHubURL string
 	BuilderSize                 builds.Size
@@ -88,6 +91,17 @@ func loadConfig(getenv func(string) string) (config, error) {
 		}
 		if cfg.RegistryEventsSecret = getenv("OBSERVATORY_REGISTRY_EVENTS_SECRET"); len(cfg.RegistryEventsSecret) < minTokenLen {
 			return config{}, fmt.Errorf("OBSERVATORY_REGISTRY_URL requires OBSERVATORY_REGISTRY_EVENTS_SECRET of at least %d characters", minTokenLen)
+		}
+	}
+	cfg.RegistryConfig = getenv("OBSERVATORY_REGISTRY_CONFIG")
+	switch cfg.RegistryGCTime = getenv("OBSERVATORY_REGISTRY_GC_TIME"); cfg.RegistryGCTime {
+	case "":
+		cfg.RegistryGCTime = "04:00"
+	case "off":
+		cfg.RegistryGCTime = ""
+	default:
+		if err := registry.ParseSchedule(cfg.RegistryGCTime); err != nil {
+			return config{}, fmt.Errorf("OBSERVATORY_REGISTRY_GC_TIME: %w", err)
 		}
 	}
 	if cfg.BuilderImage = getenv("OBSERVATORY_BUILDER_IMAGE"); cfg.BuilderImage == "" {

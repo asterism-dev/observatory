@@ -38,6 +38,7 @@ type Registry struct {
 	Manifests    RegistryManifests
 	Tags         *TagSync
 	EventsSecret string
+	GC           *registry.GC
 }
 
 // RegistryEndpoints serves the token endpoint and the registry's push events, and proxies the rest of /v2/ to the registry.
@@ -89,6 +90,13 @@ func (t *registryTokens) token(w http.ResponseWriter, r *http.Request) {
 			if len(a.Actions) > 0 {
 				access = append(access, a)
 			}
+		}
+	}
+	for _, a := range access {
+		if slices.Contains(a.Actions, "push") && !t.reg.GC.PushAllowed(p.build.ID != uuid.Nil) {
+			w.Header().Set("Retry-After", "600")
+			writeError(w, http.StatusServiceUnavailable, "the registry is being cleaned up; push again in a few minutes")
+			return
 		}
 	}
 	tok, err := t.reg.Issuer.Token(p.subject(), access, registry.TokenTTL)

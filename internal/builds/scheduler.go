@@ -46,6 +46,8 @@ type Scheduler struct {
 
 	Size Size
 	Now  func() time.Time
+	// MayStart holds queued builds back while it returns false.
+	MayStart func() bool
 }
 
 // New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it.
@@ -127,6 +129,9 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 
 func (s *Scheduler) step(ctx context.Context, b store.ImageBuild) error {
 	now := s.Now()
+	if b.State == store.BuildQueued && s.MayStart != nil && !s.MayStart() {
+		return nil
+	}
 	switch {
 	case b.State == store.BuildRunning && b.StartedAt != nil && now.Sub(*b.StartedAt) >= Timeout:
 		return s.fail(ctx, b.ID, "the build timed out after 60 minutes")

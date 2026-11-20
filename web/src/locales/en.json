@@ -44,7 +44,8 @@
     "orgSettingsSubtitle": "Members, teams, roles, limits and audit for your organization.",
     "platformSettingsSubtitle": "Organizations, users and audit across the whole platform.",
     "images": "Images",
-    "builders": "Builder VMs"
+    "builders": "Builder VMs",
+    "adminRegistry": "Registry"
   },
   "theme": {
     "system": "System",
@@ -790,5 +791,27 @@
     },
     "logTruncated": "— truncated, download for the full log —",
     "logStreamFailed": "The live log could not be loaded. Reload the page or download the log."
+  },
+  "registryGC": {
+    "title": "Registry cleanup",
+    "explain": "Deleted versions and images take up space until the registry is cleaned up. Pushes are blocked for a few minutes meanwhile and new builds wait; pulls and VMs keep running.",
+    "unmanaged": "This hub does not clean up the registry itself (OBSERVATORY_REGISTRY_CONFIG is not set).",
+    "state": "State",
+    "schedule": "Schedule",
+    "daily": "Daily at {time}",
+    "manual": "Manual only",
+    "next": "Next run",
+    "last": "Last run",
+    "failed": "Failed",
+    "ok": "Succeeded",
+    "error": "Error",
+    "summary": "Result",
+    "run": "Clean up now",
+    "states": {
+      "open": "Ready",
+      "draining": "Waiting for running builds",
+      "closed": "Pushes blocked, waiting out issued tokens",
+      "collecting": "Cleaning up"
+    }
   }
 }

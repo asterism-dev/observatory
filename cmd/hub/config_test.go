@@ -62,6 +62,20 @@ func TestLoadConfig(t *testing.T) {
 		}
 		env[k] = old
 	}
+	if cfg.RegistryGCTime != "04:00" {
+		t.Fatalf("gc time default: %q", cfg.RegistryGCTime)
+	}
+	for v, want := range map[string]string{"off": "", "23:30": "23:30"} {
+		env["OBSERVATORY_REGISTRY_GC_TIME"] = v
+		if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.RegistryGCTime != want {
+			t.Fatalf("gc time %q: %q, %v", v, cfg.RegistryGCTime, err)
+		}
+	}
+	env["OBSERVATORY_REGISTRY_GC_TIME"] = "4am"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_REGISTRY_GC_TIME") {
+		t.Fatalf("bad gc time: %v", err)
+	}
+	delete(env, "OBSERVATORY_REGISTRY_GC_TIME")
 	delete(env, "OBSERVATORY_BUILDER_CPUS")
 	delete(env, "OBSERVATORY_BUILDER_MEMORY_MB")
 	delete(env, "OBSERVATORY_BUILDER_DISK_GB")

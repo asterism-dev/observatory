@@ -113,13 +113,14 @@ The registry notifies the hub in memory only: a push whose notification the hub 
 restarts is lost (the layers stay until garbage collection, push again). Docker clients need the hub over https;
 nodes and builder VMs may use the plain internal URL. See [images.md](images.md) for using it.
 
-Deleting versions or images removes their manifests; the disk space comes back with garbage collection, which the hub
-does not run. Garbage collection must not run next to a push, so stop the registry for it, daily from the host's crontab
-at a quiet hour (pushes and pulls fail for the minute it takes):
-
-```sh
-0 4 * * * cd /path/to/observatory && docker compose -f deploy/compose.yaml stop registry && docker compose -f deploy/compose.yaml --profile maintenance run --rm registry-gc; docker compose -f deploy/compose.yaml start registry
-```
+Deleting versions or images removes their manifests; the hub gets the disk space back with the registry's garbage
+collection, daily at `OBSERVATORY_REGISTRY_GC_TIME` (default `04:00`, `off` for manual runs only) in the hub's time
+zone (`TZ`, default UTC), and when a platform admin starts it under Platform settings → Registry. For it the hub mounts
+`registry-data` and the registry's config (`OBSERVATORY_REGISTRY_CONFIG`), and the registry runs as the hub's user; the
+`registry-data-owner` service hands data the registry wrote as root over once. Collection must not run next to a push,
+so the hub stops issuing push tokens: new builds wait, running builds finish, then the hub waits out the push tokens
+already issued (6 minutes) and collects. Pushes from Docker clients fail with "try again in a few minutes" until it
+ends; pulls and VMs are not affected. Versions without tags are kept.
 
 ## Updating
 

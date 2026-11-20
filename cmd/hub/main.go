@@ -11,9 +11,12 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
+	// The hub image has no zoneinfo; TZ picks the zone OBSERVATORY_REGISTRY_GC_TIME is in.
+	_ "time/tzdata"
 
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
@@ -118,6 +121,7 @@ func run() error {
 	var manifests api.ManifestDeleter
 	var tags *api.TagSync
 	var sched *builds.Scheduler
+	var gc *registry.GC
 	if cfg.RegistryURL != "" {
 		iss, err := registry.LoadIssuer(cfg.RegistryKeyDir)
 		if err != nil {
@@ -135,16 +139,26 @@ func run() error {
 		}
 		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
 		tags = api.NewTagSync(s, client)
-		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, OtherURLs: []*url.URL{cfg.NodeURL, builderHub}, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
+		sched = newScheduler(ctx, s, f, cfg)
+		if cfg.RegistryConfig != "" {
+			gc = registry.NewGC([]string{"registry", "garbage-collect", cfg.RegistryConfig}, cfg.RegistryGCTime, func(ctx context.Context) (int, error) {
+				active, err := s.ActiveBuilds(ctx)
+				return len(slices.DeleteFunc(active, func(b store.ImageBuild) bool { return b.State != store.BuildRunning })), err
+			}, sched.Kick)
+			sched.MayStart = gc.BuildsMayStart
+			go gc.Run(ctx)
+		} else {
+			slog.Warn("OBSERVATORY_REGISTRY_CONFIG is not set; the hub does not garbage-collect the registry")
+		}
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, OtherURLs: []*url.URL{cfg.NodeURL, builderHub}, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret, GC: gc})
 		manifests = client
 		f.PullImagesFrom(cfg.NodeURL, iss)
-		sched = newScheduler(ctx, s, f, cfg)
 		f.BootBuildersWith(sched.BootEnv)
 		api.BuildEndpoints(mux, s, sched, client, tags)
 		go sched.Run(ctx, 10*time.Second)
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
