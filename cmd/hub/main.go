@@ -104,6 +104,7 @@ func run() error {
 	nodeAssets(mux, cfg.NodeBinary, cfg.Guestboot)
 	oauth := &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}
 	go f.RefreshIntegrations(ctx, oauth, time.Minute)
+	go f.PollUsage(ctx, integrations.HTTPClaudeUsage{URL: cfg.DevClaudeUsageURL}, time.Minute)
 	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth}
 	if cfg.DevSkipVerify {
 		ig.Verifier = integrations.SkipVerifier{}
@@ -111,6 +112,9 @@ func run() error {
 	}
 	if cfg.DevClaudeTokenURL != "" {
 		slog.Warn("dev mode: claude token endpoint overridden", "url", cfg.DevClaudeTokenURL)
+	}
+	if cfg.DevClaudeUsageURL != "" {
+		slog.Warn("dev mode: claude usage endpoint overridden", "url", cfg.DevClaudeUsageURL)
 	}
 	newer := func() string { return "" }
 	if release.Enabled(os.Getenv) {

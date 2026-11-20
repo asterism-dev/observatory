@@ -2015,3 +2015,310 @@ func TestDesiredImageNodeURL(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshInactiveAccount(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	far := time.Now().Add(8 * time.Hour)
+	in := e.integration(integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0000", Refresh: intRefresh, AccessExpiresAt: &far})
+	soon := time.Now().Add(10 * time.Minute)
+	acc, err := e.s.AddIntegrationAccount(context.Background(), in, store.IntegrationAccount{Account: "two@example.com", Source: integrations.SourceOAuth, CreatedBy: e.owner},
+		store.IntegrationSecret{Token: "sk-ant-oat01-dummyaccess0001", Refresh: intRefresh, AccessExpiresAt: &soon})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	node.desired()
+	newExp := time.Now().Add(8 * time.Hour).Truncate(time.Second)
+	oauth := &fakeOAuth{exp: newExp}
+	e.runRefresh(oauth)
+	node.desired()
+	if n := oauth.n(); n != 1 {
+		t.Fatalf("refresh called %d times, want 1", n)
+	}
+	accs, err := e.s.IntegrationAccounts(context.Background(), e.org.ID, in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range accs {
+		if a.ID == acc.ID && (a.Active || a.AccessExpiresAt == nil || !a.AccessExpiresAt.Equal(newExp)) {
+			t.Fatalf("inactive account after refresh: %+v", a)
+		}
+	}
+}
+
+const (
+	claudeTok1 = "sk-ant-oat01-dummyaccess0001"
+	claudeTok2 = "sk-ant-oat01-dummyaccess0002"
+)
+
+// claudeAccounts creates the owner's two-account Claude integration in proxy mode; the first account is active.
+func (e *env) claudeAccounts() (store.Integration, store.IntegrationAccount, store.IntegrationAccount) {
+	e.t.Helper()
+	ctx := context.Background()
+	cl := e.integration(integrations.Claude, integrations.SourceSetupToken, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: claudeTok1})
+	if _, err := e.s.AddIntegrationAccount(ctx, cl, store.IntegrationAccount{Account: "two@x.io", Source: integrations.SourceSetupToken, CreatedBy: e.owner}, store.IntegrationSecret{Token: claudeTok2}); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.s.SetIntegrationAutoSwitch(ctx, cl, true, e.owner); err != nil {
+		e.t.Fatal(err)
+	}
+	cl.AutoSwitch = true
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || len(list) != 2 || !list[0].Active {
+		e.t.Fatalf("accounts = %+v %v", list, err)
+	}
+	return cl, list[0], list[1]
+}
+
+func TestAutoSwitchOffSendsNoAlternates(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, _ := e.claudeAccounts()
+	if err := e.s.SetIntegrationAutoSwitch(ctx, cl, false, e.owner); err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	s := desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	if s.Account != first.ID.String() || s.Value != claudeTok1 || len(s.Alternates) != 0 {
+		t.Fatalf("account %s, %d alternates", s.Account, len(s.Alternates))
+	}
+}
+
+func TestUsageReportSwitchesAndPushes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, second := e.claudeAccounts()
+
+	node := e.connect(cred)
+	s := desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	if s.ID != "integration:"+cl.ID.String() || s.Account != first.ID.String() || s.Value != claudeTok1 ||
+		len(s.Alternates) != 1 || s.Alternates[0].Account != second.ID.String() || s.Alternates[0].Value != claudeTok2 {
+		t.Fatalf("before: %s %s %d", s.ID, s.Account, len(s.Alternates))
+	}
+	placeholder := s.Placeholder
+	until := time.Now().Add(time.Hour).UTC()
+	node.send(proto.Message{Type: "usage", Usage: []proto.UsageObservation{{Integration: cl.ID.String(), Account: first.ID.String(), LimitedUntil: &until, ObservedAt: time.Now()}}})
+	s = desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	// The guest's env holds the placeholder, so a switch must not change it.
+	if s.Account != second.ID.String() || s.Value != claudeTok2 || placeholder == "" || s.Placeholder != placeholder {
+		t.Fatalf("after: account %s, placeholder changed %v", s.Account, s.Placeholder != placeholder)
+	}
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || list[0].Active || !list[1].Active || list[0].LimitedUntil == nil || list[0].Usage.Source != "proxy" {
+		t.Fatalf("accounts = %+v %v", list, err)
+	}
+}
+
+func TestUsageReportForeignAccountIgnored(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	nA, _ := e.node(e.org.ID, "a")
+	e.vm(e.org.ID, nA.ID, "vm", &e.owner, nil)
+	nB, credB := e.node(e.org.ID, "b")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.vm(e.org.ID, nB.ID, "team-vm", nil, &team.ID)
+	cl, first, _ := e.claudeAccounts()
+	e.connect(credB).desired()
+
+	until := time.Now().Add(time.Hour)
+	pct := 50.0
+	e.f.NoteUsage(ctx, nB, []proto.UsageObservation{
+		{Integration: cl.ID.String(), Account: first.ID.String(), FiveHourPct: &pct, LimitedUntil: &until, ObservedAt: time.Now()},
+		{Integration: uuid.NewString(), Account: first.ID.String(), LimitedUntil: &until, ObservedAt: time.Now()},
+	})
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || !list[0].Active || list[0].LimitedUntil != nil || list[0].Usage.FiveHourPct != nil {
+		t.Fatalf("accounts = %+v %v", list, err)
+	}
+}
+
+type fakeUsage struct {
+	mu    sync.Mutex
+	calls map[string]int
+	fn    func(token string) (integrations.Usage, error)
+}
+
+func (f *fakeUsage) Usage(_ context.Context, token string) (integrations.Usage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[token]++
+	return f.fn(token)
+}
+
+func (f *fakeUsage) n(token string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[token]
+}
+
+func (e *env) runPoll(u integrations.ClaudeUsage) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		e.f.PollUsage(ctx, u, 5*time.Millisecond)
+		close(done)
+	}()
+	e.t.Cleanup(func() { cancel(); <-done })
+}
+
+func TestPollUsageIntervals(t *testing.T) {
+	e := newEnv(t)
+	e.claudeAccounts()
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) { return integrations.Usage{}, nil }}
+	e.runPoll(u)
+	waitFor(t, func() bool { return u.n(claudeTok2) == 2 })
+	if n := u.n(claudeTok1); n < 16 {
+		t.Fatalf("active polled %d times by tick 15", n)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if n := u.n(claudeTok2); n != 2 {
+		t.Fatalf("inactive polled %d times, want ticks 0 and 15 only", n)
+	}
+}
+
+func TestPollUsageLimitSwitches(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, second := e.claudeAccounts()
+	node := e.connect(cred)
+	node.desired()
+
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	full, low := 100.0, 10.0
+	u := &fakeUsage{fn: func(tok string) (integrations.Usage, error) {
+		if tok == claudeTok1 {
+			return integrations.Usage{FiveHourPct: &full, FiveHourResetsAt: &reset, WeekPct: &low}, nil
+		}
+		return integrations.Usage{FiveHourPct: &low}, nil
+	}}
+	e.runPoll(u)
+	waitFor(t, func() bool {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		return err == nil && !list[0].Active && list[1].Active
+	})
+	list, _ := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if list[0].LimitedUntil == nil || !list[0].LimitedUntil.Equal(reset) || list[0].Usage.Source != "poll" || list[0].ID != first.ID || list[1].ID != second.ID {
+		t.Fatalf("accounts = %+v", list)
+	}
+	if s := desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]; s.Account != second.ID.String() {
+		t.Fatalf("pushed account %s", s.Account)
+	}
+}
+
+func TestPollUsageSetupTokenRejectedStops(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	cl, _, _ := e.claudeAccounts()
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		return integrations.Usage{}, fmt.Errorf("%w: claude: HTTP 403", integrations.ErrRejected)
+	}}
+	e.runPoll(u)
+	waitFor(t, func() bool {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		return err == nil && list[0].LastError == "no usage data"
+	})
+	n := u.n(claudeTok1)
+	time.Sleep(30 * time.Millisecond)
+	if u.n(claudeTok1) != n {
+		t.Fatal("kept polling a rejected setup token")
+	}
+}
+
+func TestPollUsageSetupTokenRejectedAfterPollFailureStops(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e := newEnv(t)
+	cl, _, _ := e.claudeAccounts()
+	var rejected atomic.Bool
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		if rejected.Load() {
+			return integrations.Usage{}, fmt.Errorf("%w: claude: HTTP 403", integrations.ErrRejected)
+		}
+		return integrations.Usage{}, errors.New("claude: HTTP 500")
+	}}
+	e.runPoll(u)
+	lastError := func() string {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list[0].LastError
+	}
+	waitFor(t, func() bool { return lastError() == "usage poll failed" })
+	rejected.Store(true)
+	offset.Store(int64(time.Hour))
+	waitFor(t, func() bool { return lastError() == "no usage data" })
+	n := u.n(claudeTok1)
+	time.Sleep(30 * time.Millisecond)
+	if u.n(claudeTok1) != n {
+		t.Fatal("kept polling a rejected setup token")
+	}
+}
+
+func TestPollUsageErrorShownThenCleared(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e := newEnv(t)
+	cl, _, _ := e.claudeAccounts()
+	var failing atomic.Bool
+	failing.Store(true)
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		if failing.Load() {
+			return integrations.Usage{}, errors.New("claude: HTTP 500 " + claudeTok1)
+		}
+		return integrations.Usage{}, nil
+	}}
+	e.runPoll(u)
+	lastError := func() string {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list[0].LastError
+	}
+	waitFor(t, func() bool { return lastError() != "" })
+	if got := lastError(); got != "usage poll failed" {
+		t.Fatalf("last error %q", got)
+	}
+	failing.Store(false)
+	offset.Store(int64(time.Hour))
+	waitFor(t, func() bool { return lastError() == "" })
+}
+
+func TestUsageReportClampsNodeTimes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, _ := e.claudeAccounts()
+	e.connect(cred).desired()
+	pct := 5.0
+	future, far := time.Now().Add(48*time.Hour), time.Now().Add(365*24*time.Hour)
+	e.f.NoteUsage(ctx, n, []proto.UsageObservation{{Integration: cl.ID.String(), Account: first.ID.String(), FiveHourPct: &pct, LimitedUntil: &far, ObservedAt: future}})
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || list[0].Usage.At == nil || list[0].Usage.At.After(time.Now()) || list[0].LimitedUntil == nil || list[0].LimitedUntil.After(time.Now().Add(7*24*time.Hour+time.Minute)) {
+		t.Fatalf("not clamped: %+v %v", list[0], err)
+	}
+}

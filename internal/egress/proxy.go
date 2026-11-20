@@ -27,18 +27,25 @@ type Proxy struct {
 	// UpstreamAddr and UpstreamRoots are for tests; nil means host:443 and the system roots.
 	UpstreamAddr  func(host string) string
 	UpstreamRoots *x509.CertPool
+	// Report receives Claude usage seen in responses; it runs on the request path, so it must return quickly.
+	Report func(proto.UsageObservation)
 
 	table        atomic.Pointer[table]
 	active       atomic.Int64
 	upstreamOnce sync.Once
 	upstreamTr   *http.Transport
+
+	retryBuffered atomic.Int64 // request body bytes held for Claude retries, bounded by retryBudget
 }
 
-// table is immutable once stored; SetTable swaps in a new one, issuer included.
+// table is immutable once stored except for limited, the locally rejected accounts, which a new table forgets.
 type table struct {
 	bound  map[string][]proto.HostBoundSecret
 	issuer *Issuer
 	scrub  [][]byte
+
+	limitedMu sync.Mutex
+	limited   map[string]time.Time
 }
 
 func New(vmID string, l *log.Logger) *Proxy {
@@ -59,6 +66,9 @@ func (p *Proxy) SetTable(e proto.Egress) error {
 			t.bound[h] = append(t.bound[h], s)
 		}
 		t.scrub = append(t.scrub, []byte(s.Value))
+		for _, a := range s.Alternates {
+			t.scrub = append(t.scrub, []byte(a.Value))
+		}
 	}
 	p.table.Store(t)
 	return nil

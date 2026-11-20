@@ -422,3 +422,32 @@ func TestAccountFieldsTruncated(t *testing.T) {
 		t.Fatalf("got %d %d %v", len(acc.Name), len(acc.Scopes), err)
 	}
 }
+
+func TestHTTPClaudeUsageParses(t *testing.T) {
+	var status int
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer "+dummyClaude || r.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
+			t.Errorf("request: %s %v", r.Method, r.Header)
+		}
+		w.WriteHeader(status)
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+	c := HTTPClaudeUsage{URL: srv.URL}
+	ctx := context.Background()
+
+	status, body = http.StatusOK, `{"five_hour":{"utilization":42.5,"resets_at":"2026-11-20T15:00:00Z"},"seven_day":{"utilization":7,"resets_at":null},"seven_day_opus":null}`
+	u, err := c.Usage(ctx, dummyClaude)
+	if err != nil || u.FiveHourPct == nil || *u.FiveHourPct != 42.5 || u.WeekPct == nil || *u.WeekPct != 7 ||
+		u.FiveHourResetsAt == nil || !u.FiveHourResetsAt.Equal(time.Date(2026, 11, 20, 15, 0, 0, 0, time.UTC)) || u.WeekResetsAt != nil {
+		t.Fatalf("usage: %+v %v", u, err)
+	}
+	for code, want := range map[int]error{http.StatusForbidden: ErrRejected, http.StatusInternalServerError: ErrUnreachable} {
+		status, body = code, `{"error":"`+dummyClaude+`"}`
+		_, err := c.Usage(ctx, dummyClaude)
+		if !errors.Is(err, want) || strings.Contains(err.Error(), dummyClaude) {
+			t.Errorf("HTTP %d: %v", code, err)
+		}
+	}
+}

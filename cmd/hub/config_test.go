@@ -178,7 +178,7 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 	if cfg, err := load(); err != nil || cfg.Dev || cfg.DevSkipVerify || cfg.DevClaudeTokenURL != "" {
 		t.Fatalf("defaults: %+v, %v", cfg, err)
 	}
-	for _, k := range []string{"OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY", "OBSERVATORY_DEV_CLAUDE_TOKEN_URL"} {
+	for _, k := range []string{"OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY", "OBSERVATORY_DEV_CLAUDE_TOKEN_URL", "OBSERVATORY_DEV_CLAUDE_USAGE_URL"} {
 		env[k] = "1"
 		if _, err := load(); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_DEV=1") {
 			t.Fatalf("%s without dev: %v", k, err)
@@ -188,7 +188,8 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 	env["OBSERVATORY_DEV"] = "1"
 	env["OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY"] = "1"
 	env["OBSERVATORY_DEV_CLAUDE_TOKEN_URL"] = "http://127.0.0.1:9999/token"
-	if cfg, err := load(); err != nil || !cfg.Dev || !cfg.DevSkipVerify || cfg.DevClaudeTokenURL != "http://127.0.0.1:9999/token" {
+	env["OBSERVATORY_DEV_CLAUDE_USAGE_URL"] = "http://127.0.0.1:9999/usage"
+	if cfg, err := load(); err != nil || !cfg.Dev || !cfg.DevSkipVerify || cfg.DevClaudeTokenURL != "http://127.0.0.1:9999/token" || cfg.DevClaudeUsageURL != "http://127.0.0.1:9999/usage" {
 		t.Fatalf("dev: %+v, %v", cfg, err)
 	}
 }

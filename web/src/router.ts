@@ -10,6 +10,7 @@ import NetworksView from '@/views/NetworksView.vue'
 import EnvView from '@/views/EnvView.vue'
 import ImageDetailView from '@/views/ImageDetailView.vue'
 import ImagesView from '@/views/ImagesView.vue'
+import IntegrationDetailView from '@/views/IntegrationDetailView.vue'
 import IntegrationsView from '@/views/IntegrationsView.vue'
 import NodeDetailView from '@/views/NodeDetailView.vue'
 import NodesView from '@/views/NodesView.vue'
@@ -58,6 +59,7 @@ export const router = createRouter({
     { path: '/orgs/:orgId/images', component: ImagesView, meta: { title: 'nav.images' } },
     { path: '/orgs/:orgId/images/:imageId', component: ImageDetailView },
     { path: '/orgs/:orgId/integrations', component: IntegrationsView, meta: { title: 'nav.integrations' } },
+    { path: '/orgs/:orgId/integrations/:id', component: IntegrationDetailView },
     {
       path: '/orgs/:orgId',
       component: OrgSettingsLayout,

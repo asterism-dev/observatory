@@ -68,12 +68,17 @@ Integrations page (`/orgs/:orgId/integrations`, tabs All / Org / Teams / Private
 
 | Method and path | Does |
 |---|---|
-| `GET /api/orgs/{org}/integrations` | List (kind, source, scope, mode, account, status, expiry; never a token or placeholder) and the scopes the caller may write |
+| `GET /api/orgs/{org}/integrations` | List (kind, source, scope, mode, account, status, expiry; Claude also `accounts` and `lastSwitch`; never a token or placeholder) and the scopes the caller may write |
 | `POST /api/orgs/{org}/integrations` | Connect a pasted token: `kind`, `source`, `scope`, `teamId`, `mode`, `token`; `dryRun` only verifies |
 | `PUT /api/orgs/{org}/integrations/{id}/token` | Replace the token |
 | `PATCH /api/orgs/{org}/integrations/{id}` | Change the mode |
 | `DELETE /api/orgs/{org}/integrations/{id}` | Disconnect |
-| `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below) |
+| `POST /api/orgs/{org}/integrations/{id}/accounts` | Add a Claude account by pasted setup token (`source`, `token`); 201 with the account id |
+| `PUT /api/orgs/{org}/integrations/{id}/accounts/{accountId}/token` | Replace one account's token |
+| `POST /api/orgs/{org}/integrations/{id}/accounts/{accountId}/activate` | Make the account active |
+| `PUT /api/orgs/{org}/integrations/{id}/accounts/order` | Set the order: `{"ids":[…]}`, every account once |
+| `DELETE /api/orgs/{org}/integrations/{id}/accounts/{accountId}` | Remove an account; the last one disconnects the integration (needs `integration:delete` too) |
+| `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below); `addToId` (integration) adds an account, `replaceAccountId` replaces one |
 
 From the CLI, the token comes from stdin, never an argument: `printf %s "$TOKEN" | observatory integration connect github`
 (see [cli.md](cli.md#secrets-input)).
@@ -96,6 +101,58 @@ hub memory for 10 minutes and is bound to you and the org; after a hub restart, 
   it runs out.
 - Proxy mode: the proxy's value changes, the placeholder does not, so the next request uses the new token. `vm` mode:
   the guest sync rewrites the credentials file within 5 minutes, well inside the remaining hour.
+
+### Several Claude accounts
+
+A private Claude integration in `proxy` mode can hold several accounts (your own subscriptions, e.g. work and
+private). Org and team Claude integrations, and `vm` mode, keep exactly one: the mode cannot be changed while there is
+more than one account (409), and adding an account to such an integration is refused (409). Each account is a row with
+its email (setup-token accounts: "Setup token"), position and active flag. The same email cannot be added twice.
+
+- **One account is active**; all your VMs use it, with the same placeholder, so a switch needs no guest change.
+  Flipping another row's switch activates it at once, even when it is limited. The active one cannot be switched off.
+- **Order is priority:** it decides which account comes next. Reordering never changes the active account.
+- **Switch automatically** (per integration, default off, also for integrations created before it existed): only
+  when on does the hub switch on a limit and does the proxy retry with the next account (Limit, Retry and Transition
+  only below). When off, the hub never switches by itself, the node gets only the active account's token (the other
+  tokens never reach it), and a confirmed 429 reaches Claude Code; switch yourself. Usage, polling and manual
+  switching work either way. Set it with `PATCH /api/orgs/{org}/integrations/{id}` `{"autoSwitch": true|false}`
+  (`mode` may be sent alongside or alone); refused for non-Claude integrations (400); audited as `integration:set`
+  with `action` = `auto-switch`. The list shows `autoSwitch` on each integration.
+- **Add** with the same sign-in or a pasted setup token (`addToId`); the account is appended, switched off. **Sign in
+  again** per account (`replaceAccountId` or the token route). **Remove** any account: removing the active one
+  activates the next eligible one; removing the last disconnects.
+- **Refresh:** the hub refreshes every `oauth` account that is due, not only the active one. An `expired` account is
+  never switched to and not sent to the node.
+- **Usage:** the hub polls each `oauth` account's usage (5-hour and weekly window, percent and reset) every minute for
+  the active account and every 15 minutes for the others; errors back off 1 to 15 minutes and keep the last values.
+  The egress proxy also reads the rate-limit headers of Anthropic's responses for the account that served the request; the newer
+  reading wins and the row shows its source and age. Setup-token accounts that the usage endpoint rejects show "no
+  usage data" until proxy readings arrive while active.
+- **Limit:** a 429 with `anthropic-ratelimit-unified-status: rejected` and an overage status that is absent or
+  `rejected`. Until is the unified reset header, else `retry-after`, clamped to 5 s to 7 days. A 429 without these
+  headers passes through unchanged. A polled account counts as limited at 100 % in either window with the reset in
+  the future.
+- **Retry:** the hub sends each VM's proxy the active account's token plus the other non-`expired` accounts in order.
+  On a confirmed limit the proxy resends the same request with the next account that is not limited, so Claude Code
+  does not see the limit ([egress.md](egress.md#claude-requests-apianthropiccom)). It reports the limit at once; the
+  hub activates the first account in order that is not limited, not `expired` and not the current one, and pushes to
+  all your VMs' nodes.
+- **Transition only:** an account you switched on while limited stays active until that limit ends; the proxy still
+  retries, the hub does not move the switch. A later limit switches as usual. An account switched away from automatically is not switched back before its limit ends. If no
+  account is eligible, the active one stays and the page says all are limited until the earliest reset. When the
+  active, non-manual account is still limited and another account's limit has passed, the hub moves to the first
+  available one.
+- **Page:** after an automatic switch the integration shows "Switched automatically at <time>: <email> reached its
+  limit" until the next manual action. Automatic switches are logged, not audited. Adding, replacing, removing,
+  activating and ordering are audited as `integration:set` (`action` = `account-add`, `account-replace`,
+  `account-remove`, `account-activate`, `account-order`); removing the last account is one `integration:delete` row.
+- **Permissions:** `integration:set` on your private integration; no new actions.
+
+List JSON (Claude): `accounts: [{id, account, source, position, active, status, lastError, usage: {fiveHourPct,
+fiveHourResetsAt, weekPct, weekResetsAt, limitedUntil, source, at}}]` and `lastSwitch: {at, fromId, from, toId, to}`
+or `null`. `from` and `to` are empty for setup-token accounts. Top-level `account`, `source` and `status` are the
+active account's.
 
 ## In the guest
 
@@ -168,6 +225,7 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
 - `OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY=1` stores any well-formed token as account "unverified".
 - `OBSERVATORY_DEV_CLAUDE_TOKEN_URL=<url>` sends the Claude code exchange and refreshes to a local fake token
   endpoint.
+- `OBSERVATORY_DEV_CLAUDE_USAGE_URL=<url>` sends the usage poll to a local fake usage endpoint.
 
 ## Known limits
 
@@ -193,6 +251,20 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
   retry a minute later succeeds.
 - **`LINEAR_API_KEY` after disconnect:** shells opened before the disconnect keep the exported value (the
   placeholder, or the key in `vm` mode) until they exit.
+- **Several Claude accounts:**
+  - The usage endpoint (`api.anthropic.com/api/oauth/usage`) and the `anthropic-ratelimit-unified-*` headers are
+    undocumented and may change; polling or limit detection then stops working while `setup-token` and `oauth` keep
+    working.
+  - Setup-token accounts usually have no polled usage (the endpoint rejects them); they show "no usage data" until
+    the proxy reads headers while they are active.
+  - A revoked token (401) does not trigger a switch; the account stays active until you switch it.
+  - Each other VM may send one more request to a limited account before the hub's push reaches its node; the proxy
+    retries it locally with the next account.
+  - Proxy readings are throttled to one per account per 30 s; readings within the window are dropped (a limit is
+    never dropped).
+  - Up to 32 MiB of a request body is buffered in the proxy per in-flight Claude request of a multi-account
+    integration, 256 MiB per VM's proxy in total; a larger body, or one that would exceed the total, is sent without
+    retry.
 - **No GitHub App, no OAuth for GitHub or Linear, no GitHub Enterprise Server, no `ghcr.io`/`docker login`.**
 
 ## Real-credential checklist
@@ -213,3 +285,8 @@ Agents test with dummy tokens only. These checks need real tokens and are run by
    the leak check is skipped), switch back to proxy and rotate the tokens at the providers as the page says.
 6. Disconnect each integration and check that the next `gh api user`, `claude -p "say ok"` and Linear call fail.
 7. Revoke the PAT and the Linear key at the providers.
+8. Several accounts: in your private Claude integration (proxy mode) add a second account. Both rows show usage
+   within two minutes. Exhaust the active account's window or simulate it (`OBSERVATORY_DEV_CLAUDE_USAGE_URL` with
+   dummy accounts reports 100 % but does not exercise the proxy retry), run `claude -p "say ok"` in a VM, and check
+   that it succeeds, the switch moves to the other account and the page shows the automatic-switch note (with
+   "Switch automatically" on). Flip the switch back by hand and check that it stays.

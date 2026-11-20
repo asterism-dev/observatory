@@ -429,13 +429,14 @@ type fakeProc struct {
 	h           *fakeEgress
 	ready, done chan struct{}
 	once        sync.Once
+	usage       chan proto.UsageObservation
 }
 
 func (h *fakeEgress) Spawn(VMFile) (EgressProc, error) {
 	h.p.record("spawn")
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	pr := &fakeProc{h: h, ready: make(chan struct{}), done: make(chan struct{})}
+	pr := &fakeProc{h: h, ready: make(chan struct{}), done: make(chan struct{}), usage: make(chan proto.UsageObservation, 4)}
 	if !h.noReady {
 		close(pr.ready)
 	}
@@ -466,7 +467,8 @@ func (pr *fakeProc) Send(t proto.Egress) error {
 	return pr.h.failSend
 }
 
-func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
-func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
-func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
-func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }
+func (pr *fakeProc) Ready() <-chan struct{}               { return pr.ready }
+func (pr *fakeProc) Done() <-chan struct{}                { return pr.done }
+func (pr *fakeProc) Usage() <-chan proto.UsageObservation { return pr.usage }
+func (pr *fakeProc) Kill()                                { pr.h.p.record("kill"); pr.crash() }
+func (pr *fakeProc) crash()                               { pr.once.Do(func() { close(pr.done) }) }

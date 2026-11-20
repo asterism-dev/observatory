@@ -507,3 +507,343 @@ func TestSignInStartAndFinishGuards(t *testing.T) {
 		t.Fatalf("replace non-claude without rights: %d", c)
 	}
 }
+
+func claudeSetupBody(scope string) string {
+	return `{"kind":"claude","source":"setup-token","scope":"` + scope + `","token":"` + dummyAccess + `"}`
+}
+
+type accountJSON struct {
+	ID, Account, Source, Status string
+	Position                    int
+	Active                      bool
+}
+
+type claudeListJSON struct {
+	Integrations []struct {
+		ID         string
+		Mode       string
+		AutoSwitch bool
+		Accounts   []accountJSON
+		LastSwitch *struct{ FromID, ToID, From, To string }
+	}
+}
+
+func (e *env) claudeAccounts(tok string, org uuid.UUID) ([]accountJSON, string) {
+	e.t.Helper()
+	rec := e.do("GET", integrationsPath(org), tok)
+	if rec.Code != 200 {
+		e.t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	var got claudeListJSON
+	decode(e.t, rec, &got)
+	if len(got.Integrations) != 1 {
+		e.t.Fatalf("list: %s", rec.Body.String())
+	}
+	return got.Integrations[0].Accounts, rec.Body.String()
+}
+
+func (e *env) addAccount(tok string, org uuid.UUID, id, name string) string {
+	e.t.Helper()
+	e.verifier.name = name
+	rec := e.send("POST", integrationsPath(org)+"/"+id+"/accounts", tok, `{"source":"setup-token","token":"`+dummyAccess+`"}`)
+	noSecrets(e.t, "add account", rec.Body.String())
+	if rec.Code != 201 {
+		e.t.Fatalf("add account: %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct{ ID string }
+	decode(e.t, rec, &got)
+	return got.ID
+}
+
+func TestAddAccountOrgScopeRefused(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.connect(tok, org, claudeSetupBody("org"))
+	rec := e.send("POST", integrationsPath(org)+"/"+id+"/accounts", tok, `{"source":"setup-token","token":"`+dummyAccess+`"}`)
+	var got struct{ Error string }
+	decode(t, rec, &got)
+	if rec.Code != 409 || got.Error != store.ErrMultiAccountNotAllowed.Error() {
+		t.Fatalf("org scope: %d %s", rec.Code, rec.Body.String())
+	}
+	gh := e.connect(tok, org, githubBody("user", ""))
+	if rec := e.send("POST", integrationsPath(org)+"/"+gh+"/accounts", tok, `{"source":"setup-token","token":"`+dummyAccess+`"}`); rec.Code != 400 {
+		t.Fatalf("github: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAddAccountAuditsNoToken(t *testing.T) {
+	logs := captureLogs(t)
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	if rec := e.send("POST", integrationsPath(org)+"/"+id+"/accounts", tok, `{"source":"oauth","token":"`+dummyAccess+`"}`); rec.Code != 400 {
+		t.Fatalf("oauth paste: %d", rec.Code)
+	}
+	acc := e.addAccount(tok, org, id, "second")
+	es := e.audit(store.ActionIntegrationSet)
+	if len(es) != 2 || es[0].Details["action"] != "account-add" || es[0].Details["account"] != "second" || es[0].Details["accountId"] != acc {
+		t.Fatalf("audit: %+v", es)
+	}
+	e.verifier.name = "second"
+	if rec := e.send("POST", integrationsPath(org)+"/"+id+"/accounts", tok, `{"source":"setup-token","token":"`+dummyAccess+`"}`); rec.Code != 409 {
+		t.Fatalf("same email: %d", rec.Code)
+	}
+	e.verifier.name = "renamed"
+	rec := e.send("PUT", integrationsPath(org)+"/"+id+"/accounts/"+acc+"/token", tok, `{"source":"setup-token","token":"`+dummyAccess+`"}`)
+	if rec.Code != 200 {
+		t.Fatalf("replace: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-replace" || es[0].Details["account"] != "renamed" {
+		t.Fatalf("replace audit: %+v", es[0])
+	}
+	e.noSecretsInAudit()
+	noSecrets(t, "logs", logs.String())
+}
+
+func TestListShowsAccountsWithoutSecrets(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	acc := e.addAccount(tok, org, id, "second")
+	list, body := e.claudeAccounts(tok, org)
+	noSecrets(t, "list", body)
+	if len(list) != 2 || list[0].ID != id || !list[0].Active || list[0].Account != "first" || list[0].Position != 0 ||
+		list[1].ID != acc || list[1].Active || list[1].Account != "second" || list[1].Source != "setup-token" || list[1].Status != "ok" {
+		t.Fatalf("accounts: %s", body)
+	}
+	if !strings.Contains(body, `"lastSwitch":null`) || !strings.Contains(body, `"usage":{"fiveHourPct":null`) {
+		t.Fatalf("shape: %s", body)
+	}
+	if rec := e.send("PATCH", integrationsPath(org)+"/"+id, tok, `{"autoSwitch":true}`); rec.Code != 204 {
+		t.Fatalf("auto switch: %d", rec.Code)
+	}
+	until := time.Now().Add(time.Hour)
+	if _, err := e.store.RecordUsage(context.Background(), store.UsageObservation{Account: uuid.MustParse(id), LimitedUntil: &until,
+		Source: "proxy", ObservedAt: time.Now()}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("GET", integrationsPath(org), tok)
+	var got claudeListJSON
+	decode(t, rec, &got)
+	ls := got.Integrations[0].LastSwitch
+	if ls == nil || ls.FromID != id || ls.From != "first" || ls.ToID != acc || ls.To != "second" {
+		t.Fatalf("last switch: %s", rec.Body.String())
+	}
+}
+
+func TestActivateAndOrder(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	acc := e.addAccount(tok, org, id, "second")
+	path := integrationsPath(org) + "/" + id + "/accounts"
+	if rec := e.do("POST", path+"/"+acc+"/activate", tok); rec.Code != 204 {
+		t.Fatalf("activate: %d %s", rec.Code, rec.Body.String())
+	}
+	if list, _ := e.claudeAccounts(tok, org); list[0].Active || !list[1].Active {
+		t.Fatalf("after activate: %+v", list)
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-activate" || es[0].Details["account"] != "second" {
+		t.Fatalf("activate audit: %+v", es[0])
+	}
+	if rec := e.send("PUT", path+"/order", tok, `{"ids":["`+acc+`"]}`); rec.Code != 400 {
+		t.Fatalf("incomplete order: %d", rec.Code)
+	}
+	if rec := e.send("PUT", path+"/order", tok, `{"ids":["`+acc+`","`+id+`"]}`); rec.Code != 204 {
+		t.Fatalf("order: %d %s", rec.Code, rec.Body.String())
+	}
+	if list, _ := e.claudeAccounts(tok, org); list[0].ID != acc || list[1].ID != id {
+		t.Fatalf("after order: %+v", list)
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-order" {
+		t.Fatalf("order audit: %+v", es[0])
+	}
+	if rec := e.do("DELETE", path+"/"+acc, tok); rec.Code != 204 {
+		t.Fatalf("remove active: %d", rec.Code)
+	}
+	if list, _ := e.claudeAccounts(tok, org); len(list) != 1 || list[0].ID != id || !list[0].Active {
+		t.Fatalf("after remove: %+v", list)
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-remove" || es[0].Details["account"] != "second" {
+		t.Fatalf("remove audit: %+v", es[0])
+	}
+	if rec := e.do("DELETE", path+"/"+id, tok); rec.Code != 204 {
+		t.Fatalf("remove last: %d", rec.Code)
+	}
+	if l := e.listIntegrations(tok, org); len(l.Integrations) != 0 {
+		t.Fatalf("integration kept: %+v", l)
+	}
+	if es := e.audit(store.ActionIntegrationDelete); len(es) != 1 || es[0].Details["action"] != "account-remove" || es[0].Details["account"] != "first" {
+		t.Fatalf("last remove audit: %+v", es)
+	}
+}
+
+func TestOtherMemberCannotTouchAccounts(t *testing.T) {
+	e := newEnv(t)
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.verifier.name = "first"
+	id := e.connect(aliceTok, org, claudeSetupBody("user"))
+	acc := e.addAccount(aliceTok, org, id, "second")
+	bobID := e.connect(bobTok, org, claudeSetupBody("user"))
+	path := integrationsPath(org) + "/" + id + "/accounts"
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", path, `{"source":"setup-token","token":"` + dummyAccess + `"}`},
+		{"PUT", path + "/" + acc + "/token", `{"source":"setup-token","token":"` + dummyAccess + `"}`},
+		{"POST", path + "/" + acc + "/activate", ""},
+		{"PUT", path + "/order", `{"ids":["` + acc + `","` + id + `"]}`},
+		{"DELETE", path + "/" + acc, ""},
+		// An account of alice's integration addressed through bob's own one.
+		{"POST", integrationsPath(org) + "/" + bobID + "/accounts/" + acc + "/activate", ""},
+		{"DELETE", integrationsPath(org) + "/" + bobID + "/accounts/" + acc, ""},
+	} {
+		if rec := e.send(c.method, c.path, bobTok, c.body); rec.Code != 404 {
+			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
+		}
+	}
+	for _, body := range []string{`{"addToId":"` + id + `"}`, `{"replaceAccountId":"` + acc + `"}`} {
+		if rec := e.send("POST", integrationsPath(org)+"/claude/sign-in", bobTok, body); rec.Code != 404 {
+			t.Fatalf("sign-in %s: %d", body, rec.Code)
+		}
+	}
+	if list, _ := e.claudeAccounts(aliceTok, org); len(list) != 2 || !list[0].Active {
+		t.Fatalf("changed: %+v", list)
+	}
+}
+
+func TestModePatchRefusedWithTwoAccounts(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	e.addAccount(tok, org, id, "second")
+	rec := e.send("PATCH", integrationsPath(org)+"/"+id, tok, `{"mode":"vm"}`)
+	var got struct{ Error string }
+	decode(t, rec, &got)
+	if rec.Code != 409 || got.Error != store.ErrMultiAccountNotAllowed.Error() {
+		t.Fatalf("mode: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAutoSwitchPatch(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	path := integrationsPath(org) + "/" + id
+	list := func() claudeListJSON {
+		rec := e.do("GET", integrationsPath(org), tok)
+		var got claudeListJSON
+		decode(t, rec, &got)
+		return got
+	}
+	if l := list(); l.Integrations[0].AutoSwitch {
+		t.Fatal("auto switch on by default")
+	}
+	if rec := e.send("PATCH", path, tok, `{"autoSwitch":true}`); rec.Code != 204 {
+		t.Fatalf("on: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := list(); !l.Integrations[0].AutoSwitch || l.Integrations[0].Mode != "proxy" {
+		t.Fatalf("after on: %+v", l)
+	}
+	es := e.audit(store.ActionIntegrationSet)
+	if len(es) == 0 || es[0].Details["action"] != "auto-switch" || es[0].Details["autoSwitch"] != true {
+		t.Fatalf("audit: %+v", es)
+	}
+	if rec := e.send("PATCH", path, tok, `{"autoSwitch":false,"mode":"vm"}`); rec.Code != 204 {
+		t.Fatalf("off and vm: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := list(); l.Integrations[0].AutoSwitch || l.Integrations[0].Mode != "vm" {
+		t.Fatalf("after off: %+v", l)
+	}
+	if rec := e.send("PATCH", path, tok, `{}`); rec.Code != 400 {
+		t.Fatalf("empty: %d", rec.Code)
+	}
+	if rec := e.send("PATCH", path, bobTok, `{"autoSwitch":true}`); rec.Code != 404 {
+		t.Fatalf("other member: %d", rec.Code)
+	}
+	gh := e.connect(tok, org, githubBody("user", ""))
+	if rec := e.send("PATCH", integrationsPath(org)+"/"+gh, tok, `{"autoSwitch":true}`); rec.Code != 400 {
+		t.Fatalf("github: %d", rec.Code)
+	}
+	e.noSecretsInAudit()
+}
+
+func TestAccountSignIn(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	path := integrationsPath(org) + "/claude/sign-in"
+	start := func(body string) (int, string) {
+		rec := e.send("POST", path, tok, body)
+		var got struct{ State string }
+		decode(t, rec, &got)
+		return rec.Code, got.State
+	}
+	finish := func(state string) (int, string) {
+		rec := e.send("POST", path+"/finish", tok, `{"state":"`+state+`","code":"c"}`)
+		noSecrets(t, "finish", rec.Body.String())
+		var got struct{ ID string }
+		decode(t, rec, &got)
+		return rec.Code, got.ID
+	}
+	if c, _ := start(`{"addToId":"` + id + `","replaceId":"` + id + `"}`); c != 400 {
+		t.Fatalf("both: %d", c)
+	}
+	c, state := start(`{"addToId":"` + id + `"}`)
+	if c != 200 {
+		t.Fatalf("add start: %d", c)
+	}
+	c, acc := finish(state)
+	if c != 201 || acc == "" || acc == id {
+		t.Fatalf("add finish: %d %s", c, acc)
+	}
+	list, _ := e.claudeAccounts(tok, org)
+	if len(list) != 2 || list[1].ID != acc || list[1].Source != "oauth" || list[1].Account != "me@example.com" || list[1].Active {
+		t.Fatalf("after add: %+v", list)
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-add" || es[0].Details["account"] != "me@example.com" {
+		t.Fatalf("add audit: %+v", es[0])
+	}
+	c, state = start(`{"replaceAccountId":"` + id + `"}`)
+	if c != 200 {
+		t.Fatalf("replace start: %d", c)
+	}
+	// The first account would take the email the added one already has.
+	if c, _ := finish(state); c != 409 {
+		t.Fatalf("replace duplicate email: %d", c)
+	}
+	if rec := e.do("DELETE", integrationsPath(org)+"/"+id+"/accounts/"+acc, tok); rec.Code != 204 {
+		t.Fatalf("remove: %d", rec.Code)
+	}
+	_, state = start(`{"replaceAccountId":"` + id + `"}`)
+	if c, _ := finish(state); c != 200 {
+		t.Fatalf("replace finish: %d", c)
+	}
+	if list, _ := e.claudeAccounts(tok, org); len(list) != 1 || list[0].Source != "oauth" || list[0].Account != "me@example.com" {
+		t.Fatalf("after replace: %+v", list)
+	}
+	if es := e.audit(store.ActionIntegrationSet); es[0].Details["action"] != "account-replace" {
+		t.Fatalf("replace audit: %+v", es[0])
+	}
+	orgID := e.connect(tok, org, claudeSetupBody("org"))
+	if c, _ := start(`{"addToId":"` + orgID + `"}`); c != 409 {
+		t.Fatalf("add to org: %d", c)
+	}
+	e.noSecretsInAudit()
+}

@@ -16,7 +16,7 @@ type config struct {
 	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken string
 	SecretsKey                                                                                                                       seal.Key
 	Dev, DevSkipVerify                                                                                                               bool
-	DevClaudeTokenURL, DocsURL                                                                                                       string
+	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                                                    string
 	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
 	// RegistryConfig is the registry's config file the hub runs garbage-collect with; RegistryGCTime is "HH:MM" or empty for manual runs.
 	RegistryConfig, RegistryGCTime string
@@ -136,7 +136,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")
 	cfg.DevSkipVerify, cfg.DevClaudeTokenURL = skip == "1", getenv("OBSERVATORY_DEV_CLAUDE_TOKEN_URL")
-	if !cfg.Dev && (skip != "" || cfg.DevClaudeTokenURL != "") {
+	cfg.DevClaudeUsageURL = getenv("OBSERVATORY_DEV_CLAUDE_USAGE_URL")
+	if !cfg.Dev && (skip != "" || cfg.DevClaudeTokenURL != "" || cfg.DevClaudeUsageURL != "") {
 		return config{}, errors.New("OBSERVATORY_DEV_* requires OBSERVATORY_DEV=1")
 	}
 	return cfg, nil

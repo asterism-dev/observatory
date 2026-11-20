@@ -1,12 +1,14 @@
 package linuxvm
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"os"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/egress"
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 // The proxy's UID sits next to the jail UIDs (70000+) and gets the same last-octet offset.
@@ -121,4 +123,14 @@ func egressElements(add bool, tap string, port int, mark uint32) string {
 	return fmt.Sprintf("%[1]s element bridge obs_egress marks { %[2]q%[3]s }\n"+
 		"%[1]s element inet obs_egress ports { %#[4]x%[5]s }\n"+
 		"%[1]s element inet obs_egress allowed { %#[4]x . %[6]d }\n", op, tap, markVal, mark, portVal, port)
+}
+
+// parseUsageLine reads a `usage <json>` line of the proxy; anything else, or one without ids, is not a report.
+func parseUsageLine(line string) (proto.UsageObservation, bool) {
+	var o proto.UsageObservation
+	b, ok := strings.CutPrefix(line, "usage ")
+	if !ok || json.Unmarshal([]byte(b), &o) != nil || o.Integration == "" || o.Account == "" {
+		return proto.UsageObservation{}, false
+	}
+	return o, true
 }
