@@ -574,7 +574,12 @@ func pointSeries(p dataPoint) (series, buckets int, layout []float64) {
 	case *metricspb.ExponentialHistogramDataPoint:
 		pos, neg := p.GetPositive(), p.GetNegative()
 		n := len(pos.GetBucketCounts()) + len(neg.GetBucketCounts())
-		return n + 3, n, []float64{float64(p.Scale), float64(pos.GetOffset()), float64(len(pos.GetBucketCounts())), float64(neg.GetOffset()), float64(len(neg.GetBucketCounts()))}
+		layout := []float64{float64(p.Scale), float64(pos.GetOffset()), float64(len(pos.GetBucketCounts())), float64(neg.GetOffset()), float64(len(neg.GetBucketCounts()))}
+		// The store names the zero bucket by its threshold.
+		if p.ZeroCount > 0 {
+			layout = append(layout, p.ZeroThreshold)
+		}
+		return n + 3, n, layout
 	case *metricspb.SummaryDataPoint:
 		qs := make([]float64, len(p.QuantileValues))
 		for i, q := range p.QuantileValues {
