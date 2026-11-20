@@ -1,3 +1,9 @@
+## v0.14.0 (2026-11-20)
+
+### Feat
+
+- **vms**: delete-after and deleted VM history (#35)
+
 ## v0.13.0 (2026-11-20)
 
 ### Feat
