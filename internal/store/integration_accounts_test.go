@@ -3,6 +3,7 @@ package store_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -198,5 +199,195 @@ func TestOneActiveAccountEnforced(t *testing.T) {
 	insertAccount(t, pool, cl, "two@example.com", dummyAccess+"2", store.IntegrationOK)
 	if _, err := pool.Exec(context.Background(), "UPDATE integration_accounts SET active = true WHERE integration_id = $1", cl.ID); err == nil {
 		t.Fatal("two active accounts accepted")
+	}
+}
+
+func newClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, scope store.EnvScope, mode integrations.Mode) store.Integration {
+	t.Helper()
+	var owner *uuid.UUID
+	if scope == store.EnvScopeUser {
+		owner = &uid
+	}
+	v := integ(org, uid, integrations.Claude, integrations.SourceSetupToken, scope, owner)
+	v.Mode = mode
+	v.Account = "one@example.com"
+	return mustCreateIntegration(t, s, v, store.IntegrationSecret{Token: dummyAccess})
+}
+
+func newAccount(email string, by uuid.UUID) store.IntegrationAccount {
+	return store.IntegrationAccount{Account: email, Source: integrations.SourceSetupToken, CreatedBy: by}
+}
+
+func TestAddAccountOnlyPrivateProxy(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	sec := store.IntegrationSecret{Token: dummyAccess + "2"}
+	if _, err := s.AddIntegrationAccount(ctx, newClaude(t, s, org, uid, store.EnvScopeOrg, ""), newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrMultiAccountNotAllowed) {
+		t.Fatalf("org scope: %v", err)
+	}
+	user := newClaude(t, s, org, uid, store.EnvScopeUser, integrations.ModeVM)
+	if _, err := s.AddIntegrationAccount(ctx, user, newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrMultiAccountNotAllowed) {
+		t.Fatalf("vm mode: %v", err)
+	}
+	if err := s.SetIntegrationMode(ctx, user, integrations.ModeProxy, uid); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.AddIntegrationAccount(ctx, user, newAccount("two@example.com", uid), sec)
+	if err != nil || got.Position != 1 || got.Active || got.Account != "two@example.com" || got.Status != store.IntegrationOK {
+		t.Fatalf("user proxy: %+v %v", got, err)
+	}
+}
+
+func TestAddAccountDuplicateEmail(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	sec := store.IntegrationSecret{Token: dummyAccess + "2"}
+	if _, err := s.AddIntegrationAccount(ctx, cl, newAccount("two@example.com", uid), sec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddIntegrationAccount(ctx, cl, newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate: %v", err)
+	}
+	if n := len(mustAccounts(t, s, org.ID, cl.ID)); n != 2 {
+		t.Fatalf("%d accounts", n)
+	}
+}
+
+func TestReplaceAccountToken(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	b := insertAccount(t, pool, cl, "b@example.com", "old", store.IntegrationExpired)
+	execSQL(t, pool, "UPDATE integration_accounts SET last_error = 'sign in again' WHERE id = $1", b)
+	var acct store.IntegrationAccount
+	for _, x := range mustAccounts(t, s, org.ID, cl.ID) {
+		if x.ID == b {
+			acct = x
+		}
+	}
+	if err := s.ReplaceAccountToken(ctx, acct, integrations.SourceSetupToken, "b@example.com", store.IntegrationSecret{Token: "fresh"}, uid); err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range mustAccounts(t, s, org.ID, cl.ID) {
+		if x.ID == b && (x.Status != store.IntegrationOK || x.LastError != "") {
+			t.Fatalf("account %+v", x)
+		}
+	}
+	acct.ID = uuid.New()
+	if err := s.ReplaceAccountToken(ctx, acct, integrations.SourceSetupToken, "b@example.com", store.IntegrationSecret{Token: "x"}, uid); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown account: %v", err)
+	}
+}
+
+func TestActivateAccountSwapsActive(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	accts := mustAccounts(t, s, org.ID, cl.ID)
+	if err := s.ActivateAccount(ctx, accts[1], true, uid); err != nil {
+		t.Fatal(err)
+	}
+	got := mustAccounts(t, s, org.ID, cl.ID)
+	if got[0].Active || !got[1].Active || got[1].ID != b || !got[1].ActivatedManually {
+		t.Fatalf("accounts %+v", got)
+	}
+}
+
+func TestReorderAccounts(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	a := mustAccounts(t, s, org.ID, cl.ID)[0].ID
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	if err := s.ReorderAccounts(ctx, cl, []uuid.UUID{b, a}, uid); err != nil {
+		t.Fatal(err)
+	}
+	got := mustAccounts(t, s, org.ID, cl.ID)
+	if got[0].ID != b || got[1].ID != a || !got[1].Active || got[0].Active {
+		t.Fatalf("accounts %+v", got)
+	}
+	for _, bad := range [][]uuid.UUID{{a}, {a, a}, {a, b, uuid.New()}, {a, uuid.New()}} {
+		if err := s.ReorderAccounts(ctx, cl, bad, uid); !errors.Is(err, store.ErrInvalid) {
+			t.Fatalf("%v: %v", bad, err)
+		}
+	}
+}
+
+func TestDeleteActiveAccountActivatesNext(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	c := insertAccount(t, pool, cl, "c@example.com", "c", store.IntegrationOK)
+	execSQL(t, pool, "UPDATE integration_accounts SET limited_until = now() + interval '1 hour' WHERE id = $1", b)
+	last, err := s.DeleteIntegrationAccount(ctx, mustAccounts(t, s, org.ID, cl.ID)[0])
+	if err != nil || last {
+		t.Fatalf("last %v: %v", last, err)
+	}
+	got := mustAccounts(t, s, org.ID, cl.ID)
+	if len(got) != 2 || got[0].ID != b || got[0].Active || got[1].ID != c || !got[1].Active {
+		t.Fatalf("accounts %+v", got)
+	}
+}
+
+func TestDeleteActiveAccountFallsBackWhenNoneEligible(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationExpired)
+	insertAccount(t, pool, cl, "c@example.com", "c", store.IntegrationExpired)
+	if _, err := s.DeleteIntegrationAccount(ctx, mustAccounts(t, s, org.ID, cl.ID)[0]); err != nil {
+		t.Fatal(err)
+	}
+	got := mustAccounts(t, s, org.ID, cl.ID)
+	if !got[0].Active || got[0].ID != b || got[1].Active {
+		t.Fatalf("accounts %+v", got)
+	}
+	if v := mustIntegration(t, s, org.ID, cl.ID); v.Account != "b@example.com" {
+		t.Fatalf("integration %+v", v)
+	}
+}
+
+func TestDeleteInactiveAccountKeepsActive(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	if _, err := s.DeleteIntegrationAccount(ctx, mustAccounts(t, s, org.ID, cl.ID)[1]); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustAccounts(t, s, org.ID, cl.ID); len(got) != 1 || !got[0].Active {
+		t.Fatalf("accounts %+v", got)
+	}
+}
+
+func TestDeleteLastAccountDeletesIntegration(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	last, err := s.DeleteIntegrationAccount(ctx, mustAccounts(t, s, org.ID, cl.ID)[0])
+	if err != nil || !last {
+		t.Fatalf("last %v: %v", last, err)
+	}
+	if _, err := s.Integration(ctx, org.ID, cl.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("integration: %v", err)
+	}
+}
+
+func TestModeVMRefusedWithTwoAccounts(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	if err := s.SetIntegrationMode(ctx, cl, integrations.ModeVM, uid); err != nil {
+		t.Fatalf("one account: %v", err)
+	}
+	if err := s.SetIntegrationMode(ctx, cl, integrations.ModeProxy, uid); err != nil {
+		t.Fatal(err)
+	}
+	insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	if err := s.SetIntegrationMode(ctx, cl, integrations.ModeVM, uid); !errors.Is(err, store.ErrMultiAccountNotAllowed) {
+		t.Fatalf("two accounts: %v", err)
 	}
 }

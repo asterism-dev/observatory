@@ -248,6 +248,9 @@ func (s *Store) replaceActiveAccountToken(ctx context.Context, key seal.Key, old
 	}
 	var id uuid.UUID
 	if err := s.q.QueryRow(ctx, "SELECT id FROM integration_accounts WHERE integration_id = $1 AND active FOR UPDATE", old.ID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
 		return err
 	}
 	nonce, ct, rnonce, rct, err := sealIntegration(key, old.OrgID, id, sec)
@@ -337,10 +340,24 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 
 // SetIntegrationMode remembers a past vm mode, since the real token may still be in the guest.
 func (s *Store) SetIntegrationMode(ctx context.Context, old Integration, mode integrations.Mode, by uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, `
-		UPDATE integrations SET mode = $7, was_in_vm = was_in_vm OR $7 = 'vm', updated_by = $8, updated_at = now()
-		WHERE `+envGuard, integrationGuardArgs(old, mode, by)...)
-	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
+	return s.InTx(ctx, func(tx *Store) error {
+		if mode == integrations.ModeVM {
+			if err := tx.lockIntegration(ctx, old.OrgID, old.ID); err != nil {
+				return err
+			}
+			var n int
+			if err := tx.q.QueryRow(ctx, "SELECT count(*) FROM integration_accounts WHERE integration_id = $1", old.ID).Scan(&n); err != nil {
+				return err
+			}
+			if n > 1 {
+				return ErrMultiAccountNotAllowed
+			}
+		}
+		tag, err := tx.q.Exec(ctx, `
+			UPDATE integrations SET mode = $7, was_in_vm = was_in_vm OR $7 = 'vm', updated_by = $8, updated_at = now()
+			WHERE `+envGuard, integrationGuardArgs(old, mode, by)...)
+		return tx.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
+	})
 }
 
 func (s *Store) DeleteIntegration(ctx context.Context, old Integration) error {
