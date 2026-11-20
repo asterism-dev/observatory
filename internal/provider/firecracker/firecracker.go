@@ -283,8 +283,7 @@ func (p *Provider) Restore(ctx context.Context, f node.VMFile, dir string, from 
 	}
 	// Without fc.json, the restore path configures Firecracker's log itself.
 	if err := inst.api.PutLogger(); err != nil {
-		inst.Kill()
-		return nil, err
+		slog.Warn("firecracker logger setup failed", "vm", f.Spec.ID, "err", err)
 	}
 	if err := inst.load(ctx, f, dir, from, seedGrew); err != nil {
 		inst.Kill()
