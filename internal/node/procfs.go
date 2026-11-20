@@ -118,6 +118,9 @@ func parseLoadAvg(r io.Reader) (l1, l5, l15 float64, err error) {
 // Each tap carries VM traffic that the guests' own NICs would double count; the shape mirrors linuxvm.TapName, which this package cannot import.
 var vmTapName = regexp.MustCompile(`^vmm[0-9a-f]{8}[0-9]+$`)
 
+// OVS internal devices carry no traffic of their own; it shows up on the physical and wg interfaces.
+var ovsDevice = regexp.MustCompile(`^(ovs-system|br-int|gre_sys|genev_sys_.*|vxlan_sys_.*)$`)
+
 func parseNetDev(r io.Reader) (map[string][2]int64, error) {
 	out := map[string][2]int64{}
 	sc := bufio.NewScanner(r)
@@ -127,7 +130,7 @@ func parseNetDev(r io.Reader) (map[string][2]int64, error) {
 			continue
 		}
 		name = strings.TrimSpace(name)
-		if name == "lo" || strings.HasPrefix(name, "tap") || vmTapName.MatchString(name) {
+		if name == "lo" || strings.HasPrefix(name, "tap") || vmTapName.MatchString(name) || ovsDevice.MatchString(name) {
 			continue
 		}
 		f := strings.Fields(rest)

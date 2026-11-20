@@ -87,14 +87,20 @@ vmm1a2b3c4d0: 777 7 0 0 0 0 0 0 888 8 0 0 0 0 0 0
 vmmdeadbeef12: 777 7 0 0 0 0 0 0 888 8 0 0 0 0 0 0
   vmm0: 300 3 0 0 0 0 0 0 400 4 0 0 0 0 0 0
 tap0: 5 1 0 0 0 0 0 0 6 1 0 0 0 0 0 0
+ovs-system: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+br-int: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+genev_sys_6081: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+vxlan_sys_4789: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+gre_sys: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+wg-underlay: 10 1 0 0 0 0 0 0 20 2 0 0 0 0 0 0
 `
 
-func TestParseNetDevSkipsLoAndTaps(t *testing.T) {
+func TestParseNetDevSkipsLoTapsAndOVS(t *testing.T) {
 	got, err := parseNetDev(strings.NewReader(netDevFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got["eth0"] != [2]int64{123456, 654321} || got["vmm0"] != [2]int64{300, 400} {
+	if len(got) != 3 || got["wg-underlay"] != [2]int64{10, 20} || got["eth0"] != [2]int64{123456, 654321} || got["vmm0"] != [2]int64{300, 400} {
 		t.Fatalf("got %v", got)
 	}
 }

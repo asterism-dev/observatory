@@ -9,7 +9,7 @@ Metrics, every 10 seconds:
 - `system.cpu.time`, `system.cpu.load_average.1m`, `.5m` and `.15m`
 - `system.memory.usage` and `system.paging.usage`
 - `system.filesystem.usage` and `system.filesystem.limit` for `/` and the VM directory (once if they share a filesystem)
-- `system.network.io` per interface, without the VMs' tap devices and `lo`
+- `system.network.io` per interface, without the VMs' tap devices, OVS internal devices (`ovs-system`, `br-int`, `genev_sys_*`, `vxlan_sys_*`, `gre_sys`) and `lo`
 - `observatory.node.vms.running`
 
 Logs, from two sources:
