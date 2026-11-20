@@ -41,6 +41,8 @@ func (h *api) grafanaRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID,
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return uuid.Nil, false
 	}
+	// The hub's server-wide write timeout is shorter than a slow store query may take.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(grafanaUpstreamTimeout + 5*time.Second))
 	return org, true
 }
 
@@ -122,19 +124,19 @@ func (h *api) promProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	forwardUpstream(w, req)
+	forwardUpstream(w, h.telemetry.StoreClient(0), req)
 }
 
 // forwardUpstream relays the store's answer; store failures become a bare 502 so its URL never reaches the client.
-func forwardUpstream(w http.ResponseWriter, req *http.Request) {
-	resp, err := http.DefaultClient.Do(req)
+func forwardUpstream(w http.ResponseWriter, hc *http.Client, req *http.Request) {
+	resp, err := hc.Do(req)
 	if err != nil {
 		slog.Warn("grafana proxy upstream", "err", err)
 		writeError(w, http.StatusBadGateway, "telemetry store unavailable")
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 500 {
+	if resp.StatusCode >= 500 || (resp.StatusCode >= 300 && resp.StatusCode < 400) {
 		slog.Warn("grafana proxy upstream", "status", resp.StatusCode)
 		writeError(w, http.StatusBadGateway, "telemetry store unavailable")
 		return

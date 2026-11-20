@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -264,6 +266,59 @@ func TestPromProxyUpstreamError(t *testing.T) {
 	rec = p.prom("GET", "/grafana/prometheus/api/v1/query", p.token, "")
 	if rec.Code != 502 || strings.Contains(rec.Body.String(), host) || strings.Contains(rec.Body.String(), "127.0.0.1") {
 		t.Fatalf("down: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPromProxyRefusesRedirects(t *testing.T) {
+	p := newPromEnv(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, "/api/v1/query?query=up", http.StatusFound)
+	}))
+	defer srv.Close()
+	p.api.telemetry = &telemetry.Client{MetricsURL: srv.URL}
+	rec := p.prom("GET", "/grafana/prometheus/api/v1/query?query=up", p.token, "")
+	if rec.Code != 502 || hits.Load() != 1 || strings.Contains(rec.Body.String(), "elsewhere") {
+		t.Fatalf("redirect: %d, %d hits, %s", rec.Code, hits.Load(), rec.Body.String())
+	}
+}
+
+func TestPromProxyGetIgnoresFormBody(t *testing.T) {
+	p := newPromEnv(t)
+	req := httptest.NewRequest("GET", "/grafana/prometheus/api/v1/query?query=up", strings.NewReader("extra_label=observatory_org%3DB&extra_filters[]=x"))
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	p.h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	onlyOrgScope(t, p.forwarded(0), p.org)
+}
+
+func TestPromProxyOutlivesServerWriteTimeout(t *testing.T) {
+	p := newPromEnv(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"status":"success"}`)
+	}))
+	defer slow.Close()
+	p.api.telemetry = &telemetry.Client{MetricsURL: slow.URL}
+	hub := httptest.NewUnstartedServer(p.h)
+	hub.Config.WriteTimeout = 100 * time.Millisecond
+	hub.Start()
+	defer hub.Close()
+	req, _ := http.NewRequest("GET", hub.URL+"/grafana/prometheus/api/v1/query?query=up", nil)
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 || string(body) != `{"status":"success"}` {
+		t.Fatalf("%d %q %v", resp.StatusCode, body, err)
 	}
 }
 
