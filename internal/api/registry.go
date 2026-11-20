@@ -31,11 +31,13 @@ type BuildCredentials interface {
 
 type Registry struct {
 	Upstream, PublicURL *url.URL
-	Issuer              registry.Issuer
-	Builds              BuildCredentials
-	Manifests           RegistryManifests
-	Tags                *TagSync
-	EventsSecret        string
+	// OtherURLs are the further hub URLs clients reach /v2/ at; a request to one of their hosts gets its token realm there.
+	OtherURLs    []*url.URL
+	Issuer       registry.Issuer
+	Builds       BuildCredentials
+	Manifests    RegistryManifests
+	Tags         *TagSync
+	EventsSecret string
 }
 
 // RegistryEndpoints serves the token endpoint and the registry's push events, and proxies the rest of /v2/ to the registry.
@@ -44,7 +46,7 @@ func RegistryEndpoints(mux *http.ServeMux, s *store.Store, z *authz.Service, reg
 	mux.HandleFunc("GET /v2/token", t.token)
 	ev := &registryEvents{store: s, manifests: reg.Manifests, tags: reg.Tags, secret: reg.EventsSecret}
 	mux.HandleFunc("POST /internal/registry/events", ev.serve)
-	mux.Handle("/v2/", registryProxy(reg.Upstream, reg.PublicURL.JoinPath("/v2/token").String()))
+	mux.Handle("/v2/", registryProxy(reg.Upstream, reg.PublicURL, reg.OtherURLs))
 }
 
 type registryTokens struct {
@@ -185,17 +187,29 @@ func (t *registryTokens) buildMayPull(ctx context.Context, b store.ImageBuild, i
 
 var realmPattern = regexp.MustCompile(`realm="[^"]*"`)
 
-func registryProxy(upstream *url.URL, realm string) http.Handler {
+type realmKey struct{}
+
+// registryProxy points the token realm at the configured URL whose host the request came in on, never at the Host header itself.
+func registryProxy(upstream, public *url.URL, others []*url.URL) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(upstream) },
 		ModifyResponse: func(resp *http.Response) error {
 			if v := resp.Header.Get("WWW-Authenticate"); v != "" {
+				realm := resp.Request.Context().Value(realmKey{}).(string)
 				resp.Header.Set("WWW-Authenticate", realmPattern.ReplaceAllLiteralString(v, `realm="`+realm+`"`))
 			}
 			return nil
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base := public
+		for _, u := range others {
+			if strings.EqualFold(u.Host, r.Host) {
+				base = u
+				break
+			}
+		}
+		r = r.WithContext(context.WithValue(r.Context(), realmKey{}, base.JoinPath("/v2/token").String()))
 		// Blob transfers outlast the hub's server-wide read and write timeouts.
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Time{})

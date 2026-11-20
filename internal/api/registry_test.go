@@ -306,3 +306,27 @@ func (zeroReader) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
 }
+
+func TestProxyRealmFollowsConfiguredHost(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="http://registry:5000/token",service="observatory"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+	up, _ := url.Parse(upstream.URL)
+	node := &url.URL{Scheme: "http", Host: "100.64.0.1:8090"}
+	h := registryProxy(up, &url.URL{Scheme: "https", Host: "hub.test"}, []*url.URL{node})
+	for host, want := range map[string]string{
+		"100.64.0.1:8090": "http://100.64.0.1:8090/v2/token",
+		"hub.test":        "https://hub.test/v2/token",
+		"evil.test":       "https://hub.test/v2/token",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/v2/", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if got := w.Header().Get("WWW-Authenticate"); got != `Bearer realm="`+want+`",service="observatory"` {
+			t.Errorf("host %s: %q", host, got)
+		}
+	}
+}
