@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -224,6 +225,93 @@ func TestPromProxyRateLimit(t *testing.T) {
 	p.api.grafanaLimit.allow(uuid.New(), now)
 	if n := len(p.api.grafanaLimit.buckets); n != 1 {
 		t.Fatalf("idle buckets kept: %d", n)
+	}
+}
+
+// blockingUpstream holds every request until release is closed and reports how many are waiting.
+func blockingUpstream(t *testing.T) (srv *httptest.Server, waiting *atomic.Int32, release chan struct{}) {
+	waiting, release = &atomic.Int32{}, make(chan struct{})
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		waiting.Add(1)
+		defer waiting.Add(-1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	return srv, waiting, release
+}
+
+func waitFor(t *testing.T, n *atomic.Int32, want int32) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); n.Load() != want; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("waiting: %d, want %d", n.Load(), want)
+		}
+	}
+}
+
+func TestGrafanaConcurrencyCaps(t *testing.T) {
+	p := newPromEnv(t)
+	srv, waiting, release := blockingUpstream(t)
+	p.api.telemetry = &telemetry.Client{MetricsURL: srv.URL, LogsURL: srv.URL}
+	other := p.createTelemetryToken(p.tokSes, p.org, "other").Token
+	const tail, query = "/grafana/logs/select/logsql/tail?query=*", "/grafana/prometheus/api/v1/query"
+
+	var done sync.WaitGroup
+	start := func(target string, n int) {
+		for range n {
+			done.Go(func() { p.prom("GET", target, p.token, "") })
+		}
+	}
+	// Without a cap the request would block on the upstream, so it must answer promptly.
+	rejected := func(target string) {
+		t.Helper()
+		code := make(chan int, 1)
+		go func() { code <- p.prom("GET", target, p.token, "").Code }()
+		select {
+		case c := <-code:
+			if c != 429 {
+				t.Fatalf("%s over cap: %d", target, c)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s over cap was forwarded", target)
+		}
+	}
+	start(tail, 5)
+	waitFor(t, waiting, 5)
+	rejected(tail)
+	start(query, 15)
+	waitFor(t, waiting, 20)
+	rejected(query)
+	done.Go(func() {
+		if rec := p.prom("GET", query, other, ""); rec.Code != 200 {
+			t.Errorf("other token: %d", rec.Code)
+		}
+	})
+	waitFor(t, waiting, 21)
+
+	close(release)
+	done.Wait()
+	if n := len(p.api.grafanaInflight.used) + len(p.api.grafanaTails.used); n != 0 {
+		t.Fatalf("slots not released: %d", n)
+	}
+	// A rejected tail and a 404 must not leak their request slot either.
+	for range 25 {
+		if rec := p.prom("GET", "/grafana/prometheus/api/v1/admin", p.token, ""); rec.Code != 404 {
+			t.Fatalf("404: %d", rec.Code)
+		}
+	}
+	if n := len(p.api.grafanaInflight.used); n != 0 {
+		t.Fatalf("slots leaked: %d", n)
 	}
 }
 

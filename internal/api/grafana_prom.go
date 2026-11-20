@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const (
@@ -23,27 +25,31 @@ const (
 
 var promPath = regexp.MustCompile(`^/grafana/prometheus/api/v1/(query|query_range|series|labels|label/[a-zA-Z_][a-zA-Z0-9_.]*/values|status/buildinfo|metadata)$`)
 
-// grafanaRequest authenticates a Grafana bearer token and applies its rate limit; telemetry off reads as 404.
-func (h *api) grafanaRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+// grafanaRequest authenticates a Grafana bearer token and applies its rate limit and request cap (ok: caller calls done); telemetry off reads as 404.
+func (h *api) grafanaRequest(w http.ResponseWriter, r *http.Request) (tok store.TelemetryToken, done func(), ok bool) {
 	if h.telemetry == nil {
 		http.NotFound(w, r)
-		return uuid.Nil, false
+		return tok, nil, false
 	}
-	org, tok, status := h.grafanaAuth(r)
+	_, tok, status := h.grafanaAuth(r)
 	switch {
 	case status == http.StatusUnauthorized:
 		writeError(w, status, "unauthorized")
-		return uuid.Nil, false
+		return tok, nil, false
 	case status != http.StatusOK:
 		writeError(w, status, "internal error")
-		return uuid.Nil, false
+		return tok, nil, false
 	case !h.grafanaLimit.allow(tok.ID, h.now()):
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
-		return uuid.Nil, false
+		return tok, nil, false
+	}
+	if done, ok = h.grafanaInflight.acquire(tok.ID); !ok {
+		writeError(w, http.StatusTooManyRequests, "too many concurrent requests")
+		return tok, nil, false
 	}
 	// The hub's server-wide write timeout is shorter than a slow store query may take.
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(grafanaUpstreamTimeout + 5*time.Second))
-	return org, true
+	return tok, done, true
 }
 
 // grafanaParams merges the query string and, for POST, a url-encoded body of at most 1 MiB; it writes the error itself.
@@ -93,10 +99,11 @@ func stripParams(v url.Values, names ...string) {
 
 // promProxy forwards an allowlisted Prometheus API read to VictoriaMetrics, confined to the token's org.
 func (h *api) promProxy(w http.ResponseWriter, r *http.Request) {
-	org, ok := h.grafanaRequest(w, r)
+	tok, done, ok := h.grafanaRequest(w, r)
 	if !ok {
 		return
 	}
+	defer done()
 	// Any escape in the path (%2F, %2e, ...) is refused rather than decoded and re-matched.
 	m := promPath.FindStringSubmatch(r.URL.Path)
 	if m == nil || r.URL.EscapedPath() != r.URL.Path || (r.Method != http.MethodGet && r.Method != http.MethodPost) {
@@ -114,7 +121,7 @@ func (h *api) promProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stripParams(params, "extra_label", "extra_filters", "extra_filters[]")
-	params.Set("extra_label", "observatory_org="+org.String())
+	params.Set("extra_label", "observatory_org="+tok.OrgID.String())
 
 	ctx, cancel := context.WithTimeout(r.Context(), grafanaUpstreamTimeout)
 	defer cancel()
@@ -190,4 +197,32 @@ func (l *rateLimiter) allow(id uuid.UUID, now time.Time) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// tokenSlots caps the concurrent requests of each telemetry token.
+type tokenSlots struct {
+	mu    sync.Mutex
+	limit int
+	used  map[uuid.UUID]int
+}
+
+func newTokenSlots(limit int) *tokenSlots {
+	return &tokenSlots{limit: limit, used: map[uuid.UUID]int{}}
+}
+
+// acquire takes a slot of id; when ok the caller must call release exactly once.
+func (s *tokenSlots) acquire(id uuid.UUID) (release func(), ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.used[id] >= s.limit {
+		return nil, false
+	}
+	s.used[id]++
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.used[id]--; s.used[id] == 0 {
+			delete(s.used, id)
+		}
+	}, true
 }

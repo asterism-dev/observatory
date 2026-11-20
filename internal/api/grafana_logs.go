@@ -15,14 +15,23 @@ var grafanaLogsPath = regexp.MustCompile(`^/grafana/logs/select/logsql/(query|ta
 
 // logsProxy forwards an allowlisted LogsQL read to VictoriaLogs, confined to the token's org.
 func (h *api) logsProxy(w http.ResponseWriter, r *http.Request) {
-	org, ok := h.grafanaRequest(w, r)
+	tok, done, ok := h.grafanaRequest(w, r)
 	if !ok {
 		return
 	}
+	defer done()
 	m := grafanaLogsPath.FindStringSubmatch(r.URL.Path)
 	if m == nil || r.URL.EscapedPath() != r.URL.Path || (r.Method != http.MethodGet && r.Method != http.MethodPost) {
 		http.NotFound(w, r)
 		return
+	}
+	if m[1] == "tail" {
+		release, ok := h.grafanaTails.acquire(tok.ID)
+		if !ok {
+			writeError(w, http.StatusTooManyRequests, "too many concurrent tails")
+			return
+		}
+		defer release()
 	}
 	params, ok := grafanaParams(w, r)
 	if !ok {
@@ -33,7 +42,7 @@ func (h *api) logsProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "query uses a LogsQL construct the hub does not allow")
 		return
 	}
-	params.Set("extra_filters", fmt.Sprintf("observatory.org:=%q", org.String()))
+	params.Set("extra_filters", fmt.Sprintf("observatory.org:=%q", tok.OrgID.String()))
 
 	timeout := grafanaUpstreamTimeout
 	if m[1] == "tail" {
@@ -68,7 +77,10 @@ func (h *api) endTailOnRevoke(ctx context.Context, cancel context.CancelFunc, r 
 			return
 		case <-t.C:
 			if _, _, status := h.grafanaAuth(r); status == http.StatusUnauthorized {
-				_ = rc.SetWriteDeadline(time.Now())
+				// Once the handler has returned, the connection may already serve another request.
+				if ctx.Err() == nil {
+					_ = rc.SetWriteDeadline(time.Now())
+				}
 				cancel()
 				return
 			}
