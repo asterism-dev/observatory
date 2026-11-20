@@ -26,7 +26,8 @@ the VM page under `vm:metrics` (stream `console`, see below).
 The VM page has a Metrics tab with usage graphs, the live process list and log streams. VMs on the new guest init send
 telemetry; builder VMs never do, and a VM started before this feature sends none until it reboots.
 
-Usage, every 10 seconds, with the same `system.*` names as nodes (CPU, load, memory, paging, filesystems, network).
+Usage, every 10 seconds, with the node's `system.*` names minus paging: `system.cpu.time`, `system.cpu.load_average.1m`,
+`.5m` and `.15m`, `system.memory.usage`, `system.filesystem.usage` and `system.filesystem.limit`, and `system.network.io`.
 
 Log streams:
 
