@@ -103,6 +103,7 @@ func NewSink(fw *Forwarder, dropped func(vmID uuid.UUID, kind string, n int64)) 
 	if dropped == nil {
 		dropped = func(uuid.UUID, string, int64) {}
 	}
+	fw.dropped = dropped
 	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), decodes: make(chan struct{}, maxDecodes), vms: map[uuid.UUID]*vmLimits{}, forgets: map[uuid.UUID]*time.Timer{}}
 }
 
@@ -177,6 +178,67 @@ func LineRecord(line string) *logspb.LogRecord {
 	}
 }
 
+// MaxBatch bounds the lines of one LineBatch emit, as the VM's log burst does.
+const MaxBatch = logBurst
+
+var batchInterval = time.Second
+
+// LineBatch hands node-origin lines to emit as records, MaxBatch at a time and at least every batchInterval, so a burst is not one forwarder body per line.
+type LineBatch struct {
+	emit func(records []*logspb.LogRecord)
+	mu   sync.Mutex
+	recs []*logspb.LogRecord
+	stop chan struct{}
+	done chan struct{}
+}
+
+func NewLineBatch(emit func(records []*logspb.LogRecord)) *LineBatch {
+	b := &LineBatch{emit: emit, stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(b.done)
+		t := time.NewTicker(batchInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				b.mu.Lock()
+				b.flush()
+				b.mu.Unlock()
+			case <-b.stop:
+				return
+			}
+		}
+	}()
+	return b
+}
+
+// Add queues line as a LineRecord; a full batch is emitted at once.
+func (b *LineBatch) Add(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.recs = append(b.recs, LineRecord(line))
+	if len(b.recs) >= MaxBatch {
+		b.flush()
+	}
+}
+
+// Close emits what is left and stops the timer.
+func (b *LineBatch) Close() {
+	close(b.stop)
+	<-b.done
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.flush()
+}
+
+// flush runs under mu so batches go out in order.
+func (b *LineBatch) flush() {
+	if len(b.recs) > 0 {
+		b.emit(b.recs)
+		b.recs = nil
+	}
+}
+
 // Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not registered are dropped.
 func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) {
 	s.mu.Lock()
@@ -186,8 +248,8 @@ func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) 
 		return
 	}
 	req := &collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}}}}}
-	if out := s.admitLogs(vmID, v, req); out != nil {
-		s.fw.Send(vmID, "logs", stream, out)
+	if out, n := s.admitLogs(vmID, v, req); out != nil {
+		s.fw.Send(vmID, "logs", stream, out, n)
 	}
 }
 
@@ -259,13 +321,15 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v 
 			t.Stop()
 			defer func() { <-s.decodes }()
 		case <-t.C:
+			s.dropped(vmID, "body", 1)
 			http.Error(w, "busy", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	var out []byte
+	var records int
 	if err == nil && signal == "logs" {
-		out, err = s.admitLogsBody(vmID, v, body)
+		out, records, err = s.admitLogsBody(vmID, v, body)
 	} else if err == nil {
 		out, err = s.admitMetrics(vmID, v, stream, body)
 	}
@@ -277,7 +341,7 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v 
 		return
 	}
 	if out != nil {
-		s.fw.Send(vmID, signal, stream, out)
+		s.fw.Send(vmID, signal, stream, out, records)
 	}
 	// An empty body is the protobuf encoding of an empty Export*ServiceResponse.
 	w.Header().Set("Content-Type", "application/x-protobuf")
@@ -355,26 +419,27 @@ func tooManyAttrs(attrs ...[]*commonpb.KeyValue) bool {
 	return slices.ContainsFunc(attrs, func(a []*commonpb.KeyValue) bool { return len(a) > maxAttrs })
 }
 
-func (s *Sink) admitLogsBody(vmID uuid.UUID, v *vmLimits, body []byte) ([]byte, error) {
+func (s *Sink) admitLogsBody(vmID uuid.UUID, v *vmLimits, body []byte) ([]byte, int, error) {
 	var req collogspb.ExportLogsServiceRequest
 	if err := gproto.Unmarshal(body, &req); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	for _, rl := range req.ResourceLogs {
 		if tooManyAttrs(rl.GetResource().GetAttributes()) {
-			return nil, errTooManyAttrs
+			return nil, 0, errTooManyAttrs
 		}
 		for _, sl := range rl.GetScopeLogs() {
 			if tooManyAttrs(sl.GetScope().GetAttributes()) || slices.ContainsFunc(sl.GetLogRecords(), func(r *logspb.LogRecord) bool { return tooManyAttrs(r.GetAttributes()) }) {
-				return nil, errTooManyAttrs
+				return nil, 0, errTooManyAttrs
 			}
 		}
 	}
-	return s.admitLogs(vmID, v, &req), nil
+	out, n := s.admitLogs(vmID, v, &req)
+	return out, n, nil
 }
 
-// admitLogs keeps the records the VM's token bucket allows and returns them encoded, nil if none are left.
-func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsServiceRequest) []byte {
+// admitLogs keeps the records the VM's token bucket allows and returns them encoded with their count, nil if none are left.
+func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsServiceRequest) ([]byte, int) {
 	n := 0
 	for _, rl := range req.ResourceLogs {
 		for _, sl := range rl.GetScopeLogs() {
@@ -382,7 +447,7 @@ func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsS
 		}
 	}
 	if n == 0 {
-		return nil
+		return nil, 0
 	}
 	v.mu.Lock()
 	v.logs.refill(time.Now(), logRate, logBurst)
@@ -401,10 +466,10 @@ func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsS
 		}
 	}
 	if allowed == 0 {
-		return nil
+		return nil, 0
 	}
 	out, _ := gproto.Marshal(req)
-	return out
+	return out, allowed
 }
 
 type seriesPoint struct {

@@ -45,10 +45,12 @@ const maxLine = 16 << 10
 
 // tailFCLog logs each line of path until ctx is done, then reads once more for the lines written as the VM exited.
 func tailFCLog(ctx context.Context, path, vmID, vmName string) {
-	err := tailLines(ctx, path, 0, func(line string) {
-		level, msg := parseFCLogLine(line)
-		// ctx only signals the VM's end; the last lines must still go out.
-		slog.Log(context.Background(), level, msg, "source", "firecracker", "vm", vmID, "vm_name", vmName)
+	err := tailLines(ctx, path, 0, func(lines []string) {
+		for _, line := range lines {
+			level, msg := parseFCLogLine(line)
+			// ctx only signals the VM's end; the last lines must still go out.
+			slog.Log(context.Background(), level, msg, "source", "firecracker", "vm", vmID, "vm_name", vmName)
+		}
 	})
 	if err != nil {
 		slog.Warn("firecracker log", "vm", vmID, "err", err)
@@ -59,16 +61,20 @@ type logEmitter func(vmID uuid.UUID, stream string, records []*logspb.LogRecord)
 
 // tailConsole emits the lines the guest console gets from offset on.
 func tailConsole(ctx context.Context, path string, offset int64, vmID uuid.UUID, emit logEmitter) {
-	err := tailLines(ctx, path, offset, func(line string) {
-		emit(vmID, "console", []*logspb.LogRecord{vmtelemetry.LineRecord(strings.TrimSuffix(line, "\r"))})
+	err := tailLines(ctx, path, offset, func(lines []string) {
+		recs := make([]*logspb.LogRecord, len(lines))
+		for i, line := range lines {
+			recs[i] = vmtelemetry.LineRecord(strings.TrimSuffix(line, "\r"))
+		}
+		emit(vmID, "console", recs)
 	})
 	if err != nil {
 		slog.Warn("console log", "vm", vmID, "err", err)
 	}
 }
 
-// tailLines calls emit for each complete line of path from offset until ctx is done, then once more for the lines written as the VM exited.
-func tailLines(ctx context.Context, path string, offset int64, emit func(line string)) error {
+// tailLines calls emit with the complete lines of path from offset, up to vmtelemetry.MaxBatch per call and read pass, until ctx is done, then once more for the lines written as the VM exited.
+func tailLines(ctx context.Context, path string, offset int64, emit func(lines []string)) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -79,6 +85,7 @@ func tailLines(ctx context.Context, path string, offset int64, emit func(line st
 	}
 	r := bufio.NewReader(f)
 	var partial []byte
+	var batch []string
 	var discarding bool
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -92,9 +99,13 @@ func tailLines(ctx context.Context, path string, offset int64, emit func(line st
 			if !discarding {
 				partial = append(partial, strings.TrimSuffix(string(chunk), "\n")...)
 				if len(partial) >= maxLine || end {
-					emit(string(partial[:min(len(partial), maxLine)]))
+					batch = append(batch, string(partial[:min(len(partial), maxLine)]))
 					partial = partial[:0]
 					discarding = !end
+					if len(batch) == vmtelemetry.MaxBatch {
+						emit(batch)
+						batch = nil
+					}
 				}
 			} else if end {
 				discarding = false
@@ -102,6 +113,10 @@ func tailLines(ctx context.Context, path string, offset int64, emit func(line st
 			if err == io.EOF {
 				break
 			}
+		}
+		if len(batch) > 0 {
+			emit(batch)
+			batch = nil
 		}
 		if ctx.Err() != nil {
 			return nil

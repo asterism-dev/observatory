@@ -109,7 +109,7 @@ func TestVMForwarderRetryClass(t *testing.T) {
 		}
 		return http.StatusOK
 	})
-	newTestForwarder(t, retried.URL).Send(vm, "logs", "app", []byte("a"))
+	newTestForwarder(t, retried.URL).Send(vm, "logs", "app", []byte("a"), 1)
 	eventually(t, "retry after 503", func() bool { return len(retried.requests()) == 2 })
 	got := retried.requests()[1]
 	if got.path != "/otlp/v1/logs" || string(got.body) != "a" {
@@ -119,8 +119,8 @@ func TestVMForwarderRetryClass(t *testing.T) {
 	for _, code := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusTemporaryRedirect} {
 		rejected := newFakeHub(t, func(int) int { return code })
 		f := newTestForwarder(t, rejected.URL)
-		f.Send(vm, "metrics", "usage", []byte("x"))
-		f.Send(vm, "metrics", "usage", []byte("y"))
+		f.Send(vm, "metrics", "usage", []byte("x"), 0)
+		f.Send(vm, "metrics", "usage", []byte("y"), 0)
 		eventually(t, "both sent", func() bool { return len(rejected.requests()) == 2 })
 		time.Sleep(50 * time.Millisecond)
 		if reqs := rejected.requests(); len(reqs) != 2 || string(reqs[0].body) != "x" || string(reqs[1].body) != "y" {
@@ -135,10 +135,10 @@ func TestVMForwarderBounded(t *testing.T) {
 	down.Close()
 	f := newTestForwarder(t, down.URL)
 	a, b := uuid.New(), uuid.New()
-	f.Send(b, "logs", "app", []byte("b"))
+	f.Send(b, "logs", "app", []byte("b"), 1)
 	start := time.Now()
 	for i := range 200 {
-		f.Send(a, "logs", "app", fmt.Appendf(nil, "%d", i))
+		f.Send(a, "logs", "app", fmt.Appendf(nil, "%d", i), 1)
 	}
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("200 sends took %v", d)
@@ -155,7 +155,7 @@ func TestVMForwarderBounded(t *testing.T) {
 	for range 6 {
 		big := make([]byte, 1<<20)
 		rand.Read(big)
-		f.Send(c, "logs", "app", big)
+		f.Send(c, "logs", "app", big, 1)
 	}
 	f.mu.Lock()
 	size, n := f.queues[c].size, len(f.queues[c].items)
@@ -173,7 +173,7 @@ func TestVMForwarderForget(t *testing.T) {
 	down.Close()
 	f := newTestForwarder(t, down.URL)
 	vm := uuid.New()
-	f.Send(vm, "logs", "app", []byte("a"))
+	f.Send(vm, "logs", "app", []byte("a"), 1)
 	time.Sleep(50 * time.Millisecond) // the sender's first post has failed and it waits to retry
 	f.Forget(vm)
 	if got := queued(f, vm); got != nil {
@@ -187,5 +187,26 @@ func TestVMForwarderForget(t *testing.T) {
 	case <-done:
 	case <-ctx.Done():
 		t.Fatal("sender still running after Forget")
+	}
+}
+
+func TestVMForwarderCountsEvictions(t *testing.T) {
+	fastRetry(t)
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	f := newTestForwarder(t, down.URL)
+	d := &drops{n: map[string]int64{}}
+	NewSink(f, d.add)
+	vm := uuid.New()
+	f.Send(vm, "metrics", "app", []byte("m"), 0)
+	for range maxQueueBodies {
+		f.Send(vm, "logs", "console", []byte("l"), 3)
+	}
+	if d.get("body") != 1 || d.get("logs") != 0 {
+		t.Fatalf("metrics body evicted: drops %v", d.n)
+	}
+	f.Send(vm, "logs", "console", []byte("l"), 3)
+	if d.get("logs") != 3 {
+		t.Fatalf("logs body evicted: drops %v", d.n)
 	}
 }

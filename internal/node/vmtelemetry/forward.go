@@ -27,6 +27,7 @@ type item struct {
 	seq            uint64
 	signal, stream string
 	body           []byte // gzip
+	records        int
 }
 
 type queue struct {
@@ -43,6 +44,7 @@ type Forwarder struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	wg               sync.WaitGroup
+	dropped          func(vmID uuid.UUID, kind string, n int64) // set by NewSink
 
 	mu     sync.Mutex
 	seq    uint64
@@ -55,11 +57,12 @@ func NewForwarder(hubBase, credential string, hc *http.Client) *Forwarder {
 	c := *hc
 	// A redirect would resend the node credential to wherever the response points.
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Forwarder{base: hubBase, credential: credential, hc: &c, ctx: ctx, cancel: cancel, queues: map[uuid.UUID]*queue{}}
+	return &Forwarder{base: hubBase, credential: credential, hc: &c, ctx: ctx, cancel: cancel, queues: map[uuid.UUID]*queue{},
+		dropped: func(uuid.UUID, string, int64) {}}
 }
 
-// Send queues an OTLP protobuf body of signal ("logs" or "metrics") for the hub, dropping vmID's oldest bodies past the bound.
-func (f *Forwarder) Send(vmID uuid.UUID, signal, stream string, body []byte) {
+// Send queues an OTLP protobuf body of signal ("logs" or "metrics") holding records log records for the hub, dropping vmID's oldest bodies past the bound.
+func (f *Forwarder) Send(vmID uuid.UUID, signal, stream string, body []byte, records int) {
 	var b bytes.Buffer
 	zw := gzip.NewWriter(&b)
 	zw.Write(body)
@@ -78,9 +81,14 @@ func (f *Forwarder) Send(vmID uuid.UUID, signal, stream string, body []byte) {
 		go f.run(vmID, q)
 	}
 	f.seq++
-	q.items = append(q.items, item{f.seq, signal, stream, b.Bytes()})
+	q.items = append(q.items, item{f.seq, signal, stream, b.Bytes(), records})
 	q.size += b.Len()
 	for len(q.items) > maxQueueBodies || q.size > maxQueueBytes {
+		if n := q.items[0].records; n > 0 {
+			f.dropped(vmID, "logs", int64(n))
+		} else {
+			f.dropped(vmID, "body", 1)
+		}
 		q.size -= len(q.items[0].body)
 		q.items[0] = item{}
 		q.items = q.items[1:]

@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 )
 
-func TestEmitEgressLineSkipsWithoutSinkOrVM(t *testing.T) {
-	emitEgressLine(nil, uuid.New(), "egress vm=x vars=SECRET")
-	emitEgressLine(nil, uuid.Nil, "egress vm=x vars=SECRET")
+func TestEmitEgressSkipsWithoutSinkOrVM(t *testing.T) {
+	emitEgress(nil, uuid.New(), []*logspb.LogRecord{{}})
+	emitEgress(nil, uuid.Nil, []*logspb.LogRecord{{}})
 }

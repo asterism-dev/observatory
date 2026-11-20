@@ -402,8 +402,8 @@ func TestVMSinkDecodeBounds(t *testing.T) {
 	for range maxDecodes {
 		e.sink.decodes <- struct{}{}
 	}
-	if code := post(t, c, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusServiceUnavailable {
-		t.Fatalf("all decode slots taken: status %d", code)
+	if code := post(t, c, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusServiceUnavailable || e.drops.get("body") != 2 {
+		t.Fatalf("all decode slots taken: status %d, body drops %d", code, e.drops.get("body"))
 	}
 	<-e.sink.decodes
 	if code := post(t, c, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusOK {
@@ -537,5 +537,27 @@ func TestVMSinkPreScanCountsBounds(t *testing.T) {
 	c := e.serve(t, vm)
 	if code := post(t, c, "/v1/metrics", "app", histogramBody(t, maxItems, "x"), true); code != http.StatusRequestEntityTooLarge || e.drops.get("body") != 1 {
 		t.Fatalf("%d packed bounds: status %d, body drops %d", maxItems, code, e.drops.get("body"))
+	}
+}
+
+func TestLineBatch(t *testing.T) {
+	old := batchInterval
+	batchInterval = 200 * time.Millisecond
+	t.Cleanup(func() { batchInterval = old })
+	var mu sync.Mutex
+	var batches []int
+	got := func() []int { mu.Lock(); defer mu.Unlock(); return append([]int(nil), batches...) }
+	b := NewLineBatch(func(recs []*logspb.LogRecord) { mu.Lock(); batches = append(batches, len(recs)); mu.Unlock() })
+	for range 2*MaxBatch + 1 {
+		b.Add("line")
+	}
+	if g := got(); !reflect.DeepEqual(g, []int{MaxBatch, MaxBatch}) {
+		t.Fatalf("full batches = %v", g)
+	}
+	eventually(t, "the rest after the interval", func() bool { return len(got()) == 3 })
+	b.Add("last")
+	b.Close()
+	if g := got(); !reflect.DeepEqual(g, []int{MaxBatch, MaxBatch, 1, 1}) {
+		t.Fatalf("batches = %v", g)
 	}
 }
