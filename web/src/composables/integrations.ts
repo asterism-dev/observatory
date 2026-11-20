@@ -3,6 +3,35 @@ import type { WritableScope } from './envScopes'
 export type IntegrationKind = 'github' | 'claude' | 'linear'
 export type IntegrationMode = 'proxy' | 'vm'
 
+export interface ClaudeUsage {
+  fiveHourPct: number | null
+  fiveHourResetsAt: string | null
+  weekPct: number | null
+  weekResetsAt: string | null
+  limitedUntil: string | null
+  source: string
+  at: string | null
+}
+
+export interface ClaudeAccount {
+  id: string
+  account: string
+  source: 'oauth' | 'setup-token'
+  position: number
+  active: boolean
+  status: 'ok' | 'expired'
+  lastError: string
+  usage: ClaudeUsage
+}
+
+export interface ClaudeLastSwitch {
+  at: string
+  fromId: string
+  from: string
+  toId: string
+  to: string
+}
+
 export interface Integration extends WritableScope {
   id: string
   kind: IntegrationKind
@@ -15,6 +44,8 @@ export interface Integration extends WritableScope {
   wasInVm: boolean
   canEdit: boolean
   canDelete: boolean
+  accounts?: ClaudeAccount[]
+  lastSwitch?: ClaudeLastSwitch | null
 }
 
 export interface IntegrationScope extends WritableScope {
