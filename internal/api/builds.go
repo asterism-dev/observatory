@@ -403,7 +403,8 @@ func (a *buildAgent) log(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "log chunk too large")
 		return
 	}
-	if err := a.store.AppendBuildLog(r.Context(), b.ID, chunk); errors.Is(err, store.ErrBuildLogFinished) {
+	accepted, err := a.store.AppendBuildLog(r.Context(), b.ID, chunk)
+	if errors.Is(err, store.ErrBuildLogFinished) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	} else if err != nil {
@@ -411,7 +412,7 @@ func (a *buildAgent) log(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.copier != nil {
-		a.copier.chunk(r.Context(), b, chunk)
+		a.copier.chunk(r.Context(), b, chunk[:accepted])
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

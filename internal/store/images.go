@@ -650,8 +650,9 @@ func (s *Store) ImageBuilds(ctx context.Context, image uuid.UUID) ([]ImageBuild,
 }
 
 // AppendBuildLog stores chunk up to BuildLogLiveCap, then drops further output after one marker line.
-func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byte) error {
-	return s.InTx(ctx, func(tx *Store) error {
+// It returns how many bytes of chunk were stored, not counting the marker.
+func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byte) (accepted int, err error) {
+	err = s.InTx(ctx, func(tx *Store) error {
 		// FOR UPDATE serializes appends, so chunk ids also commit in order for BuildLogSince.
 		finished, err := tx.lockBuildLog(ctx, build, "FOR UPDATE")
 		if err != nil {
@@ -668,7 +669,9 @@ func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byt
 		if stored > BuildLogLiveCap {
 			return nil
 		}
+		accepted = len(chunk)
 		if room := BuildLogLiveCap - stored; int64(len(chunk)) > room {
+			accepted = int(room)
 			chunk = append(chunk[:room:room], buildLogCapMarker...)
 			stored = BuildLogLiveCap + 1
 		} else {
@@ -680,6 +683,10 @@ func (s *Store) AppendBuildLog(ctx context.Context, build uuid.UUID, chunk []byt
 		_, err = tx.q.Exec(ctx, "INSERT INTO image_build_log_chunks (build_id, chunk) VALUES ($1, $2)", build, chunk)
 		return err
 	})
+	if err != nil {
+		accepted = 0
+	}
+	return accepted, err
 }
 
 // BuildLogSince returns the chunks after chunk id after and the last id read, or finished once the log is compacted.

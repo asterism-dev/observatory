@@ -14,6 +14,7 @@ import (
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
@@ -195,6 +196,48 @@ func TestBuildLogTeamImageCopied(t *testing.T) {
 	}
 }
 
+func TestBuildLogCopiesOnlyStoredBytes(t *testing.T) {
+	e, fake, stop := buildLogEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	b, secret := e.running(tok, org, e.recipeImage(tok, org, "tools", ""))
+	fill := make([]byte, 1<<20)
+	for range store.BuildLogLiveCap/len(fill) - 1 {
+		if _, err := e.store.AppendBuildLog(context.Background(), b.ID, fill); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.store.AppendBuildLog(context.Background(), b.ID, fill[:len(fill)-6]); err != nil {
+		t.Fatal(err)
+	}
+	e.postLog(b.ID, secret, "one\ntwo\nthree\n")
+	e.postLog(b.ID, secret, "four\n")
+	e.agentDo("POST", "/api/builds/"+b.ID.String()+"/result", secret, `{"error":"boom"}`)
+	stop()
+	if got := bodies(fake.lines()); !slices.Equal(got, []string{"one", "tw"}) {
+		t.Fatalf("bodies = %v", got)
+	}
+}
+
+func TestBuildLogStopsAfterRescopeToPrivate(t *testing.T) {
+	old := copyScopeRefresh
+	copyScopeRefresh = 0
+	t.Cleanup(func() { copyScopeRefresh = old })
+	e, fake, stop := buildLogEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	img := e.recipeImage(tok, org, "tools", "")
+	b, secret := e.running(tok, org, img)
+	e.postLog(b.ID, secret, "public\npart")
+	e.exec("UPDATE images SET scope = 'user', user_id = created_by WHERE id = $1", img)
+	e.postLog(b.ID, secret, "ial\nprivate\n")
+	e.agentDo("POST", "/api/builds/"+b.ID.String()+"/result", secret, `{"error":"boom"}`)
+	stop()
+	if got := bodies(fake.lines()); !slices.Equal(got, []string{"public"}) {
+		t.Fatalf("bodies = %v", got)
+	}
+}
+
 func TestBuildLogTelemetryOff(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	_, tok := e.user("alice")
@@ -203,5 +246,9 @@ func TestBuildLogTelemetryOff(t *testing.T) {
 	e.postLog(b.ID, secret, "x\ny")
 	if rec := e.agentDo("POST", "/api/builds/"+b.ID.String()+"/result", secret, `{"error":"boom"}`); rec.Code != 204 {
 		t.Fatalf("result: %d", rec.Code)
+	}
+	rec := e.do("GET", buildsPath(org, e.build(b.ID).ImageID)+"/"+b.ID.String()+"/log", tok)
+	if rec.Code != 200 || rec.Body.String() != "x\ny" {
+		t.Fatalf("log: %d %q", rec.Code, rec.Body.String())
 	}
 }

@@ -66,7 +66,10 @@ With telemetry on, the hub also copies the log of every build of an **org** or *
 arrives, one record per line, with stream `build`. Builds of private (user) images are never copied. Postgres stays the
 record: the build log API and the web UI read from it and do not change, and the copy is best effort. If the store is
 down the queue holds at most 10 000 lines (the oldest are dropped) and the build is never slowed or failed. Lines are cut
-at 16 KiB. A builder agent that retries a chunk can leave duplicate lines in the copy but not in the build log.
+at 16 KiB, a trailing `\r` is dropped, and only bytes the build log accepted are copied (nothing past its 64 MiB live cap).
+The image's scope is re-read every 30 seconds: after a rescope to private, copying stops, but lines already copied stay
+until retention. A partial last line is copied when the builder reports the result; for a build that times out or is
+cancelled it is lost. A builder agent that retries a chunk can leave duplicate lines in the copy but not in the build log.
 
 Records carry `observatory.org`, `observatory.image`, `observatory.image_name`, `observatory.image_scope` (`org` or
 `team`), `observatory.build`, `observatory.stream=build` and `service.name=observatory-builder`, and no node or VM
