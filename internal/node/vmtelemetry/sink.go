@@ -23,11 +23,13 @@ import (
 )
 
 const (
-	maxBody      = 1 << 20
-	logRate      = 100
-	logBurst     = 500
-	maxSeries    = 2000
-	seriesWindow = time.Hour
+	maxBody        = 1 << 20
+	logRate        = 100
+	logBurst       = 500
+	maxSeries      = 2000
+	maxUsageSeries = 500
+	maxAttrs       = 128
+	seriesWindow   = time.Hour
 	// maxConns bounds what one guest can make the node buffer at once.
 	maxConns = 4
 )
@@ -35,7 +37,14 @@ const (
 // guestStreams are the stream classes a guest may send per signal; console and egress only originate on the node.
 var guestStreams = map[string][]string{"logs": {"service", "system", "app"}, "metrics": {"usage", "app"}}
 
-var errTooLarge = errors.New("body too large")
+var (
+	errTooLarge     = errors.New("body too large")
+	errTooManyAttrs = errors.New("too many attributes")
+)
+
+// usageMetrics are the metrics the guest collector sends on stream usage.
+var usageMetrics = []string{"system.cpu.time", "system.memory.usage", "system.filesystem.usage", "system.filesystem.limit", "system.network.io",
+	"system.cpu.load_average.1m", "system.cpu.load_average.5m", "system.cpu.load_average.15m"}
 
 // Sink enforces the per-VM limits on telemetry from guests and node-origin streams before handing it to the Forwarder.
 type Sink struct {
@@ -44,14 +53,26 @@ type Sink struct {
 	seed    maphash.Seed
 
 	mu  sync.Mutex
-	vms map[uuid.UUID]*vmLimits
+	vms map[uuid.UUID]*vmLimits // VMs being served
 }
 
+// vmLimits is one VM's limit state; its own lock keeps one VM's admission from holding up another's.
 type vmLimits struct {
-	tokens      float64
-	filled      time.Time
+	mu          sync.Mutex
+	logs        bucket
 	windowStart time.Time
-	series      map[uint64]struct{} // app series seen in the current window
+	series      map[string]map[uint64]struct{} // per stream, the series seen in the current window
+}
+
+type bucket struct {
+	tokens float64
+	filled time.Time
+}
+
+// refill adds what accrued since the last refill at rate per second, up to burst.
+func (b *bucket) refill(now time.Time, rate, burst float64) {
+	b.tokens = min(burst, b.tokens+now.Sub(b.filled).Seconds()*rate)
+	b.filled = now
 }
 
 // NewSink forwards through fw and reports every drop to dropped, which may be nil.
@@ -62,10 +83,15 @@ func NewSink(fw *Forwarder, dropped func(vmID uuid.UUID, kind string, n int64)) 
 	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), vms: map[uuid.UUID]*vmLimits{}}
 }
 
-// Serve answers OTLP/HTTP requests on l, the listener of vmID only, until l is closed.
+// Serve answers OTLP/HTTP requests on l, the listener of vmID only, until l is closed; it starts vmID with fresh limits.
 func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
+	now := time.Now()
+	v := &vmLimits{logs: bucket{logBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
+	s.mu.Lock()
+	s.vms[vmID] = v
+	s.mu.Unlock()
 	srv := &http.Server{
-		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, vmID) }),
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, vmID, v) }),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       time.Minute,
 		IdleTimeout:       2 * time.Minute,
@@ -74,22 +100,28 @@ func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
 	srv.Serve(netutil.LimitListener(l, maxConns))
 }
 
-// Emit forwards node-origin log records of vmID under the VM's log limit.
+// Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not being served are dropped.
 func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) {
+	s.mu.Lock()
+	v := s.vms[vmID]
+	s.mu.Unlock()
+	if v == nil {
+		return
+	}
 	req := &collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}}}}}
-	if out := s.admitLogs(vmID, req); out != nil {
+	if out := s.admitLogs(vmID, v, req); out != nil {
 		s.fw.Send(vmID, "logs", stream, out)
 	}
 }
 
-// Forget drops vmID's limit state once the VM has exited.
+// Forget drops vmID's limit state once the VM has exited; requests still in flight keep the state they started with.
 func (s *Sink) Forget(vmID uuid.UUID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.vms, vmID)
 }
 
-func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID) {
+func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v *vmLimits) {
 	signal, _ := strings.CutPrefix(r.URL.Path, "/v1/")
 	streams, ok := guestStreams[signal]
 	if !ok || r.Method != http.MethodPost {
@@ -109,12 +141,12 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID) {
 	}
 	var out []byte
 	if err == nil && signal == "logs" {
-		var req collogspb.ExportLogsServiceRequest
-		if err = gproto.Unmarshal(body, &req); err == nil {
-			out = s.admitLogs(vmID, &req)
-		}
+		out, err = s.admitLogsBody(vmID, v, body)
 	} else if err == nil {
-		out, err = s.admitMetrics(vmID, stream, body)
+		out, err = s.admitMetrics(vmID, v, stream, body)
+	}
+	if errors.Is(err, errTooManyAttrs) {
+		s.dropped(vmID, "body", 1)
 	}
 	if err != nil {
 		http.Error(w, "invalid OTLP body", http.StatusBadRequest)
@@ -150,17 +182,30 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	return body, err
 }
 
-func (s *Sink) limits(vmID uuid.UUID, now time.Time) *vmLimits {
-	v := s.vms[vmID]
-	if v == nil {
-		v = &vmLimits{tokens: logBurst, filled: now, windowStart: now, series: map[uint64]struct{}{}}
-		s.vms[vmID] = v
+func tooManyAttrs(attrs ...[]*commonpb.KeyValue) bool {
+	return slices.ContainsFunc(attrs, func(a []*commonpb.KeyValue) bool { return len(a) > maxAttrs })
+}
+
+func (s *Sink) admitLogsBody(vmID uuid.UUID, v *vmLimits, body []byte) ([]byte, error) {
+	var req collogspb.ExportLogsServiceRequest
+	if err := gproto.Unmarshal(body, &req); err != nil {
+		return nil, err
 	}
-	return v
+	for _, rl := range req.ResourceLogs {
+		if tooManyAttrs(rl.GetResource().GetAttributes()) {
+			return nil, errTooManyAttrs
+		}
+		for _, sl := range rl.GetScopeLogs() {
+			if tooManyAttrs(sl.GetScope().GetAttributes()) || slices.ContainsFunc(sl.GetLogRecords(), func(r *logspb.LogRecord) bool { return tooManyAttrs(r.GetAttributes()) }) {
+				return nil, errTooManyAttrs
+			}
+		}
+	}
+	return s.admitLogs(vmID, v, &req), nil
 }
 
 // admitLogs keeps the records the VM's token bucket allows and returns them encoded, nil if none are left.
-func (s *Sink) admitLogs(vmID uuid.UUID, req *collogspb.ExportLogsServiceRequest) []byte {
+func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsServiceRequest) []byte {
 	n := 0
 	for _, rl := range req.ResourceLogs {
 		for _, sl := range rl.GetScopeLogs() {
@@ -170,14 +215,11 @@ func (s *Sink) admitLogs(vmID uuid.UUID, req *collogspb.ExportLogsServiceRequest
 	if n == 0 {
 		return nil
 	}
-	now := time.Now()
-	s.mu.Lock()
-	v := s.limits(vmID, now)
-	v.tokens = min(logBurst, v.tokens+now.Sub(v.filled).Seconds()*logRate)
-	v.filled = now
-	allowed := min(n, int(v.tokens))
-	v.tokens -= float64(allowed)
-	s.mu.Unlock()
+	v.mu.Lock()
+	v.logs.refill(time.Now(), logRate, logBurst)
+	allowed := min(n, int(v.logs.tokens))
+	v.logs.tokens -= float64(allowed)
+	v.mu.Unlock()
 	if allowed < n {
 		s.dropped(vmID, "logs", int64(n-allowed))
 		left := allowed
@@ -196,50 +238,86 @@ func (s *Sink) admitLogs(vmID uuid.UUID, req *collogspb.ExportLogsServiceRequest
 	return out
 }
 
-// admitMetrics drops new app series past the VM's hourly limit; usage series are not counted.
-func (s *Sink) admitMetrics(vmID uuid.UUID, stream string, body []byte) ([]byte, error) {
+type seriesPoint struct {
+	key     uint64
+	allowed bool // false for a metric the stream does not accept
+}
+
+// admitMetrics drops new series past the VM's hourly limit of the stream and, on usage, every metric the guest collector does not send.
+func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []byte) ([]byte, error) {
 	var req colmetricspb.ExportMetricsServiceRequest
 	if err := gproto.Unmarshal(body, &req); err != nil {
 		return nil, err
 	}
-	if stream != "app" {
-		return body, nil
+	// Keys are hashed before taking the lock, so a costly request only delays itself.
+	var points []seriesPoint
+	for _, rm := range req.ResourceMetrics {
+		res := rm.GetResource().GetAttributes()
+		if tooManyAttrs(res) {
+			return nil, errTooManyAttrs
+		}
+		resKey := s.attrsKey(res)
+		for _, sm := range rm.GetScopeMetrics() {
+			if tooManyAttrs(sm.GetScope().GetAttributes()) {
+				return nil, errTooManyAttrs
+			}
+			for _, m := range sm.GetMetrics() {
+				allowed := stream != "usage" || slices.Contains(usageMetrics, m.GetName())
+				tooMany := false
+				keepPoints(m, func(attrs []*commonpb.KeyValue) bool {
+					tooMany = tooMany || tooManyAttrs(attrs)
+					points = append(points, seriesPoint{s.seriesKey(m.GetName(), resKey, attrs), allowed})
+					return true
+				})
+				if tooMany {
+					return nil, errTooManyAttrs
+				}
+			}
+		}
 	}
-	dropped, kept := 0, false
+	limit := maxSeries
+	if stream == "usage" {
+		limit = maxUsageSeries
+	}
+	keep := make([]bool, len(points))
+	dropped := 0
 	now := time.Now()
-	s.mu.Lock()
-	v := s.limits(vmID, now)
+	v.mu.Lock()
 	if now.Sub(v.windowStart) >= seriesWindow {
 		clear(v.series)
 		v.windowStart = now
 	}
-	for _, rm := range req.ResourceMetrics {
-		res := rm.GetResource().GetAttributes()
-		for _, sm := range rm.GetScopeMetrics() {
-			sm.Metrics = slices.DeleteFunc(sm.Metrics, func(m *metricspb.Metric) bool {
-				left := keepPoints(m, func(attrs []*commonpb.KeyValue) bool {
-					key := s.seriesKey(m.GetName(), res, attrs)
-					if _, ok := v.series[key]; ok {
-						return true
-					}
-					if len(v.series) < maxSeries {
-						v.series[key] = struct{}{}
-						return true
-					}
-					dropped++
-					return false
-				})
-				kept = kept || left
-				return !left
-			})
+	seen := v.series[stream]
+	if seen == nil {
+		seen = map[uint64]struct{}{}
+		v.series[stream] = seen
+	}
+	for i, p := range points {
+		if _, ok := seen[p.key]; ok && p.allowed {
+			keep[i] = true
+		} else if p.allowed && len(seen) < limit {
+			seen[p.key] = struct{}{}
+			keep[i] = true
+		} else {
+			dropped++
 		}
 	}
-	s.mu.Unlock()
+	v.mu.Unlock()
 	if dropped > 0 {
 		s.dropped(vmID, "series", int64(dropped))
 	}
-	if !kept {
+	if dropped == len(points) {
 		return nil, nil
+	}
+	if dropped > 0 {
+		i := 0
+		for _, rm := range req.ResourceMetrics {
+			for _, sm := range rm.GetScopeMetrics() {
+				sm.Metrics = slices.DeleteFunc(sm.Metrics, func(m *metricspb.Metric) bool {
+					return !keepPoints(m, func([]*commonpb.KeyValue) bool { i++; return keep[i-1] })
+				})
+			}
+		}
 	}
 	return gproto.Marshal(&req)
 }
@@ -280,21 +358,28 @@ func filterPoints[P interface{ GetAttributes() []*commonpb.KeyValue }](pts []P, 
 	return slices.DeleteFunc(pts, func(p P) bool { return !keep(p.GetAttributes()) })
 }
 
+// attrsKey hashes attributes independent of their order.
+func (s *Sink) attrsKey(attrs []*commonpb.KeyValue) uint64 {
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	sorted := slices.SortedFunc(slices.Values(attrs), func(a, b *commonpb.KeyValue) int { return strings.Compare(a.GetKey(), b.GetKey()) })
+	for _, kv := range sorted {
+		h.WriteString(kv.GetKey())
+		h.WriteByte(0)
+		v, _ := gproto.MarshalOptions{Deterministic: true}.Marshal(kv.GetValue())
+		h.Write(v)
+		h.WriteByte(0)
+	}
+	return h.Sum64()
+}
+
 // seriesKey hashes the metric name with the resource and point attributes, which the store turns into labels.
-func (s *Sink) seriesKey(name string, res, attrs []*commonpb.KeyValue) uint64 {
+func (s *Sink) seriesKey(name string, resKey uint64, attrs []*commonpb.KeyValue) uint64 {
 	var h maphash.Hash
 	h.SetSeed(s.seed)
 	h.WriteString(name)
-	for _, kvs := range [][]*commonpb.KeyValue{res, attrs} {
-		h.WriteByte(0)
-		sorted := slices.SortedFunc(slices.Values(kvs), func(a, b *commonpb.KeyValue) int { return strings.Compare(a.GetKey(), b.GetKey()) })
-		for _, kv := range sorted {
-			h.WriteString(kv.GetKey())
-			h.WriteByte(0)
-			v, _ := gproto.MarshalOptions{Deterministic: true}.Marshal(kv.GetValue())
-			h.Write(v)
-			h.WriteByte(0)
-		}
-	}
+	h.WriteByte(0)
+	maphash.WriteComparable(&h, resKey)
+	maphash.WriteComparable(&h, s.attrsKey(attrs))
 	return h.Sum64()
 }

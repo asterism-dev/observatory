@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -19,6 +20,7 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	gproto "google.golang.org/protobuf/proto"
 )
 
@@ -74,6 +76,14 @@ func (e *testEnv) serve(t *testing.T, vm uuid.UUID) *http.Client {
 
 func post(t *testing.T, c *http.Client, path, stream string, body []byte, gz bool) int {
 	t.Helper()
+	code, err := do(c, path, stream, body, gz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
+func do(c *http.Client, path, stream string, body []byte, gz bool) (int, error) {
 	if gz {
 		var b bytes.Buffer
 		zw := gzip.NewWriter(&b)
@@ -89,10 +99,10 @@ func post(t *testing.T, c *http.Client, path, stream string, body []byte, gz boo
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return 0, err
 	}
 	resp.Body.Close()
-	return resp.StatusCode
+	return resp.StatusCode, nil
 }
 
 func logsBody(t *testing.T, n int) []byte {
@@ -104,12 +114,12 @@ func logsBody(t *testing.T, n int) []byte {
 }
 
 // gaugeBody has one point per label value, each its own series.
-func gaugeBody(t *testing.T, values ...string) []byte {
+func gaugeBody(t *testing.T, name string, values ...string) []byte {
 	pts := make([]*metricspb.NumberDataPoint, len(values))
 	for i, v := range values {
 		pts[i] = &metricspb.NumberDataPoint{Attributes: []*commonpb.KeyValue{{Key: "k", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}}}
 	}
-	m := &metricspb.Metric{Name: "orders_total", Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: pts}}}
+	m := &metricspb.Metric{Name: name, Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: pts}}}
 	return marshal(t, &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{m}}}}}})
 }
 
@@ -231,9 +241,9 @@ func TestVMSinkLimits(t *testing.T) {
 		t.Fatalf("forwarded %d, dropped %d", n, e.drops.get("logs"))
 	}
 
-	post(t, c, "/v1/metrics", "app", gaugeBody(t, seq(0, maxSeries+1)...), false)
-	post(t, c, "/v1/metrics", "app", gaugeBody(t, "0", "new", fmt.Sprint(maxSeries-1)), false)
-	post(t, c, "/v1/metrics", "usage", gaugeBody(t, seq(5000, 5010)...), false)
+	post(t, c, "/v1/metrics", "app", gaugeBody(t, "orders_total", seq(0, maxSeries+1)...), false)
+	post(t, c, "/v1/metrics", "app", gaugeBody(t, "orders_total", "0", "new", fmt.Sprint(maxSeries-1)), false)
+	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "system.memory.usage", seq(5000, 5010)...), false)
 	eventually(t, "usage", func() bool { return e.hub.points(t, "usage") > 0 })
 	if app, usage := e.hub.points(t, "app"), e.hub.points(t, "usage"); app != maxSeries+2 || usage != 10 || e.drops.get("series") != 2 {
 		t.Fatalf("app points %d, usage points %d, series dropped %d", app, usage, e.drops.get("series"))
@@ -262,7 +272,80 @@ func TestVMSinkIsolation(t *testing.T) {
 		t.Fatalf("a forwarded %d", n)
 	}
 
+	before := e.hub.logRecords(t, a)
 	e.sink.Forget(a)
+	e.sink.Emit(a, "console", []*logspb.LogRecord{{}})
+	post(t, ca, "/v1/logs", "app", logsBody(t, 100), false)
+	ca = e.serve(t, a)
 	post(t, ca, "/v1/logs", "app", logsBody(t, 500), false)
-	eventually(t, "a reset", func() bool { return e.hub.logRecords(t, a) >= 1000 })
+	eventually(t, "a restarted", func() bool { return e.hub.logRecords(t, a) >= before+500 })
+	time.Sleep(50 * time.Millisecond)
+	if n := e.hub.logRecords(t, a); n > before+510 {
+		t.Fatalf("after Forget: %d records forwarded beyond the new burst", n-before-500)
+	}
+}
+
+// hostileBody has resAttrs resource attributes and points attribute-less points of one gauge.
+func hostileBody(t *testing.T, resAttrs, points int) []byte {
+	res := make([]*commonpb.KeyValue, resAttrs)
+	for i := range res {
+		res[i] = &commonpb.KeyValue{Key: fmt.Sprint("k", i), Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "v"}}}
+	}
+	pts := make([]*metricspb.NumberDataPoint, points)
+	for i := range pts {
+		pts[i] = &metricspb.NumberDataPoint{}
+	}
+	m := &metricspb.Metric{Name: "m", Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: pts}}}
+	return marshal(t, &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		Resource: &resourcepb.Resource{Attributes: res}, ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{m}}},
+	}}})
+}
+
+func TestVMSinkHostileMetricsDontStall(t *testing.T) {
+	e := newTestEnv(t)
+	a, b := uuid.New(), uuid.New()
+	ca, cb := e.serve(t, a), e.serve(t, b)
+	start := time.Now()
+	if code := post(t, ca, "/v1/metrics", "app", hostileBody(t, 2000, 1000), false); code != http.StatusBadRequest || e.drops.get("body") != 1 {
+		t.Fatalf("2 000 resource attributes: status %d, body drops %d", code, e.drops.get("body"))
+	}
+	t.Logf("rejected in %v", time.Since(start))
+
+	done := make(chan error, 1)
+	go func() {
+		code, err := do(ca, "/v1/metrics", "app", hostileBody(t, maxAttrs, 60000), false)
+		if err == nil && code != http.StatusOK {
+			err = fmt.Errorf("status %d", code)
+		}
+		done <- err
+	}()
+	start = time.Now()
+	if code := post(t, cb, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusOK || time.Since(start) > time.Second {
+		t.Fatalf("other VM: status %d after %v", code, time.Since(start))
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("128 resource attributes x 60 000 points still running")
+	}
+}
+
+func TestVMSinkUsageAllowlist(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "orders_total", seq(0, 10)...), false)
+	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "system.cpu.time", seq(0, maxUsageSeries+100)...), false)
+	eventually(t, "usage", func() bool { return e.hub.points(t, "usage") > 0 })
+	if n := e.hub.points(t, "usage"); n != maxUsageSeries || e.drops.get("series") != 110 {
+		t.Fatalf("usage points %d, series dropped %d", n, e.drops.get("series"))
+	}
+	for _, r := range e.hub.requests() {
+		if bytes.Contains(r.body, []byte("orders_total")) {
+			t.Fatal("non-usage metric forwarded on usage")
+		}
+	}
 }

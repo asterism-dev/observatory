@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -511,24 +512,34 @@ func TestVMTelemetryDroppedCounter(t *testing.T) {
 	cancel()
 	defer fw.Close(ctx)
 	vm := uuid.New()
-	sink.Emit(vm, "console", make([]*logspb.LogRecord, 501))
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name != "observatory.vm.telemetry.dropped" {
-				continue
-			}
-			p := m.Data.(metricdata.Sum[int64]).DataPoints[0]
-			v, _ := p.Attributes.Value("vm")
-			k, _ := p.Attributes.Value("kind")
-			if p.Value != 1 || v.AsString() != vm.String() || k.AsString() != "logs" {
-				t.Fatalf("dropped = %+v", p)
-			}
-			return
+	served := make(chan struct{})
+	go func() { sink.Serve(l, vm); close(served) }()
+	defer func() { l.Close(); <-served }()
+	// Emit drops records of a VM not yet served, so it repeats until Serve has started.
+	eventually(t, "dropped counter", func() bool {
+		sink.Emit(vm, "console", make([]*logspb.LogRecord, 501))
+		var rm metricdata.ResourceMetrics
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			t.Fatal(err)
 		}
-	}
-	t.Fatal("no dropped counter")
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != "observatory.vm.telemetry.dropped" {
+					continue
+				}
+				p := m.Data.(metricdata.Sum[int64]).DataPoints[0]
+				v, _ := p.Attributes.Value("vm")
+				k, _ := p.Attributes.Value("kind")
+				if p.Value < 1 || v.AsString() != vm.String() || k.AsString() != "logs" {
+					t.Fatalf("dropped = %+v", p)
+				}
+				return true
+			}
+		}
+		return false
+	})
 }
