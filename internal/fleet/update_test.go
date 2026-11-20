@@ -513,7 +513,7 @@ func TestUpdateIgnoresVMDeletedMidUpdate(t *testing.T) {
 	e.start(ns...)
 	ns[0].conn.awaitUpdate()
 	e.back(ns[0], version.Version)
-	if err := e.s.DeleteVM(context.Background(), e.org.ID, v.ID); err != nil {
+	if err := e.s.DeleteVM(context.Background(), e.org.ID, v.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	if r := e.ended(); r.State != "done" {

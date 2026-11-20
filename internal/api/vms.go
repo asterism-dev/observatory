@@ -438,8 +438,9 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p, _ := auth.PrincipalFrom(r.Context())
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID); errors.Is(err, store.ErrConflict) {
+		if err := tx.DeleteVM(r.Context(), v.OrgID, v.ID, &p.User.ID, store.DeleteReasonUser); errors.Is(err, store.ErrConflict) {
 			return errForkPending
 		} else if err != nil {
 			return err

@@ -98,7 +98,7 @@ func TestCreateVMAssignsMgmtIP(t *testing.T) {
 	if v1.MgmtIP != first || v2.MgmtIP != first.Next() {
 		t.Fatalf("got %s %s, want %s and next", v1.MgmtIP, v2.MgmtIP, first)
 	}
-	if err := e.s.DeleteVM(ctx, e.org.ID, v1.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, v1.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	v3, err := e.s.CreateVM(ctx, e.vm("v3", nil, 1, 1, 1))
