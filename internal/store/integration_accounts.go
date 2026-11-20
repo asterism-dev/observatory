@@ -343,7 +343,7 @@ func (s *Store) autoSwitch(ctx context.Context, org, integration, from uuid.UUID
 	return &Switch{OrgID: org, IntegrationID: integration, From: from, To: to, LimitedUntil: until}, nil
 }
 
-// RecordUsage stores obs if newer than the stored usage_at; when it limits the active, automatically activated account, it activates the next eligible one in the same tx.
+// RecordUsage stores obs's usage if newer than the stored usage_at and always applies its limit; when it limits the active, automatically activated account, it activates the next eligible one in the same tx.
 func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.Time) (*Switch, error) {
 	var org, integration uuid.UUID
 	err := s.q.QueryRow(ctx, "SELECT org_id, integration_id FROM integration_accounts WHERE id = $1", obs.Account).Scan(&org, &integration)
@@ -364,14 +364,19 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 			obs.Account).Scan(&active, &manual, &limitedUntil, &usageAt); err != nil {
 			return err
 		}
-		if usageAt != nil && !obs.ObservedAt.After(*usageAt) {
-			return nil
+		// Poll and proxy stamp ObservedAt on different clocks, so only usage follows the newest report; a limit always applies and only grows.
+		if usageAt == nil || obs.ObservedAt.After(*usageAt) {
+			if _, err := tx.q.Exec(ctx, `UPDATE integration_accounts SET five_hour_pct = $2, week_pct = $3, five_hour_resets_at = $4, week_resets_at = $5,
+				usage_source = $6, usage_at = $7 WHERE id = $1`,
+				obs.Account, obs.FiveHourPct, obs.WeekPct, obs.FiveHourResetsAt, obs.WeekResetsAt, obs.Source, obs.ObservedAt); err != nil {
+				return err
+			}
 		}
-		// Only time clears a limit, so an observation without one keeps the stored limited_until.
-		if _, err := tx.q.Exec(ctx, `UPDATE integration_accounts SET five_hour_pct = $2, week_pct = $3, five_hour_resets_at = $4, week_resets_at = $5,
-			usage_source = $6, usage_at = $7, limited_until = coalesce($8, limited_until) WHERE id = $1`,
-			obs.Account, obs.FiveHourPct, obs.WeekPct, obs.FiveHourResetsAt, obs.WeekResetsAt, obs.Source, obs.ObservedAt, obs.LimitedUntil); err != nil {
-			return err
+		if obs.LimitedUntil != nil {
+			if _, err := tx.q.Exec(ctx, "UPDATE integration_accounts SET limited_until = greatest(limited_until, $2) WHERE id = $1",
+				obs.Account, obs.LimitedUntil); err != nil {
+				return err
+			}
 		}
 		wasLimited := limitedUntil != nil && limitedUntil.After(now)
 		if !active || manual || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {

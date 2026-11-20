@@ -487,6 +487,13 @@ func TestRecordUsageAlreadyLimitedNoSecondSwitch(t *testing.T) {
 	if sw, err := s.RecordUsage(ctx, limitObs(a, now.Add(time.Second), now.Add(2*time.Hour)), now); err != nil || sw != nil {
 		t.Fatalf("second: %v %v", sw, err)
 	}
+	// A newer but shorter limit never shortens the stored one.
+	if _, err := s.RecordUsage(ctx, limitObs(a, now.Add(2*time.Second), now.Add(time.Minute)), now); err != nil {
+		t.Fatal(err)
+	}
+	if l := mustAccounts(t, s, cl.OrgID, cl.ID)[0].LimitedUntil; l == nil || !l.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("limited until %v", l)
+	}
 	if id := activeID(t, s, cl); id != b {
 		t.Fatalf("active %v", id)
 	}
@@ -569,5 +576,23 @@ func TestResumeLimited(t *testing.T) {
 	}
 	if id := activeID(t, s, cl); id != a {
 		t.Fatalf("active %v", id)
+	}
+}
+
+func TestRecordUsageOlderProxyLimitStillSwitches(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	if _, err := s.RecordUsage(ctx, store.UsageObservation{Account: a, FiveHourPct: pct(50), Source: "poll", ObservedAt: now}, now); err != nil {
+		t.Fatal(err)
+	}
+	until := now.Add(time.Hour)
+	sw, err := s.RecordUsage(ctx, limitObs(a, now.Add(-time.Second), until), now)
+	if err != nil || sw == nil || sw.From != a || sw.To != b {
+		t.Fatalf("switch %+v: %v", sw, err)
+	}
+	got := mustAccounts(t, s, cl.OrgID, cl.ID)[0]
+	if got.LimitedUntil == nil || !got.LimitedUntil.Equal(until) || got.Usage.Source != "poll" || *got.Usage.FiveHourPct != 50 {
+		t.Fatalf("account %+v", got)
 	}
 }
