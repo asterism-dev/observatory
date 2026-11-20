@@ -349,3 +349,22 @@ func TestRetryingLogExporterDropsOldestBeyondBound(t *testing.T) {
 		t.Fatalf("exported %s, want 4,5,6", got)
 	}
 }
+
+func TestTelemetryDurationsAsStrings(t *testing.T) {
+	c := &logCollector{}
+	hub := httptest.NewServer(c)
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Default().With("wait", 5*time.Second).Info("built", "took", 79*time.Second)
+	shutdownTelemetry(t, tel)
+
+	recs := c.records()
+	if len(recs) != 1 {
+		t.Fatalf("records = %d, want 1", len(recs))
+	}
+	attrs := attrMap(recs[0].Attributes)
+	if attrs["took"] != "1m19s" || attrs["wait"] != "5s" {
+		t.Fatalf("attrs = %v", attrs)
+	}
+}

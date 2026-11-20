@@ -104,24 +104,44 @@ type defaultSource struct {
 }
 
 func (h defaultSource) Handle(ctx context.Context, r slog.Record) error {
-	if !h.hasSource {
-		r.Attrs(func(a slog.Attr) bool {
-			h.hasSource = h.hasSource || a.Key == "source"
-			return !h.hasSource
-		})
+	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	hasSource := h.hasSource
+	r.Attrs(func(a slog.Attr) bool {
+		hasSource = hasSource || a.Key == "source"
+		out.AddAttrs(durationString(a))
+		return true
+	})
+	if !hasSource {
+		out.AddAttrs(slog.String("source", "observatory-node"))
 	}
-	if !h.hasSource {
-		r.AddAttrs(slog.String("source", "observatory-node"))
-	}
-	return h.Handler.Handle(ctx, r)
+	return h.Handler.Handle(ctx, out)
 }
 
 func (h defaultSource) WithAttrs(attrs []slog.Attr) slog.Handler {
-	for _, a := range attrs {
+	out := make([]slog.Attr, len(attrs))
+	for i, a := range attrs {
 		h.hasSource = h.hasSource || a.Key == "source"
+		out[i] = durationString(a)
 	}
-	h.Handler = h.Handler.WithAttrs(attrs)
+	h.Handler = h.Handler.WithAttrs(out)
 	return h
+}
+
+// otelslog exports durations as integer nanoseconds; the string form matches stderr.
+func durationString(a slog.Attr) slog.Attr {
+	a.Value = a.Value.Resolve()
+	switch a.Value.Kind() {
+	case slog.KindDuration:
+		return slog.String(a.Key, a.Value.Duration().String())
+	case slog.KindGroup:
+		group := a.Value.Group()
+		out := make([]slog.Attr, len(group))
+		for i, g := range group {
+			out[i] = durationString(g)
+		}
+		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
+	}
+	return a
 }
 
 // Records under a group would get a prefixed source, so none is added.
