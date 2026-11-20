@@ -135,11 +135,14 @@ func followFile(ctx context.Context, path string, offset int64, poll time.Durati
 	for {
 		if f == nil {
 			if nf, err := os.Open(path); err == nil {
-				f = nf
-				if fi, err := f.Stat(); err != nil || fi.Size() < offset {
+				if fi, err := nf.Stat(); err != nil || fi.Size() < offset {
 					offset = 0
 				}
-				f.Seek(offset, io.SeekStart)
+				if _, err := nf.Seek(offset, io.SeekStart); err != nil {
+					nf.Close()
+				} else {
+					f = nf
+				}
 			}
 		}
 		if f != nil {
@@ -154,7 +157,10 @@ func followFile(ctx context.Context, path string, offset int64, poll time.Durati
 				f, offset = nil, 0
 				continue
 			case cerr == nil && cur.Size() < offset:
-				f.Seek(0, io.SeekStart)
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					f.Close()
+					f = nil
+				}
 				offset, partial, skipping = 0, partial[:0], false
 			}
 		}

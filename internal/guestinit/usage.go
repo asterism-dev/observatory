@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	"golang.org/x/sys/unix"
 
 	"github.com/asterism-dev/observatory/internal/sysstat"
 )
@@ -105,7 +107,14 @@ func (u *usage) collect(now time.Time) *metricspb.ResourceMetrics {
 		}
 	}
 	var used, limit []*metricspb.NumberDataPoint
+	var devs []uint64
 	for _, mp := range u.mounts {
+		// A filesystem mounted twice is reported once, as the node does.
+		var st unix.Stat_t
+		if unix.Stat(mp, &st) != nil || slices.Contains(devs, uint64(st.Dev)) {
+			continue
+		}
+		devs = append(devs, uint64(st.Dev))
 		if fsUsed, total, err := sysstat.FilesystemUsage(mp); err == nil {
 			used = append(used, intPt(fsUsed, attr("mountpoint", mp)))
 			limit = append(limit, intPt(total, attr("mountpoint", mp)))

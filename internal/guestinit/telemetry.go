@@ -29,7 +29,7 @@ const (
 var sinkBackoff = time.Second
 
 // initResource marks what the init itself sends, as the node's own telemetry carries its service.name.
-var initResource = &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "observatory-init"}}}}}
+var initResource = &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{Key: "service.name", Value: stringValue("observatory-init")}}}
 
 // Sink sends OTLP to the node's telemetry listener; a bounded queue that drops the oldest request keeps callers from ever blocking.
 type Sink struct {
@@ -78,9 +78,11 @@ func (s *Sink) Logs(stream string, recs []*logspb.LogRecord) {
 	}
 	for len(recs) > 0 {
 		n, size := 0, 0
-		for n < len(recs) && n < maxRequestRecords && (n == 0 || size+gproto.Size(recs[n]) <= maxRequestBytes) {
+		for ; n < len(recs) && n < maxRequestRecords; n++ {
 			size += gproto.Size(recs[n])
-			n++
+			if n > 0 && size > maxRequestBytes {
+				break
+			}
 		}
 		s.enqueue(sinkRequest{"logs", stream, &logspb.LogsData{ResourceLogs: []*logspb.ResourceLogs{{Resource: res, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: recs[:n]}}}}}})
 		recs = recs[n:]

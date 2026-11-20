@@ -44,7 +44,8 @@ func TestUsageMetrics(t *testing.T) {
 	proc, mnt := t.TempDir(), t.TempDir()
 	writeSysProc(t, proc, "cpu  1 2 3 4\ncpu0 100 0 50 1000 0 0 0 0\n")
 	start := time.Unix(1000, 0)
-	u := newUsage(proc, []string{mnt}, start)
+	// A second directory on the same filesystem is reported once, as on the node.
+	u := newUsage(proc, []string{mnt, t.TempDir()}, start)
 	rm := u.collect(time.Unix(1010, 0))
 
 	if got := attrString(rm.GetResource().GetAttributes()); got != "service.name=observatory-init" {
