@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +12,7 @@ import (
 	"time"
 )
 
-// GC states: pushes are open, only running builds may push, nobody may push, garbage-collect runs.
+// GC states: pushes are open, builds wait for running ones to end, nobody may push, garbage-collect runs.
 const (
 	GCOpen       = "open"
 	GCDraining   = "draining"
@@ -62,7 +61,7 @@ type GC struct {
 
 func NewGC(command []string, schedule string, runningBuilds func(context.Context) (int, error), reopened func()) *GC {
 	return &GC{Command: command, Schedule: schedule, RunningBuilds: runningBuilds, Reopened: reopened,
-		TokenWait: TokenTTL + time.Minute, Poll: 10 * time.Second, DrainLimit: 65 * time.Minute, Now: time.Now,
+		TokenWait: TokenTTL + 2*time.Minute, Poll: 10 * time.Second, DrainLimit: 65 * time.Minute, Now: time.Now,
 		state: GCOpen, trigger: make(chan struct{}, 1)}
 }
 
@@ -75,14 +74,14 @@ func ParseSchedule(s string) error {
 	return nil
 }
 
-// PushAllowed says whether a push token may be issued; builds already running keep pushing while the registry drains.
-func (g *GC) PushAllowed(build bool) bool {
+// PushAllowed says whether a push token may be issued; pushes are safe until the registry closes.
+func (g *GC) PushAllowed() bool {
 	if g == nil {
 		return true
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.state == GCOpen || g.state == GCDraining && build
+	return g.state == GCOpen || g.state == GCDraining
 }
 
 // BuildsMayStart is false from the moment a collection is pending until it ends.
@@ -115,6 +114,7 @@ func (g *GC) Trigger() error {
 	}
 	select {
 	case g.trigger <- struct{}{}:
+		g.state = GCDraining
 		return nil
 	default:
 		return ErrGCRunning
@@ -125,20 +125,27 @@ func (g *GC) Trigger() error {
 func (g *GC) Run(ctx context.Context) {
 	for {
 		var timer <-chan time.Time
-		t := time.NewTimer(time.Hour)
+		var t *time.Timer
 		if g.Schedule != "" {
 			now := g.Now()
-			t.Reset(g.next(now).Sub(now))
+			t = time.NewTimer(g.next(now).Sub(now))
 			timer = t.C
 		}
 		select {
 		case <-ctx.Done():
-			t.Stop()
-			return
 		case <-timer:
 		case <-g.trigger:
 		}
-		t.Stop()
+		if t != nil {
+			t.Stop()
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-g.trigger: // a trigger that raced the schedule is served by this run
+		default:
+		}
 		g.collect(ctx)
 	}
 }
@@ -187,12 +194,12 @@ func (g *GC) collect(ctx context.Context) {
 	case <-time.After(g.TokenWait):
 	}
 	g.setState(GCCollecting)
-	var out bytes.Buffer
+	out := &summaryWriter{}
 	cmd := exec.CommandContext(ctx, g.Command[0], g.Command[1:]...)
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Stdout, cmd.Stderr = out, out
 	cmd.Env = append(os.Environ(), "OTEL_TRACES_EXPORTER=none")
 	err := cmd.Run()
-	run.Summary = summary(out.String())
+	run.Summary = out.summary()
 	if err != nil {
 		run.Error = err.Error()
 	}
@@ -202,6 +209,12 @@ func (g *GC) collect(ctx context.Context) {
 func (g *GC) drain(ctx context.Context) error {
 	deadline := g.Now().Add(g.DrainLimit)
 	for {
+		// Waiting before counting also covers a build the scheduler started just before draining began.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(g.Poll):
+		}
 		n, err := g.RunningBuilds(ctx)
 		if err != nil {
 			return err
@@ -209,21 +222,40 @@ func (g *GC) drain(ctx context.Context) error {
 		if n == 0 || !g.Now().Before(deadline) {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(g.Poll):
-		}
 	}
 }
 
-// summary picks garbage-collect's "N blobs marked, M blobs and K manifests eligible for deletion" line.
-func summary(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	for _, l := range lines {
-		if strings.Contains(l, "eligible for deletion") {
-			return strings.TrimSpace(l)
-		}
+// summaryWriter keeps garbage-collect's "N blobs marked, …" line, or else its last line, without holding the whole output.
+type summaryWriter struct {
+	partial, marked, last string
+}
+
+func (w *summaryWriter) Write(p []byte) (int, error) {
+	lines := strings.Split(w.partial+string(p), "\n")
+	w.partial = lines[len(lines)-1]
+	if len(w.partial) > 4096 {
+		w.partial = w.partial[len(w.partial)-4096:]
 	}
-	return strings.TrimSpace(lines[len(lines)-1])
+	for _, l := range lines[:len(lines)-1] {
+		w.line(l)
+	}
+	return len(p), nil
+}
+
+func (w *summaryWriter) line(l string) {
+	if l = strings.TrimSpace(l); l == "" {
+		return
+	}
+	w.last = l
+	if strings.Contains(l, "blobs marked") {
+		w.marked = l
+	}
+}
+
+func (w *summaryWriter) summary() string {
+	w.line(w.partial)
+	if w.marked != "" {
+		return w.marked
+	}
+	return w.last
 }

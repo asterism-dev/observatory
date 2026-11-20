@@ -93,8 +93,8 @@ func (t *registryTokens) token(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, a := range access {
-		if slices.Contains(a.Actions, "push") && !t.reg.GC.PushAllowed(p.build.ID != uuid.Nil) {
-			w.Header().Set("Retry-After", "600")
+		if slices.Contains(a.Actions, "push") && !t.reg.GC.PushAllowed() {
+			w.Header().Set("Retry-After", "300")
 			writeError(w, http.StatusServiceUnavailable, "the registry is being cleaned up; push again in a few minutes")
 			return
 		}

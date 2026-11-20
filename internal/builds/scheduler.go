@@ -46,8 +46,9 @@ type Scheduler struct {
 
 	Size Size
 	Now  func() time.Time
-	// MayStart holds queued builds back while it returns false.
+	// MayStart holds queued builds back while it returns false; heldAt restarts their queue timeout.
 	MayStart func() bool
+	heldAt   time.Time
 }
 
 // New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it.
@@ -130,12 +131,17 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 func (s *Scheduler) step(ctx context.Context, b store.ImageBuild) error {
 	now := s.Now()
 	if b.State == store.BuildQueued && s.MayStart != nil && !s.MayStart() {
+		s.heldAt = now
 		return nil
+	}
+	queuedFor := now.Sub(b.QueuedAt)
+	if h := now.Sub(s.heldAt); h < queuedFor {
+		queuedFor = h
 	}
 	switch {
 	case b.State == store.BuildRunning && b.StartedAt != nil && now.Sub(*b.StartedAt) >= Timeout:
 		return s.fail(ctx, b.ID, "the build timed out after 60 minutes")
-	case b.State == store.BuildQueued && now.Sub(b.QueuedAt) >= Timeout:
+	case b.State == store.BuildQueued && queuedFor >= Timeout:
 		return s.fail(ctx, b.ID, "no node had room for the builder VM within 60 minutes")
 	case b.State == store.BuildQueued:
 		return s.start(ctx, b)

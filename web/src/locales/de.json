@@ -794,7 +794,7 @@
   },
   "registryGC": {
     "title": "Registry-Bereinigung",
-    "explain": "Gelöschte Versionen und Images belegen Speicher, bis die Registry bereinigt wird. Währenddessen sind Pushes für einige Minuten gesperrt, neue Builds warten; Pulls und VMs laufen weiter.",
+    "explain": "Gelöschte Versionen und Images belegen Speicher, bis die Registry bereinigt wird. Neue Builds warten, bis laufende fertig sind; danach sind Pushes für einige Minuten gesperrt. Pulls und VMs laufen weiter.",
     "unmanaged": "Dieser Hub bereinigt die Registry nicht selbst (OBSERVATORY_REGISTRY_CONFIG ist nicht gesetzt).",
     "state": "Status",
     "schedule": "Zeitplan",

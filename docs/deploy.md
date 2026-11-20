@@ -117,10 +117,10 @@ Deleting versions or images removes their manifests; the hub gets the disk space
 collection, daily at `OBSERVATORY_REGISTRY_GC_TIME` (default `04:00`, `off` for manual runs only) in the hub's time
 zone (`TZ`, default UTC), and when a platform admin starts it under Platform settings → Registry. For it the hub mounts
 `registry-data` and the registry's config (`OBSERVATORY_REGISTRY_CONFIG`), and the registry runs as the hub's user; the
-`registry-data-owner` service hands data the registry wrote as root over once. Collection must not run next to a push,
-so the hub stops issuing push tokens: new builds wait, running builds finish, then the hub waits out the push tokens
-already issued (6 minutes) and collects. Pushes from Docker clients fail with "try again in a few minutes" until it
-ends; pulls and VMs are not affected. Versions without tags are kept.
+`registry-data-owner` service hands data the registry wrote as root over once. Collection must not run next to a push:
+new builds wait while running builds finish, then the hub stops issuing push tokens, waits out the ones already issued
+(7 minutes) and collects. Until it ends, pushes fail (Docker shows `failed to fetch oauth token` with status 503);
+pulls and VMs are not affected. Versions without tags are kept.
 
 ## Updating
 

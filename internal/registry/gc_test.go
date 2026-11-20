@@ -11,7 +11,7 @@ func TestGCDrainsClosesCollectsAndReopens(t *testing.T) {
 	var running atomic.Int32
 	running.Store(1)
 	reopened := make(chan struct{}, 1)
-	g := NewGC([]string{"sh", "-c", `echo "blob eligible"; echo "3 blobs marked, 2 blobs and 1 manifests eligible for deletion"; echo "Deleting blob: x" >&2`}, "",
+	g := NewGC([]string{"sh", "-c", `echo "blob eligible for deletion: sha256:a"; printf "\n3 blobs marked, 2 blobs and 1 manifests eligible for deletion\n"; echo "Deleting blob: x" >&2`}, "",
 		func(context.Context) (int, error) { return int(running.Load()), nil }, func() { reopened <- struct{}{} })
 	g.TokenWait, g.Poll = 50*time.Millisecond, 5*time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -21,16 +21,18 @@ func TestGCDrainsClosesCollectsAndReopens(t *testing.T) {
 	if err := g.Trigger(); err != nil {
 		t.Fatal(err)
 	}
-	waitState(t, g, GCDraining)
-	if g.PushAllowed(false) || !g.PushAllowed(true) || g.BuildsMayStart() {
-		t.Fatal("draining: users must not push, running builds must, new builds must not start")
+	if st := g.Status().State; st != GCDraining {
+		t.Fatalf("trigger left state %s", st)
+	}
+	if !g.PushAllowed() || g.BuildsMayStart() {
+		t.Fatal("draining: pushes go on, new builds must not start")
 	}
 	if g.Trigger() == nil {
 		t.Fatal("second trigger accepted")
 	}
 	running.Store(0)
 	waitState(t, g, GCClosed)
-	if g.PushAllowed(true) || g.PushAllowed(false) {
+	if g.PushAllowed() {
 		t.Fatal("closed: nobody may push")
 	}
 	select {
@@ -42,7 +44,7 @@ func TestGCDrainsClosesCollectsAndReopens(t *testing.T) {
 	if st.State != GCOpen || st.Last == nil || st.Last.Error != "" || st.Last.Summary != "3 blobs marked, 2 blobs and 1 manifests eligible for deletion" {
 		t.Fatalf("status %+v %+v", st, st.Last)
 	}
-	if !g.PushAllowed(false) || !g.BuildsMayStart() {
+	if !g.PushAllowed() || !g.BuildsMayStart() {
 		t.Fatal("not reopened")
 	}
 }
@@ -50,7 +52,7 @@ func TestGCDrainsClosesCollectsAndReopens(t *testing.T) {
 func TestGCReportsCommandFailure(t *testing.T) {
 	reopened := make(chan struct{}, 1)
 	g := NewGC([]string{"sh", "-c", "echo boom; exit 3"}, "", func(context.Context) (int, error) { return 0, nil }, func() { reopened <- struct{}{} })
-	g.TokenWait = 0
+	g.TokenWait, g.Poll = 0, time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go g.Run(ctx)
@@ -91,4 +93,24 @@ func waitState(t *testing.T, g *GC, want string) {
 		}
 	}
 	t.Fatalf("state %q, want %q", g.Status().State, want)
+}
+
+func TestGCTriggerAfterRunStartsAnother(t *testing.T) {
+	runs := make(chan struct{}, 2)
+	g := NewGC([]string{"true"}, "", func(context.Context) (int, error) { return 0, nil }, func() { runs <- struct{}{} })
+	g.TokenWait, g.Poll = 0, time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go g.Run(ctx)
+	for range 2 {
+		if err := g.Trigger(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-runs:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("run did not happen, state %s", g.Status().State)
+		}
+		waitState(t, g, GCOpen)
+	}
 }

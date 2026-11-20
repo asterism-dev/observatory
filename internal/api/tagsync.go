@@ -27,9 +27,13 @@ type TagSync struct {
 	store  *store.Store
 	mirror TagMirror
 
-	mu    sync.Mutex
-	dirty map[uuid.UUID]bool // images with a run in flight; true when another change arrived meanwhile
-	wg    sync.WaitGroup
+	// Held defers syncs until Resume while the registry is garbage-collected.
+	Held func() bool
+
+	mu      sync.Mutex
+	dirty   map[uuid.UUID]bool // images with a run in flight; true when another change arrived meanwhile
+	pending map[uuid.UUID]bool // images whose sync waits for Resume
+	wg      sync.WaitGroup
 }
 
 // NewTagSync returns nil without a registry, which makes Kick a no-op.
@@ -37,7 +41,7 @@ func NewTagSync(s *store.Store, m TagMirror) *TagSync {
 	if m == nil {
 		return nil
 	}
-	return &TagSync{store: s, mirror: m, dirty: map[uuid.UUID]bool{}}
+	return &TagSync{store: s, mirror: m, dirty: map[uuid.UUID]bool{}, pending: map[uuid.UUID]bool{}}
 }
 
 // Kick schedules a sync of image after its tags changed; a nil TagSync (hub without registry) does nothing.
@@ -56,9 +60,32 @@ func (t *TagSync) Kick(image uuid.UUID) {
 	go t.run(image)
 }
 
+// Resume syncs the images deferred while Held.
+func (t *TagSync) Resume() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	images := t.pending
+	t.pending = map[uuid.UUID]bool{}
+	t.mu.Unlock()
+	for image := range images {
+		t.Kick(image)
+	}
+}
+
 func (t *TagSync) run(image uuid.UUID) {
 	defer t.wg.Done()
 	for {
+		// Checked under the lock so a reopen's Resume cannot miss the image.
+		t.mu.Lock()
+		if t.Held != nil && t.Held() {
+			t.pending[image] = true
+			delete(t.dirty, image)
+			t.mu.Unlock()
+			return
+		}
+		t.mu.Unlock()
 		t.sync(image)
 		t.mu.Lock()
 		if t.dirty[image] {

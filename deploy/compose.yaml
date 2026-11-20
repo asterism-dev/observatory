@@ -71,11 +71,11 @@ services:
       - ./registry/config.yml:/etc/distribution/config.yml:ro
       - registry-data:/var/lib/registry
       - registry-certs:/keys:ro
-  # Hands registry data written by root before the registry ran as the hub's user over to that user.
+  # Hands registry data written by root before the registry ran as the hub's user over to that user, once.
   registry-data-owner:
-    image: alpine:3.22
+    image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
     restart: "no"
-    command: ["chown", "-R", "65532:65532", "/var/lib/registry"]
+    entrypoint: ["sh", "-c", '[ "$$(stat -c %u /var/lib/registry)" = 65532 ] || chown -R 65532:65532 /var/lib/registry']
     volumes:
       - registry-data:/var/lib/registry
   # Loads the kernel modules the gateway needs; built-in modules make modprobe fail harmlessly.

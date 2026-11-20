@@ -794,7 +794,7 @@
   },
   "registryGC": {
     "title": "Registry cleanup",
-    "explain": "Deleted versions and images take up space until the registry is cleaned up. Pushes are blocked for a few minutes meanwhile and new builds wait; pulls and VMs keep running.",
+    "explain": "Deleted versions and images take up space until the registry is cleaned up. New builds wait until running ones finish; then pushes are blocked for a few minutes. Pulls and VMs keep running.",
     "unmanaged": "This hub does not clean up the registry itself (OBSERVATORY_REGISTRY_CONFIG is not set).",
     "state": "State",
     "schedule": "Schedule",

@@ -144,8 +144,9 @@ func run() error {
 			gc = registry.NewGC([]string{"registry", "garbage-collect", cfg.RegistryConfig}, cfg.RegistryGCTime, func(ctx context.Context) (int, error) {
 				active, err := s.ActiveBuilds(ctx)
 				return len(slices.DeleteFunc(active, func(b store.ImageBuild) bool { return b.State != store.BuildRunning })), err
-			}, sched.Kick)
+			}, func() { sched.Kick(); tags.Resume() })
 			sched.MayStart = gc.BuildsMayStart
+			tags.Held = func() bool { return !gc.PushAllowed() }
 			go gc.Run(ctx)
 		} else {
 			slog.Warn("OBSERVATORY_REGISTRY_CONFIG is not set; the hub does not garbage-collect the registry")

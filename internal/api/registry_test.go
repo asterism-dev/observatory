@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -188,12 +189,15 @@ func TestTokenOverStorageLimitDropsPush(t *testing.T) {
 	}
 }
 
-func TestTokenRefusesPushDuringGC(t *testing.T) {
+func TestTokenRefusesPushWhileRegistryClosed(t *testing.T) {
 	e := newEnv(t)
 	alice, aliceTok := e.user("alice")
 	org := e.createOrg(aliceTok, "Acme")
 	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
-	gc := registry.NewGC([]string{"true"}, "", func(context.Context) (int, error) { return 1, nil }, nil)
+	var running atomic.Int32
+	running.Store(1)
+	gc := registry.NewGC([]string{"true"}, "", func(context.Context) (int, error) { return int(running.Load()), nil }, nil)
+	gc.Poll, gc.TokenWait = time.Millisecond, time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go gc.Run(ctx)
@@ -202,17 +206,20 @@ func TestTokenRefusesPushDuringGC(t *testing.T) {
 	if err := gc.Trigger(); err != nil {
 		t.Fatal(err)
 	}
-	for gc.Status().State != registry.GCDraining {
+	if _, got := grant(t, h, "observatory", cred, repoScope(a, "pull,push")); !slices.Equal(got["i/"+a.String()], []string{"pull", "push"}) {
+		t.Fatalf("push while draining: %v", got)
+	}
+	running.Store(0)
+	for gc.Status().State != registry.GCClosed {
 		time.Sleep(time.Millisecond)
 	}
-	if code, _ := grant(t, h, "observatory", cred, repoScope(a, "pull,push")); code != http.StatusServiceUnavailable {
-		t.Fatalf("user push while draining: %d", code)
+	for _, secret := range []string{cred, "build-a"} {
+		if code, _ := grant(t, h, "observatory", secret, repoScope(a, "pull,push")); code != http.StatusServiceUnavailable {
+			t.Fatalf("%s push while closed: %d", secret, code)
+		}
 	}
 	if _, got := grant(t, h, "observatory", cred, repoScope(a, "pull")); !slices.Equal(got["i/"+a.String()], []string{"pull"}) {
-		t.Fatalf("user pull while draining: %v", got)
-	}
-	if _, got := grant(t, h, "observatory", "build-a", repoScope(a, "pull,push")); !slices.Equal(got["i/"+a.String()], []string{"pull", "push"}) {
-		t.Fatalf("running build push while draining: %v", got)
+		t.Fatalf("pull while closed: %v", got)
 	}
 }
 
@@ -242,9 +249,6 @@ func TestAdminRegistryGC(t *testing.T) {
 	}
 	if rec := e.do("POST", "/api/admin/registry-gc", adminTok); rec.Code != 202 {
 		t.Fatalf("run: %d %s", rec.Code, rec.Body.String())
-	}
-	for gc.Status().State == registry.GCOpen {
-		time.Sleep(time.Millisecond)
 	}
 	if rec := e.do("POST", "/api/admin/registry-gc", adminTok); rec.Code != 409 {
 		t.Fatalf("second run: %d", rec.Code)
