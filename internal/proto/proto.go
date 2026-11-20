@@ -189,6 +189,18 @@ type UpdateReport struct {
 	Error string `json:"error,omitempty"`
 }
 
+// UsageObservation is one Claude usage reading for an account; it holds ids only, no secrets.
+type UsageObservation struct {
+	Integration      string     `json:"integration"`
+	Account          string     `json:"account"`
+	FiveHourPct      *float64   `json:"fiveHourPct,omitempty"`
+	WeekPct          *float64   `json:"weekPct,omitempty"`
+	FiveHourResetsAt *time.Time `json:"fiveHourResetsAt,omitempty"`
+	WeekResetsAt     *time.Time `json:"weekResetsAt,omitempty"`
+	LimitedUntil     *time.Time `json:"limitedUntil,omitempty"`
+	ObservedAt       time.Time  `json:"observedAt"`
+}
+
 const (
 	ImagePulling = "pulling"
 	ImageReady   = "ready"
