@@ -1,7 +1,7 @@
 # Integrations (GitHub, Claude, Linear, gcloud)
 
 An integration is a login a member connects once (on the org, a team or privately), so every VM they are entitled
-to has working `git`/`gh`, Claude Code and the Linear MCP server without any setup inside the guest. By default the
+to has working `git`/`gh`, Claude Code, the Linear MCP server and `gcloud` without any setup inside the guest. By default the
 VM holds only a placeholder and the egress proxy puts the real token into requests ([egress.md](egress.md)); per
 integration the owner can deliver the real token into the VM instead.
 
