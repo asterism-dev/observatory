@@ -46,6 +46,7 @@ const command = ref('')
 const confirmDelete = ref(false)
 const updateOpen = ref(false)
 const usageRange = ref<UsageRange | null>(null)
+const hoverAt = ref<number | null>(null)
 
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -164,8 +165,8 @@ watch(
             </div>
           </Section>
           <template v-if="node.canTelemetry">
-            <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" />
-            <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" />
+            <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+            <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" :hover-at="hoverAt" />
           </template>
           <Section :label="t('nodes.machine')">
             <Card>

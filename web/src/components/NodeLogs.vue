@@ -7,7 +7,7 @@ import { api } from '@/api'
 import { logParams, prettyLine, type LogFilter, type LogLine, type UsageRange } from '@/composables/telemetry'
 import { Card, Section } from '@/ui'
 
-const props = defineProps<{ orgId: string; nodeId: string; range: UsageRange }>()
+const props = defineProps<{ orgId: string; nodeId: string; range: UsageRange; hoverAt: number | null }>()
 
 const { t, locale } = useI18n()
 const q = ref('')
@@ -22,6 +22,9 @@ const maxLines = 2000
 let seen = new Set<string>()
 let stream: EventSource | null = null
 let debounce = 0
+// Bumped by every load and on unmount, so a load that finishes late neither shows its lines nor opens a stream.
+let generation = 0
+const linesEl = ref<HTMLElement | null>(null)
 
 const levels = computed(() => [{ value: 'all', label: t('telemetry.allLevels') }, ...['error', 'warn', 'info', 'debug'].map((v) => ({ value: v, label: v }))])
 const sources = computed(() => [{ value: 'all', label: t('telemetry.allSources') }, ...['observatory-node', 'firecracker'].map((v) => ({ value: v, label: v }))])
@@ -48,6 +51,7 @@ function tail(f: LogFilter) {
   const p = logParams(f)
   p.delete('from')
   p.delete('to')
+  stop()
   stream = new EventSource(`${base()}/tail?${p}`)
   // The stream may end without notice; EventSource reconnects and the dedupe drops lines already shown.
   stream.onmessage = (e) => {
@@ -65,16 +69,18 @@ function tail(f: LogFilter) {
 }
 
 async function load() {
+  const gen = ++generation
   stop()
-  const f = filter.value
+  // range.to of a live range is only set on preset changes; history must reach now or the tail leaves a gap.
+  const f = props.range.now ? { ...filter.value, to: new Date() } : filter.value
   try {
     const res = await api<{ lines: LogLine[] }>(`${base()}?${logParams(f)}`)
-    if (f !== filter.value) return
+    if (gen !== generation) return
     lines.value = res.lines
     seen = new Set(res.lines.map(lineKey))
     error.value = ''
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (gen === generation) error.value = e instanceof Error ? e.message : String(e)
     return
   }
   if (following.value) tail(f)
@@ -86,8 +92,18 @@ watch([filter, following], () => {
 }, { immediate: true })
 onBeforeUnmount(() => {
   window.clearTimeout(debounce)
+  generation++
   stop()
 })
+
+// Toggled on the DOM directly: hover moves fast and re-rendering every row per move is wasted work.
+watch(
+  () => props.hoverAt,
+  (at) => {
+    const span = (props.range.to.getTime() - props.range.from.getTime()) / 80
+    linesEl.value?.querySelectorAll<HTMLElement>('.ln').forEach((r) => r.classList.toggle('mark', at != null && Math.abs(Number(r.dataset.t) - at * 1000) < span))
+  },
+)
 
 function toggle(k: string) {
   if (!open.value.delete(k)) open.value.add(k)
@@ -120,10 +136,10 @@ function removeField(key: string) {
         </button>
       </div>
       <p v-if="error" role="alert">{{ error }}</p>
-      <div class="lines mono">
+      <div ref="linesEl" class="lines mono">
         <p v-if="!lines.length" class="muted empty">{{ t('telemetry.noLines') }}</p>
         <template v-for="l in lines" :key="lineKey(l)">
-          <div class="ln" role="button" tabindex="0" :aria-expanded="open.has(lineKey(l))" @click="toggle(lineKey(l))" @keydown.enter="toggle(lineKey(l))">
+          <div class="ln" :data-t="Date.parse(l.time)" role="button" tabindex="0" :aria-expanded="open.has(lineKey(l))" @click="toggle(lineKey(l))" @keydown.enter="toggle(lineKey(l))">
             <span class="muted">{{ open.has(lineKey(l)) ? '▾' : '▸' }} {{ time(l.time) }}</span>
             <span :class="`lv-${l.level}`">{{ l.level.toUpperCase() }}</span>
             <span class="src muted">{{ l.source }}</span>
@@ -196,6 +212,9 @@ function removeField(key: string) {
 }
 .ln:hover {
   background: var(--select);
+}
+.ln.mark {
+  background: color-mix(in srgb, var(--ws-blue) 15%, transparent);
 }
 .src,
 .msg {

@@ -10,7 +10,7 @@ import { presets, rangeFor, type Preset, type Unit, type Usage, type UsageRange 
 import { Section } from '@/ui'
 
 const props = defineProps<{ orgId: string; node: NodeInfo }>()
-const emit = defineEmits<{ range: [r: UsageRange] }>()
+const emit = defineEmits<{ range: [r: UsageRange]; hover: [t: number | null] }>()
 
 const { t } = useI18n()
 const preset = ref<Preset>('6h')
@@ -88,6 +88,7 @@ onBeforeUnmount(() => {
         :sync-key="`node-${node.id}`"
         @zoom="(from, to) => (zoomed = { from: new Date(from * 1000), to: new Date(to * 1000) })"
         @reset="zoomed = null"
+        @hover="(at) => emit('hover', at)"
       />
     </div>
   </Section>

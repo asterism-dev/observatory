@@ -8,7 +8,7 @@ import { formatValue, type Series, type Unit } from '@/composables/telemetry'
 import { Card } from '@/ui'
 
 const props = defineProps<{ title: string; unit: string; t: number[]; series: Series[]; max?: number; syncKey: string }>()
-const emit = defineEmits<{ zoom: [from: number, to: number]; reset: [] }>()
+const emit = defineEmits<{ zoom: [from: number, to: number]; reset: []; hover: [t: number | null] }>()
 
 const { locale } = useI18n()
 const el = ref<HTMLElement | null>(null)
@@ -33,7 +33,11 @@ const data = (): uPlot.AlignedData => [props.t, ...props.series.map((s) => s.val
 function showTip(u: uPlot) {
   const i = u.cursor.idx
   const ts = i == null ? undefined : props.t[i]
-  if (i == null || ts == null || u.cursor.left == null || u.cursor.left < 0) return (tip.value = null)
+  if (i == null || ts == null || u.cursor.left == null || u.cursor.left < 0) {
+    tip.value = null
+    return emit('hover', null)
+  }
+  emit('hover', ts)
   tip.value = {
     left: u.over.offsetLeft + u.cursor.left,
     flip: u.cursor.left > u.over.clientWidth / 2,
@@ -81,7 +85,10 @@ function build() {
     el.value,
   )
   plot.over.addEventListener('dblclick', () => emit('reset'))
-  plot.over.addEventListener('mouseleave', () => (tip.value = null))
+  plot.over.addEventListener('mouseleave', () => {
+    tip.value = null
+    emit('hover', null)
+  })
 }
 
 watch(() => props.series.map((s) => s.name).join('\n'), build)
