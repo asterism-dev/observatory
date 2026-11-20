@@ -353,7 +353,7 @@ func TestVMSinkUsageAllowlist(t *testing.T) {
 	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "orders_total", seq(0, 10)...), false)
 	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "system.cpu.time", seq(0, maxUsageSeries+100)...), false)
 	eventually(t, "usage", func() bool { return e.hub.points(t, "usage") > 0 })
-	if n := e.hub.points(t, "usage"); n != maxUsageSeries || e.drops.get("series") != 110 {
+	if n := e.hub.points(t, "usage"); n != 2000 || e.drops.get("series") != 110 {
 		t.Fatalf("usage points %d, series dropped %d", n, e.drops.get("series"))
 	}
 	for _, r := range e.hub.requests() {

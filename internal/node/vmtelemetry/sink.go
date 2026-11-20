@@ -28,7 +28,7 @@ const (
 	logRate        = 100
 	logBurst       = 500
 	maxSeries      = 2000
-	maxUsageSeries = 500
+	maxUsageSeries = 2000 // cpu × state points alone pass 500 above ~60 vCPUs
 	maxAttrs       = 128
 	seriesWindow   = time.Hour
 	byteRate       = 256 << 10
