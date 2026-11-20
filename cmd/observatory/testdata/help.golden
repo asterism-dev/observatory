@@ -76,12 +76,12 @@ var:
   var delete <name> [--scope S] [--team T]                                                    delete a variable
 
 integration:
-  integration list                                                                                   list integrations
-  integration connect github|linear|claude [--scope S] [--team T] [--mode proxy|vm] [--from-file F]  connect an integration (token from stdin or --from-file)
-  integration sign-in claude [--scope S] [--team T] [--mode proxy|vm] [--replace]                    connect Claude by signing in with your browser
-  integration replace <kind> [--scope S] [--team T] [--from-file F]                                  replace an integration's token (from stdin or --from-file)
-  integration mode <kind> proxy|vm [--scope S] [--team T]                                            change how the token reaches VMs
-  integration disconnect <kind> [--scope S] [--team T]                                               disconnect an integration
+  integration list                                                                                                              list integrations
+  integration connect github|linear|claude|gcloud [--scope S] [--team T] [--mode proxy|vm] [--from-file F] [--quota-project P]  connect an integration (token from stdin or --from-file)
+  integration sign-in claude [--scope S] [--team T] [--mode proxy|vm] [--replace]                                               connect Claude by signing in with your browser
+  integration replace <kind> [--scope S] [--team T] [--from-file F]                                                             replace an integration's token (from stdin or --from-file)
+  integration mode <kind> proxy|vm [--scope S] [--team T]                                                                       change how the token reaches VMs
+  integration disconnect <kind> [--scope S] [--team T]                                                                          disconnect an integration
 
 image:
   image list                                                                                    list images

@@ -1,4 +1,5 @@
-KIND    SCOPE         ACCOUNT           DELIVERY  STATUS
-github  private       ada               proxy     ok · expires in 41 days
-claude  team backend  ada@example.test  vm        ok
-linear  org           —                 proxy     expired
+KIND    SCOPE         ACCOUNT                                  DELIVERY  STATUS
+github  private       ada                                      proxy     ok · expires in 41 days
+claude  team backend  ada@example.test                         vm        ok
+linear  org           —                                        proxy     expired
+gcloud  private       ada@example.test (quota project proj-1)  proxy     expired: run gcloud auth application-default login, then observatory integration connect gcloud
