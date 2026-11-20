@@ -1207,3 +1207,15 @@ func RandomMAC() string {
 	b[0] = b[0]&^0x01 | 0x02 // unicast, locally administered
 	return net.HardwareAddr(b).String()
 }
+
+func (a *Agent) runningVMs() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, e := range a.vms {
+		if e.status.State == proto.StateRunning {
+			n++
+		}
+	}
+	return n
+}

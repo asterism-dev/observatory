@@ -34,7 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if tel, err := node.StartTelemetry(context.Background(), cfg.Hub.URL, cfg.Hub.Credential, version.Version); err != nil {
+	tel, err := node.StartTelemetry(context.Background(), cfg.Hub.URL, cfg.Hub.Credential, version.Version)
+	if err != nil {
 		log.Printf("telemetry disabled: %v", err)
 	} else {
 		defer func() {
@@ -81,6 +82,11 @@ func main() {
 		Config: public, Machine: node.MachineInfo(),
 		Version: version.Version, Egress: egressHost,
 		Updater: newUpdater(filepath.Dir(*configPath)), ShutdownMarker: filepath.Join(filepath.Dir(*configPath), "shutdown-vms"),
+	}
+	if tel != nil {
+		if err := a.RegisterHostMetrics(tel.Meter, []string{"/", cfg.Paths.VMs}); err != nil {
+			log.Printf("host metrics disabled: %v", err)
+		}
 	}
 	log.Printf("node %s (%s): provider %s, %d CPUs, %d MB", cfg.NodeID, version.Version, provider.Name(), cfg.Capacity.CPUs, cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
