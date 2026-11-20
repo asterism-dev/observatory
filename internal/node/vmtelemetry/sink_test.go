@@ -561,3 +561,49 @@ func TestLineBatch(t *testing.T) {
 		t.Fatalf("batches = %v", g)
 	}
 }
+
+func (e *testEnv) storeSeries(vm uuid.UUID) int {
+	e.sink.mu.Lock()
+	v := e.sink.vms[vm]
+	e.sink.mu.Unlock()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.storeSeries["app"]
+}
+
+func TestVMSinkSeriesKeyCoversStoreLabels(t *testing.T) {
+	gauge := func(unit string) *metricspb.Metric {
+		return &metricspb.Metric{Name: "m", Unit: unit, Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: []*metricspb.NumberDataPoint{{}}}}}
+	}
+	expHist := func(zero float64) *metricspb.Metric {
+		return &metricspb.Metric{Name: "h", Data: &metricspb.Metric_ExponentialHistogram{ExponentialHistogram: &metricspb.ExponentialHistogram{
+			DataPoints: []*metricspb.ExponentialHistogramDataPoint{{ZeroCount: 1, ZeroThreshold: zero}}}}}
+	}
+	body := func(scope *commonpb.InstrumentationScope, schema string, m *metricspb.Metric) []byte {
+		return marshal(t, &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{
+			ScopeMetrics: []*metricspb.ScopeMetrics{{Scope: scope, SchemaUrl: schema, Metrics: []*metricspb.Metric{m}}}}}})
+	}
+	attr := []*commonpb.KeyValue{{Key: "a", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "b"}}}}
+	for _, tc := range []struct {
+		name          string
+		base, variant []byte
+	}{
+		{"unit", body(nil, "", gauge("ms")), body(nil, "", gauge("s"))},
+		{"scope name", body(&commonpb.InstrumentationScope{Name: "a"}, "", gauge("")), body(&commonpb.InstrumentationScope{Name: "b"}, "", gauge(""))},
+		{"scope version", body(&commonpb.InstrumentationScope{Version: "1"}, "", gauge("")), body(&commonpb.InstrumentationScope{Version: "2"}, "", gauge(""))},
+		{"scope attributes", body(nil, "", gauge("")), body(&commonpb.InstrumentationScope{Attributes: attr}, "", gauge(""))},
+		{"scope schema", body(nil, "x", gauge("")), body(nil, "y", gauge(""))},
+		{"zero threshold", body(nil, "", expHist(0.001)), body(nil, "", expHist(0.002))},
+	} {
+		e := newTestEnv(t)
+		vm := uuid.New()
+		c := e.serve(t, vm)
+		post(t, c, "/v1/metrics", "app", tc.base, false)
+		post(t, c, "/v1/metrics", "app", tc.base, false)
+		before := e.storeSeries(vm)
+		post(t, c, "/v1/metrics", "app", tc.variant, false)
+		if after := e.storeSeries(vm); after != 2*before {
+			t.Errorf("%s: store series %d, then %d after the variant", tc.name, before, after)
+		}
+	}
+}

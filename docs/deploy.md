@@ -130,7 +130,9 @@ pulls and VMs are not affected. Versions without tags are kept.
 
 The `victoriametrics` and `victorialogs` services hold node metrics and logs in the volumes `metrics-data` and
 `logs-data`. They publish no port; only the hub reaches them. Upgrading an existing deployment: `docker compose up -d`
-starts the stores, and telemetry is on from then.
+starts the stores, and telemetry is on from then. VictoriaMetrics runs with `-opentelemetry.promoteScopeMetadata=false`:
+scope names, versions and attributes from VM apps would otherwise become labels, and so series that the per-VM series
+limit does not count ([telemetry.md](telemetry.md#vms)). Keep the flag if you run your own VictoriaMetrics.
 
 ## Updating
 

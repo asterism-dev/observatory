@@ -496,6 +496,7 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 			if tooManyAttrs(sm.GetScope().GetAttributes()) {
 				return nil, errTooManyAttrs
 			}
+			scopeKey := s.scopeKey(resKey, sm)
 			for _, m := range sm.GetMetrics() {
 				allowed := stream != "usage" || slices.Contains(usageMetrics, m.GetName())
 				var err error
@@ -506,7 +507,7 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 					} else if buckets > maxBuckets {
 						err = errTooManyBuckets
 					}
-					points = append(points, seriesPoint{s.seriesKey(m.GetName(), resKey, p.GetAttributes(), layout), weight, allowed})
+					points = append(points, seriesPoint{s.seriesKey(m.GetName(), m.GetUnit(), scopeKey, p.GetAttributes(), layout), weight, allowed})
 					return true
 				})
 				if err != nil {
@@ -641,13 +642,28 @@ func (s *Sink) attrsKey(attrs []*commonpb.KeyValue) uint64 {
 	return h.Sum64()
 }
 
-// seriesKey hashes the metric name with the resource and point attributes and the bucket layout, which the store turns into labels.
-func (s *Sink) seriesKey(name string, resKey uint64, attrs []*commonpb.KeyValue, layout []float64) uint64 {
+// scopeKey adds sm's scope to resKey: unless -opentelemetry.promoteScopeMetadata=false the store makes labels of it.
+func (s *Sink) scopeKey(resKey uint64, sm *metricspb.ScopeMetrics) uint64 {
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	maphash.WriteComparable(&h, resKey)
+	for _, v := range []string{sm.GetScope().GetName(), sm.GetScope().GetVersion(), sm.GetSchemaUrl()} {
+		maphash.WriteComparable(&h, len(v))
+		h.WriteString(v)
+	}
+	maphash.WriteComparable(&h, s.attrsKey(sm.GetScope().GetAttributes()))
+	return h.Sum64()
+}
+
+// seriesKey hashes the metric name and unit (part of the name with Prometheus naming) with the scope, the point attributes and the bucket layout, which the store turns into labels.
+func (s *Sink) seriesKey(name, unit string, scopeKey uint64, attrs []*commonpb.KeyValue, layout []float64) uint64 {
 	var h maphash.Hash
 	h.SetSeed(s.seed)
 	h.WriteString(name)
 	h.WriteByte(0)
-	maphash.WriteComparable(&h, resKey)
+	maphash.WriteComparable(&h, len(unit))
+	h.WriteString(unit)
+	maphash.WriteComparable(&h, scopeKey)
 	maphash.WriteComparable(&h, s.attrsKey(attrs))
 	for _, f := range layout {
 		maphash.WriteComparable(&h, math.Float64bits(f))
