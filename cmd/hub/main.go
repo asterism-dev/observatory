@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -128,9 +129,13 @@ func run() error {
 			}
 		}
 		upstream, _ := url.Parse(cfg.RegistryURL)
+		builderHub, err := url.Parse(cfg.BuilderHubURL)
+		if err != nil {
+			return fmt.Errorf("OBSERVATORY_BUILDER_HUB_URL: %w", err)
+		}
 		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
 		tags = api.NewTagSync(s, client)
-		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, OtherURLs: []*url.URL{cfg.NodeURL, builderHub}, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret})
 		manifests = client
 		f.PullImagesFrom(cfg.NodeURL, iss)
 		sched = newScheduler(ctx, s, f, cfg)
