@@ -74,6 +74,10 @@ func (a fcAPI) PatchDrive(id, pathOnHost string) error {
 	}{id, pathOnHost}, nil, apiTimeout)
 }
 
+func (a fcAPI) PutLogger() error {
+	return a.call(http.MethodPut, "/logger", fcLogger, nil, apiTimeout)
+}
+
 func (a fcAPI) BalloonStats() (balloonStats, error) {
 	var st balloonStats
 	return st, a.call(http.MethodGet, "/balloon/statistics", nil, &st, apiTimeout)

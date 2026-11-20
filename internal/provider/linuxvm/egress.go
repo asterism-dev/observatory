@@ -3,6 +3,7 @@ package linuxvm
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"strings"
@@ -10,6 +11,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
+
+// egressOutputLog keeps the proxy's decrypted per-request log on the node's stderr, out of the telemetry fan-out.
+var egressOutputLog = slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 // The proxy's UID sits next to the jail UIDs (70000+) and gets the same last-octet offset.
 const (

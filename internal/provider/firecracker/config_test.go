@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/asterism-dev/observatory/internal/node"
@@ -89,6 +90,23 @@ func TestVMConfigBalloonVsock(t *testing.T) {
 	}
 	if c.Vsock == nil || c.Vsock.CID != 3 || c.Vsock.Path != "/v.sock" {
 		t.Errorf("vsock = %+v", c.Vsock)
+	}
+}
+
+func TestVMConfigLogger(t *testing.T) {
+	b, err := vmConfig(testVMFile(), "k", "i", []string{"/root.img", "/seed.iso"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Logger map[string]any `json:"logger"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"log_path": "firecracker.log", "level": "Warning", "show_level": true, "show_log_origin": false}
+	if !reflect.DeepEqual(c.Logger, want) {
+		t.Errorf("logger = %v, want %v", c.Logger, want)
 	}
 }
 

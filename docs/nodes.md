@@ -158,6 +158,10 @@ Firecracker cannot open it. The socket goes away with the jail, not when its lis
 - The node journal gets one line per request: VM id, kind, result (`token vm=<id> kind=github result=ok`), never the
   token.
 
+## Telemetry
+
+The node ships host metrics and logs to the hub ([telemetry.md](telemetry.md)); they show on the node page.
+
 ## Updating
 
 A node whose version is older than the hub's shows as outdated. An org admin updates it from the hub: one node from

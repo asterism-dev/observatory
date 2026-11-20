@@ -30,6 +30,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/telemetry"
 	"github.com/asterism-dev/observatory/web"
 )
 
@@ -97,7 +98,12 @@ func run() error {
 	defer f.Close()
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
+	var tc *telemetry.Client
+	if cfg.MetricsURL != "" {
+		tc = &telemetry.Client{MetricsURL: cfg.MetricsURL, LogsURL: cfg.LogsURL}
+	}
 	api.NodeEndpoints(mux, s, f)
+	api.OTLPEndpoints(mux, s, tc)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
 	api.StorageEndpoints(mux, dh)
@@ -165,7 +171,7 @@ func run() error {
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript))))
+	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc))
 	mux.Handle("/", spa(dist))
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,

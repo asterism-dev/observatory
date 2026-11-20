@@ -11,6 +11,7 @@
     "@asterism-dev/lumen": "github:asterism-dev/lumen#v0.4.0",
     "@lucide/vue": "1.74.0",
     "qrcode": "1.5.4",
+    "uplot": "1.6.32",
     "vue": "3.5.45",
     "vue-i18n": "11.4.21",
     "vue-router": "5.5.1"

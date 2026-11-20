@@ -64,6 +64,7 @@ const (
 	ActionIntegrationDelete   = "integration:delete"
 	ActionNodeCreate          = "node:create"
 	ActionNodeUpdate          = "node:update"
+	ActionNodeMetrics         = "node:metrics"
 	ActionNodeEnroll          = "node:enroll"
 	ActionNodeRevoke          = "node:revoke"
 	ActionNodeDelete          = "node:delete"

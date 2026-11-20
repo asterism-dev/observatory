@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"regexp"
 	"time"
@@ -47,7 +47,7 @@ func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {
 		// EMFILE and the like pass; returning would leave the VM without a token service until it restarts.
 		if err != nil {
 			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
-			log.Printf("token vm=%s: accept: %v", vmID, err)
+			slog.Warn("token accept failed", "vm", vmID, "err", err)
 			time.Sleep(delay)
 			continue
 		}
@@ -87,13 +87,13 @@ func serveToken(c net.Conn, vmID string, lookup TokenLookup) {
 			ExpiresAt *time.Time `json:"expiresAt"`
 			Project   string     `json:"project,omitempty"`
 		}{true, tok.Token, tok.ExpiresAt, tok.Project}
-		log.Printf("token vm=%s kind=%s result=ok", vmID, kind)
+		slog.Info("token served", "vm", vmID, "kind", kind, "result", "ok")
 	} else {
 		reply = struct {
 			OK    bool   `json:"ok"`
 			Error string `json:"error"`
 		}{false, result}
-		log.Printf("token vm=%s kind=%s result=%s", vmID, kind, result)
+		slog.Info("token served", "vm", vmID, "kind", kind, "result", result)
 	}
 	b, _ := json.Marshal(reply)
 	c.Write(append(b, '\n'))

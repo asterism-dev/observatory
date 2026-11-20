@@ -21,6 +21,8 @@ services:
       OBSERVATORY_REGISTRY_CERT_DIR: /certs
       OBSERVATORY_REGISTRY_EVENTS_SECRET: ${OBSERVATORY_REGISTRY_EVENTS_SECRET:?set OBSERVATORY_REGISTRY_EVENTS_SECRET in deploy/.env}
       OBSERVATORY_REGISTRY_CONFIG: /etc/distribution/config.yml
+      OBSERVATORY_METRICS_URL: http://victoriametrics:8428
+      OBSERVATORY_LOGS_URL: http://victorialogs:9428
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     volumes:
@@ -78,6 +80,26 @@ services:
     entrypoint: ["sh", "-c", '[ "$$(stat -c %u /var/lib/registry)" = 65532 ] || chown -R 65532:65532 /var/lib/registry']
     volumes:
       - registry-data:/var/lib/registry
+  # Reached only by the hub, which stamps and forwards node telemetry.
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=${OBSERVATORY_METRICS_RETENTION:-30d}
+      - -opentelemetry.usePrometheusNaming
+      - -storage.maxHourlySeries=${OBSERVATORY_METRICS_MAX_HOURLY_SERIES:-200000}
+      - -storage.maxDailySeries=${OBSERVATORY_METRICS_MAX_DAILY_SERIES:-1000000}
+    volumes:
+      - metrics-data:/storage
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.54.0@sha256:ee4e820cac3721f5f5d91641b950c22439593adc4224f9655e5333d5a84c1dfe
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=${OBSERVATORY_LOGS_RETENTION:-14d}
+    volumes:
+      - logs-data:/storage
   # Loads the kernel modules the gateway needs; built-in modules make modprobe fail harmlessly.
   modules:
     image: alpine:3.22
@@ -147,6 +169,8 @@ volumes:
   registry-data:
   registry-keys:
   registry-certs:
+  metrics-data:
+  logs-data:
   ovn:
   ovs:
   disks:

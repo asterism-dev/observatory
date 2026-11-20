@@ -8,11 +8,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '@/api'
 import UpdateNodesDialog from '@/components/UpdateNodesDialog.vue'
 import InstallCommand from '@/components/InstallCommand.vue'
+import NodeLogs from '@/components/NodeLogs.vue'
+import NodeUsage from '@/components/NodeUsage.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import type { UsageRange } from '@/composables/telemetry'
 import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d, locale } = useI18n()
@@ -22,10 +25,10 @@ const { org } = useOrg()
 const { me } = useMe()
 
 const nodeId = computed(() => String(route.params.nodeId))
-const tabIds = ['overview', 'vms', 'settings']
-const tabs = computed(() => tabIds.map((v) => ({ value: v, label: t(`nodes.tabs.${v}`) })))
+const tabIds = computed(() => (node.value?.canTelemetry ? ['overview', 'metrics', 'vms', 'settings'] : ['overview', 'vms', 'settings']))
+const tabs = computed(() => tabIds.value.map((v) => ({ value: v, label: t(`nodes.tabs.${v}`) })))
 const tab = computed({
-  get: () => (tabIds.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
+  get: () => (tabIds.value.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
   set: (v) => router.replace({ query: { ...route.query, tab: v === 'overview' ? undefined : v } }),
 })
 const pct = (used: number, total: number) => (total ? (used / total) * 100 : null)
@@ -42,6 +45,11 @@ const confirmRegen = ref(false)
 const command = ref('')
 const confirmDelete = ref(false)
 const updateOpen = ref(false)
+const usageRange = ref<UsageRange | null>(null)
+const hoverAt = ref<number | null>(null)
+watch(tab, (v) => {
+  if (v !== 'metrics') usageRange.value = hoverAt.value = null
+})
 
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -179,6 +187,11 @@ watch(
               </KeyValueList>
             </Card>
           </Section>
+        </template>
+
+        <template v-if="tab === 'metrics'">
+          <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+          <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" :hover-at="hoverAt" />
         </template>
 
         <VMList v-if="tab === 'vms'" :org-id="org.id" :vms="vms" :empty="t('nodes.noVms')" @changed="load" />

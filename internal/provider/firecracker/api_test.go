@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net"
@@ -99,6 +100,31 @@ func TestAPIPatchDrive(t *testing.T) {
 	want := apiRequest{"PATCH", "/drives/d1", `{"drive_id":"d1","path_on_host":"/vdb"}`}
 	if got := <-reqs; got != want {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// The restore path must configure the same logger a cold boot gets from fc.json.
+func TestAPIPutLogger(t *testing.T) {
+	api, reqs := fakeAPI(t, http.StatusNoContent, "")
+	if err := api.PutLogger(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := vmConfig(testVMFile(), "k", "i", []string{"/root.img", "/seed.iso"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Logger json.RawMessage `json:"logger"`
+	}
+	if err := json.Unmarshal(cfg, &c); err != nil {
+		t.Fatal(err)
+	}
+	var want bytes.Buffer
+	if err := json.Compact(&want, c.Logger); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-reqs; got.method != "PUT" || got.path != "/logger" || got.body != want.String() {
+		t.Fatalf("got %+v, want body %s", got, want.String())
 	}
 }
 

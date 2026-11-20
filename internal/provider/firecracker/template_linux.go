@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -76,7 +76,7 @@ func (p *Provider) buildTemplate(ctx context.Context, key, base string, f node.V
 	if err := saveTemplate(inst, dir, dst, digest); err != nil {
 		return err
 	}
-	log.Printf("template %s: built in %s", key, time.Since(began).Round(time.Second))
+	slog.Info("template built", "template", key, "took", time.Since(began).Round(time.Second))
 	return evictTemplates(filepath.Dir(dst), maxTemplates)
 }
 
@@ -138,7 +138,7 @@ func (p *Provider) removeUnfinishedTemplates() {
 	tmps, _ := filepath.Glob(filepath.Join(p.VMsDir, templatesDir, "*.tmp"))
 	for _, d := range append(dirs, tmps...) {
 		if err := os.RemoveAll(d); err != nil {
-			log.Printf("remove unfinished template %s: %v", d, err)
+			slog.Warn("remove unfinished template failed", "template", d, "err", err)
 		}
 	}
 }

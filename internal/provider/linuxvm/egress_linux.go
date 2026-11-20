@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,7 +136,7 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 			if !ok {
 				if !warned {
 					warned = true
-					log.Printf("vm %s egress: malformed usage line", id)
+					slog.Warn("malformed egress usage line", "vm", id)
 				}
 				continue
 			}
@@ -152,7 +152,7 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 		defer readers.Done()
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			log.Printf("vm %s egress: %s", id, sc.Text())
+			egressOutputLog.Info("egress proxy output", "vm", id, "line", sc.Text())
 		}
 		// An over-long line ends the scanner; draining keeps the proxy from blocking on a full pipe.
 		io.Copy(io.Discard, stderr)
@@ -199,7 +199,7 @@ func (p *egressProc) Kill() {
 		select {
 		case <-p.exited:
 		case <-time.After(egressKillWait):
-			log.Printf("egress proxy pid %d: still running %s after SIGKILL", p.cmd.Process.Pid, egressKillWait)
+			slog.Warn("egress proxy still running after SIGKILL", "pid", p.cmd.Process.Pid, "wait", egressKillWait)
 			p.doneOnce.Do(func() { close(p.done) })
 		}
 	}()

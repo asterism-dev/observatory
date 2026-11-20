@@ -48,6 +48,10 @@ until the hub has written its token certificate to `deploy/dev/registry-certs`. 
 against it: `HUB_URL=http://host.docker.internal:55090 make registry-up`, then with `deploy/dev/hub.env` sourced
 `OBSERVATORY_TEST_REGISTRY_URL=http://localhost:55000 go test ./internal/api -run TestRegistryPushRoundTrip`.
 
+For telemetry, start the stores with `make telemetry-up` (`telemetry-down` stops them). It appends
+`OBSERVATORY_METRICS_URL` and `OBSERVATORY_LOGS_URL` to `deploy/dev/hub.env` if missing and listens on
+`localhost:58428` and `localhost:59428`.
+
 Open <http://localhost:5173>. The first user to log in becomes platform admin.
 With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.
 

@@ -158,6 +158,7 @@ var Catalog = []Permission{
 	{"node:update", ObjNodes + "/*"},
 	{"node:delete", ObjNodes + "/*"},
 	{"node:use", ObjNodes + "/*"},
+	{"node:metrics", ObjNodes + "/*"},
 	{"vm:create", ObjVMs},
 	{"vm:create", ObjTeamVMs + "/*"},
 	{"vm:read", ObjVMs + "/*"},

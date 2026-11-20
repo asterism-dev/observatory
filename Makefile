@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -27,6 +27,15 @@ registry-up: registry-env
 
 registry-down:
 	docker compose -f deploy/dev/compose.yaml rm -sf registry
+
+telemetry-env:
+	grep -q '^OBSERVATORY_METRICS_URL=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_METRICS_URL=http://localhost:58428"; echo "OBSERVATORY_LOGS_URL=http://localhost:59428"; } >> deploy/dev/hub.env
+
+telemetry-up: telemetry-env
+	docker compose -f deploy/dev/compose.yaml --profile telemetry up -d --wait victoriametrics victorialogs
+
+telemetry-down:
+	docker compose -f deploy/dev/compose.yaml rm -sf victoriametrics victorialogs
 
 idp-up:
 	[ -f deploy/idp/.env ] || cp deploy/idp/.env.example deploy/idp/.env

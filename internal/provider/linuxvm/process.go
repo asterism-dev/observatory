@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,7 +52,7 @@ func AttachDisks(f node.VMFile, dir string) ([]string, []string, error) {
 func DetachAll(vmID, dir string, nbdIDs []string) {
 	for _, id := range nbdIDs {
 		if err := DetachNBD(dir, id); err != nil {
-			log.Printf("vm %s: detach %s: %v", vmID, id, err)
+			slog.Warn("detach failed", "vm", vmID, "disk", id, "err", err)
 		}
 	}
 }
@@ -120,7 +120,7 @@ func (p *Process) Kill() error {
 	select {
 	case <-p.done:
 	case <-time.After(nbdStuckAfter):
-		log.Printf("vm %s: still running %s after SIGKILL, dropping its NBD disks", p.vmID, nbdStuckAfter)
+		slog.Warn("still running after SIGKILL, dropping its NBD disks", "vm", p.vmID, "wait", nbdStuckAfter)
 		DetachAll(p.vmID, p.dir, p.nbdIDs)
 		<-p.done
 	}
@@ -145,6 +145,6 @@ func (p *Process) KillOnConsole(text string) {
 	if err == nil {
 		p.Cmd.Process.Kill()
 	} else if !errors.Is(err, context.Canceled) {
-		log.Printf("watching console %s: %v", p.Console, err)
+		slog.Warn("watching console failed", "console", p.Console, "err", err)
 	}
 }

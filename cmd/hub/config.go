@@ -25,6 +25,8 @@ type config struct {
 	BuilderSize                 builds.Size
 	// NodeURL is the hub URL nodes pull images from, the public URL by default.
 	NodeURL *url.URL
+	// MetricsURL and LogsURL are the telemetry stores; both empty turns telemetry off.
+	MetricsURL, LogsURL string
 }
 
 const minTokenLen = 32
@@ -132,6 +134,15 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if cfg.NodeURL, err = url.Parse(nodeURL); err != nil || cfg.NodeURL.Host == "" || cfg.NodeURL.Scheme != "http" && cfg.NodeURL.Scheme != "https" {
 		return config{}, errors.New("OBSERVATORY_NODE_URL must be an absolute http(s) URL")
+	}
+	cfg.MetricsURL, cfg.LogsURL = getenv("OBSERVATORY_METRICS_URL"), getenv("OBSERVATORY_LOGS_URL")
+	if (cfg.MetricsURL == "") != (cfg.LogsURL == "") {
+		return config{}, errors.New("OBSERVATORY_METRICS_URL and OBSERVATORY_LOGS_URL must be set together")
+	}
+	for key, v := range map[string]string{"OBSERVATORY_METRICS_URL": cfg.MetricsURL, "OBSERVATORY_LOGS_URL": cfg.LogsURL} {
+		if u, err := url.Parse(v); v != "" && (err != nil || u.Host == "" || u.Scheme != "http" && u.Scheme != "https") {
+			return config{}, fmt.Errorf("%s must be an absolute http(s) URL", key)
+		}
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

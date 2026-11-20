@@ -2,7 +2,7 @@ package node
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,7 +63,7 @@ func (a *Agent) syncSnapshots(d proto.DesiredVM) {
 			return false
 		}
 		if err := os.RemoveAll(filepath.Join(snaps, ref.ID)); err != nil {
-			log.Printf("vm %s: remove snapshot %s: %v", id, ref.ID, err)
+			slog.Warn("remove snapshot failed", "vm", id, "snapshot", ref.ID, "err", err)
 		}
 		orphans = append(orphans, ref.ID)
 		return true
@@ -115,7 +115,7 @@ func (a *Agent) gcSnapshots(id string, refs []proto.SnapshotRef) {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(snaps, en.Name())); err != nil {
-			log.Printf("vm %s: remove snapshot %s: %v", id, en.Name(), err)
+			slog.Warn("remove snapshot failed", "vm", id, "snapshot", en.Name(), "err", err)
 		}
 		removed = true
 	}
@@ -190,22 +190,22 @@ func (a *Agent) takeSnapshot(id string, ref proto.SnapshotRef) {
 	}
 	if err != nil {
 		os.RemoveAll(tmp)
-		log.Printf("vm %s: snapshot %s: %v", id, ref.ID, err)
+		slog.Error("snapshot failed", "vm", id, "snapshot", ref.ID, "err", err)
 		a.mu.Lock()
 		job.err = err.Error()
 		a.mu.Unlock()
 	} else {
-		log.Printf("vm %s: snapshot %s written in %s", id, ref.ID, time.Since(started).Round(time.Millisecond))
+		slog.Info("snapshot written", "vm", id, "snapshot", ref.ID, "took", time.Since(started).Round(time.Millisecond))
 	}
 	a.reportCurrent(id)
 	if err == nil {
 		select {
 		case <-job.release:
 		case <-time.After(snapshotWait):
-			log.Printf("vm %s: snapshot %s not completed within %s, going on", id, ref.ID, snapshotWait)
+			slog.Warn("snapshot not completed in time, going on", "vm", id, "snapshot", ref.ID, "wait", snapshotWait)
 			// Disk copies the hub queues from now on would postdate the memory.
 			if err := os.RemoveAll(filepath.Join(snaps, ref.ID)); err != nil {
-				log.Printf("vm %s: remove snapshot %s: %v", id, ref.ID, err)
+				slog.Warn("remove snapshot failed", "vm", id, "snapshot", ref.ID, "err", err)
 			}
 			a.mu.Lock()
 			job.err = errResumedEarly
@@ -215,9 +215,9 @@ func (a *Agent) takeSnapshot(id string, ref proto.SnapshotRef) {
 	}
 	if live && !wasPaused && alive(inst) {
 		if err := inst.Resume(); err != nil {
-			log.Printf("vm %s: resume after snapshot: %v", id, err)
+			slog.Warn("resume after snapshot failed", "vm", id, "err", err)
 		} else {
-			log.Printf("vm %s: paused %s for snapshot %s", id, time.Since(started).Round(time.Millisecond), ref.ID)
+			slog.Info("vm paused for snapshot", "vm", id, "snapshot", ref.ID, "took", time.Since(started).Round(time.Millisecond))
 			go a.guestResume(id, inst)
 		}
 	}

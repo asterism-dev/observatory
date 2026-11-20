@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -134,7 +134,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	for {
 		if err := a.connect(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("hub connection: %v", err)
+			slog.Warn("hub connection failed", "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -201,7 +201,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("connected to hub %s", a.HubURL)
+	slog.Info("connected to hub", "hub", a.HubURL)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
 	go a.metricsLoop(connCtx)
@@ -261,7 +261,7 @@ func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 		a.chassisPending = nil
 		a.chassisMu.Unlock()
 		if err := a.Provider.StartChassis(ctx, next); err != nil {
-			log.Printf("chassis: %v", err)
+			slog.Error("chassis failed", "err", err)
 		}
 		a.chassisMu.Lock()
 	}
@@ -576,7 +576,7 @@ func (a *Agent) setImage(st proto.ImageStatus) {
 	a.mu.Unlock()
 	if send != nil {
 		if err := send(proto.Message{Type: "image", Image: &st}); err != nil {
-			log.Printf("image: %v", err)
+			slog.Error("image setup failed", "err", err)
 		}
 	}
 }
@@ -621,7 +621,7 @@ func (a *Agent) start(ctx context.Context, e *vmEntry, f VMFile, dir string) (in
 			// Stopping or deleted: no cold boot to replace it.
 			return nil, "", err
 		}
-		log.Printf("vm %s: restore: %v", f.Spec.ID, err)
+		slog.Error("restore failed", "vm", f.Spec.ID, "err", err)
 		note = "hibernation discarded: " + err.Error()
 	}
 	inst, err = a.coldStart(ctx, f, dir)
@@ -705,7 +705,7 @@ func (a *Agent) hibernate(e *vmEntry) error {
 		// After a kill (node stop budget) there is nothing left to resume.
 		if !wasPaused && alive(inst) {
 			if err := inst.Resume(); err != nil {
-				log.Printf("vm %s: resume after failed hibernate: %v", f.Spec.ID, err)
+				slog.Warn("resume after failed hibernate", "vm", f.Spec.ID, "err", err)
 			}
 		}
 		return err
@@ -724,7 +724,7 @@ func (a *Agent) endHibernation(ctx context.Context, e *vmEntry, graceful bool) e
 	// An unstarted fork's state is its source's memory: resuming it would bring the source's identity up on the fork's NICs.
 	if !graceful || len(f.Spec.Attachments) == 0 || f.Takeoff {
 		if err := a.clearHibernated(e); err != nil {
-			log.Printf("vm %s: save: %v", f.Spec.ID, err)
+			slog.Error("save failed", "vm", f.Spec.ID, "err", err)
 		}
 		return os.RemoveAll(state)
 	}
@@ -735,16 +735,16 @@ func (a *Agent) endHibernation(ctx context.Context, e *vmEntry, graceful bool) e
 		return fmt.Errorf("save: %w", err)
 	}
 	if inst, err := a.Provider.Restore(ctx, f, dir, RestoreFrom{StateDir: state}); err != nil {
-		log.Printf("vm %s: resume to shut down: %v", f.Spec.ID, err)
+		slog.Warn("resume to shut down failed", "vm", f.Spec.ID, "err", err)
 	} else {
 		if err := inst.Stop(); err != nil {
-			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
+			slog.Error("stop failed", "vm", f.Spec.ID, "err", err)
 			inst.Kill()
 		}
 		<-inst.Done()
 	}
 	if err := os.RemoveAll(state); err != nil {
-		log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
+		slog.Warn("remove state failed", "vm", f.Spec.ID, "err", err)
 	}
 	return nil
 }
@@ -758,7 +758,7 @@ func (a *Agent) endHibernationWait(ctx context.Context, e *vmEntry, graceful boo
 		if err == nil {
 			return nil
 		}
-		log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
+		slog.Error("end hibernation failed", "vm", e.file.Spec.ID, "err", err)
 		a.reportEntry(e, proto.VMStatus{ID: e.file.Spec.ID, State: proto.StateHibernated, Error: err.Error()})
 		if !errors.As(err, new(storageError)) {
 			if failures++; failures > len(restartBackoff) {
@@ -859,7 +859,7 @@ func (a *Agent) reloadSeed(e *vmEntry, inst Instance) {
 		err = inst.ReloadSeed()
 	}
 	if err != nil {
-		log.Printf("vm %s: reload seed: %v", f.Spec.ID, err)
+		slog.Error("reload seed failed", "vm", f.Spec.ID, "err", err)
 	}
 }
 
@@ -868,7 +868,7 @@ func (a *Agent) guestResume(id string, inst Instance) {
 	ctx, cancel := context.WithTimeout(context.Background(), guestResumeTimeout)
 	defer cancel()
 	if err := inst.GuestResume(ctx); err != nil {
-		log.Printf("vm %s: guest agent resume: %v", id, err)
+		slog.Warn("guest agent resume failed", "vm", id, "err", err)
 	}
 }
 
@@ -926,7 +926,7 @@ func (a *Agent) watch(ctx context.Context, e *vmEntry, id string, inst Instance,
 func (a *Agent) hibernateFits(entries map[string]*vmEntry) map[*vmEntry]bool {
 	free, err := statfsFree(a.VMsDir)
 	if err != nil {
-		log.Printf("free space: %v", err)
+		slog.Warn("free space check failed", "err", err)
 		return nil
 	}
 	fits := map[*vmEntry]bool{}
@@ -938,7 +938,7 @@ func (a *Agent) hibernateFits(entries map[string]*vmEntry) map[*vmEntry]bool {
 		need := int64(e.file.Spec.MemoryMB)<<20 + 1<<30
 		a.mu.Unlock()
 		if need > free {
-			log.Printf("vm %s: not enough space on node to hibernate, stopping it", id)
+			slog.Warn("not enough space to hibernate, stopping", "vm", id)
 			continue
 		}
 		free -= need
@@ -1005,7 +1005,7 @@ func (a *Agent) restart(ctx context.Context, e *vmEntry) (Instance, string, erro
 			end = inst.Stop
 		}
 		if err := end(); err != nil {
-			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
+			slog.Error("stop failed", "vm", f.Spec.ID, "err", err)
 			inst.Kill()
 		}
 		<-inst.Done()
@@ -1028,9 +1028,9 @@ func (a *Agent) stopAll() {
 	var fits map[*vmEntry]bool
 	hv, ok := a.Provider.(interface{ HypervisorChanged() bool })
 	if _, err := os.Stat(a.ShutdownMarker); err == nil {
-		log.Printf("%s present: stopping VMs instead of hibernating", a.ShutdownMarker)
+		slog.Info("shutdown marker present, stopping VMs instead of hibernating", "marker", a.ShutdownMarker)
 	} else if ok && hv.HypervisorChanged() {
-		log.Printf("hypervisor changed since start: stopping VMs instead of hibernating")
+		slog.Info("hypervisor changed since start, stopping VMs instead of hibernating")
 	} else {
 		fits = a.hibernateFits(entries)
 	}
@@ -1038,7 +1038,7 @@ func (a *Agent) stopAll() {
 	kill := func(id string, e *vmEntry, inst Instance) {
 		e.stopRequested.Store(true)
 		if err := inst.Kill(); err != nil {
-			log.Printf("vm %s: kill: %v", id, err)
+			slog.Error("kill failed", "vm", id, "err", err)
 		}
 	}
 	var wg sync.WaitGroup
@@ -1063,7 +1063,7 @@ func (a *Agent) stopAll() {
 				if err == nil {
 					return
 				}
-				log.Printf("vm %s: hibernate: %v", id, err)
+				slog.Error("hibernate failed", "vm", id, "err", err)
 				a.mu.Lock()
 				saved := e.file.Hibernated
 				a.mu.Unlock()
@@ -1077,7 +1077,7 @@ func (a *Agent) stopAll() {
 			}
 			if !expired.Load() {
 				if err := inst.Stop(); err != nil {
-					log.Printf("vm %s: stop: %v", id, err)
+					slog.Error("stop failed", "vm", id, "err", err)
 				}
 			}
 		}()
@@ -1104,7 +1104,7 @@ func (a *Agent) stopAll() {
 	a.chassisMu.Unlock()
 	a.chassisWG.Wait()
 	if err := a.Provider.StopChassis(); err != nil {
-		log.Printf("stop chassis: %v", err)
+		slog.Error("stop chassis failed", "err", err)
 	}
 }
 
@@ -1141,7 +1141,7 @@ func (a *Agent) reportEntry(want *vmEntry, st proto.VMStatus) {
 	a.mu.Unlock()
 	if ok && send != nil {
 		if err := send(proto.Message{Type: "status", Status: &st}); err != nil {
-			log.Printf("vm %s: status: %v", st.ID, err)
+			slog.Warn("status failed", "vm", st.ID, "err", err)
 		}
 	}
 }
@@ -1149,7 +1149,7 @@ func (a *Agent) reportEntry(want *vmEntry, st proto.VMStatus) {
 func (a *Agent) disks(f VMFile) []proto.Disk {
 	disks, err := a.Provider.Disks(f, VMDir(a.VMsDir, f.Spec.ID))
 	if err != nil {
-		log.Printf("vm %s: disks: %v", f.Spec.ID, err)
+		slog.Error("disk status failed", "vm", f.Spec.ID, "err", err)
 		return nil
 	}
 	return disks
@@ -1195,7 +1195,7 @@ func (a *Agent) refreshDisks() {
 		a.mu.Unlock()
 		if send != nil {
 			if err := send(proto.Message{Type: "status", Status: &st}); err != nil {
-				log.Printf("vm %s: status: %v", f.Spec.ID, err)
+				slog.Warn("status failed", "vm", f.Spec.ID, "err", err)
 			}
 		}
 	}
@@ -1206,4 +1206,16 @@ func RandomMAC() string {
 	rand.Read(b)
 	b[0] = b[0]&^0x01 | 0x02 // unicast, locally administered
 	return net.HardwareAddr(b).String()
+}
+
+func (a *Agent) runningVMs() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, e := range a.vms {
+		if e.status.State == proto.StateRunning {
+			n++
+		}
+	}
+	return n
 }

@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -104,7 +104,7 @@ func installedFirecracker() (string, error) {
 func (p *Provider) HypervisorChanged() bool {
 	v, err := installedFirecracker()
 	if err != nil {
-		log.Printf("hypervisor check: %v", err)
+		slog.Error("hypervisor check failed", "err", err)
 		return false
 	}
 	return v != p.fcVersion
@@ -166,11 +166,11 @@ func (p *Provider) Prepare(ctx context.Context, f node.VMFile, dir string) error
 		if _, err := os.Stat(tpl); err != nil {
 			go func() {
 				if err := p.buildTemplate(context.Background(), key, base, f); err != nil {
-					log.Printf("template %s: %v", key, err)
+					slog.Warn("template build failed", "template", key, "err", err)
 				}
 			}()
 		} else if err := node.CloneResize(filepath.Join(tpl, "root.img"), filepath.Join(dir, "root.img"), f.Spec.DiskGB); err != nil {
-			log.Printf("vm %s: template %s: %v; booting cold", f.Spec.ID, key, err)
+			slog.Warn("template clone failed, booting cold", "vm", f.Spec.ID, "template", key, "err", err)
 		} else {
 			now := time.Now()
 			os.Chtimes(tpl, now, now)
@@ -220,7 +220,7 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 			began := time.Now()
 			inst, err := p.Restore(ctx, f, dir, node.RestoreFrom{StateDir: tpl, Takeoff: true, Shared: true})
 			if err == nil {
-				log.Printf("vm %s: started from template %s in %s", f.Spec.ID, key, time.Since(began).Round(time.Millisecond))
+				slog.Info("started from template", "vm", f.Spec.ID, "template", key, "took", time.Since(began).Round(time.Millisecond))
 				return inst, nil
 			}
 			if ctx.Err() != nil {
@@ -230,9 +230,9 @@ func (p *Provider) Start(ctx context.Context, f node.VMFile, dir string) (node.I
 				}
 				return nil, err
 			}
-			log.Printf("vm %s: start from template %s: %v; deleting the template and booting cold", f.Spec.ID, key, err)
+			slog.Warn("start from template failed, deleting the template and booting cold", "vm", f.Spec.ID, "template", key, "err", err)
 			if err := os.RemoveAll(tpl); err != nil {
-				log.Printf("template %s: %v", key, err)
+				slog.Warn("template build failed", "template", key, "err", err)
 			}
 		}
 		// The template's disk carries its machine id and host keys; a cold boot starts from the base image instead.
@@ -280,6 +280,10 @@ func (p *Provider) Restore(ctx context.Context, f node.VMFile, dir string, from 
 	if err := inst.waitSock(5 * time.Second); err != nil {
 		inst.Kill()
 		return nil, err
+	}
+	// Without fc.json, the restore path configures Firecracker's log itself.
+	if err := inst.api.PutLogger(); err != nil {
+		slog.Warn("firecracker logger setup failed", "vm", f.Spec.ID, "err", err)
 	}
 	if err := inst.load(ctx, f, dir, from, seedGrew); err != nil {
 		inst.Kill()
@@ -334,7 +338,7 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 			os.Remove(filepath.Join(jailRoot(dir), n))
 		}
 		if err := os.RemoveAll(from.StateDir); err != nil {
-			log.Printf("vm %s: remove state: %v", f.Spec.ID, err)
+			slog.Warn("remove state failed", "vm", f.Spec.ID, "err", err)
 		}
 	}
 	if from.Paused {
@@ -351,7 +355,7 @@ func (i *instance) load(ctx context.Context, f node.VMFile, dir string, from nod
 	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(dir), vsockPath), req)
 	if err != nil && !from.Takeoff {
 		// The guest runs where it was, only with a stale clock and seed; that beats discarding its memory.
-		log.Printf("vm %s: guest agent: %v", f.Spec.ID, err)
+		slog.Error("guest agent failed", "vm", f.Spec.ID, "err", err)
 		return nil
 	}
 	return err
@@ -471,6 +475,16 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 			return nil, "", 0, err
 		}
 	}
+	// Firecracker runs as uid and cannot open a log file it does not own.
+	fcLog := filepath.Join(jailRoot(dir), fcLogName)
+	if err := os.WriteFile(fcLog, nil, 0o600); err != nil {
+		removeJail()
+		return nil, "", 0, err
+	}
+	if err := os.Chown(fcLog, uid, uid); err != nil {
+		removeJail()
+		return nil, "", 0, err
+	}
 	tokens, err := listenTokens(dir, uid)
 	if err != nil {
 		removeJail()
@@ -480,6 +494,10 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, func() { tokens.Close(); removeJail() })
 	if err != nil {
 		tokens.Close()
+	} else {
+		ctx, stop := context.WithCancel(context.Background())
+		go func() { <-proc.Done(); stop() }()
+		go tailFCLog(ctx, fcLog, f.Spec.ID, f.Spec.Name)
 	}
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {

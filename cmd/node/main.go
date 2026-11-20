@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,6 +34,18 @@ func main() {
 	cfg, err := node.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	tel, err := node.StartTelemetry(context.Background(), cfg.Hub.URL, cfg.Hub.Credential, version.Version)
+	if err != nil {
+		slog.Warn("telemetry disabled", "err", err)
+	} else {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tel.Shutdown(ctx); err != nil {
+				slog.Error("telemetry shutdown failed", "err", err)
+			}
+		}()
 	}
 	provider, err := newProvider(cfg)
 	if err != nil {
@@ -71,7 +84,12 @@ func main() {
 		Version: version.Version, Egress: egressHost,
 		Updater: newUpdater(filepath.Dir(*configPath)), ShutdownMarker: filepath.Join(filepath.Dir(*configPath), "shutdown-vms"),
 	}
-	log.Printf("node %s (%s): provider %s, %d CPUs, %d MB", cfg.NodeID, version.Version, provider.Name(), cfg.Capacity.CPUs, cfg.Capacity.MemoryMB)
+	if tel != nil {
+		if err := a.RegisterHostMetrics(tel.Meter, []string{"/", cfg.Paths.VMs}); err != nil {
+			slog.Warn("host metrics disabled", "err", err)
+		}
+	}
+	slog.Info("node starting", "node", cfg.NodeID, "version", version.Version, "provider", provider.Name(), "cpus", cfg.Capacity.CPUs, "memory_mb", cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}

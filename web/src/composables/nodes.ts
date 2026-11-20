@@ -17,6 +17,7 @@ export interface NodeInfo {
   usedMemoryMB: number
   canUpdate: boolean
   canDelete: boolean
+  canTelemetry: boolean
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
   quarantined: boolean
   image: {

@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -126,7 +126,7 @@ func (a *Agent) sendMetrics(marks map[string]cpuMark, every time.Duration) {
 	}
 	if len(out) > 0 && send != nil {
 		if err := send(proto.Message{Type: "metrics", Metrics: out}); err != nil {
-			log.Printf("metrics: %v", err)
+			slog.Warn("metrics failed", "err", err)
 		}
 	}
 }
