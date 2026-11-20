@@ -15,7 +15,7 @@ import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
 import { defaultSourceLabel } from '@/composables/images'
 import { kindLabels, type IntegrationKind } from '@/composables/integrations'
-import { gb, powerActions, relativeTime, vmTones, type VmInfo } from '@/composables/nodes'
+import { deletionLabel, gb, powerActions, relativeTime, vmTones, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import { Card, CommandBox, KeyValue, KeyValueList, PageHeader, Section, Tag } from '@/ui'
@@ -158,6 +158,7 @@ watch(
         <template #tags>
           <Tag :tone="vmTones[vm.state]">{{ t(`vms.states.${vm.state}`) }}</Tag>
           <Tag strong>{{ vm.node.name }}</Tag>
+          <Tag v-if="vm.deleteAt" tone="warning">{{ deletionLabel(vm.deleteAt, t, locale) }}</Tag>
           <Tag v-if="vm.legacyRuntime" tone="warning">{{ t('vms.legacyRuntime') }}</Tag>
         </template>
         <template #actions>
