@@ -2,7 +2,7 @@ package firecracker
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,7 +48,7 @@ func removeLegacyImages(imagesDir string) {
 	for _, e := range entries {
 		if e.Type().IsRegular() && legacyImageRE.MatchString(e.Name()) {
 			if err := os.Remove(filepath.Join(imagesDir, e.Name())); err != nil {
-				log.Printf("remove legacy image: %v", err)
+				slog.Warn("remove legacy image failed", "err", err)
 			}
 		}
 	}

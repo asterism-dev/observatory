@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -36,13 +37,13 @@ func main() {
 	}
 	tel, err := node.StartTelemetry(context.Background(), cfg.Hub.URL, cfg.Hub.Credential, version.Version)
 	if err != nil {
-		log.Printf("telemetry disabled: %v", err)
+		slog.Warn("telemetry disabled", "err", err)
 	} else {
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := tel.Shutdown(ctx); err != nil {
-				log.Printf("telemetry shutdown: %v", err)
+				slog.Error("telemetry shutdown failed", "err", err)
 			}
 		}()
 	}
@@ -85,10 +86,10 @@ func main() {
 	}
 	if tel != nil {
 		if err := a.RegisterHostMetrics(tel.Meter, []string{"/", cfg.Paths.VMs}); err != nil {
-			log.Printf("host metrics disabled: %v", err)
+			slog.Warn("host metrics disabled", "err", err)
 		}
 	}
-	log.Printf("node %s (%s): provider %s, %d CPUs, %d MB", cfg.NodeID, version.Version, provider.Name(), cfg.Capacity.CPUs, cfg.Capacity.MemoryMB)
+	slog.Info("node starting", "node", cfg.NodeID, "version", version.Version, "provider", provider.Name(), "cpus", cfg.Capacity.CPUs, "memory_mb", cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}

@@ -2,7 +2,7 @@ package node
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"maps"
 	"reflect"
 	"sync"
@@ -63,7 +63,7 @@ func (a *Agent) egressUp(e *vmEntry) {
 	select {
 	case <-s.ready:
 	case <-time.After(egressReadyTimeout):
-		log.Printf("vm %s: egress proxy not ready after %s, starting without it", f.Spec.ID, egressReadyTimeout)
+		slog.Warn("egress proxy not ready, starting without it", "vm", f.Spec.ID, "timeout", egressReadyTimeout)
 	}
 }
 
@@ -118,7 +118,7 @@ func (a *Agent) egressSync(e *vmEntry, old VMFile) {
 		ctx, cancel := context.WithTimeout(context.Background(), guestTrustTimeout)
 		defer cancel()
 		if err := inst.GuestTrust(ctx, latest); err != nil {
-			log.Printf("vm %s: egress ca trust: %v", id, err)
+			slog.Error("egress ca trust failed", "vm", id, "err", err)
 		}
 	}()
 }
@@ -129,7 +129,7 @@ func (a *Agent) setEgressLocked(f VMFile) *egressSup {
 		return nil
 	}
 	if a.Egress == nil {
-		a.egressWarn.Do(func() { log.Printf("vm %s: has host-bound secrets, but this node runs no egress proxies", f.Spec.ID) })
+		a.egressWarn.Do(func() { slog.Warn("vm has host-bound secrets, but this node runs no egress proxies", "vm", f.Spec.ID) })
 		return nil
 	}
 	id := f.Spec.ID
@@ -225,7 +225,7 @@ func (a *Agent) runEgress(ctx context.Context, s *egressSup) {
 	id := f.Spec.ID
 	proc, err := a.Egress.Spawn(f)
 	if err != nil {
-		log.Printf("vm %s: egress proxy: %v", id, err)
+		slog.Error("egress proxy failed", "vm", id, "err", err)
 		return
 	}
 	defer func() {
@@ -233,37 +233,37 @@ func (a *Agent) runEgress(ctx context.Context, s *egressSup) {
 		<-proc.Done()
 	}()
 	if err := proc.Send(*f.Egress); err != nil {
-		log.Printf("vm %s: egress proxy config: %v", id, err)
+		slog.Error("egress proxy config failed", "vm", id, "err", err)
 		return
 	}
 	select {
 	case <-proc.Ready():
 	case <-proc.Done():
-		log.Printf("vm %s: egress proxy exited before it was ready", id)
+		slog.Error("egress proxy exited before it was ready", "vm", id)
 		return
 	case <-ctx.Done():
 		return
 	}
 	if err := a.Egress.Redirect(f); err != nil {
-		log.Printf("vm %s: egress redirect: %v", id, err)
+		slog.Error("egress redirect failed", "vm", id, "err", err)
 		return
 	}
 	defer func() {
 		if err := a.Egress.Unredirect(f); err != nil {
-			log.Printf("vm %s: egress unredirect: %v", id, err)
+			slog.Error("egress unredirect failed", "vm", id, "err", err)
 		}
 	}()
 	s.once.Do(func() { close(s.ready) })
 	for {
 		select {
 		case <-proc.Done():
-			log.Printf("vm %s: egress proxy exited", id)
+			slog.Warn("egress proxy exited", "vm", id)
 			return
 		case <-ctx.Done():
 			return
 		case <-s.changed:
 			if err := proc.Send(*a.egressFile(s).Egress); err != nil {
-				log.Printf("vm %s: egress proxy config: %v", id, err)
+				slog.Error("egress proxy config failed", "vm", id, "err", err)
 				return
 			}
 		}

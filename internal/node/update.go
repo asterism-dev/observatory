@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -24,9 +24,9 @@ func hubBase(connectURL string) string {
 
 func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
 	fail := func(err error) {
-		log.Printf("update: %v", err)
+		slog.Error("update failed", "err", err)
 		if err := send(proto.Message{Type: "update", Update: &proto.UpdateReport{Error: err.Error()}}); err != nil {
-			log.Printf("update report: %v", err)
+			slog.Warn("update report failed", "err", err)
 		}
 	}
 	if a.Updater == nil {
@@ -55,6 +55,6 @@ func (a *Agent) removeShutdownMarker() {
 		return
 	}
 	if err := os.Remove(a.ShutdownMarker); err != nil && !os.IsNotExist(err) {
-		log.Printf("shutdown marker: %v", err)
+		slog.Error("shutdown marker failed", "err", err)
 	}
 }

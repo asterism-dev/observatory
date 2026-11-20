@@ -2,7 +2,7 @@ package node
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -33,7 +33,7 @@ func (a *Agent) suspendLoop(ctx context.Context, e *vmEntry) {
 	for {
 		if err := a.Provider.WaitIdle(ctx, f, time.Duration(f.AutoSuspendMinutes)*time.Minute); err != nil {
 			if ctx.Err() == nil {
-				log.Printf("vm %s: idle watch: %v", f.Spec.ID, err)
+				slog.Warn("idle watch failed", "vm", f.Spec.ID, "err", err)
 			}
 			return
 		}
@@ -63,7 +63,7 @@ func (a *Agent) suspend(ctx context.Context, e *vmEntry) bool {
 	if err == nil {
 		return true
 	}
-	log.Printf("vm %s: auto-suspend: %v", e.file.Spec.ID, err)
+	slog.Error("auto-suspend failed", "vm", e.file.Spec.ID, "err", err)
 	a.mu.Lock()
 	e.file.Suspended = e.file.Hibernated
 	a.mu.Unlock()
@@ -119,7 +119,7 @@ func (a *Agent) waitForWake(e *vmEntry) bool {
 		if err == nil || woken {
 			return true
 		}
-		log.Printf("vm %s: wait for traffic: %v", f.Spec.ID, err)
+		slog.Warn("wait for traffic failed", "vm", f.Spec.ID, "err", err)
 		a.reportEntry(e, proto.VMStatus{ID: f.Spec.ID, State: proto.StateSuspended, Error: "wait for traffic: " + err.Error()})
 		select {
 		case <-e.ctx.Done():
@@ -157,7 +157,7 @@ func (a *Agent) syncSuspend(e *vmEntry, d proto.DesiredVM) {
 	// A running operation saves e.file itself; an older copy saved here could land after it.
 	if e.op.TryLock() {
 		if err := SaveVM(a.VMsDir, f); err != nil {
-			log.Printf("vm %s: save: %v", f.Spec.ID, err)
+			slog.Error("save failed", "vm", f.Spec.ID, "err", err)
 		}
 		e.op.Unlock()
 	}

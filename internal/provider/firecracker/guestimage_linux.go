@@ -2,7 +2,7 @@ package firecracker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,7 +23,7 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 		report(proto.ImageStatus{Version: p.imageRef, State: proto.ImagePulling, StartedAt: &started})
 		img, cfg, err := p.pullGuestImage(ctx)
 		if err == nil {
-			log.Printf("guest image %s: ready in %s", img, time.Since(started).Round(time.Second))
+			slog.Info("guest image ready", "image", img, "took", time.Since(started).Round(time.Second))
 			ready := time.Now()
 			report(proto.ImageStatus{Version: img, State: proto.ImageReady, Config: cfg, StartedAt: &started, BuiltAt: &ready})
 			digest, _ := imageDigest(img)
@@ -36,7 +36,7 @@ func (p *Provider) RunGuestImages(ctx context.Context, report func(proto.ImageSt
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("guest image %s: %v", p.imageRef, err)
+		slog.Error("guest image failed", "image", p.imageRef, "err", err)
 		retry := time.Now().Add(imageRetry)
 		report(proto.ImageStatus{Version: p.imageRef, State: proto.ImageFailed, Error: err.Error(), StartedAt: &started, RetryAt: &retry})
 		select {
@@ -95,7 +95,7 @@ func (p *Provider) prune(inFlight ...string) {
 		err = p.store.Prune(append(keep, inFlight...))
 	}
 	if err != nil {
-		log.Printf("image cache: prune: %v", err)
+		slog.Warn("image cache prune failed", "err", err)
 	}
 }
 

@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -286,8 +286,9 @@ func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return 
 
 func TestTokenLogNoSecrets(t *testing.T) {
 	var buf syncBuffer
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 	uds := tokenSocket(t, "vm1", func(vmID, kind string) (proto.IntegrationToken, string) {
 		if kind == "github" {
 			return proto.IntegrationToken{Kind: kind, Token: dummyGitHubToken}, ""
@@ -297,9 +298,9 @@ func TestTokenLogNoSecrets(t *testing.T) {
 	askToken(t, uds, `{"op":"token","kind":"github"}`+"\n")
 	askToken(t, uds, `{"op":"token","kind":"Linear\n`+dummyGitHubToken+`"}`+"\n")
 	askToken(t, uds, "garbage "+dummyGitHubToken+"\n")
-	eventually(t, "three log lines", func() bool { return strings.Count(buf.String(), "token vm=vm1") == 3 })
+	eventually(t, "three log lines", func() bool { return strings.Count(buf.String(), "msg=\"token served\" vm=vm1") == 3 })
 	out := buf.String()
-	if !strings.Contains(out, "token vm=vm1 kind=github result=ok") || !strings.Contains(out, "kind=? result=not-connected") {
+	if !strings.Contains(out, "vm=vm1 kind=github result=ok") || !strings.Contains(out, "kind=? result=not-connected") {
 		t.Fatalf("log = %s", out)
 	}
 	if strings.Contains(out, dummyGitHubToken) {

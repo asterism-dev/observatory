@@ -2,7 +2,7 @@ package node
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"math"
 	"slices"
 	"sync"
@@ -104,7 +104,7 @@ func (a *Agent) sendDisks() {
 	a.mu.Unlock()
 	if send != nil {
 		if err := send(m); err != nil {
-			log.Printf("disks in use: %v", err)
+			slog.Warn("listing disks in use failed", "err", err)
 		}
 	}
 }
@@ -133,7 +133,7 @@ func (a *Agent) resumeDeferred(ctx context.Context, deferred []VMFile, desired [
 			go func() { a.destroy(ctx, e); a.sendDisks() }()
 		case !ok:
 			if err := DeleteVMDir(a.VMsDir, f.Spec.ID); err != nil {
-				log.Printf("vm %s: delete dir: %v", f.Spec.ID, err)
+				slog.Warn("delete dir failed", "vm", f.Spec.ID, "err", err)
 			}
 		case gen > f.Generation:
 			// The attachments may have changed while the node was down; updateDesired applies them before booting.
@@ -184,7 +184,7 @@ func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
 			// The node is stopping; the VM dir and its state stay, and so do its disks.
 			return
 		} else if err != nil {
-			log.Printf("vm %s: giving up on its memory state: %v", id, err)
+			slog.Error("giving up on memory state", "vm", id, "err", err)
 		}
 	}
 	if inst := a.instance(e); inst != nil {
@@ -192,19 +192,19 @@ func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
 		// Disks outlive the VM, so the guest must flush them; Stop powers off hard if the guest does not shut down.
 		if len(e.file.Spec.Attachments) > 0 {
 			if err := inst.Stop(); err != nil {
-				log.Printf("vm %s: stop: %v", id, err)
+				slog.Error("stop failed", "vm", id, "err", err)
 				if err := inst.Kill(); err != nil {
-					log.Printf("vm %s: kill: %v", id, err)
+					slog.Error("kill failed", "vm", id, "err", err)
 				}
 			}
 		} else if err := inst.Kill(); err != nil {
-			log.Printf("vm %s: kill: %v", id, err)
+			slog.Error("kill failed", "vm", id, "err", err)
 		}
 		select {
 		case <-inst.Done():
 			gone()
 		case <-time.After(killWait):
-			log.Printf("vm %s: still running %s after power-off; its disks stay in use until it exits", id, killWait)
+			slog.Warn("still running after power-off, disks stay in use until it exits", "vm", id, "wait", killWait)
 			go func() {
 				<-inst.Done()
 				gone()
@@ -215,7 +215,7 @@ func (a *Agent) destroy(ctx context.Context, e *vmEntry) {
 		gone()
 	}
 	if err := DeleteVMDir(a.VMsDir, id); err != nil {
-		log.Printf("vm %s: delete dir: %v", id, err)
+		slog.Warn("delete dir failed", "vm", id, "err", err)
 	}
 }
 
@@ -286,7 +286,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 			go func() {
 				defer op.Unlock()
 				if err := a.restoreLocal(e, *d.Restore); err != nil {
-					log.Printf("vm %s: restore: %v", f.Spec.ID, err)
+					slog.Error("restore failed", "vm", f.Spec.ID, "err", err)
 					a.mu.Lock()
 					st := e.status
 					a.mu.Unlock()
@@ -331,7 +331,7 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 		}
 	}
 	if err := SaveVM(a.VMsDir, f); err != nil {
-		log.Printf("vm %s: save: %v", f.Spec.ID, err)
+		slog.Error("save failed", "vm", f.Spec.ID, "err", err)
 		if halted {
 			a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateError, Error: "save: " + err.Error()})
 		}
@@ -381,17 +381,17 @@ func (a *Agent) updateDesired(ctx context.Context, e *vmEntry, d proto.DesiredVM
 			stop = inst.Kill
 		}
 		if err := stop(); err != nil {
-			log.Printf("vm %s: stop: %v", f.Spec.ID, err)
+			slog.Error("stop failed", "vm", f.Spec.ID, "err", err)
 		}
 		a.report(proto.VMStatus{ID: f.Spec.ID, State: proto.StateStopped})
 	case f.Power == proto.PowerStopped && f.Hibernated:
 		e.cancel()
 		if err := a.endHibernation(ctx, e, graceful); err != nil {
-			log.Printf("vm %s: end hibernation: %v", f.Spec.ID, err)
+			slog.Error("end hibernation failed", "vm", f.Spec.ID, "err", err)
 		}
 		f.Hibernated = false
 		if err := SaveVM(a.VMsDir, f); err != nil {
-			log.Printf("vm %s: save: %v", f.Spec.ID, err)
+			slog.Error("save failed", "vm", f.Spec.ID, "err", err)
 		}
 		a.mu.Lock()
 		e.file = f
@@ -431,9 +431,9 @@ func (a *Agent) halt(ctx context.Context, e *vmEntry, graceful bool) *vmEntry {
 		case <-inst.Done():
 		default:
 			if err := inst.Stop(); err != nil {
-				log.Printf("vm %s: stop: %v", e.file.Spec.ID, err)
+				slog.Error("stop failed", "vm", e.file.Spec.ID, "err", err)
 				if err := inst.Kill(); err != nil {
-					log.Printf("vm %s: kill: %v", e.file.Spec.ID, err)
+					slog.Error("kill failed", "vm", e.file.Spec.ID, "err", err)
 				}
 			}
 			<-inst.Done()
@@ -445,7 +445,7 @@ func (a *Agent) halt(ctx context.Context, e *vmEntry, graceful bool) *vmEntry {
 	// Attached disks change, so the memory state cannot be resumed against them; a VM with disks was resumed and shut down before.
 	if hibernated {
 		if err := a.endHibernation(ctx, e, graceful); err != nil {
-			log.Printf("vm %s: end hibernation: %v", e.file.Spec.ID, err)
+			slog.Error("end hibernation failed", "vm", e.file.Spec.ID, "err", err)
 		}
 	}
 	a.mu.Lock()

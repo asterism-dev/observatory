@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -83,7 +83,7 @@ func (systemdUpdater) Wait(ctx context.Context) error {
 			if failures++; failures == maxShowFailures {
 				return err
 			}
-			log.Printf("update: %v", err)
+			slog.Error("update failed", "err", err)
 			continue
 		}
 		failures = 0
