@@ -2490,3 +2490,19 @@ func TestFleetProcessesRoundTrip(t *testing.T) {
 		t.Fatalf("disconnect: %+v", r)
 	}
 }
+
+func TestFleetProcessesCapped(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "a", &e.owner, nil)
+	node := e.connect(cred)
+	node.desired()
+	go func() {
+		req := <-node.msgs
+		_ = node.enc.Encode(proto.Message{Type: "processes", ReqID: req.ReqID, Processes: make([]proto.GuestProcess, 700)})
+	}()
+	ps, err := e.f.Processes(context.Background(), n.ID, v.ID)
+	if err != nil || len(ps) != 500 {
+		t.Fatalf("%d entries, %v", len(ps), err)
+	}
+}

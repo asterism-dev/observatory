@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	maxProcesses   = 500
-	maxCommandLine = 512
-	processSample  = 200 * time.Millisecond
+	processSample = 200 * time.Millisecond
 	// /proc reports CPU times in USER_HZ, which Linux fixes at 100 for userspace.
-	userHZ = 100
+	userHZ    = 100
+	pfKthread = 0x200000
 )
 
 type procSample struct {
@@ -50,7 +49,7 @@ func listProcesses(proc, passwd string, sleep func(time.Duration)) ([]proto.Gues
 	slices.SortFunc(list, func(a, b proto.GuestProcess) int {
 		return cmp.Or(cmp.Compare(b.CPUPercent, a.CPUPercent), cmp.Compare(b.RSSBytes, a.RSSBytes), cmp.Compare(a.PID, b.PID))
 	})
-	return list[:min(len(list), maxProcesses)], nil
+	return list[:min(len(list), proto.MaxGuestProcesses)], nil
 }
 
 func sampleProcesses(proc string) (map[int]procSample, error) {
@@ -71,23 +70,26 @@ func sampleProcesses(proc string) (map[int]procSample, error) {
 	return out, nil
 }
 
-// readProcess is false for kernel threads (no command line) and processes that exited while being read.
+// readProcess is false for kernel threads and processes that exited while being read.
 func readProcess(dir string, pid int) (procSample, bool) {
-	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
-	if err != nil || len(cmdline) == 0 {
-		return procSample{}, false
-	}
 	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
 	if err != nil {
 		return procSample{}, false
 	}
 	// comm may contain spaces and parens, so the fields start after the last ')'.
-	i := bytes.LastIndexByte(stat, ')')
-	if i < 0 {
+	open, end := bytes.IndexByte(stat, '('), bytes.LastIndexByte(stat, ')')
+	if open < 0 || end < open {
 		return procSample{}, false
 	}
-	f := strings.Fields(string(stat[i+1:]))
+	f := strings.Fields(string(stat[end+1:]))
 	if len(f) < 13 {
+		return procSample{}, false
+	}
+	if flags, _ := strconv.ParseUint(f[6], 10, 64); flags&pfKthread != 0 {
+		return procSample{}, false
+	}
+	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	if err != nil {
 		return procSample{}, false
 	}
 	ppid, _ := strconv.Atoi(f[1])
@@ -101,8 +103,12 @@ func readProcess(dir string, pid int) (procSample, bool) {
 		}
 	}
 	cmd := strings.TrimRight(strings.ReplaceAll(string(cmdline), "\x00", " "), " ")
-	if len(cmd) > maxCommandLine {
-		cmd = strings.ToValidUTF8(cmd[:maxCommandLine], "")
+	if cmd == "" {
+		// Zombies have no command line; ps shows their name in brackets too.
+		cmd = "[" + string(stat[open+1:end]) + "]"
+	}
+	if len(cmd) > proto.MaxGuestCommand {
+		cmd = strings.ToValidUTF8(cmd[:proto.MaxGuestCommand], "")
 	}
 	return procSample{
 		GuestProcess: proto.GuestProcess{PID: pid, PPID: ppid, Command: cmd, State: f[0], RSSBytes: rss},

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -267,10 +268,23 @@ func (a *Agent) processes(ctx context.Context, req proto.Message) proto.Message 
 	defer cancel()
 	ps, err := inst.GuestProcesses(ctx)
 	if err != nil {
-		reply.Error = err.Error()
+		reply.Error = clip(err.Error(), 256)
+		return reply
 	}
-	reply.Processes = ps
+	// The list comes from the guest, so it is bounded before it shares the control stream.
+	reply.Processes = ps[:min(len(ps), proto.MaxGuestProcesses)]
+	for i := range reply.Processes {
+		p := &reply.Processes[i]
+		p.Command, p.User, p.State = clip(p.Command, proto.MaxGuestCommand), clip(p.User, 64), clip(p.State, 8)
+	}
 	return reply
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "")
 }
 
 func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {

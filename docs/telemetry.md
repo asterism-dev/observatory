@@ -43,3 +43,6 @@ For development, `make telemetry-up` and `make telemetry-down` start and stop th
 `POST /otlp/v1/metrics` and `POST /otlp/v1/logs` take OTLP/HTTP protobuf (`application/x-protobuf`, gzip allowed) with
 a bearer node credential; in this version nothing else is accepted. The body limit is 4 MiB. The hub sets
 `observatory.org/node/node_name` and drops any sender-supplied attributes starting with `observatory`.
+
+`GET /api/orgs/{org}/vms/{id}/processes` (needs `vm:metrics`) returns the running VM's live process list, at most 500
+entries. `cpuPercent` is percent of one core over a 200 ms sample, like `top`, so it can exceed 100 on a multi-core VM.

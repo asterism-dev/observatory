@@ -98,7 +98,12 @@ func (i *fakeInstance) GuestTrust(_ context.Context, cas map[string]string) erro
 
 func (i *fakeInstance) GuestProcesses(context.Context) ([]proto.GuestProcess, error) {
 	i.p.record("guest-processes")
-	return []proto.GuestProcess{{PID: 1, Command: "/sbin/init"}}, nil
+	i.p.mu.Lock()
+	defer i.p.mu.Unlock()
+	if i.p.processes != nil {
+		return i.p.processes, i.p.processesErr
+	}
+	return []proto.GuestProcess{{PID: 1, Command: "/sbin/init"}}, i.p.processesErr
 }
 
 func (i *fakeInstance) SaveState(dir string) error {
@@ -159,6 +164,8 @@ type fakeProvider struct {
 	wakeTeardown  chan struct{} // when set, a cancelled WaitWake removes its taps only once it is closed
 	trusts        []map[string]string
 	trustBlock    chan struct{} // when set, the next GuestTrust waits for it to close
+	processes     []proto.GuestProcess
+	processesErr  error
 }
 
 func (p *fakeProvider) Disks(f VMFile, _ string) ([]proto.Disk, error) {

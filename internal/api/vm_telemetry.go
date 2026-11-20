@@ -34,8 +34,9 @@ func newVMUsageJSON(n telemetry.VMNow) *vmUsageJSON {
 const (
 	vmLatestTimeout     = 2 * time.Second
 	vmListLatestTimeout = 5 * time.Second
-	vmProcessesTimeout  = 3 * time.Second
 )
+
+var vmProcessesTimeout = 3 * time.Second
 
 // vmLatest loads the newest usage of those vms the caller may see metrics of; a store error only drops the usage.
 func (h *api) vmLatest(r *http.Request, org uuid.UUID, vms []store.VM, timeout time.Duration) map[uuid.UUID]telemetry.VMNow {
@@ -128,6 +129,7 @@ func (h *api) tailVMLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// vmProcesses proxies the live list from the VM's node; cpuPercent is percent of one core, like top.
 func (h *api) vmProcesses(w http.ResponseWriter, r *http.Request) {
 	v, ok := h.vmFromPath(w, r, store.ActionVMMetrics)
 	if !ok {

@@ -75,6 +75,15 @@ func (a *Agent) readyChan() chan struct{} {
 	return a.ready
 }
 
+func (a *Agent) isReady() bool {
+	select {
+	case <-a.readyChan():
+		return true
+	default:
+		return false
+	}
+}
+
 // SetReady lets ping succeed; Run calls it once the guest is set up.
 func (a *Agent) SetReady() { a.readyOnce.Do(func() { close(a.readyChan()) }) }
 
@@ -140,6 +149,10 @@ func (a *Agent) handle(line []byte) agentReply {
 	req, err := parseAgentRequest(line)
 	if err != nil {
 		return agentReply{Error: err.Error()}
+	}
+	// A poll during boot must not hold one of the few agent slots for minutes.
+	if req.Op == "processes" && !a.isReady() {
+		return agentReply{Error: "booting"}
 	}
 	// Every op waits for Run's setup, or a trust could be overwritten by the setup's older seed.
 	select {

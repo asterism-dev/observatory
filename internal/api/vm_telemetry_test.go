@@ -273,9 +273,11 @@ func TestVMProcessesAPI(t *testing.T) {
 	if rec := te.do("GET", path, te.ownerTok); rec.Code != 409 {
 		t.Fatalf("node says not running: %d", rec.Code)
 	}
-	start := time.Now()
-	if rec := te.do("GET", path, te.ownerTok); rec.Code != 504 || time.Since(start) < 3*time.Second {
-		t.Fatalf("timeout: %d after %s", rec.Code, time.Since(start))
+	old := vmProcessesTimeout
+	vmProcessesTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { vmProcessesTimeout = old })
+	if rec := te.do("GET", path, te.ownerTok); rec.Code != 504 {
+		t.Fatalf("timeout: %d", rec.Code)
 	}
 	close(answer)
 	ctrl.Close()

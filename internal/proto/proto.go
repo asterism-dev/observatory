@@ -239,7 +239,12 @@ type Machine struct {
 
 const ErrVMNotRunning = "vm not running"
 
-// GuestProcess is one entry of a VM's live process list; CPUPercent is of one core, so a multi-threaded process can exceed 100.
+const (
+	MaxGuestProcesses = 500
+	MaxGuestCommand   = 512
+)
+
+// GuestProcess is one entry of a VM's live process list; CPUPercent is percent of one core (like top), so it can exceed 100 on several cores.
 type GuestProcess struct {
 	PID        int     `json:"pid"`
 	PPID       int     `json:"ppid"`

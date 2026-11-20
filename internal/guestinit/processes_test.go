@@ -32,7 +32,11 @@ func writeProc(t *testing.T, proc string, pid int, cmdline, stat, uid string, rs
 
 // stat builds a /proc/<pid>/stat line; comm holds ") " to check parsing from the last paren.
 func stat(pid, ppid int, state string, utime, stime int) string {
-	return fmt.Sprintf("%d (we) ird) %s %d 1 1 0 -1 4194560 100 0 0 0 %d %d 0 0 20 0 1 0 50 1000 10\n", pid, state, ppid, utime, stime)
+	return statFlags(pid, ppid, state, utime, stime, 0x400100)
+}
+
+func statFlags(pid, ppid int, state string, utime, stime, flags int) string {
+	return fmt.Sprintf("%d (we) ird) %s %d 1 1 0 -1 %d 100 0 0 0 %d %d 0 0 20 0 1 0 50 1000 10\n", pid, state, ppid, flags, utime, stime)
 }
 
 func procFixture(t *testing.T) (proc, passwd string) {
@@ -44,7 +48,9 @@ func procFixture(t *testing.T) (proc, passwd string) {
 	}
 	long := strings.Repeat("a", 600)
 	writeProc(t, proc, 1, "/sbin/init\x00splash\x00", stat(1, 0, "S", 10, 10), "0", 100)
-	writeProc(t, proc, 2, "", stat(2, 0, "I", 0, 0), "0", 0)
+	// A kernel thread is known by PF_KTHREAD, even with a command line; a zombie has none but is listed.
+	writeProc(t, proc, 2, "kthreadd\x00", statFlags(2, 0, "I", 0, 0, 0x208040), "0", 0)
+	writeProc(t, proc, 7, "", stat(7, 1, "Z", 0, 0), "1000", 0)
 	writeProc(t, proc, 42, "node\x00"+long+"\x00", stat(42, 1, "R", 100, 0), "1001", 50)
 	return proc, passwd
 }
@@ -63,10 +69,13 @@ func TestProcessList(t *testing.T) {
 	if slept != 200*time.Millisecond {
 		t.Fatalf("slept %s", slept)
 	}
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("got %+v", got)
 	}
-	node, init := got[0], got[1]
+	node, init, zombie := got[0], got[1], got[2]
+	if zombie.PID != 7 || zombie.State != "Z" || zombie.Command != "[we) ird]" || zombie.User != "dev" {
+		t.Fatalf("zombie = %+v", zombie)
+	}
 	if node.PID != 42 || node.PPID != 1 || node.State != "R" || node.CPUPercent != 100 || node.User != "1001" || node.RSSBytes != 50*int64(os.Getpagesize()) {
 		t.Fatalf("node = %+v", node)
 	}
@@ -121,10 +130,19 @@ func TestAgentProcessesWhileBusy(t *testing.T) {
 			OK        bool
 			Processes []proto.GuestProcess
 		}
-		if err := json.Unmarshal(b, &r); err != nil || !r.OK || len(r.Processes) != 2 {
+		if err := json.Unmarshal(b, &r); err != nil || !r.OK || len(r.Processes) != 3 {
 			t.Fatalf("reply %s", b)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("processes waited for takeoff")
+	}
+}
+
+func TestProcessesWhileBootingAnswersAtOnce(t *testing.T) {
+	a := &Agent{Root: Root{t.TempDir()}}
+	a.Proc, _ = procFixture(t)
+	start := time.Now()
+	if r := call(t, a, `{"op":"processes"}`); r.OK || r.Error != "booting" || time.Since(start) > time.Second {
+		t.Fatalf("reply %+v after %s", r, time.Since(start))
 	}
 }

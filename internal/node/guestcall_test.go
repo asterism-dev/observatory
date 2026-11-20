@@ -98,3 +98,12 @@ func TestCallGuestTrust(t *testing.T) {
 		t.Fatalf("request = %q", l)
 	}
 }
+
+func TestCallGuestReplyBounded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	uds, _ := fakeVsock(t, "OK 1\n", `{"ok":true,"version":"`+strings.Repeat("v", 2<<20)+`"}`+"\n")
+	if _, err := CallGuest(ctx, uds, GuestRequest{Op: "ping"}); err == nil {
+		t.Fatal("oversized reply accepted")
+	}
+}

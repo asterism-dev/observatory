@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 var (
@@ -37,7 +39,8 @@ func SetVMErrorGrace(f *Fleet, d time.Duration) { f.updateTimeouts.vmErrGrace = 
 func AttachDeadConn(f *Fleet, node, org uuid.UUID) {
 	done := make(chan struct{})
 	close(done)
-	f.attach(&conn{node: node, org: org, update: make(chan struct{}), done: done, seen: map[string]bool{}})
+	f.attach(&conn{node: node, org: org, update: make(chan struct{}), done: done, seen: map[string]bool{},
+		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}})
 }
 
 func UpdateErr(f *Fleet, node uuid.UUID) (string, bool) {
@@ -57,7 +60,8 @@ func AttachStalledConn(f *Fleet, node, org uuid.UUID) (end func()) {
 		panic(err)
 	}
 	done := make(chan struct{})
-	f.attach(&conn{node: node, org: org, sess: sess, update: make(chan struct{}), done: done, seen: map[string]bool{}})
+	f.attach(&conn{node: node, org: org, sess: sess, update: make(chan struct{}), done: done, seen: map[string]bool{},
+		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}})
 	return func() { close(done) }
 }
 

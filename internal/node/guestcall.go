@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +17,9 @@ import (
 )
 
 const GuestAgentPort = 1050
+
+// maxGuestReply bounds what a guest, which root inside the VM controls, can make the node read.
+const maxGuestReply = 1 << 20
 
 // GuestRequest is one guest agent call; it never carries keys or variables, the guest reads those from its seed.
 type GuestRequest struct {
@@ -58,7 +62,7 @@ func CallGuest(ctx context.Context, uds string, req GuestRequest) (GuestReply, e
 	if _, err := fmt.Fprintf(c, "CONNECT %d\n", GuestAgentPort); err != nil {
 		return GuestReply{}, err
 	}
-	r := bufio.NewReader(c)
+	r := bufio.NewReader(io.LimitReader(c, maxGuestReply))
 	line, err := r.ReadString('\n')
 	if err != nil {
 		return GuestReply{}, fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))

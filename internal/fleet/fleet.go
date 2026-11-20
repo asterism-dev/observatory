@@ -143,7 +143,7 @@ func (f *Fleet) Processes(ctx context.Context, node, vm uuid.UUID) ([]proto.Gues
 	reply := make(chan proto.Message, 1)
 	f.mu.Lock()
 	c := f.conns[node]
-	if c == nil || c.pending == nil {
+	if c == nil {
 		f.mu.Unlock()
 		return nil, ErrNodeOffline
 	}
@@ -165,7 +165,7 @@ func (f *Fleet) Processes(ctx context.Context, node, vm uuid.UUID) ([]proto.Gues
 	case m := <-reply:
 		switch m.Error {
 		case "":
-			return m.Processes, nil
+			return m.Processes[:min(len(m.Processes), proto.MaxGuestProcesses)], nil
 		case proto.ErrVMNotRunning:
 			return nil, ErrVMNotRunning
 		default:
