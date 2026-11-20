@@ -2,15 +2,15 @@ package vmtelemetry
 
 import (
 	"bytes"
-	"log/slog"
-	"strings"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
