@@ -134,6 +134,9 @@ type LogLine struct {
 	Fields map[string]any `json:"fields"`
 }
 
+// severityText maps API levels to the OTLP severity text written by the slog bridge; unknown levels add no filter.
+var severityText = map[string]string{"debug": "DEBUG", "info": "INFO", "warn": "WARN", "error": "ERROR"}
+
 // buildLogsQL puts user input only into quoted string literals (field names included, since bare names can be keywords like "not").
 func buildLogsQL(q LogQuery) string {
 	var parts []string
@@ -143,8 +146,8 @@ func buildLogsQL(q LogQuery) string {
 	if q.Text != "" {
 		parts = append(parts, "*:"+strconv.Quote(q.Text))
 	}
-	if q.Level != "" {
-		parts = append(parts, "severity_text:="+strconv.Quote(q.Level))
+	if sev, ok := severityText[q.Level]; ok {
+		parts = append(parts, `"severity_text":=`+strconv.Quote(sev))
 	}
 	if q.Source != "" {
 		parts = append(parts, "source:="+strconv.Quote(q.Source))
@@ -220,7 +223,7 @@ func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q
 
 func toLogLine(rec map[string]string) LogLine {
 	t, _ := time.Parse(time.RFC3339Nano, rec["_time"])
-	l := LogLine{Time: t, Level: rec["severity_text"], Source: rec["source"], Msg: rec["_msg"], Fields: map[string]any{}}
+	l := LogLine{Time: t, Level: strings.ToLower(rec["severity_text"]), Source: rec["source"], Msg: rec["_msg"], Fields: map[string]any{}}
 	for k, v := range rec {
 		switch k {
 		case "_time", "_msg", "_stream", "_stream_id", "severity_text", "source":

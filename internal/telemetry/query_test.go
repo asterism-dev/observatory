@@ -67,10 +67,13 @@ func TestLogsQLQuotesUserInput(t *testing.T) {
 func TestLogsQLFilters(t *testing.T) {
 	from := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
-	q := buildLogsQL(LogQuery{From: from, To: to, Level: "ERROR", Source: "firecracker", Fields: map[string]string{"vm": "vm01"}})
-	want := `_time:[2026-11-20T10:00:00Z, 2026-11-20T11:00:00Z] severity_text:="ERROR" source:="firecracker" "vm":="vm01"`
+	q := buildLogsQL(LogQuery{From: from, To: to, Level: "error", Source: "firecracker", Fields: map[string]string{"vm": "vm01"}})
+	want := `_time:[2026-11-20T10:00:00Z, 2026-11-20T11:00:00Z] "severity_text":="ERROR" source:="firecracker" "vm":="vm01"`
 	if q != want {
 		t.Fatalf("got  %s\nwant %s", q, want)
+	}
+	if q := buildLogsQL(LogQuery{Level: "ERROR"}); q != "*" {
+		t.Fatalf("unknown level must add no filter: %q", q)
 	}
 	if q := buildLogsQL(LogQuery{}); q != "*" {
 		t.Fatalf("empty: %q", q)
@@ -142,7 +145,7 @@ func TestLogsScoped(t *testing.T) {
 		if r.URL.Path != "/select/logsql/query" {
 			t.Errorf("path %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"_msg":"older","_time":"2026-11-20T10:00:00Z","_stream":"{}","_stream_id":"x","severity_text":"INFO","source":"firecracker","vm":"vm01"}
+		_, _ = w.Write([]byte(`{"_msg":"older","_time":"2026-11-20T10:00:00Z","_stream":"{}","_stream_id":"x","severity_text":"WARN","source":"firecracker","vm":"vm01"}
 {"_msg":"image pull failed","_time":"2026-11-20T10:00:01.5Z","severity_text":"ERROR","source":"observatory-node","err":"connection reset"}
 `))
 	}))
@@ -160,8 +163,8 @@ func TestLogsScoped(t *testing.T) {
 		t.Fatalf("form %v", form)
 	}
 	got, _ := json.Marshal(lines)
-	want := `[{"time":"2026-11-20T10:00:01.5Z","level":"ERROR","source":"observatory-node","msg":"image pull failed","fields":{"err":"connection reset"}},` +
-		`{"time":"2026-11-20T10:00:00Z","level":"INFO","source":"firecracker","msg":"older","fields":{"vm":"vm01"}}]`
+	want := `[{"time":"2026-11-20T10:00:01.5Z","level":"error","source":"observatory-node","msg":"image pull failed","fields":{"err":"connection reset"}},` +
+		`{"time":"2026-11-20T10:00:00Z","level":"warn","source":"firecracker","msg":"older","fields":{"vm":"vm01"}}]`
 	if string(got) != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
