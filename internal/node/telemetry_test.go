@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -268,5 +270,82 @@ func TestOTelErrorHandlerThrottles(t *testing.T) {
 	h.Handle(errors.New("other"))
 	if n := strings.Count(buf.String(), "\n"); n != 2 {
 		t.Fatalf("lines = %d, want 2:\n%s", n, buf.String())
+	}
+}
+
+func TestTelemetryKeepsLogsWhileHubDown(t *testing.T) {
+	c := &logCollector{}
+	var down atomic.Bool
+	var refused atomic.Int32
+	down.Store(true)
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			refused.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		c.ServeHTTP(w, r)
+	}))
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Warn("a")
+	slog.Warn("b")
+	for deadline := time.Now().Add(5 * time.Second); refused.Load() == 0; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no export attempted while down")
+		}
+	}
+	slog.Warn("c")
+	time.Sleep(1500 * time.Millisecond)
+	down.Store(false)
+	slog.Info("d")
+	shutdownTelemetry(t, tel)
+
+	var got []string
+	for _, r := range c.records() {
+		got = append(got, r.Body.GetStringValue())
+	}
+	if strings.Join(got, ",") != "a,b,c,d" {
+		t.Fatalf("records = %v, want a,b,c,d", got)
+	}
+}
+
+type flakyExporter struct {
+	fail   bool
+	bodies []string
+}
+
+func (f *flakyExporter) Export(_ context.Context, records []sdklog.Record) error {
+	if f.fail {
+		return errors.New("down")
+	}
+	for _, r := range records {
+		f.bodies = append(f.bodies, r.Body().AsString())
+	}
+	return nil
+}
+func (f *flakyExporter) Shutdown(context.Context) error   { return nil }
+func (f *flakyExporter) ForceFlush(context.Context) error { return nil }
+
+func TestRetryingLogExporterDropsOldestBeyondBound(t *testing.T) {
+	inner := &flakyExporter{fail: true}
+	e := &retryingLogExporter{Exporter: inner, limit: 3}
+	export := func(bodies ...string) error {
+		recs := make([]sdklog.Record, len(bodies))
+		for i, b := range bodies {
+			recs[i].SetBody(attribute.StringValue(b))
+		}
+		return e.Export(context.Background(), recs)
+	}
+	if export("1", "2") == nil || export("3", "4", "5") == nil {
+		t.Fatal("failing export must return an error")
+	}
+	inner.fail = false
+	if err := export("6"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(inner.bodies, ","); got != "4,5,6" {
+		t.Fatalf("exported %s, want 4,5,6", got)
 	}
 }

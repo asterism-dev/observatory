@@ -47,6 +47,8 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 		otlploghttp.WithHeaders(headers),
 		otlploghttp.WithCompression(otlploghttp.GzipCompression),
 		otlploghttp.WithTimeout(telemetryTimeout),
+		// retryingLogExporter retries with the next batch; the exporter's own backoff would block the processor.
+		otlploghttp.WithRetry(otlploghttp.RetryConfig{Enabled: false}),
 	}
 	metricOpts := []otlpmetrichttp.Option{
 		otlpmetrichttp.WithEndpointURL(base + "/v1/metrics"),
@@ -70,7 +72,11 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 
 	logProvider := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp, sdklog.WithMaxQueueSize(telemetryLogQueue))),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(
+			&retryingLogExporter{Exporter: logExp, limit: telemetryLogQueue},
+			sdklog.WithMaxQueueSize(telemetryLogQueue),
+			sdklog.WithExportTimeout(telemetryTimeout),
+		)),
 	)
 	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
@@ -149,4 +155,32 @@ func (h *otelErrorHandler) Handle(err error) {
 	h.last[msg] = time.Now()
 	h.mu.Unlock()
 	h.log.Warn("telemetry export error", "err", err)
+}
+
+// retryingLogExporter resends failed records with the next batch (the processor drops them), keeping at most limit.
+type retryingLogExporter struct {
+	sdklog.Exporter
+	limit   int
+	pending []sdklog.Record
+}
+
+const telemetryLogChunk = 512
+
+func (e *retryingLogExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	for i := range records {
+		e.pending = append(e.pending, records[i].Clone())
+	}
+	if over := len(e.pending) - e.limit; over > 0 {
+		clear(e.pending[:over])
+		e.pending = e.pending[over:]
+	}
+	for len(e.pending) > 0 {
+		n := min(len(e.pending), telemetryLogChunk)
+		if err := e.Exporter.Export(ctx, e.pending[:n]); err != nil {
+			return err
+		}
+		clear(e.pending[:n])
+		e.pending = e.pending[n:]
+	}
+	return nil
 }
