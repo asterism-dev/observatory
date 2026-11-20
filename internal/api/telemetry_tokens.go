@@ -64,8 +64,11 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry:token") {
+		return
+	}
 	name, ok := readName(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry:token") {
+	if !ok {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -101,10 +104,11 @@ func (h *api) revokeTelemetryToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.RevokeTelemetryToken(r.Context(), m.Org.ID, id); err != nil {
+		name, err := tx.RevokeTelemetryToken(r.Context(), m.Org.ID, id)
+		if err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenRevoke, store.TelemetryToken{ID: id, OrgID: m.Org.ID}))
+		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenRevoke, store.TelemetryToken{ID: id, OrgID: m.Org.ID, Name: name}))
 	}) {
 		return
 	}
@@ -153,20 +157,29 @@ func (h *api) creatorHoldsToken(ctx context.Context, tok store.TelemetryToken) (
 	} else if err != nil {
 		return false, err
 	}
-	return h.z.Enforcer().CanHold(authz.UserSubject(tok.CreatedBy), tok.OrgID, telemetryTokenRules) == nil, nil
+	if err := h.z.Enforcer().CanHold(authz.UserSubject(tok.CreatedBy), tok.OrgID, telemetryTokenRules); errors.Is(err, authz.ErrEscalation) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (h *api) revokeLostToken(ctx context.Context, tok store.TelemetryToken) {
 	err := h.store.InTx(ctx, func(tx *store.Store) error {
-		if err := tx.RevokeTelemetryToken(ctx, tok.OrgID, tok.ID); err != nil {
+		if _, err := tx.RevokeTelemetryToken(ctx, tok.OrgID, tok.ID); err != nil {
 			return err
 		}
-		return tx.Audit(ctx, store.AuditEntry{ActorKind: store.ActorSystem, OrgID: &tok.OrgID, Action: store.ActionGrafanaTokenRevoke,
-			Resource: "telemetry-token/" + tok.ID.String(), Result: store.ResultAllowed,
-			Details: map[string]any{"name": tok.Name, "reason": "creator lost access"}})
+		return tx.Audit(ctx, lostTokenAudit(tok, "creator lost access"))
 	})
 	// A concurrent request may have revoked it first.
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Error("revoke telemetry token", "token", tok.ID, "err", err)
 	}
+}
+
+func lostTokenAudit(tok store.TelemetryToken, reason string) store.AuditEntry {
+	return store.AuditEntry{ActorKind: store.ActorSystem, OrgID: &tok.OrgID, Action: store.ActionGrafanaTokenRevoke,
+		Resource: "telemetry-token/" + tok.ID.String(), Result: store.ResultAllowed,
+		Details: map[string]any{"name": tok.Name, "reason": reason}}
 }

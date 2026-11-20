@@ -72,7 +72,11 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 	if rec := e.send("POST", tokensPath(org), daveTok, `{"name":"g"}`); rec.Code != 403 {
 		t.Fatalf("admin with deny: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, a := range e.audit(store.ActionGrafanaTokenCreate) {
+	es := e.audit(store.ActionGrafanaTokenCreate)
+	if len(es) != 2 {
+		t.Fatalf("denied audits: %d", len(es))
+	}
+	for _, a := range es {
 		if a.Result != store.ResultDenied {
 			t.Fatalf("audit: %+v", a)
 		}
@@ -146,7 +150,7 @@ func TestTokenRevoke(t *testing.T) {
 	if rec := e.do("GET", tokensPath(org), tok); rec.Body.String() != "[]\n" {
 		t.Fatalf("list: %s", rec.Body.String())
 	}
-	if es := e.audit(store.ActionGrafanaTokenRevoke); len(es) != 1 || es[0].ActorKind != store.ActorUser {
+	if es := e.audit(store.ActionGrafanaTokenRevoke); len(es) != 1 || es[0].ActorKind != store.ActorUser || es[0].Details["name"] != "g" {
 		t.Fatalf("audit: %+v", es)
 	}
 	e.createTelemetryToken(tok, org, "g")
@@ -222,5 +226,48 @@ func TestGrafanaAuthIgnoresCookies(t *testing.T) {
 	}
 	if _, status := e.grafana("bearer " + created.Token); status != 200 {
 		t.Fatalf("lower-case scheme: %d", status)
+	}
+}
+
+func TestTokenRevokedWhenCreatorRemoved(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.addMember(org, carol, store.RoleAdmin)
+	removed := e.createTelemetryToken(bobTok, org, "bob")
+	left := e.createTelemetryToken(carolTok, org, "carol")
+	kept := e.createTelemetryToken(ownerTok, org, "alice")
+
+	// Neither token is used before its creator goes, so only the membership change can revoke it.
+	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), ownerTok); rec.Code != 204 {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+carol.ID.String(), carolTok); rec.Code != 204 {
+		t.Fatalf("leave: %d %s", rec.Code, rec.Body.String())
+	}
+	var list []telemetryTokenTest
+	decode(t, e.do("GET", tokensPath(org), ownerTok), &list)
+	if len(list) != 1 || list[0].ID != kept.ID {
+		t.Fatalf("list: %+v", list)
+	}
+	es := e.audit(store.ActionGrafanaTokenRevoke)
+	if len(es) != 2 {
+		t.Fatalf("audit: %+v", es)
+	}
+	for _, a := range es {
+		if a.ActorKind != store.ActorSystem || (a.Details["name"] != "bob" && a.Details["name"] != "carol") {
+			t.Fatalf("audit: %+v", a)
+		}
+	}
+
+	e.addMember(org, bob, store.RoleAdmin)
+	e.addMember(org, carol, store.RoleAdmin)
+	for _, tok := range []string{removed.Token, left.Token} {
+		if _, status := e.grafana("Bearer " + tok); status != 401 {
+			t.Fatalf("revived after re-add: %d", status)
+		}
 	}
 }

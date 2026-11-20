@@ -88,15 +88,23 @@ func (s *Store) TelemetryTokens(ctx context.Context, org uuid.UUID) ([]Telemetry
 	return out, rows.Err()
 }
 
-func (s *Store) RevokeTelemetryToken(ctx context.Context, org, id uuid.UUID) error {
-	tag, err := s.q.Exec(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND id = $2 AND revoked_at IS NULL", org, id)
+// RevokeTelemetryToken returns the revoked token's name.
+func (s *Store) RevokeTelemetryToken(ctx context.Context, org, id uuid.UUID) (string, error) {
+	var name string
+	err := s.q.QueryRow(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND id = $2 AND revoked_at IS NULL RETURNING name", org, id).Scan(&name)
+	if err == pgx.ErrNoRows {
+		err = ErrNotFound
+	}
+	return name, err
+}
+
+// RevokeTelemetryTokensBy revokes the active tokens user created in org and returns them.
+func (s *Store) RevokeTelemetryTokensBy(ctx context.Context, org, user uuid.UUID) ([]TelemetryToken, error) {
+	rows, err := s.q.Query(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL RETURNING "+telemetryTokenColumns, org, user)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (TelemetryToken, error) { return scanTelemetryToken(row) })
 }
 
 func (s *Store) TelemetryTokenBySecret(ctx context.Context, secret string) (TelemetryToken, error) {

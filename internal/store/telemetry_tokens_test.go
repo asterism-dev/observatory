@@ -72,11 +72,11 @@ func TestTelemetryTokens(t *testing.T) {
 		t.Fatal("stale touch not refreshed")
 	}
 
-	if err := s.RevokeTelemetryToken(ctx, orgB.ID, tok.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.RevokeTelemetryToken(ctx, orgB.ID, tok.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("foreign revoke: %v", err)
 	}
-	if err := s.RevokeTelemetryToken(ctx, orgA.ID, tok.ID); err != nil {
-		t.Fatal(err)
+	if name, err := s.RevokeTelemetryToken(ctx, orgA.ID, tok.ID); err != nil || name != tok.Name {
+		t.Fatal(name, err)
 	}
 	if _, err := s.TelemetryTokenBySecret(ctx, secret); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("revoked still resolves: %v", err)
@@ -84,7 +84,7 @@ func TestTelemetryTokens(t *testing.T) {
 	if list, _ := s.TelemetryTokens(ctx, orgA.ID); len(list) != 0 {
 		t.Fatalf("revoked listed: %+v", list)
 	}
-	if err := s.RevokeTelemetryToken(ctx, orgA.ID, tok.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.RevokeTelemetryToken(ctx, orgA.ID, tok.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("double revoke: %v", err)
 	}
 	if _, _, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana"); err != nil {
@@ -110,7 +110,7 @@ func TestTelemetryTokenLimit(t *testing.T) {
 	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra"); !errors.Is(err, store.ErrLimitExceeded) {
 		t.Fatalf("21st: %v", err)
 	}
-	if err := s.RevokeTelemetryToken(ctx, org.ID, first.ID); err != nil {
+	if _, err := s.RevokeTelemetryToken(ctx, org.ID, first.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra"); err != nil {
