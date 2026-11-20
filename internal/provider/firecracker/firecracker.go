@@ -507,6 +507,7 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 			removeJail()
 			return nil, "", 0, fmt.Errorf("telemetry socket: %w", err)
 		}
+		sink.Register(vmID)
 		go sink.Serve(telemetry, vmID)
 		closeListeners = func() { tokens.Close(); telemetry.Close(); sink.Forget(vmID) }
 	}

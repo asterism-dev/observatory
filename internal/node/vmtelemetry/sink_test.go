@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -67,6 +68,7 @@ func (e *testEnv) serve(t *testing.T, vm uuid.UUID) *http.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.sink.Register(vm)
 	done := make(chan struct{})
 	go func() { e.sink.Serve(l, vm); close(done) }()
 	t.Cleanup(func() { l.Close(); <-done })
@@ -425,5 +427,46 @@ func TestVMSinkByteRate(t *testing.T) {
 	}
 	if code := post(t, c, "/v1/logs", "app", big(), true); code != http.StatusTooManyRequests || e.drops.get("body") != 1 {
 		t.Fatalf("past the burst: status %d, body drops %d", code, e.drops.get("body"))
+	}
+}
+
+func TestVMSinkEmitFromRegistration(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	e.sink.Emit(vm, "console", []*logspb.LogRecord{{}})
+	e.sink.Register(vm)
+	e.sink.Emit(vm, "console", []*logspb.LogRecord{{}, {}})
+	eventually(t, "early console lines", func() bool { return e.hub.logRecords(t, vm) == 2 })
+	e.sink.Forget(vm)
+	e.sink.Emit(vm, "console", []*logspb.LogRecord{{}})
+	e.sink.Emit(uuid.New(), "console", []*logspb.LogRecord{{}})
+	time.Sleep(50 * time.Millisecond)
+	if n := e.hub.logRecords(t, vm); n != 2 || len(e.hub.requests()) != 1 {
+		t.Fatalf("records %d, requests %d: before Register or after Forget forwarded", n, len(e.hub.requests()))
+	}
+}
+
+func TestVMSinkKeepsQueueAfterExit(t *testing.T) {
+	fastRetry(t)
+	old := forgetDelay
+	forgetDelay = 200 * time.Millisecond
+	t.Cleanup(func() { forgetDelay = old })
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	fw := newTestForwarder(t, down.URL)
+	sink := NewSink(fw, nil)
+	a, b := uuid.New(), uuid.New()
+	for _, vm := range []uuid.UUID{a, b} {
+		sink.Register(vm)
+		sink.Emit(vm, "console", []*logspb.LogRecord{{}})
+		sink.Forget(vm)
+	}
+	sink.Register(b) // b boots again before the delay ends
+	if len(queued(fw, a)) != 1 || len(queued(fw, b)) != 1 {
+		t.Fatal("queue dropped at exit")
+	}
+	eventually(t, "a's queue forgotten", func() bool { return queued(fw, a) == nil })
+	if len(queued(fw, b)) != 1 {
+		t.Fatal("queue of a VM registered again was forgotten")
 	}
 }

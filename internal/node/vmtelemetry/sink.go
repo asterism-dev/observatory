@@ -41,6 +41,9 @@ const (
 
 var decodeWait = 5 * time.Second
 
+// forgetDelay keeps an exited VM's forwarder queue long enough for its last lines to reach the hub.
+var forgetDelay = time.Minute
+
 var (
 	logItems    = [][]protowire.Number{{1}, {2}, {2}}
 	metricItems = [][]protowire.Number{{1}, {2}, {2}, {5, 7, 9, 10, 11}, {1}}
@@ -65,8 +68,9 @@ type Sink struct {
 	seed    maphash.Seed
 	decodes chan struct{}
 
-	mu  sync.Mutex
-	vms map[uuid.UUID]*vmLimits // VMs being served
+	mu      sync.Mutex
+	vms     map[uuid.UUID]*vmLimits   // registered VMs
+	forgets map[uuid.UUID]*time.Timer // pending forwarder Forgets of exited VMs
 }
 
 // vmLimits is one VM's limit state; its own lock keeps one VM's admission from holding up another's.
@@ -93,16 +97,17 @@ func NewSink(fw *Forwarder, dropped func(vmID uuid.UUID, kind string, n int64)) 
 	if dropped == nil {
 		dropped = func(uuid.UUID, string, int64) {}
 	}
-	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), decodes: make(chan struct{}, maxDecodes), vms: map[uuid.UUID]*vmLimits{}}
+	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), decodes: make(chan struct{}, maxDecodes), vms: map[uuid.UUID]*vmLimits{}, forgets: map[uuid.UUID]*time.Timer{}}
 }
 
 // Serve answers OTLP/HTTP requests on l, the listener of vmID only, until l is closed; it starts vmID with fresh limits.
 func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
-	now := time.Now()
-	v := &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
 	s.mu.Lock()
-	s.vms[vmID] = v
+	v := s.vms[vmID]
 	s.mu.Unlock()
+	if v == nil {
+		return
+	}
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, vmID, v) }),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -144,7 +149,19 @@ func (c *slotConn) Close() error {
 	return c.Conn.Close()
 }
 
-// Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not being served are dropped.
+// Register starts vmID with fresh limits when it boots; Emit and Serve accept a VM only from here until Forget.
+func (s *Sink) Register(vmID uuid.UUID) {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vms[vmID] = &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
+	if t := s.forgets[vmID]; t != nil {
+		t.Stop()
+		delete(s.forgets, vmID)
+	}
+}
+
+// Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not registered are dropped.
 func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) {
 	s.mu.Lock()
 	v := s.vms[vmID]
@@ -158,12 +175,24 @@ func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) 
 	}
 }
 
-// Forget drops vmID's limit state and forwarder queue once the VM has exited; requests still in flight keep the state they started with.
+// Forget drops an exited VM's limit state (in-flight requests keep theirs) and its forwarder queue forgetDelay later unless it registers again.
 func (s *Sink) Forget(vmID uuid.UUID) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.vms, vmID)
-	s.mu.Unlock()
-	s.fw.Forget(vmID)
+	if t := s.forgets[vmID]; t != nil {
+		t.Stop()
+	}
+	var t *time.Timer
+	t = time.AfterFunc(forgetDelay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.forgets[vmID] == t {
+			delete(s.forgets, vmID)
+			s.fw.Forget(vmID)
+		}
+	})
+	s.forgets[vmID] = t
 }
 
 func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v *vmLimits) {

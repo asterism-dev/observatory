@@ -517,6 +517,7 @@ func TestVMTelemetryDroppedCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 	served := make(chan struct{})
+	sink.Register(vm)
 	go func() { sink.Serve(l, vm); close(served) }()
 	defer func() { l.Close(); <-served }()
 	// Emit drops records of a VM not yet served, so it repeats until Serve has started.
