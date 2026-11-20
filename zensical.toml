@@ -28,6 +28,7 @@ nav = [
     { "Images" = "images.md" },
     { "Integrations" = "integrations.md" },
     { "Egress proxy" = "egress.md" },
+    { "Telemetry" = "telemetry.md" },
   ] },
   { "Operating" = [
     { "Permissions" = "permissions.md" },
