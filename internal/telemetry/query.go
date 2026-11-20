@@ -35,10 +35,10 @@ type nodeQuery struct {
 
 // $node and $step are substituted per request; label names follow VictoriaMetrics' Prometheus naming of OTel metrics.
 var nodeQueries = map[string]nodeQuery{
-	"cpu":  {`sum by (state) (rate(system_cpu_time_seconds_total{observatory_node="$node",state=~"user|system|iowait"}[$step])) / scalar(count(count by (cpu) (system_cpu_time_seconds_total{observatory_node="$node"}))) * 100`, []string{"state"}},
-	"mem":  {`sum by (state) (system_memory_usage_bytes{observatory_node="$node",state=~"used|cached"})`, []string{"state"}},
-	"disk": {`100 * system_filesystem_usage_bytes{observatory_node="$node"} / system_filesystem_limit_bytes{observatory_node="$node"}`, []string{"mountpoint"}},
-	"net":  {`sum by (device, direction) (rate(system_network_io_bytes_total{observatory_node="$node"}[$step]))`, []string{"device", "direction"}},
+	"cpu":  {`sum by (state) (rate(system_cpu_time_seconds_total{observatory_node="$node",observatory_vm="",state=~"user|system|iowait"}[$step])) / scalar(count(count by (cpu) (system_cpu_time_seconds_total{observatory_node="$node",observatory_vm=""}))) * 100`, []string{"state"}},
+	"mem":  {`sum by (state) (system_memory_usage_bytes{observatory_node="$node",observatory_vm="",state=~"used|cached"})`, []string{"state"}},
+	"disk": {`100 * system_filesystem_usage_bytes{observatory_node="$node",observatory_vm=""} / system_filesystem_limit_bytes{observatory_node="$node",observatory_vm=""}`, []string{"mountpoint"}},
+	"net":  {`sum by (device, direction) (rate(system_network_io_bytes_total{observatory_node="$node",observatory_vm=""}[$step]))`, []string{"device", "direction"}},
 }
 
 func usageStep(from, to time.Time) time.Duration {
@@ -195,7 +195,7 @@ func (c *Client) TailLogs(ctx context.Context, q LogQuery, emit func(LogLine) er
 
 func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q LogQuery, form url.Values, emit func(LogLine) error) error {
 	form.Set("query", buildLogsQL(q))
-	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+" observatory.node:="+strconv.Quote(q.Node.String()))
+	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+" observatory.node:="+strconv.Quote(q.Node.String())+` observatory.vm:=""`)
 	resp, err := c.postForm(ctx, hc, c.LogsURL+path, form)
 	if resp != nil {
 		defer resp.Body.Close()

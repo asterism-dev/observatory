@@ -88,8 +88,8 @@ services:
       - -storageDataPath=/storage
       - -retentionPeriod=${OBSERVATORY_METRICS_RETENTION:-30d}
       - -opentelemetry.usePrometheusNaming
-      - -storage.maxHourlySeries=${OBSERVATORY_METRICS_MAX_HOURLY_SERIES:-200000}
-      - -storage.maxDailySeries=${OBSERVATORY_METRICS_MAX_DAILY_SERIES:-1000000}
+      - -storage.maxHourlySeries=${OBSERVATORY_METRICS_MAX_HOURLY_SERIES:-500000}
+      - -storage.maxDailySeries=${OBSERVATORY_METRICS_MAX_DAILY_SERIES:-2000000}
     volumes:
       - metrics-data:/storage
   victorialogs:

@@ -59,7 +59,7 @@ func TestNodeTelemetryRoundTrip(t *testing.T) {
 			var req collogspb.ExportLogsServiceRequest
 			if err = proto.Unmarshal(raw, &req); err == nil {
 				telemetry.StampLogs(&req, id)
-				err = client.WriteLogs(r.Context(), &req)
+				err = client.WriteLogs(r.Context(), &req, telemetry.NodeLogStreamFields)
 			}
 		default:
 			http.NotFound(w, r)

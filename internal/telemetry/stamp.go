@@ -13,9 +13,10 @@ import (
 
 const ReservedPrefix = "observatory."
 
+// Identity is node data when VMID is uuid.Nil.
 type Identity struct {
-	OrgID, NodeID uuid.UUID
-	NodeName      string
+	OrgID, NodeID, VMID      uuid.UUID
+	NodeName, VMName, Stream string
 }
 
 func StampMetrics(req *colmetricspb.ExportMetricsServiceRequest, id Identity) {
@@ -44,6 +45,9 @@ func StampLogs(req *collogspb.ExportLogsServiceRequest, id Identity) {
 			continue
 		}
 		rl.Resource = stampResource(rl.Resource, id)
+		if id.VMID != uuid.Nil {
+			rl.Resource.Attributes = append(rl.Resource.Attributes, stringAttr(ReservedPrefix+"stream", id.Stream))
+		}
 		for _, sl := range rl.ScopeLogs {
 			if sl == nil {
 				continue
@@ -69,6 +73,9 @@ func stampResource(r *resourcepb.Resource, id Identity) *resourcepb.Resource {
 		stringAttr(ReservedPrefix+"node", id.NodeID.String()),
 		stringAttr(ReservedPrefix+"node_name", id.NodeName),
 	)
+	if id.VMID != uuid.Nil {
+		r.Attributes = append(r.Attributes, stringAttr(ReservedPrefix+"vm", id.VMID.String()), stringAttr(ReservedPrefix+"vm_name", id.VMName))
+	}
 	return r
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -156,7 +157,7 @@ func TestLogsScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFilter := `observatory.org:="` + testOrg.String() + `" observatory.node:="` + testNode.String() + `"`
+	wantFilter := `observatory.org:="` + testOrg.String() + `" observatory.node:="` + testNode.String() + `" observatory.vm:=""`
 	if f := form["extra_filters"]; len(f) != 1 || f[0] != wantFilter {
 		t.Fatalf("extra_filters %v", f)
 	}
@@ -213,5 +214,34 @@ func TestLogsCanceledClosesBody(t *testing.T) {
 	}
 	if !body.closed {
 		t.Fatal("body not closed")
+	}
+}
+
+func TestNodeQueriesExcludeVMs(t *testing.T) {
+	selector := regexp.MustCompile(`[a-z_]+\{[^}]*\}`)
+	for chart, nq := range nodeQueries {
+		sels := selector.FindAllString(nq.expr, -1)
+		if len(sels) == 0 {
+			t.Fatalf("%s: no selectors", chart)
+		}
+		for _, s := range sels {
+			if !strings.Contains(s, `observatory_vm=""`) {
+				t.Errorf("%s: selector %s includes VM series", chart, s)
+			}
+		}
+	}
+	var filters string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		filters = r.Form.Get("extra_filters")
+	}))
+	defer srv.Close()
+	c := &Client{LogsURL: srv.URL}
+	if _, err := c.Logs(context.Background(), LogQuery{Org: testOrg, Node: testNode}); err != nil {
+		t.Fatal(err)
+	}
+	// Verified against VictoriaLogs v1.54.0: `field:=""` matches records where the field is absent or empty.
+	if !strings.HasSuffix(filters, ` observatory.vm:=""`) {
+		t.Fatalf("extra_filters %q", filters)
 	}
 }

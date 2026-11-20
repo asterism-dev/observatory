@@ -16,7 +16,10 @@ import (
 
 var ErrStore = errors.New("telemetry store unavailable")
 
-const logStreamFields = "observatory.org,observatory.node,service.name"
+const (
+	NodeLogStreamFields = "observatory.org,observatory.node,service.name"
+	VMLogStreamFields   = "observatory.org,observatory.vm,observatory.stream"
+)
 
 type Client struct {
 	MetricsURL, LogsURL string
@@ -27,8 +30,8 @@ func (c *Client) WriteMetrics(ctx context.Context, req *colmetricspb.ExportMetri
 	return c.post(ctx, c.MetricsURL+"/opentelemetry/v1/metrics", nil, req)
 }
 
-func (c *Client) WriteLogs(ctx context.Context, req *collogspb.ExportLogsServiceRequest) error {
-	return c.post(ctx, c.LogsURL+"/insert/opentelemetry/v1/logs", map[string]string{"VL-Stream-Fields": logStreamFields}, req)
+func (c *Client) WriteLogs(ctx context.Context, req *collogspb.ExportLogsServiceRequest, streamFields string) error {
+	return c.post(ctx, c.LogsURL+"/insert/opentelemetry/v1/logs", map[string]string{"VL-Stream-Fields": streamFields}, req)
 }
 
 func (c *Client) post(ctx context.Context, url string, header map[string]string, msg proto.Message) error {

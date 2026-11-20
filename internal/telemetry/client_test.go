@@ -29,7 +29,7 @@ func TestClientPathsAndErrors(t *testing.T) {
 	if err := c.WriteMetrics(ctx, &colmetricspb.ExportMetricsServiceRequest{}); err != nil || path != "/opentelemetry/v1/metrics" || ctype != "application/x-protobuf" {
 		t.Fatalf("%v %q %q", err, path, ctype)
 	}
-	if err := c.WriteLogs(ctx, &collogspb.ExportLogsServiceRequest{}); err != nil || path != "/insert/opentelemetry/v1/logs" || fields != "observatory.org,observatory.node,service.name" {
+	if err := c.WriteLogs(ctx, &collogspb.ExportLogsServiceRequest{}, telemetry.NodeLogStreamFields); err != nil || path != "/insert/opentelemetry/v1/logs" || fields != "observatory.org,observatory.node,service.name" {
 		t.Fatalf("%v %q %q", err, path, fields)
 	}
 	status = 500

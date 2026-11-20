@@ -33,7 +33,7 @@ Hub settings are listed in [deploy.md](deploy.md#configuration); the compose fil
 - `OBSERVATORY_METRICS_URL` and `OBSERVATORY_LOGS_URL`: both or neither. Unset turns telemetry off: the OTLP endpoints
   answer 404 and the node page hides the graphs and logs.
 - `OBSERVATORY_METRICS_RETENTION` (default `30d`) and `OBSERVATORY_LOGS_RETENTION` (`14d`).
-- `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`200000`) and `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`1000000`); series
+- `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`500000`) and `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`2000000`); series
   beyond the limits are dropped.
 
 For development, `make telemetry-up` and `make telemetry-down` start and stop the stores (see the README).
