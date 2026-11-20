@@ -1,3 +1,9 @@
+## v0.12.0 (2026-11-20)
+
+### Feat
+
+- **builds**: configurable builder VM size (#31)
+
 ## v0.11.0 (2026-11-19)
 
 ### Feat
