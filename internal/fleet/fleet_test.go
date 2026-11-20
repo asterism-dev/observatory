@@ -2047,3 +2047,74 @@ func TestRefreshInactiveAccount(t *testing.T) {
 		}
 	}
 }
+
+const (
+	claudeTok1 = "sk-ant-oat01-dummyaccess0001"
+	claudeTok2 = "sk-ant-oat01-dummyaccess0002"
+)
+
+// claudeAccounts creates the owner's two-account Claude integration in proxy mode; the first account is active.
+func (e *env) claudeAccounts() (store.Integration, store.IntegrationAccount, store.IntegrationAccount) {
+	e.t.Helper()
+	ctx := context.Background()
+	cl := e.integration(integrations.Claude, integrations.SourceSetupToken, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: claudeTok1})
+	if _, err := e.s.AddIntegrationAccount(ctx, cl, store.IntegrationAccount{Account: "two@x.io", Source: integrations.SourceSetupToken, CreatedBy: e.owner}, store.IntegrationSecret{Token: claudeTok2}); err != nil {
+		e.t.Fatal(err)
+	}
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || len(list) != 2 || !list[0].Active {
+		e.t.Fatalf("accounts = %+v %v", list, err)
+	}
+	return cl, list[0], list[1]
+}
+
+func TestUsageReportSwitchesAndPushes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, second := e.claudeAccounts()
+
+	node := e.connect(cred)
+	s := desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	if s.ID != "integration:"+cl.ID.String() || s.Account != first.ID.String() || s.Value != claudeTok1 ||
+		len(s.Alternates) != 1 || s.Alternates[0].Account != second.ID.String() || s.Alternates[0].Value != claudeTok2 {
+		t.Fatalf("before: %s %s %d", s.ID, s.Account, len(s.Alternates))
+	}
+	until := time.Now().Add(time.Hour).UTC()
+	node.send(proto.Message{Type: "usage", Usage: []proto.UsageObservation{{Integration: cl.ID.String(), Account: first.ID.String(), LimitedUntil: &until, ObservedAt: time.Now()}}})
+	s = desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	if s.Account != second.ID.String() || s.Value != claudeTok2 {
+		t.Fatalf("after: account %s", s.Account)
+	}
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || list[0].Active || !list[1].Active || list[0].LimitedUntil == nil || list[0].Usage.Source != "proxy" {
+		t.Fatalf("accounts = %+v %v", list, err)
+	}
+}
+
+func TestUsageReportForeignAccountIgnored(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	nA, _ := e.node(e.org.ID, "a")
+	e.vm(e.org.ID, nA.ID, "vm", &e.owner, nil)
+	nB, credB := e.node(e.org.ID, "b")
+	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.vm(e.org.ID, nB.ID, "team-vm", nil, &team.ID)
+	cl, first, _ := e.claudeAccounts()
+	e.connect(credB).desired()
+
+	until := time.Now().Add(time.Hour)
+	pct := 50.0
+	e.f.NoteUsage(ctx, nB, []proto.UsageObservation{
+		{Integration: cl.ID.String(), Account: first.ID.String(), FiveHourPct: &pct, LimitedUntil: &until, ObservedAt: time.Now()},
+		{Integration: uuid.NewString(), Account: first.ID.String(), LimitedUntil: &until, ObservedAt: time.Now()},
+	})
+	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+	if err != nil || !list[0].Active || list[0].LimitedUntil != nil || list[0].Usage.FiveHourPct != nil {
+		t.Fatalf("accounts = %+v %v", list, err)
+	}
+}

@@ -23,6 +23,8 @@ type EgressProc interface {
 	Ready() <-chan struct{}
 	Done() <-chan struct{}
 	Kill()
+	// Usage carries the proxy's Claude usage reports, ids only; the proxy throttles them.
+	Usage() <-chan proto.UsageObservation
 }
 
 var testHookBeforeEgressUp func()
@@ -232,6 +234,7 @@ func (a *Agent) runEgress(ctx context.Context, s *egressSup) {
 		proc.Kill()
 		<-proc.Done()
 	}()
+	go a.forwardUsage(proc)
 	if err := proc.Send(*f.Egress); err != nil {
 		log.Printf("vm %s: egress proxy config: %v", id, err)
 		return
@@ -266,6 +269,31 @@ func (a *Agent) runEgress(ctx context.Context, s *egressSup) {
 				log.Printf("vm %s: egress proxy config: %v", id, err)
 				return
 			}
+		}
+	}
+}
+
+// forwardUsage sends proc's usage reports to the hub, batching those already queued, until proc exits; reports while disconnected are lost, the hub's polling catches up.
+func (a *Agent) forwardUsage(proc EgressProc) {
+	for {
+		var batch []proto.UsageObservation
+		select {
+		case <-proc.Done():
+			return
+		case o := <-proc.Usage():
+			batch = append(batch, o)
+		}
+		for n := len(proc.Usage()); n > 0; n-- {
+			batch = append(batch, <-proc.Usage())
+		}
+		a.mu.Lock()
+		send := a.send
+		a.mu.Unlock()
+		if send == nil {
+			continue
+		}
+		if err := send(proto.Message{Type: "usage", Usage: batch}); err != nil {
+			log.Printf("usage: %v", err)
 		}
 	}
 }

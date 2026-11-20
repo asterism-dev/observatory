@@ -10,12 +10,69 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"sync"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 const maxTableLine = 4 << 20
+
+const usageEvery = 30 * time.Second
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(b []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(b)
+}
+
+// usageReporter returns a Report that never blocks: it queues for one writer of `usage <json>` lines, which throttles readings per account and drops them when the queue is full.
+func usageReporter(w io.Writer) func(proto.UsageObservation) {
+	// Limits get their own queue, read first and never throttled, so a burst of readings cannot crowd one out.
+	readings := make(chan proto.UsageObservation, 64)
+	limits := make(chan proto.UsageObservation, 64)
+	go func() {
+		last := map[string]time.Time{}
+		for {
+			var o proto.UsageObservation
+			select {
+			case o = <-limits:
+			default:
+				select {
+				case o = <-limits:
+				case o = <-readings:
+					if time.Since(last[o.Account]) < usageEvery {
+						continue
+					}
+				}
+			}
+			last[o.Account] = time.Now()
+			b, err := json.Marshal(o)
+			if err != nil {
+				continue
+			}
+			if _, err := w.Write(append(append([]byte("usage "), b...), '\n')); err != nil {
+				return
+			}
+		}
+	}()
+	return func(o proto.UsageObservation) {
+		q := readings
+		if o.LimitedUntil != nil {
+			q = limits
+		}
+		select {
+		case q <- o:
+		default:
+		}
+	}
+}
 
 func egressMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// net/http logs raw upstream bytes through the global logger, and the node copies stderr into the journal.
@@ -58,10 +115,12 @@ func runEgress(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// The node prefixes and timestamps each stderr line.
 	p := egress.New(*vm, log.New(stderr, "", 0))
 	p.Peer = peerAddr
+	out := &lockedWriter{w: stdout}
+	p.Report = usageReporter(out)
 
 	serveErr := make(chan error, 1)
 	stdinErr := make(chan error, 1)
-	go func() { stdinErr <- readTables(stdin, p, stdout, func() { go func() { serveErr <- p.Serve(ln) }() }) }()
+	go func() { stdinErr <- readTables(stdin, p, out, func() { go func() { serveErr <- p.Serve(ln) }() }) }()
 	select {
 	case err := <-stdinErr:
 		return err

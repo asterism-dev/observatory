@@ -39,7 +39,8 @@ var (
 type conn struct {
 	node, org uuid.UUID
 	sess      *yamux.Session
-	vms       map[string]bool // IDs of the VMs in the last desired list; guarded by Fleet.mu
+	vms       map[string]bool            // IDs of the VMs in the last desired list; guarded by Fleet.mu
+	accounts  map[string]map[string]bool // account IDs by integration ID in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
 	wake chan struct{}
 	// update hands an update request to pushLoop; done closes when the connection's handler ends, pushLoop gone or not.
@@ -142,6 +143,8 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			f.mu.Unlock()
 		case m.Type == "metrics":
 			f.NoteMetrics(ctx, node.ID, m.Metrics)
+		case m.Type == "usage":
+			f.NoteUsage(ctx, node, m.Usage)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		case m.Type == "image" && m.Image != nil:
@@ -261,12 +264,16 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			continue
 		}
 		vms := make(map[string]bool, len(desired))
+		accounts := map[string]map[string]bool{}
 		for _, d := range desired {
 			vms[d.Spec.ID] = true
+			if d.Egress != nil {
+				desiredAccounts(accounts, d.Egress.Secrets)
+			}
 		}
 		f.mu.Lock()
 		f.dropDiskErrors(c, vms)
-		c.vms = vms
+		c.vms, c.accounts = vms, accounts
 		f.mu.Unlock()
 		// Register statuses arrive before the node's VMs are known; any later status is newer.
 		for _, st := range reg.VMs {

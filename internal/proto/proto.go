@@ -237,7 +237,7 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics" and "image" (node→hub).
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image" and "usage" (node→hub).
 // VMMetrics is one sample of a running VM; MemTotalMB 0 means the VM has no balloon statistics.
 type VMMetrics struct {
 	ID         string  `json:"id"`
@@ -253,13 +253,14 @@ type Message struct {
 	Status   *VMStatus `json:"status,omitempty"`
 	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
-	Desired    []DesiredVM   `json:"desired,omitempty"`
-	DisksInUse []string      `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
-	Seq        uint64        `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
-	AppliedSeq uint64        `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Metrics    []VMMetrics   `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
-	Image      *ImageStatus  `json:"image,omitempty"`      // type "image": the guest image changed state
-	Update     *UpdateReport `json:"update,omitempty"`     // type "update": an update attempt failed
+	Desired    []DesiredVM        `json:"desired,omitempty"`
+	DisksInUse []string           `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
+	Seq        uint64             `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
+	AppliedSeq uint64             `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
+	Metrics    []VMMetrics        `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
+	Image      *ImageStatus       `json:"image,omitempty"`      // type "image": the guest image changed state
+	Update     *UpdateReport      `json:"update,omitempty"`     // type "update": an update attempt failed
+	Usage      []UsageObservation `json:"usage,omitempty"`      // type "usage": Claude usage the node's egress proxies saw
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

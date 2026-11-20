@@ -78,3 +78,14 @@ func TestNameservers(t *testing.T) {
 		t.Fatalf("missing file: %v", got)
 	}
 }
+
+func TestParseUsageLine(t *testing.T) {
+	if o, ok := parseUsageLine(`usage {"integration":"i1","account":"a1","observedAt":"2026-11-20T10:00:00Z"}`); !ok || o.Integration != "i1" || o.Account != "a1" {
+		t.Fatalf("valid = %+v %v", o, ok)
+	}
+	for _, l := range []string{"ready", "usage", "usage {", `usage {"integration":"i1"}`, `usagex {"integration":"i1","account":"a1"}`} {
+		if _, ok := parseUsageLine(l); ok {
+			t.Errorf("%q accepted", l)
+		}
+	}
+}

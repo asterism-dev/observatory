@@ -475,11 +475,63 @@ func IntegrationEntries(res []store.ResolvedIntegration) (bound []proto.HostBoun
 			continue
 		}
 		spec := integrations.Kinds[r.Kind]
-		bound = append(bound, proto.HostBoundSecret{ID: "integration:" + r.ID.String(), Name: string(r.Kind) + " integration",
-			Placeholder: r.Placeholder, Value: r.Token, Hosts: spec.Hosts, Headers: spec.Headers})
+		b := proto.HostBoundSecret{ID: "integration:" + r.ID.String(), Name: string(r.Kind) + " integration",
+			Placeholder: r.Placeholder, Value: r.Token, Hosts: spec.Hosts, Headers: spec.Headers}
+		if r.Kind == integrations.Claude && len(r.Accounts) > 0 {
+			b.Account = r.Accounts[0].ID.String()
+			for _, a := range r.Accounts[1:] {
+				b.Alternates = append(b.Alternates, proto.AlternateValue{Account: a.ID.String(), Value: a.Token})
+			}
+		}
+		bound = append(bound, b)
 		tokens = append(tokens, proto.IntegrationToken{Kind: string(r.Kind), Token: r.Placeholder})
 	}
 	return bound, tokens
+}
+
+// desiredAccounts adds the accounts of the integration secrets in bound to into, by integration ID.
+func desiredAccounts(into map[string]map[string]bool, bound []proto.HostBoundSecret) {
+	for _, b := range bound {
+		id, ok := strings.CutPrefix(b.ID, "integration:")
+		if !ok || b.Account == "" {
+			continue
+		}
+		if into[id] == nil {
+			into[id] = map[string]bool{}
+		}
+		into[id][b.Account] = true
+		for _, a := range b.Alternates {
+			into[id][a.Account] = true
+		}
+	}
+}
+
+// NoteUsage records the usage the node's proxies saw, but only for accounts in the node's last desired list, as nodes are untrusted.
+func (f *Fleet) NoteUsage(ctx context.Context, node store.Node, obs []proto.UsageObservation) {
+	f.mu.Lock()
+	var accounts map[string]map[string]bool
+	if c := f.conns[node.ID]; c != nil {
+		accounts = c.accounts
+	}
+	f.mu.Unlock()
+	for _, o := range obs {
+		account, err := uuid.Parse(o.Account)
+		if err != nil || !accounts[o.Integration][o.Account] {
+			// The ids are not logged: they are whatever the node sent.
+			slog.Debug("usage report ignored", "node", node.ID)
+			continue
+		}
+		sw, err := f.store.RecordUsage(ctx, store.UsageObservation{Account: account, FiveHourPct: o.FiveHourPct, WeekPct: o.WeekPct,
+			FiveHourResetsAt: o.FiveHourResetsAt, WeekResetsAt: o.WeekResetsAt, LimitedUntil: o.LimitedUntil, Source: "proxy", ObservedAt: o.ObservedAt}, time.Now())
+		if err != nil {
+			slog.Error("record usage", "node", node.ID, "account", account, "err", err)
+			continue
+		}
+		if sw != nil {
+			slog.Info("integration account switched", "integration", sw.IntegrationID, "from", sw.From, "to", sw.To, "limitedUntil", sw.LimitedUntil)
+			f.NotifyOrg(sw.OrgID)
+		}
+	}
 }
 
 // egress keeps the VM's CAs current for the bound hosts and returns its egress entry plus the public certs by CA ID; nil, nil when nothing is bound.
