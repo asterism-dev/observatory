@@ -55,7 +55,7 @@ Transport: OTLP/HTTP from the node (chosen) vs. a stream on the existing yamux c
 
 - `POST /otlp/v1/metrics` and `POST /otlp/v1/logs`, OTLP/HTTP protobuf (gzip accepted), `Authorization: Bearer <node credential>` resolved with `store.NodeByCredential`. Body size limit (e.g. 4 MB after decompression). *(Our call.)*
 - The hub unmarshals with `go.opentelemetry.io/proto/otlp`, removes every resource and data-point/record attribute starting with `observatory.`, sets resource attributes `observatory.org` (node's org id), `observatory.node` (node id) and `observatory.node_name`, re-marshals and forwards to VictoriaMetrics `/opentelemetry/v1/metrics` and VictoriaLogs `/insert/opentelemetry/v1/logs` (stream fields: `observatory.org`, `observatory.node`, `service.name`).
-- The forwarding answer is passed back (2xx / 5xx), so the SDK's retry logic applies; the hub does not buffer.
+- The forwarding answer is passed back (2xx / 5xx); the hub does not buffer. The node keeps log records that failed retryably (no response, 429, 5xx) and resends them with the next batch, bounded at 10 000 records (oldest dropped); batches rejected with any other status are dropped. Metrics are not resent, a gap is acceptable.
 - The credential-based identity is designed so part 2 can add a VM identity (the node forwards guest data and states the VM id, the hub checks the VM is on that node) without changing the endpoints.
 
 ### Node
