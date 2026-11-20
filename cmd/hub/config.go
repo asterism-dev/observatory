@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/builds"
@@ -18,6 +19,7 @@ type config struct {
 	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
 	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
 	BuilderImage, BuilderHubURL string
+	BuilderSize                 builds.Size
 	// NodeURL is the hub URL nodes pull images from, the public URL by default.
 	NodeURL *url.URL
 }
@@ -93,6 +95,22 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if cfg.BuilderHubURL = getenv("OBSERVATORY_BUILDER_HUB_URL"); cfg.BuilderHubURL == "" {
 		cfg.BuilderHubURL = cfg.PublicURL
+	}
+	cfg.BuilderSize = builds.DefaultSize
+	for _, f := range []struct {
+		key string
+		min int
+		v   *int
+	}{
+		{"OBSERVATORY_BUILDER_CPUS", 1, &cfg.BuilderSize.CPUs},
+		{"OBSERVATORY_BUILDER_MEMORY_MB", 1024, &cfg.BuilderSize.MemoryMB},
+		{"OBSERVATORY_BUILDER_DISK_GB", 10, &cfg.BuilderSize.DiskGB},
+	} {
+		if s := getenv(f.key); s != "" {
+			if *f.v, err = strconv.Atoi(s); err != nil || *f.v < f.min {
+				return config{}, fmt.Errorf("%s must be a number of at least %d", f.key, f.min)
+			}
+		}
 	}
 	nodeURL := getenv("OBSERVATORY_NODE_URL")
 	if nodeURL == "" {
