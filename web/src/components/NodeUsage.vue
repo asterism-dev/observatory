@@ -46,8 +46,8 @@ async function load(r: UsageRange) {
   }
 }
 
-function pick(p: Preset) {
-  preset.value = p
+function pick(p: Preset | '') {
+  if (p) preset.value = p
   zoomed.value = null
 }
 
@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
 <template>
   <Section :label="t('telemetry.usage')">
     <template #actions>
-      <SegmentedControl :model-value="preset" :options="options" size="sm" @update:model-value="pick" />
+      <SegmentedControl :model-value="zoomed ? '' : preset" :options="options" size="sm" @update:model-value="pick" />
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-else-if="usage && !usage.t.length" class="muted">{{ t('telemetry.noData') }}</p>
