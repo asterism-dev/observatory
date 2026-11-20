@@ -17,10 +17,10 @@ import (
 func writeSysProc(t *testing.T, dir, stat string) {
 	t.Helper()
 	files := map[string]string{
-		"stat":    stat,
-		"meminfo": "MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 200 kB\nSReclaimable: 50 kB\n",
-		"loadavg": "0.50 0.25 0.10 1/100 42\n",
-		"net/dev": "Inter-|   Receive\n face |bytes\n    lo: 9 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n  eth0: 100 1 0 0 0 0 0 0 200 2 0 0 0 0 0 0\n",
+		"stat":      stat,
+		"meminfo":   "MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 200 kB\nSReclaimable: 50 kB\n",
+		"loadavg":   "0.50 0.25 0.10 1/100 42\n",
+		"1/net/dev": "Inter-|   Receive\n face |bytes\n    lo: 9 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n  eth0: 100 1 0 0 0 0 0 0 200 2 0 0 0 0 0 0\n",
 	}
 	for name, body := range files {
 		p := filepath.Join(dir, name)

@@ -92,7 +92,8 @@ func (u *usage) collect(now time.Time) *metricspb.ResourceMetrics {
 				intPt(m.Used, attr("state", "used")), intPt(m.Cached, attr("state", "cached")), intPt(m.Free, attr("state", "free"))})
 		}
 	}
-	if f, ok := u.open("net/dev"); ok {
+	// /proc/net is self/net, absent for the init outside the image's PID namespace; the image's PID 1 shares the init's network.
+	if f, ok := u.open("1/net/dev"); ok {
 		devs, err := sysstat.NetDev(f, nil)
 		f.Close()
 		if err == nil {
