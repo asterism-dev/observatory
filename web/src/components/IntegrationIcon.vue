@@ -19,6 +19,15 @@ withDefaults(defineProps<{ kind: IntegrationKind; size?: number }>(), { size: 20
       stroke-linecap="round"
       d="M14.51 12.67L21.66 14.59M13.84 13.84L17.80 17.80M12.67 14.51L14.59 21.66M11.33 14.51L9.88 19.92M10.16 13.84L4.93 19.07M9.49 12.67L4.08 14.12M9.49 11.33L2.34 9.41M10.16 10.16L6.20 6.20M11.33 9.49L9.41 2.34M12.67 9.49L14.12 4.08M13.84 10.16L19.07 4.93M14.51 11.33L19.92 9.88"
     />
+    <path
+      v-else-if="kind === 'gcloud'"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4.75 4.75 0 0 1-.5 9.5Z"
+    />
     <g v-else fill="#5E6AD2" stroke="#5E6AD2">
       <path stroke="none" d="M3.55 6.66A10 10 0 1 1 17.34 20.45Z" />
       <path fill="none" stroke-width="1.3" stroke-linecap="round" d="M2.86 9.08L14.92 21.14M2.41 11.60L12.40 21.59M2.77 14.65L9.35 21.23" />

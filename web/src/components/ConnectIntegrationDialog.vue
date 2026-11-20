@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Button, Dialog, RadioGroup, Select, TextInput } from '@asterism-dev/lumen'
+import { Button, Dialog, RadioGroup, Select, Textarea, TextInput } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
+import GcloudCommands from '@/components/GcloudCommands.vue'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import { defaultSource, kindLabels, type ClaudeAccount, type Integration, type IntegrationKind, type IntegrationMode, type IntegrationScope } from '@/composables/integrations'
 
@@ -23,7 +24,8 @@ const busy = ref(false)
 const error = ref('')
 
 const kindOptions = (Object.keys(kindLabels) as IntegrationKind[]).map((k) => ({ value: k, label: kindLabels[k] }))
-const freeScopes = computed(() => props.scopes.filter((s) => !s.connected.includes(kind.value)))
+const isGcloud = computed(() => kind.value === 'gcloud')
+const freeScopes = computed(() => props.scopes.filter((s) => !s.connected.includes(kind.value) && (!isGcloud.value || s.scope === 'user')))
 const scopeOptions = computed(() => freeScopes.value.map((s) => ({ value: scopeKey(s), label: scopeLabel(s, t) })))
 const target = computed(() => freeScopes.value.find((s) => scopeKey(s) === scope.value))
 const signingIn = computed(() => kind.value === 'claude' && claudeSource.value === 'oauth')
@@ -36,7 +38,7 @@ const sourceOptions = computed(() => [
   { value: 'oauth' as const, label: t('integrations.sourceSignIn') },
   { value: 'setup-token' as const, label: t('integrations.sourceToken') },
 ])
-const teamVmWarning = computed(() => !props.replacing && mode.value === 'vm' && target.value?.scope === 'team')
+const teamVmWarning = computed(() => !props.replacing && !isGcloud.value && mode.value === 'vm' && target.value?.scope === 'team')
 const ready = computed(() => (props.replacing || props.addTo || !!target.value) && !busy.value)
 
 watch(
@@ -156,10 +158,14 @@ function done() {
       </template>
     </template>
     <template v-else>
-      <TextInput v-model="token" type="password" autocomplete="off" spellcheck="false" :aria-label="t('integrations.token')" :placeholder="t('integrations.token')" />
+      <template v-if="isGcloud">
+        <GcloudCommands />
+        <Textarea v-model="token" autocomplete="off" spellcheck="false" :aria-label="t('integrations.adcJson')" :placeholder="t('integrations.adcJson')" />
+      </template>
+      <TextInput v-else v-model="token" type="password" autocomplete="off" spellcheck="false" :aria-label="t('integrations.token')" :placeholder="t('integrations.token')" />
       <p v-if="checked" role="status">{{ t('integrations.checked', { account: checked || '–' }) }}</p>
     </template>
-    <template v-if="!replacing && !addTo">
+    <template v-if="!replacing && !addTo && !isGcloud">
       <RadioGroup v-model="mode" :options="modeOptions" :aria-label="t('integrations.delivery')" />
       <p v-if="teamVmWarning" role="alert">{{ t('integrations.teamVmWarning') }}</p>
     </template>

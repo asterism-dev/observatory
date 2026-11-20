@@ -245,7 +245,7 @@
     "emptyText": "Füge Variablen und Secrets hinzu, die in deine VMs injiziert werden."
   },
   "integrations": {
-    "subtitle": "Verbinde GitHub, Claude und Linear, damit deine VMs sie nutzen können.",
+    "subtitle": "Verbinde GitHub, Claude, Linear und gcloud, damit deine VMs sie nutzen können.",
     "connect": "Verbinden",
     "connectTitle": "Integration verbinden",
     "replaceTitle": "{kind}-Token ersetzen",
@@ -315,7 +315,13 @@
     "connectedTag": "verbunden",
     "about_github": "git und gh funktionieren in deinen VMs.",
     "about_claude": "Claude Code ist in deinen VMs angemeldet.",
-    "about_linear": "Die Linear-API und MCP funktionieren in deinen VMs."
+    "about_linear": "Die Linear-API und MCP funktionieren in deinen VMs.",
+    "about_gcloud": "gcloud, Terraform und Google-SDKs nutzen deine Anmeldung in deinen VMs.",
+    "gcloudHint": "Melde dich auf deinem Rechner an und übergib die Anmeldung dann dem Hub. Wiederhole den zweiten Befehl nach jeder neuen Anmeldung.",
+    "adcJson": "Oder application_default_credentials.json einfügen",
+    "quotaProject": "Quota-Projekt",
+    "quotaInvalid": "ungültiges Quota-Projekt",
+    "quotaHint": "Wird von Google-SDKs wie Python genutzt. gcloud sendet sein eigenes Projekt; Terraform braucht user_project_override."
   },
   "nodes": {
     "subtitle": "Maschinen, auf denen deine VMs laufen.",
