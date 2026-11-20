@@ -52,6 +52,7 @@ func StampLogs(req *collogspb.ExportLogsServiceRequest, id Identity) {
 			for _, lr := range sl.LogRecords {
 				if lr != nil {
 					lr.Attributes = filterReserved(lr.Attributes)
+					stripValue(lr.Body)
 				}
 			}
 		}
@@ -118,10 +119,23 @@ func filterReserved(attrs []*commonpb.KeyValue) []*commonpb.KeyValue {
 	kept := attrs[:0]
 	for _, kv := range attrs {
 		if kv != nil && !isReserved(kv.Key) {
+			stripValue(kv.Value)
 			kept = append(kept, kv)
 		}
 	}
 	return kept
+}
+
+// Nested kvlists can flatten to top-level fields (empty parent key, log body), so strip at any depth.
+func stripValue(v *commonpb.AnyValue) {
+	switch x := v.GetValue().(type) {
+	case *commonpb.AnyValue_KvlistValue:
+		x.KvlistValue.Values = filterReserved(x.KvlistValue.Values)
+	case *commonpb.AnyValue_ArrayValue:
+		for _, e := range x.ArrayValue.GetValues() {
+			stripValue(e)
+		}
+	}
 }
 
 // The stores flatten dots and other separators to "_" (metric labels) or nest kvlists into dotted fields (logs), so lookalike keys must go too.

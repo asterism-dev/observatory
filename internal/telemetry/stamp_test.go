@@ -38,6 +38,15 @@ func attrMap(t *testing.T, attrs []*commonpb.KeyValue) map[string]string {
 
 func requireIdentity(t *testing.T, r *resourcepb.Resource) {
 	t.Helper()
+	n := 0
+	for _, kv := range r.GetAttributes() {
+		if isReserved(kv.Key) {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Fatalf("want exactly 3 reserved resource attrs, got %d: %v", n, r.GetAttributes())
+	}
 	m := attrMap(t, r.GetAttributes())
 	if m["observatory.org"] != testID.OrgID.String() || m["observatory.node"] != testID.NodeID.String() || m["observatory.node_name"] != "node-107" {
 		t.Fatalf("identity not stamped: %v", m)
@@ -50,15 +59,23 @@ func evil() []*commonpb.KeyValue {
 		str("Observatory.Node", "evil"),
 		str("observatory_org", "evil"),
 		str("observatory-org", "evil"),
-		kvlist("observatory", str("org", "evil")),
 		str("orders", "7"),
+		kvlist("observatory", str("org", "evil")),
+		kvlist("", str("observatory.org", "evil"), str("orders", "7")),
+		kvlist("deep", kvlist("", str("observatory.node", "evil"))),
 	}
 }
 
 func requireOnlyClean(t *testing.T, where string, attrs []*commonpb.KeyValue) {
 	t.Helper()
-	if len(attrs) != 1 || attrs[0].Key != "orders" || attrs[0].Value.GetStringValue() != "7" {
+	if len(attrs) != 3 || attrs[0].Key != "orders" || attrs[0].Value.GetStringValue() != "7" {
 		t.Fatalf("%s: reserved not stripped or clean attr lost: %v", where, attrs)
+	}
+	if attrs[1].Key != "" || len(attrs[1].Value.GetKvlistValue().Values) != 1 || attrs[1].Value.GetKvlistValue().Values[0].Key != "orders" {
+		t.Fatalf("%s: empty-key kvlist not cleaned: %v", where, attrs[1])
+	}
+	if d := attrs[2].Value.GetKvlistValue().Values; len(d) != 1 || len(d[0].Value.GetKvlistValue().Values) != 0 {
+		t.Fatalf("%s: nested kvlist not cleaned: %v", where, attrs[2])
 	}
 }
 
@@ -94,7 +111,7 @@ func TestStampStripsReserved(t *testing.T) {
 	rm := req.ResourceMetrics[0]
 	requireIdentity(t, rm.Resource)
 	m := attrMap(t, rm.Resource.Attributes)
-	if m["orders"] != "7" || m["status"] != "paid" {
+	if m["orders"] != "7" || m["status"] != "paid" || len(rm.Resource.Attributes) != 7 {
 		t.Fatalf("clean resource attrs lost: %v", m)
 	}
 	sm := rm.ScopeMetrics[0]
@@ -118,7 +135,7 @@ func TestStampLogsSetsIdentity(t *testing.T) {
 		Resource: &resourcepb.Resource{Attributes: append(evil(), str("service.name", "observatory-node"))},
 		ScopeLogs: []*logspb.ScopeLogs{{
 			Scope:      &commonpb.InstrumentationScope{Attributes: evil()},
-			LogRecords: []*logspb.LogRecord{{Attributes: append(evil(), str("vm", "vm01"))}},
+			LogRecords: []*logspb.LogRecord{{Attributes: append(evil(), str("vm", "vm01")), Body: kvlist("", evil()...).Value}},
 		}},
 	}}}
 	StampLogs(req, testID)
@@ -126,10 +143,12 @@ func TestStampLogsSetsIdentity(t *testing.T) {
 	rl := req.ResourceLogs[0]
 	requireIdentity(t, rl.Resource)
 	requireOnlyClean(t, "scope", rl.ScopeLogs[0].Scope.Attributes)
-	m := attrMap(t, rl.ScopeLogs[0].LogRecords[0].Attributes)
-	if len(m) != 2 || m["vm"] != "vm01" || m["orders"] != "7" {
-		t.Fatalf("log record attrs: %v", m)
+	lr := rl.ScopeLogs[0].LogRecords[0]
+	m := attrMap(t, lr.Attributes)
+	if len(lr.Attributes) != 4 || m["vm"] != "vm01" || m["orders"] != "7" {
+		t.Fatalf("log record attrs: %v", lr.Attributes)
 	}
+	requireOnlyClean(t, "log body", lr.Body.GetKvlistValue().Values)
 	for k := range attrMap(t, rl.Resource.Attributes) {
 		if strings.HasPrefix(strings.ToLower(k), "observatory") && !strings.HasPrefix(k, ReservedPrefix) {
 			t.Fatalf("lookalike key survived: %s", k)
