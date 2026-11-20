@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,7 +193,7 @@ func TestLogsProxyTail(t *testing.T) {
 	}
 	rest, _ := io.ReadAll(body)
 	took := time.Since(start)
-	// Rows past the server's 100 ms write timeout prove the deadline was cleared.
+	// Rows past the server's 100 ms write timeout prove the tail replaced that deadline.
 	if n := strings.Count(string(rest), "\n"); n < 10 || took < 600*time.Millisecond || took > 3*time.Second {
 		t.Fatalf("%d more rows, stream ended after %s", n, took)
 	}
@@ -216,6 +217,72 @@ func TestLogsProxyTailEndsOnRevoke(t *testing.T) {
 	_, _ = io.ReadAll(body)
 	if took := time.Since(revoked); took > 2*time.Second {
 		t.Fatalf("tail outlived its token by %s", took)
+	}
+}
+
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.deadlines = append(d.deadlines, t)
+	return nil
+}
+
+func (d *deadlineRecorder) last() (time.Time, int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.deadlines) == 0 {
+		return time.Time{}, 0
+	}
+	return d.deadlines[len(d.deadlines)-1], len(d.deadlines)
+}
+
+func (p *promEnv) serveTail(w http.ResponseWriter) {
+	req := httptest.NewRequest("GET", "/grafana/logs/select/logsql/tail?query=*", nil)
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	p.h.ServeHTTP(w, req)
+}
+
+func TestLogsProxyTailWriteDeadline(t *testing.T) {
+	p := newLogsEnv(t)
+	p.api.telemetry = &telemetry.Client{LogsURL: tailUpstream(t).URL}
+	p.api.grafanaTailMax = 300 * time.Millisecond
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	start := time.Now()
+	p.serveTail(rec)
+	if d, _ := rec.last(); d.Before(start.Add(5300*time.Millisecond)) || d.After(time.Now().Add(5300*time.Millisecond)) {
+		t.Fatalf("tail write deadline %s, want start + tail max + 5 s (%s)", d, start.Add(5300*time.Millisecond))
+	}
+}
+
+func TestLogsProxyTailRevokeCutsWriteDeadline(t *testing.T) {
+	p := newLogsEnv(t)
+	p.api.telemetry = &telemetry.Client{LogsURL: tailUpstream(t).URL}
+	p.api.grafanaTailRecheck = 50 * time.Millisecond
+	tok := p.createTelemetryToken(p.tokSes, p.org, "revoked")
+	p.token = tok.Token
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	done := make(chan struct{})
+	go func() { p.serveTail(rec); close(done) }()
+	// grafanaRequest sets the first deadline, the tail the second.
+	for _, n := rec.last(); n < 2; _, n = rec.last() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rec := p.do("DELETE", tokensPath(p.org)+"/"+tok.ID, p.tokSes); rec.Code != 204 {
+		t.Fatalf("revoke: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tail outlived its token")
+	}
+	if d, _ := rec.last(); d.After(time.Now()) {
+		t.Fatalf("write deadline %s still in the future after revoke", d)
 	}
 }
 
