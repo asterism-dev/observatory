@@ -44,6 +44,8 @@ type Integration struct {
 	WasInVM                            bool
 	CreatedBy, UpdatedBy               uuid.UUID
 	CreatedAt, UpdatedAt               time.Time
+	LastSwitchAt                       *time.Time
+	LastSwitchFrom, LastSwitchTo       *uuid.UUID // account ids of the last automatic switch
 }
 
 // IntegrationSecret is the token to store; Refresh is set only for oauth sources.
@@ -71,13 +73,14 @@ func (ResolvedIntegration) MarshalJSON() ([]byte, error) { return []byte(`"redac
 // A Claude integration shows its active account's source, account, expiry and status.
 const integrationCols = `i.id, i.org_id, i.kind, coalesce(a.source, i.source), i.scope, coalesce(i.team_id, i.user_id), i.mode, coalesce(a.account, i.account),
 	i.scopes_info, i.provider_expires_at, coalesce(a.access_expires_at, i.access_expires_at), coalesce(a.status, i.status), coalesce(a.last_error, i.last_error),
-	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at`
+	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at, i.last_switch_at, i.last_switch_from, i.last_switch_to`
 
 const integrationFrom = " FROM integrations i LEFT JOIN integration_accounts a ON a.integration_id = i.id AND a.active "
 
 func scanIntegration(r pgx.Row, extra ...any) (v Integration, err error) {
 	dest := append([]any{&v.ID, &v.OrgID, &v.Kind, &v.Source, &v.Scope, &v.OwnerID, &v.Mode, &v.Account, &v.ScopesInfo, &v.ProviderExpiresAt,
-		&v.AccessExpiresAt, &v.Status, &v.LastError, &v.WasInVM, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt}, extra...)
+		&v.AccessExpiresAt, &v.Status, &v.LastError, &v.WasInVM, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt,
+		&v.LastSwitchAt, &v.LastSwitchFrom, &v.LastSwitchTo}, extra...)
 	err = r.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound

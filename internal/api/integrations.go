@@ -24,10 +24,12 @@ type Integrations struct {
 }
 
 type signIn struct {
-	Scope     store.EnvScope
-	OwnerID   *uuid.UUID
-	Mode      integrations.Mode
-	ReplaceID *uuid.UUID
+	Scope            store.EnvScope
+	OwnerID          *uuid.UUID
+	Mode             integrations.Mode
+	ReplaceID        *uuid.UUID
+	AddToID          *uuid.UUID // integration that gains the signed-in account
+	ReplaceAccountID *uuid.UUID
 }
 
 const signInTTL = 10 * time.Minute
@@ -46,6 +48,25 @@ func integrationAudit(r *http.Request, action string, v store.Integration) store
 	e := auditEntry(r, &v.OrgID, action, integrationObject(v.Scope, v.OwnerID), store.ResultAllowed)
 	e.Details = map[string]any{"kind": v.Kind, "source": v.Source, "scope": v.Scope, "ownerId": v.OwnerID, "mode": v.Mode, "account": v.Account}
 	return e
+}
+
+func accountAudit(r *http.Request, action string, v store.Integration, a store.IntegrationAccount) store.AuditEntry {
+	e := integrationAudit(r, store.ActionIntegrationSet, v)
+	e.Details["action"], e.Details["account"], e.Details["accountId"], e.Details["source"] = action, a.Account, a.ID, a.Source
+	return e
+}
+
+// multiAccountAllowed mirrors the store's rule so a refused add fails before the provider is asked.
+func multiAccountAllowed(w http.ResponseWriter, v store.Integration) bool {
+	if v.Kind != integrations.Claude {
+		writeError(w, http.StatusBadRequest, "not a claude integration")
+		return false
+	}
+	if v.Scope != store.EnvScopeUser || v.Mode != integrations.ModeProxy {
+		writeError(w, http.StatusConflict, store.ErrMultiAccountNotAllowed.Error())
+		return false
+	}
+	return true
 }
 
 func validMode(m integrations.Mode) bool {
@@ -112,6 +133,58 @@ func (h *api) integrationFromPath(w http.ResponseWriter, r *http.Request) (store
 	return h.loadIntegration(w, r, m.Org.ID, id)
 }
 
+// findAccount returns v's account id, or writes 404 when v has no such account.
+func (h *api) findAccount(w http.ResponseWriter, r *http.Request, v store.Integration, id uuid.UUID) (store.IntegrationAccount, bool) {
+	list, err := h.store.IntegrationAccounts(r.Context(), v.OrgID, v.ID)
+	if err != nil {
+		serverError(w, "integration accounts", err)
+		return store.IntegrationAccount{}, false
+	}
+	if i := slices.IndexFunc(list, func(a store.IntegrationAccount) bool { return a.ID == id }); i >= 0 {
+		return list[i], true
+	}
+	writeError(w, http.StatusNotFound, "not found")
+	return store.IntegrationAccount{}, false
+}
+
+// accountByID loads an account and its integration from the account id alone, with loadIntegration's 404 rules.
+func (h *api) accountByID(w http.ResponseWriter, r *http.Request, org, id uuid.UUID) (store.Integration, store.IntegrationAccount, bool) {
+	all, err := h.store.OrgIntegrationAccounts(r.Context(), org)
+	if err != nil {
+		serverError(w, "integration accounts", err)
+		return store.Integration{}, store.IntegrationAccount{}, false
+	}
+	for integration, list := range all {
+		for _, a := range list {
+			if a.ID == id {
+				v, ok := h.loadIntegration(w, r, org, integration)
+				return v, a, ok
+			}
+		}
+	}
+	writeError(w, http.StatusNotFound, "not found")
+	return store.Integration{}, store.IntegrationAccount{}, false
+}
+
+// writableIntegrationFromPath loads the path's integration and checks integration:set on its scope.
+func (h *api) writableIntegrationFromPath(w http.ResponseWriter, r *http.Request) (store.Integration, bool) {
+	v, ok := h.integrationFromPath(w, r)
+	return v, ok && h.authorize(w, r, v.OrgID, integrationObject(v.Scope, v.OwnerID), store.ActionIntegrationSet)
+}
+
+func (h *api) accountFromPath(w http.ResponseWriter, r *http.Request) (store.Integration, store.IntegrationAccount, bool) {
+	v, ok := h.writableIntegrationFromPath(w, r)
+	if !ok {
+		return v, store.IntegrationAccount{}, false
+	}
+	id, ok := pathID(w, r, "accountId")
+	if !ok {
+		return v, store.IntegrationAccount{}, false
+	}
+	a, ok := h.findAccount(w, r, v, id)
+	return v, a, ok
+}
+
 func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
 	if !ok {
@@ -128,9 +201,40 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "teams", err)
 		return
 	}
+	accounts, err := h.store.OrgIntegrationAccounts(ctx, m.Org.ID)
+	if err != nil {
+		serverError(w, "integration accounts", err)
+		return
+	}
 	teamNames := make(map[uuid.UUID]string, len(teams))
 	for _, t := range teams {
 		teamNames[t.ID] = t.Name
+	}
+	type usageJSON struct {
+		FiveHourPct      *float64   `json:"fiveHourPct"`
+		FiveHourResetsAt *time.Time `json:"fiveHourResetsAt"`
+		WeekPct          *float64   `json:"weekPct"`
+		WeekResetsAt     *time.Time `json:"weekResetsAt"`
+		LimitedUntil     *time.Time `json:"limitedUntil"`
+		Source           string     `json:"source"`
+		At               *time.Time `json:"at"`
+	}
+	type accountJSON struct {
+		ID        uuid.UUID           `json:"id"`
+		Account   string              `json:"account"`
+		Source    integrations.Source `json:"source"`
+		Position  int                 `json:"position"`
+		Active    bool                `json:"active"`
+		Status    string              `json:"status"`
+		LastError string              `json:"lastError"`
+		Usage     usageJSON           `json:"usage"`
+	}
+	type switchJSON struct {
+		At     time.Time  `json:"at"`
+		FromID *uuid.UUID `json:"fromId"`
+		From   string     `json:"from"`
+		ToID   *uuid.UUID `json:"toId"`
+		To     string     `json:"to"`
 	}
 	type integrationJSON struct {
 		ID                uuid.UUID           `json:"id"`
@@ -149,6 +253,8 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt         time.Time           `json:"updatedAt"`
 		CanEdit           bool                `json:"canEdit"`
 		CanDelete         bool                `json:"canDelete"`
+		Accounts          []accountJSON       `json:"accounts,omitempty"`
+		LastSwitch        *switchJSON         `json:"lastSwitch"`
 	}
 	type scopeJSON struct {
 		Scope     store.EnvScope      `json:"scope"`
@@ -176,6 +282,25 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationDelete)}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
+		}
+		emails := map[uuid.UUID]string{}
+		for _, a := range accounts[v.ID] {
+			u := a.Usage
+			j.Accounts = append(j.Accounts, accountJSON{ID: a.ID, Account: a.Account, Source: a.Source, Position: a.Position, Active: a.Active,
+				Status: a.Status, LastError: a.LastError, Usage: usageJSON{FiveHourPct: u.FiveHourPct, FiveHourResetsAt: u.FiveHourResetsAt,
+					WeekPct: u.WeekPct, WeekResetsAt: u.WeekResetsAt, LimitedUntil: a.LimitedUntil, Source: u.Source, At: u.At}})
+			emails[a.ID] = a.Account
+		}
+		if v.LastSwitchAt != nil {
+			// A removed account keeps its id here but loses its email.
+			s := switchJSON{At: *v.LastSwitchAt, FromID: v.LastSwitchFrom, ToID: v.LastSwitchTo}
+			if s.FromID != nil {
+				s.From = emails[*s.FromID]
+			}
+			if s.ToID != nil {
+				s.To = emails[*s.ToID]
+			}
+			j.LastSwitch = &s
 		}
 		out = append(out, j)
 	}
@@ -354,12 +479,18 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Scope     store.EnvScope
-		TeamID    *uuid.UUID
-		Mode      integrations.Mode
-		ReplaceID *uuid.UUID
+		Scope            store.EnvScope
+		TeamID           *uuid.UUID
+		Mode             integrations.Mode
+		ReplaceID        *uuid.UUID
+		AddToID          *uuid.UUID
+		ReplaceAccountID *uuid.UUID
 	}
 	if !readJSON(w, r, &body) {
+		return
+	}
+	if (body.ReplaceID != nil && body.AddToID != nil) || (body.ReplaceID != nil && body.ReplaceAccountID != nil) || (body.AddToID != nil && body.ReplaceAccountID != nil) {
+		writeError(w, http.StatusBadRequest, "replaceId, addToId and replaceAccountId exclude each other")
 		return
 	}
 	si := signIn{Mode: body.Mode}
@@ -367,13 +498,27 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		si.Mode = integrations.ModeProxy
 	}
 	var replaceKind integrations.Kind
-	if body.ReplaceID != nil {
+	var addTo store.Integration
+	switch {
+	case body.ReplaceID != nil:
 		old, ok := h.loadIntegration(w, r, m.Org.ID, *body.ReplaceID)
 		if !ok {
 			return
 		}
 		replaceKind, si.Scope, si.OwnerID, si.ReplaceID = old.Kind, old.Scope, old.OwnerID, &old.ID
-	} else {
+	case body.ReplaceAccountID != nil:
+		v, a, ok := h.accountByID(w, r, m.Org.ID, *body.ReplaceAccountID)
+		if !ok {
+			return
+		}
+		si.Scope, si.OwnerID, si.ReplaceAccountID = v.Scope, v.OwnerID, &a.ID
+	case body.AddToID != nil:
+		v, ok := h.loadIntegration(w, r, m.Org.ID, *body.AddToID)
+		if !ok {
+			return
+		}
+		addTo, si.Scope, si.OwnerID, si.AddToID = v, v.Scope, v.OwnerID, &v.ID
+	default:
 		if !validMode(si.Mode) {
 			writeError(w, http.StatusBadRequest, "invalid mode")
 			return
@@ -391,7 +536,10 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "not a claude integration")
 		return
 	}
-	if si.ReplaceID == nil {
+	if si.AddToID != nil && !multiAccountAllowed(w, addTo) {
+		return
+	}
+	if si.ReplaceID == nil && si.AddToID == nil && si.ReplaceAccountID == nil {
 		list, err := h.store.Integrations(r.Context(), m.Org.ID)
 		if err != nil {
 			serverError(w, "integrations", err)
@@ -447,10 +595,17 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var old store.Integration
-	if si.ReplaceID != nil {
-		if old, ok = h.loadIntegration(w, r, m.Org.ID, *si.ReplaceID); !ok {
-			return
-		}
+	var replaceAccount store.IntegrationAccount
+	switch {
+	case si.ReplaceID != nil:
+		old, ok = h.loadIntegration(w, r, m.Org.ID, *si.ReplaceID)
+	case si.AddToID != nil:
+		old, ok = h.loadIntegration(w, r, m.Org.ID, *si.AddToID)
+	case si.ReplaceAccountID != nil:
+		old, replaceAccount, ok = h.accountByID(w, r, m.Org.ID, *si.ReplaceAccountID)
+	}
+	if !ok {
+		return
 	}
 	t, err := h.ig.OAuth.Exchange(r.Context(), code, body.State, verifier)
 	if err != nil {
@@ -467,6 +622,14 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sec := store.IntegrationSecret{Token: access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt}
+	switch {
+	case si.AddToID != nil:
+		h.commitAddAccount(w, r, old, store.IntegrationAccount{Source: integrations.SourceOAuth, Account: t.Email, CreatedBy: p.User.ID}, sec)
+		return
+	case si.ReplaceAccountID != nil:
+		h.commitReplaceAccount(w, r, old, replaceAccount, integrations.SourceOAuth, t.Email, sec)
+		return
+	}
 	if si.ReplaceID != nil {
 		v := old
 		v.Source, v.Account, v.ScopesInfo, v.ProviderExpiresAt, v.UpdatedBy = integrations.SourceOAuth, t.Email, "", nil, p.User.ID
@@ -491,6 +654,154 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	h.fleet.NotifyOrg(m.Org.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": v.ID, "account": v.Account})
+}
+
+func (h *api) addIntegrationAccount(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.writableIntegrationFromPath(w, r)
+	if !ok || !multiAccountAllowed(w, v) {
+		return
+	}
+	var body struct {
+		Source integrations.Source
+		Token  string
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if !pastedSource(v.Kind, body.Source) {
+		writeError(w, http.StatusBadRequest, "invalid source")
+		return
+	}
+	token, acc, ok := h.verify(w, r, v.Kind, body.Source, body.Token)
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	h.commitAddAccount(w, r, v, store.IntegrationAccount{Source: body.Source, Account: acc.Name, CreatedBy: p.User.ID}, store.IntegrationSecret{Token: token})
+}
+
+func (h *api) commitAddAccount(w http.ResponseWriter, r *http.Request, v store.Integration, a store.IntegrationAccount, sec store.IntegrationSecret) {
+	if !h.commit(w, r, func(tx *store.Store) error {
+		var err error
+		if a, err = tx.AddIntegrationAccount(r.Context(), v, a, sec); err != nil {
+			return err
+		}
+		return tx.Audit(r.Context(), accountAudit(r, "account-add", v, a))
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	writeJSON(w, http.StatusCreated, map[string]any{"id": a.ID, "integrationId": v.ID, "account": a.Account})
+}
+
+func (h *api) replaceAccountToken(w http.ResponseWriter, r *http.Request) {
+	v, a, ok := h.accountFromPath(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Source integrations.Source
+		Token  string
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if !pastedSource(v.Kind, body.Source) {
+		writeError(w, http.StatusBadRequest, "invalid source")
+		return
+	}
+	token, acc, ok := h.verify(w, r, v.Kind, body.Source, body.Token)
+	if !ok {
+		return
+	}
+	h.commitReplaceAccount(w, r, v, a, body.Source, acc.Name, store.IntegrationSecret{Token: token})
+}
+
+func (h *api) commitReplaceAccount(w http.ResponseWriter, r *http.Request, v store.Integration, a store.IntegrationAccount, src integrations.Source, email string,
+	sec store.IntegrationSecret) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.ReplaceAccountToken(r.Context(), a, src, email, sec, p.User.ID); err != nil {
+			return err
+		}
+		a.Source, a.Account = src, email
+		return tx.Audit(r.Context(), accountAudit(r, "account-replace", v, a))
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	writeJSON(w, http.StatusOK, map[string]any{"id": a.ID, "integrationId": v.ID, "account": email})
+}
+
+func (h *api) activateIntegrationAccount(w http.ResponseWriter, r *http.Request) {
+	v, a, ok := h.accountFromPath(w, r)
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.ActivateAccount(r.Context(), a, true, p.User.ID); err != nil {
+			return err
+		}
+		return tx.Audit(r.Context(), accountAudit(r, "account-activate", v, a))
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) orderIntegrationAccounts(w http.ResponseWriter, r *http.Request) {
+	v, ok := h.writableIntegrationFromPath(w, r)
+	if !ok {
+		return
+	}
+	var body struct{ IDs []uuid.UUID }
+	if !readJSON(w, r, &body) {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.ReorderAccounts(r.Context(), v, body.IDs, p.User.ID); err != nil {
+			return err
+		}
+		e := integrationAudit(r, store.ActionIntegrationSet, v)
+		e.Details["action"], e.Details["order"] = "account-order", body.IDs
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *api) deleteIntegrationAccount(w http.ResponseWriter, r *http.Request) {
+	v, a, ok := h.accountFromPath(w, r)
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	// Removing the last account deletes the integration, so it needs the delete right too.
+	mayDelete := h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), v.OrgID, integrationObject(v.Scope, v.OwnerID), store.ActionIntegrationDelete)
+	if !h.commit(w, r, func(tx *store.Store) error {
+		a.UpdatedBy = p.User.ID
+		last, err := tx.DeleteIntegrationAccount(r.Context(), a)
+		if err != nil {
+			return err
+		}
+		e := accountAudit(r, "account-remove", v, a)
+		if last {
+			if !mayDelete {
+				return errForbidden
+			}
+			e.Action = store.ActionIntegrationDelete
+		}
+		return tx.Audit(r.Context(), e)
+	}) {
+		return
+	}
+	h.fleet.NotifyOrg(v.OrgID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
