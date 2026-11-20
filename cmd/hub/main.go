@@ -167,7 +167,9 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg confi
 	} else {
 		slog.Info("builder image", "ref", builder)
 	}
-	return builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, f.DropMetrics)
+	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, f.DropMetrics)
+	sched.Size = cfg.BuilderSize
+	return sched
 }
 
 // spa serves index.html for extensionless paths that are not files, so GUI routes like /vms survive a reload.

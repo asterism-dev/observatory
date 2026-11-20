@@ -23,12 +23,13 @@ import (
 const (
 	Timeout     = 60 * time.Minute
 	BuilderRepo = "ghcr.io/asterism-dev/observatory-builder"
-
-	builderCPUs     = 2
-	builderMemoryMB = 4096
-	builderDiskGB   = 40
-	latestTag       = "latest"
+	latestTag   = "latest"
 )
+
+// Size is the builder VM's size.
+type Size struct{ CPUs, MemoryMB, DiskGB int }
+
+var DefaultSize = Size{CPUs: 2, MemoryMB: 4096, DiskGB: 40}
 
 // errNameTaken tells a VM name already in the org apart from a build that is no longer queued.
 var errNameTaken = errors.New("a VM with the builder's name exists")
@@ -43,14 +44,15 @@ type Scheduler struct {
 	vmDeleted  func(vm uuid.UUID)
 	kick       chan struct{}
 
-	Now func() time.Time
+	Size Size
+	Now  func() time.Time
 }
 
 // New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it.
 // vmDeleted runs for every builder VM the scheduler deletes, to drop what the hub keeps about it in memory.
 func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool, vmDeleted func(vm uuid.UUID)) *Scheduler {
 	return &Scheduler{store: s, hubURL: strings.TrimRight(hubURL, "/"), builder: builder, builderErr: builderErr,
-		notify: notify, online: online, vmDeleted: vmDeleted, kick: make(chan struct{}, 1), Now: time.Now}
+		notify: notify, online: online, vmDeleted: vmDeleted, kick: make(chan struct{}, 1), Size: DefaultSize, Now: time.Now}
 }
 
 // BuilderTag is the builder image tag released with this hub.
@@ -158,7 +160,7 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 	}
 	_, digest, _ := strings.Cut(s.builder, "@")
 	v := store.VM{OrgID: img.OrgID, NodeID: node, Name: "build-" + strings.ReplaceAll(b.ID.String(), "-", ""), Kind: store.VMKindBuilder,
-		CPUs: builderCPUs, MemoryMB: builderMemoryMB, DiskGB: builderDiskGB, CreatedBy: b.StartedBy,
+		CPUs: s.Size.CPUs, MemoryMB: s.Size.MemoryMB, DiskGB: s.Size.DiskGB, CreatedBy: b.StartedBy,
 		ImageRef: s.builder, ImageDigest: digest, ImageSource: store.VMKindBuilder}
 	switch img.Scope {
 	case store.EnvScopeTeam:
@@ -192,7 +194,7 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 	}
 	switch {
 	case errors.Is(err, store.ErrLimitExceeded):
-		return s.fail(ctx, b.ID, fmt.Sprintf("the builder VM (%d vCPU, %d MB RAM, %d GB disk) counts against the VM limits: %v", builderCPUs, builderMemoryMB, builderDiskGB, err))
+		return s.fail(ctx, b.ID, fmt.Sprintf("the builder VM (%d vCPU, %d MB RAM, %d GB disk) counts against the VM limits: %v", s.Size.CPUs, s.Size.MemoryMB, s.Size.DiskGB, err))
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrNotEnrolled):
 		return s.fail(ctx, b.ID, "the builder VM could not be created: "+err.Error())
 	case errors.Is(err, store.ErrConflict):
@@ -211,7 +213,7 @@ func (s *Scheduler) pickNode(ctx context.Context, org uuid.UUID) (uuid.UUID, boo
 		return uuid.Nil, false, err
 	}
 	// ponytail: memory-only fit against the node's reported RAM; add CPU and disk once nodes report usable capacity.
-	best, bestFree := uuid.Nil, builderMemoryMB-1
+	best, bestFree := uuid.Nil, s.Size.MemoryMB-1
 	for _, n := range nodes {
 		if !n.Enrolled || n.Quarantined || !s.online(n.ID) {
 			continue

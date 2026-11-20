@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/asterism-dev/observatory/internal/builds"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -45,6 +47,24 @@ func TestLoadConfig(t *testing.T) {
 		}
 	}
 	delete(env, "OBSERVATORY_NODE_URL")
+	if cfg.BuilderSize != builds.DefaultSize {
+		t.Fatalf("builder size default: %+v", cfg.BuilderSize)
+	}
+	env["OBSERVATORY_BUILDER_CPUS"], env["OBSERVATORY_BUILDER_MEMORY_MB"], env["OBSERVATORY_BUILDER_DISK_GB"] = "1", "2048", "20"
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.BuilderSize != (builds.Size{CPUs: 1, MemoryMB: 2048, DiskGB: 20}) {
+		t.Fatalf("builder size: %+v, %v", cfg.BuilderSize, err)
+	}
+	for k, bad := range map[string]string{"OBSERVATORY_BUILDER_CPUS": "0", "OBSERVATORY_BUILDER_MEMORY_MB": "512", "OBSERVATORY_BUILDER_DISK_GB": "x"} {
+		old := env[k]
+		env[k] = bad
+		if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("%s=%q: err = %v", k, bad, err)
+		}
+		env[k] = old
+	}
+	delete(env, "OBSERVATORY_BUILDER_CPUS")
+	delete(env, "OBSERVATORY_BUILDER_MEMORY_MB")
+	delete(env, "OBSERVATORY_BUILDER_DISK_GB")
 	if cfg.DocsURL != "https://asterism-dev.github.io/observatory/" {
 		t.Fatalf("docs url default: %q", cfg.DocsURL)
 	}
