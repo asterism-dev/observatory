@@ -8,6 +8,8 @@ on their Mac every morning anyway; handing that login to the VMs must be one ext
 
 ## Goals
 
+- Python (and other SDK) clients that use ADC work too, over REST and gRPC, and send the quota project.
+
 - New integration kind `gcloud` that makes both logins work in the guest: gcloud's own login and Application Default
   Credentials (ADC, used by Terraform and the Google SDKs).
 - No real Google credential (refresh token, access token, client secret) ever reaches the guest.
@@ -84,6 +86,10 @@ Google sign-in (one command fewer, but depends on gcloud's public OAuth client a
   `userinfo`; ADC logins carry the `userinfo.email` scope). Verification failure changes nothing.
 - Stored sealed with the org key like Claude's OAuth tokens: refresh token, client id/secret, current access token
   and its expiry.
+- **Quota project** (user decision): a plain field of the integration, prefilled from the file's `quota_project_id`
+  on connect (unless `--quota-project`/`quotaProject` is given), changeable with
+  `PATCH /api/orgs/{org}/integrations/{id}` `{"quotaProject": "…"}` (audited `integration:set`, `action` =
+  `quota-project`), the CLI flag and the page. Empty means none. Validated as a GCP project id.
 
 ### Hub refresh
 
@@ -118,8 +124,10 @@ Google sign-in (one command fewer, but depends on gcloud's public OAuth client a
 The integrations sync (`internal/guestinit/integrations.go`) gains `syncGcloud`:
 
 - Writes `~/.config/gcloud/application_default_credentials.json` (0600, as `dev`):
-  `{"type":"authorized_user","client_id":<ph>,"client_secret":<ph>,"refresh_token":<ph>,"quota_project_id":…}`.
-  Placeholders come from `vmm-token gcloud`; all three fields carry the same placeholder. Written only if missing or
+  `{"type":"authorized_user","client_id":<ph>,"client_secret":<ph>,"refresh_token":<ph>,"quota_project_id":…}`
+  (`quota_project_id` only when set). Placeholders come from `vmm-token gcloud`; all three fields carry the same
+  placeholder. The quota project reaches the guest through the node's token service: its reply gains a `project`
+  field next to `token`. Written only if missing or
   still the file the sync wrote (hash bookkeeping, as for `~/.claude/.credentials.json`); removed on disconnect only
   if still ours.
 - A `gcloud` wrapper in `/.observatory/bin` (the init binary under another name, like `gh`) runs the user's own
@@ -138,6 +146,9 @@ The integrations sync (`internal/guestinit/integrations.go`) gains `syncGcloud`:
 - Under the same conditions the wrapper also sets `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE` to the system bundle that
   contains the VM's CA, when unset: gcloud ignores the system store (spike: `CERTIFICATE_VERIFY_FAILED` without it).
 - `gcloud auth list` shows no account with the override; cosmetic, documented.
+- `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` joins the guest's system-wide trust variables (`SSL_CERT_FILE`,
+  `REQUESTS_CA_BUNDLE`, …): gRPC ignores the others, and Python's default gRPC clients fail behind the egress without
+  it (spike). It is trust configuration for every gRPC client, not a gcloud setting.
 - Known gap: programs that run `gcloud` by absolute path bypass the wrapper and get no override.
 
 ### Web UI
@@ -160,6 +171,11 @@ CA in the system store, emulating the planned egress; real access token of the u
 - gcloud needs `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE`; without it the refresh fails with `CERTIFICATE_VERIFY_FAILED`.
 - Terraform finds the ADC file with no env, refreshes the same way; `terraform plan` (userinfo, project, billing info
   data sources) succeeds.
+- Second run with `quota_project_id` in the file: gcloud sends `x-goog-user-project` = its own project (`--project`),
+  ignoring the file; Terraform sends none (only with `user_project_override`). Both succeed.
+- Python (`google-auth`): REST client works and sends the file's `quota_project_id`; the default gRPC client
+  (`logging_v2`) fails with `CERTIFICATE_VERIFY_FAILED` until `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` points at the system
+  bundle, then works over HTTP/2 through the proxy and sends the quota project.
 - No placeholder in a URL or request body; every Google call carried it in `Authorization` only. Hosts seen:
   `oauth2`, `logging`, `openidconnect`, `cloudresourcemanager`, `cloudbilling` `.googleapis.com`.
 
