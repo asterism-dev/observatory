@@ -471,6 +471,16 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 			return nil, "", 0, err
 		}
 	}
+	// Firecracker runs as uid and cannot open a log file it does not own.
+	fcLog := filepath.Join(jailRoot(dir), fcLogName)
+	if err := os.WriteFile(fcLog, nil, 0o600); err != nil {
+		removeJail()
+		return nil, "", 0, err
+	}
+	if err := os.Chown(fcLog, uid, uid); err != nil {
+		removeJail()
+		return nil, "", 0, err
+	}
 	tokens, err := listenTokens(dir, uid)
 	if err != nil {
 		removeJail()
@@ -480,6 +490,10 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, func() { tokens.Close(); removeJail() })
 	if err != nil {
 		tokens.Close()
+	} else {
+		ctx, stop := context.WithCancel(context.Background())
+		go func() { <-proc.Done(); stop() }()
+		go tailFCLog(ctx, fcLog, f.Spec.ID, f.Spec.Name)
 	}
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {
