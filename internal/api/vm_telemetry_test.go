@@ -209,3 +209,25 @@ func TestVMMetricsRouteGone(t *testing.T) {
 		t.Fatalf("%d", rec.Code)
 	}
 }
+
+func TestVMJSONUsageStoreHangs(t *testing.T) {
+	te := newVMTelemetryEnv(t)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	te.api.telemetry = &telemetry.Client{MetricsURL: srv.URL, LogsURL: srv.URL}
+	start := time.Now()
+	rec := te.do("GET", te.path(""), te.ownerTok)
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("took %s", took)
+	}
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), `"usage"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}

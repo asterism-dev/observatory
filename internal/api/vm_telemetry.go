@@ -28,8 +28,13 @@ func newVMUsageJSON(n telemetry.VMNow) *vmUsageJSON {
 		DiskUsedMB: n.DiskUsedBytes >> 20, DiskTotalMB: n.DiskTotalBytes >> 20}
 }
 
+const (
+	vmLatestTimeout     = 2 * time.Second
+	vmListLatestTimeout = 5 * time.Second
+)
+
 // vmLatest loads the newest usage of those vms the caller may see metrics of; a store error only drops the usage.
-func (h *api) vmLatest(r *http.Request, org uuid.UUID, vms []store.VM) map[uuid.UUID]telemetry.VMNow {
+func (h *api) vmLatest(r *http.Request, org uuid.UUID, vms []store.VM, timeout time.Duration) map[uuid.UUID]telemetry.VMNow {
 	if h.telemetry == nil {
 		return nil
 	}
@@ -44,7 +49,7 @@ func (h *api) vmLatest(r *http.Request, org uuid.UUID, vms []store.VM) map[uuid.
 	if len(ids) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), usageTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	latest, err := h.telemetry.VMLatest(ctx, org, ids)
 	if err != nil {

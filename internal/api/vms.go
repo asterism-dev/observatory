@@ -192,7 +192,7 @@ func (h *api) writeVM(w http.ResponseWriter, r *http.Request, status int, v stor
 		serverError(w, "vm names", err)
 		return
 	}
-	names.usage = h.vmLatest(r, v.OrgID, []store.VM{v})
+	names.usage = h.vmLatest(r, v.OrgID, []store.VM{v}, vmLatestTimeout)
 	writeJSON(w, status, h.vmJSON(r, v, names))
 }
 
@@ -254,7 +254,7 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 			visible = append(visible, v)
 		}
 	}
-	names.usage = h.vmLatest(r, m.Org.ID, visible)
+	names.usage = h.vmLatest(r, m.Org.ID, visible, vmListLatestTimeout)
 	out := []vmJSON{}
 	for _, v := range visible {
 		out = append(out, h.vmJSON(r, v, names))
