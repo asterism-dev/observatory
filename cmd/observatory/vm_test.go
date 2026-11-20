@@ -9,7 +9,7 @@ import (
 
 const (
 	vmDev = `{"id":"v1","name":"dev","owner":{"kind":"user","id":"u1","name":"Ada Lovelace"},"node":{"id":"n1","name":"pve1"},"state":"running","power":"running","ip":"10.0.0.5","dnsName":"dev.internal","networks":[],"cpus":2,"memoryMB":4096,"diskGB":20,"image":"","legacyRuntime":true,"createdAt":"2026-11-19T13:00:00Z","disks":[],"autoSuspendMinutes":0}`
-	vmWeb = `{"id":"v2","name":"web","owner":{"kind":"team","id":"t1","name":"backend"},"node":{"id":"n1","name":"pve1"},"state":"hibernated","power":"hibernated","dnsName":"web.internal","networks":[{"id":"w1","name":"lan","ip":"10.1.0.4","dnsName":"web.lan.internal"}],"cpus":4,"memoryMB":8192,"diskGB":30,"image":"v3","legacyRuntime":false,"createdAt":"2026-11-10T09:30:00Z","disks":[{"id":"d1","name":"data","mountPath":"/data","sizeGB":50,"state":"ready"}],"autoSuspendMinutes":30}`
+	vmWeb = `{"id":"v2","name":"web","owner":{"kind":"team","id":"t1","name":"backend"},"node":{"id":"n1","name":"pve1"},"state":"hibernated","power":"hibernated","dnsName":"web.internal","networks":[{"id":"w1","name":"lan","ip":"10.1.0.4","dnsName":"web.lan.internal"}],"cpus":4,"memoryMB":8192,"diskGB":30,"image":"v3","legacyRuntime":false,"createdAt":"2026-11-10T09:30:00Z","disks":[{"id":"d1","name":"data","mountPath":"/data","sizeGB":50,"state":"ready"}],"autoSuspendMinutes":30,"deleteAt":"2026-11-20T09:30:00Z"}`
 )
 
 func vmHub(t *testing.T, nodes string) (*fakeHub, *cli, func() string, func() string) {
