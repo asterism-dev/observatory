@@ -44,21 +44,35 @@ func (c *Client) post(ctx context.Context, url string, header map[string]string,
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
-	hc := c.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
-	}
-	resp, err := hc.Do(req)
+	resp, err := c.do(c.httpClient(), req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStore, err)
+		return err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("%w: status %d", ErrStore, resp.StatusCode)
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("telemetry store rejected write: status %d", resp.StatusCode)
-	}
 	return nil
+}
+
+func (c *Client) httpClient() *http.Client {
+	if c.HTTP == nil {
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+	return c.HTTP
+}
+
+// do maps transport errors and 5xx to ErrStore; on success the caller closes the body.
+func (c *Client) do(hc *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStore, err)
+	}
+	if resp.StatusCode < 300 {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("%w: status %d", ErrStore, resp.StatusCode)
+	}
+	return nil, fmt.Errorf("telemetry store rejected request: status %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
 }
