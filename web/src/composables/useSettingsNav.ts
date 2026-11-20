@@ -16,6 +16,7 @@ const ORG_TABS = [
   { segment: 'roles', action: 'role:read', label: 'nav.roles' },
   { segment: 'limits', action: 'limit:read', label: 'nav.limits' },
   { segment: 'audit', action: 'audit:read', label: 'nav.orgAudit' },
+  { segment: 'telemetry', action: 'telemetry:token', label: 'nav.telemetry' },
   { segment: 'builders', action: null, label: 'nav.builders' },
 ] as const
 

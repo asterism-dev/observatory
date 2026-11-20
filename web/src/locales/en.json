@@ -45,7 +45,8 @@
     "platformSettingsSubtitle": "Organizations, users and audit across the whole platform.",
     "images": "Images",
     "builders": "Builder VMs",
-    "adminRegistry": "Registry"
+    "adminRegistry": "Registry",
+    "telemetry": "Telemetry"
   },
   "theme": {
     "system": "System",
@@ -905,5 +906,26 @@
     "empty": "No processes.",
     "notRunning": "VM not running. The process list is shown while it runs.",
     "cpuHint": "CPU % is per core: 100 % is one fully used core, so a process using several cores can exceed 100 %."
+  },
+  "grafana": {
+    "title": "Grafana access",
+    "hint": "Tokens let a Grafana you run read all telemetry of this organization. A token stops working when its creator loses access to telemetry.",
+    "name": "Name",
+    "createdBy": "Created by",
+    "created": "Created",
+    "lastUsed": "Last used",
+    "never": "never",
+    "create": "Create token",
+    "empty": "No tokens",
+    "createTitle": "Create Grafana token",
+    "tokenName": "Token name",
+    "token": "Token",
+    "tokenOnce": "Copy this token now; it is shown only once.",
+    "prometheusUrl": "Prometheus datasource URL",
+    "logsUrl": "VictoriaLogs datasource URL",
+    "header": "Custom HTTP header",
+    "done": "Done",
+    "revokeTitle": "Revoke token?",
+    "revokeBody": "Grafana datasources using {name} stop working immediately."
   }
 }
