@@ -75,7 +75,7 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.DownTo(ctx, 25); err != nil {
+	if _, err := provider.DownTo(ctx, 26); err != nil {
 		t.Fatal(err)
 	}
 	claudeID, ghID := uuid.New(), uuid.New()
@@ -122,7 +122,7 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 		t.Fatalf("github token opens: %v", err)
 	}
 
-	if _, err := provider.DownTo(ctx, 25); err != nil {
+	if _, err := provider.DownTo(ctx, 26); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	if _, err := provider.Up(ctx); err != nil {
@@ -133,7 +133,7 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 	}
 
 	insertAccount(t, pool, cl, "two@example.com", dummyAccess+"2", store.IntegrationOK)
-	if _, err := provider.DownTo(ctx, 25); err == nil {
+	if _, err := provider.DownTo(ctx, 26); err == nil {
 		t.Fatal("down with two accounts succeeded")
 	}
 }
