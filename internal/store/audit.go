@@ -99,6 +99,8 @@ const (
 	ActionImageDefault        = "image:default"
 	ActionImageBuild          = "image:build"
 	ActionImageBuildCancel    = "image:build-cancel"
+	ActionGrafanaTokenCreate  = "telemetry_token:create"
+	ActionGrafanaTokenRevoke  = "telemetry_token:revoke"
 )
 
 type AuditEntry struct {

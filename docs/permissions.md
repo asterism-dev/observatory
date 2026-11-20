@@ -33,7 +33,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 
 | Action | Object |
 |---|---|
-| `org:update` | `org/settings` |
+| `org:update`, `telemetry:token` | `org/settings` |
 | `member:read`, `member:invite`, `member:remove`, `member:set-role` | `org/members` |
 | `team:read`, `team:create` | `org/teams` |
 | `team:update`, `team:delete`, `team:manage-members`, `team:leave` | `org/teams/*` |
@@ -59,7 +59,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | Permission | member | admin | owner |
 |---|---|---|---|
 | `member:read`, `team:read`, `team:leave`, `role:read`, `limit:read` | yes | yes | yes |
-| `org:update`, `member:invite`, `member:remove` | | yes | yes |
+| `org:update`, `telemetry:token`, `member:invite`, `member:remove` | | yes | yes |
 | `team:*` (create, update, delete, manage members, leave) | | yes | yes |
 | `role:write`, `role:bind`, `limit:set`, `audit:read` | | yes | yes |
 | `member:set-role` | | | yes |

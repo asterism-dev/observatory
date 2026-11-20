@@ -99,7 +99,7 @@ func TestOrgPermissionsByRole(t *testing.T) {
 	memberPerms := []string{"disk:create", "env:list", "env:use", "image:list", "image:use", "integration:list", "integration:use", "limit:read", "member:read", "network:create", "network:read", "network:use", "node:read", "node:use", "role:read", "team:leave", "team:read", "vm:create"}
 	adminPerms := []string{"audit:read", "device:delete", "device:list", "disk:create", "disk:delete", "disk:read", "disk:update", "env:delete", "env:list", "env:set", "env:use", "image:build", "image:default", "image:edit", "image:list", "image:use", "integration:delete", "integration:list", "integration:set", "integration:use", "limit:read", "limit:set", "member:invite", "member:read", "member:remove",
 		"network:create", "network:delete", "network:read", "network:use", "node:create", "node:delete", "node:metrics", "node:read", "node:update", "node:use", "org:update",
-		"role:bind", "role:read", "role:write", "team:create", "team:delete", "team:leave", "team:manage-members", "team:read", "team:update",
+		"role:bind", "role:read", "role:write", "team:create", "team:delete", "team:leave", "team:manage-members", "team:read", "team:update", "telemetry:token",
 		"vm:create", "vm:delete", "vm:disks", "vm:metrics", "vm:network", "vm:power", "vm:read", "vm:restore", "vm:snapshot"}
 	ownerPerms := append(slices.Clone(adminPerms), "member:set-role")
 	slices.Sort(ownerPerms)

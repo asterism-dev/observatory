@@ -1085,3 +1085,18 @@ func TestPrivateImagesOnlyOwner(t *testing.T) {
 	checkImageRights(t, e, org, UserSubject(admin), UserImagesObject(member), nil)
 	checkImageRights(t, e, org, UserSubject(member), UserImagesObject(admin), nil)
 }
+
+func TestTelemetryTokenPermission(t *testing.T) {
+	org := uuid.New()
+	owner, admin, member := uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{Memberships: []MemberRole{
+		{OrgID: org, UserID: owner, Role: "owner"},
+		{OrgID: org, UserID: admin, Role: "admin"},
+		{OrgID: org, UserID: member, Role: "member"},
+	}})
+	for u, want := range map[uuid.UUID]bool{owner: true, admin: true, member: false} {
+		if got := e.Allowed(UserSubject(u), org, ObjSettings, "telemetry:token"); got != want {
+			t.Errorf("%v: got %v", u, got)
+		}
+	}
+}

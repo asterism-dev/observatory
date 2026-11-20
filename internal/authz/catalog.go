@@ -97,6 +97,7 @@ type Permission struct {
 
 var Catalog = []Permission{
 	{"org:update", ObjSettings},
+	{"telemetry:token", ObjSettings},
 	{"member:read", ObjMembers},
 	{"member:invite", ObjMembers},
 	{"member:remove", ObjMembers},
@@ -211,6 +212,7 @@ func BuiltinRules(key string) []Rule {
 	}
 	admin := append(member,
 		Rule{Allow, ObjSettings, "org:update"},
+		Rule{Allow, ObjSettings, "telemetry:token"},
 		Rule{Allow, ObjMembers, "member:invite"},
 		Rule{Allow, ObjMembers, "member:remove"},
 		Rule{Allow, ObjTeams + "*", "team:*"},
