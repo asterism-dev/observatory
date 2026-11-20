@@ -88,7 +88,7 @@ func newRig(t *testing.T, secrets []proto.HostBoundSecret, h http.Handler, opts 
 	if h == nil {
 		h = http.HandlerFunc(r.record)
 	}
-	upCA, err := NewCA([]string{"a.test", "b.test"}, time.Now())
+	upCA, err := NewCA([]string{"a.test", "b.test", claudeHost}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func newRig(t *testing.T, secrets []proto.HostBoundSecret, h http.Handler, opts 
 	r.upPool = x509.NewCertPool()
 	r.upPool.AppendCertsFromPEM([]byte(upCA.CertPEM))
 
-	vmCA, err := NewCA([]string{"a.test", "b.test"}, time.Now())
+	vmCA, err := NewCA([]string{"a.test", "b.test", claudeHost}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

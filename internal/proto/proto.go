@@ -335,7 +335,18 @@ type HostBoundSecret struct {
 	Value       string   `json:"value"`
 	Hosts       []string `json:"hosts"`
 	Headers     []string `json:"headers,omitempty"`
+	// Account and Alternates are set for a multi-account Claude integration: Value is Account's, Alternates follow in retry order.
+	Account    string           `json:"account,omitempty"`
+	Alternates []AlternateValue `json:"alternates,omitempty"`
 }
+
+type AlternateValue struct {
+	Account string `json:"account"`
+	Value   string `json:"value"`
+}
+
+func (AlternateValue) String() string   { return "AlternateValue{redacted}" }
+func (AlternateValue) GoString() string { return "AlternateValue{redacted}" }
 
 func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
 func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }

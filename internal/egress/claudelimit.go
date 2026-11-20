@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -62,7 +63,8 @@ func noteUsage(h http.Header, now time.Time) *proto.UsageObservation {
 
 func window(h http.Header, name string) (*float64, *time.Time) {
 	frac, err := strconv.ParseFloat(h.Get(limitHeaderPrefix+name+"-utilization"), 64)
-	if err != nil {
+	// NaN and Inf would later fail json.Marshal of the report.
+	if err != nil || math.IsNaN(frac) || math.IsInf(frac, 0) || frac < 0 {
 		return nil, nil
 	}
 	pct := frac * 100

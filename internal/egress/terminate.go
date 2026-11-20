@@ -123,10 +123,15 @@ func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 			fail(w, st, http.StatusMisdirectedRequest, "egress: host does not match the TLS server name")
 		} else {
 			var sent []string
-			names, sent = substitute(r.Header, sni, t.bound[sni])
+			acct := p.newAccountTransport(r, sni, t)
+			if acct != nil && acct.retry {
+				names, sent = acct.sentValues(r.Header)
+			} else {
+				names, sent = substitute(r.Header, sni, t.bound[sni])
+			}
 			r.Header.Set("Accept-Encoding", "identity")
 			r.Header.Del("Sec-WebSocket-Extensions")
-			p.reverseProxy(sni, st, t, sent).ServeHTTP(w, r)
+			p.reverseProxy(sni, st, t, sent, acct).ServeHTTP(w, r)
 		}
 		line := "egress vm=%s host=%s method=%s path=%s status=%d bytes=%d dur=%s vars=%s"
 		args := []any{p.VMID, sni, r.Method, redactPath(r.URL.Path, t), st.status, st.bytes, time.Since(start), strings.Join(names, ",")}
@@ -150,7 +155,11 @@ func fail(w http.ResponseWriter, st *reqStats, code int, msg string) {
 func redactPath(path string, t *table) string {
 	for _, secrets := range t.bound {
 		for _, s := range secrets {
-			for _, v := range []string{s.Placeholder, s.Value} {
+			vs := []string{s.Placeholder, s.Value}
+			for _, a := range s.Alternates {
+				vs = append(vs, a.Value)
+			}
+			for _, v := range vs {
 				if v != "" {
 					path = strings.ReplaceAll(path, v, "***")
 				}
@@ -160,8 +169,14 @@ func redactPath(path string, t *table) string {
 	return (&url.URL{Path: path}).EscapedPath()
 }
 
-func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) *httputil.ReverseProxy {
+// reverseProxy wraps acct, if not nil, around the upstream transport.
+func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string, acct *accountTransport) *httputil.ReverseProxy {
 	pats := scrubPatterns(t.scrub, sent)
+	var tr http.RoundTripper = scrub1xx{p.upstream(), pats}
+	if acct != nil {
+		acct.base = tr
+		tr = acct
+	}
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = "https"
@@ -169,7 +184,7 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string) 
 			pr.Out.Host = sni
 			pr.Out.Header.Del("Forwarded")
 		},
-		Transport:     scrub1xx{p.upstream(), pats},
+		Transport:     tr,
 		FlushInterval: -1,
 		ErrorLog:      discard,
 		ModifyResponse: func(res *http.Response) error {

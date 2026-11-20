@@ -66,3 +66,13 @@ func TestNoteUsageWithoutStatusIgnored(t *testing.T) {
 		t.Fatalf("got %+v", u)
 	}
 }
+
+func TestNoteUsageSkipsInvalidUtilization(t *testing.T) {
+	for _, v := range []string{"NaN", "+Inf", "-Inf", "-0.1"} {
+		u := noteUsage(hdr(limitHeaderPrefix+"status", "allowed", limitHeaderPrefix+"5h-utilization", v,
+			limitHeaderPrefix+"7d-utilization", "0.5"), time.Now())
+		if u == nil || u.FiveHourPct != nil || u.WeekPct == nil {
+			t.Fatalf("%s: got %+v", v, u)
+		}
+	}
+}
