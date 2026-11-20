@@ -10,10 +10,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-type fakeExpiryFleet struct{ dropped, notified []uuid.UUID }
+type fakeExpiryFleet struct{ notified []uuid.UUID }
 
-func (f *fakeExpiryFleet) DropMetrics(id uuid.UUID) { f.dropped = append(f.dropped, id) }
-func (f *fakeExpiryFleet) NotifyOrg(id uuid.UUID)   { f.notified = append(f.notified, id) }
+func (f *fakeExpiryFleet) NotifyOrg(id uuid.UUID) { f.notified = append(f.notified, id) }
 
 // expireVM puts delete_at in the past, which the API refuses.
 func (e *env) expireVM(id string) {
@@ -48,7 +47,7 @@ func TestVMExpiryDeletesExpired(t *testing.T) {
 	if len(es) != 1 || es[0].ActorKind != store.ActorSystem || es[0].Details["reason"] != "expired" || es[0].Resource != authz.VMObject(uuid.MustParse(old.ID)) {
 		t.Fatalf("audit: %+v", es)
 	}
-	if len(f.dropped) != 1 || f.dropped[0].String() != old.ID || len(f.notified) != 1 || f.notified[0] != org {
+	if len(f.notified) != 1 || f.notified[0] != org {
 		t.Fatalf("fleet: %+v", f)
 	}
 }

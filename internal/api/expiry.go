@@ -13,7 +13,6 @@ import (
 )
 
 type expiryFleet interface {
-	DropMetrics(uuid.UUID)
 	NotifyOrg(uuid.UUID)
 }
 
@@ -85,7 +84,6 @@ func (x *VMExpiry) expire(ctx context.Context, v store.VM) bool {
 		slog.Error("vm expiry", "vm", v.ID, "err", err)
 		return false
 	}
-	x.fleet.DropMetrics(v.ID)
 	x.fleet.NotifyOrg(v.OrgID)
 	return true
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
 var vmNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -67,7 +68,8 @@ type vmJSON struct {
 	CanFork            bool `json:"canFork"`
 	Restoring          bool `json:"restoring"`
 
-	Usage *metricJSON `json:"usage,omitempty"` // latest sample, so lists need no request per VM
+	CanTelemetry bool         `json:"canTelemetry"`
+	Usage        *vmUsageJSON `json:"usage,omitempty"` // latest values, so lists need no request per VM
 }
 
 type vmDiskJSON struct {
@@ -94,6 +96,7 @@ type vmNames struct {
 	disks                         map[uuid.UUID]store.Disk
 	teamList                      []store.Team
 	nodeList                      []store.Node
+	usage                         map[uuid.UUID]telemetry.VMNow
 }
 
 func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
@@ -154,11 +157,11 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
 		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
-		Restoring: v.RestoreState == "node" || v.RestoreState == "storage",
-		DNSName:   v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
-	if s := h.fleet.Metrics(v.ID); len(s) > 0 {
-		u := metricJSON(s[len(s)-1])
-		j.Usage = &u
+		Restoring:    v.RestoreState == "node" || v.RestoreState == "storage",
+		CanTelemetry: h.telemetry != nil && e.Allowed(sub, v.OrgID, obj, store.ActionVMMetrics),
+		DNSName:      v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
+	if n, ok := names.usage[v.ID]; ok {
+		j.Usage = newVMUsageJSON(n)
 	}
 	if v.MgmtIP.IsValid() {
 		j.MgmtIP = v.MgmtIP.String()
@@ -189,6 +192,7 @@ func (h *api) writeVM(w http.ResponseWriter, r *http.Request, status int, v stor
 		serverError(w, "vm names", err)
 		return
 	}
+	names.usage = h.vmLatest(r, v.OrgID, []store.VM{v})
 	writeJSON(w, status, h.vmJSON(r, v, names))
 }
 
@@ -244,11 +248,16 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
-	out := []vmJSON{}
+	visible := []store.VM{}
 	for _, v := range vms {
 		if e.Allowed(sub, m.Org.ID, authz.VMObject(v.ID), "vm:read") {
-			out = append(out, h.vmJSON(r, v, names))
+			visible = append(visible, v)
 		}
+	}
+	names.usage = h.vmLatest(r, m.Org.ID, visible)
+	out := []vmJSON{}
+	for _, v := range visible {
+		out = append(out, h.vmJSON(r, v, names))
 	}
 	owners := []ownerJSON{}
 	if e.Allowed(sub, m.Org.ID, authz.ObjVMs, store.ActionVMCreate) {
@@ -462,30 +471,8 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	h.fleet.DropMetrics(v.ID)
 	h.fleet.NotifyOrg(v.OrgID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *api) vmMetrics(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, "vm:read")
-	if !ok {
-		return
-	}
-	samples := h.fleet.Metrics(v.ID)
-	out := make([]metricJSON, len(samples))
-	for i, s := range samples {
-		out[i] = metricJSON(s)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"samples": out})
-}
-
-type metricJSON struct {
-	At         time.Time `json:"at"`
-	CPUPercent float64   `json:"cpuPercent"`
-	MemTotalMB int       `json:"memTotalMB"`
-	MemUsedMB  int       `json:"memUsedMB"`
-	DiskUsedMB int       `json:"diskUsedMB"`
 }
 
 func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {

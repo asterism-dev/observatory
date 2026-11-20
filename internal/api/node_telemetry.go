@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
@@ -59,6 +61,11 @@ func (h *api) nodeLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.Org, q.Node = n.OrgID, n.ID
+	h.writeLogs(w, r, q)
+}
+
+func (h *api) writeLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery) {
+	var ok bool
 	if q.From, q.To, ok = timeRange(w, r, time.Hour); !ok {
 		return
 	}
@@ -92,6 +99,10 @@ func (h *api) tailNodeLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.Org, q.Node = n.OrgID, n.ID
+	h.tailLogs(w, r, q, "node", n.ID)
+}
+
+func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery, kind string, id uuid.UUID) {
 	rc := http.NewResponseController(w)
 	// A tail is open for as long as the page is, longer than the server's write timeout.
 	_ = rc.SetWriteDeadline(time.Time{})
@@ -110,7 +121,7 @@ func (h *api) tailNodeLogs(w http.ResponseWriter, r *http.Request) {
 		return rc.Flush()
 	})
 	if err != nil && r.Context().Err() == nil {
-		slog.Warn("tail node logs", "node", n.ID, "err", err)
+		slog.Warn("tail "+kind+" logs", kind, id, "err", err)
 	}
 }
 

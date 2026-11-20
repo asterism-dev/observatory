@@ -30,7 +30,7 @@ vm:
   vm delete <vm> [--wait]                    delete a VM
   vm auto-suspend <vm> <minutes|off>         suspend an idle VM after N minutes (5-1440)
   vm delete-after <vm> <30m|1h|2d|time|off>  delete a VM automatically at a time
-  vm metrics <vm>                            show recent CPU and memory samples
+  vm metrics <vm>                            show the latest CPU, memory and disk usage
   vm egress <vm>                             show egress proxy hosts and CA of a VM
   vm integrations <vm>                       show the integrations a VM gets
 

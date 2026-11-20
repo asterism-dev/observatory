@@ -72,7 +72,7 @@ func vmCommands() []command {
 		{"vm delete", "<vm> [--wait]", "delete a VM", cmdVMDelete},
 		{"vm auto-suspend", "<vm> <minutes|off>", "suspend an idle VM after N minutes (5-1440)", cmdVMAutoSuspend},
 		{"vm delete-after", "<vm> <30m|1h|2d|time|off>", "delete a VM automatically at a time", cmdVMDeleteAfter},
-		{"vm metrics", "<vm>", "show recent CPU and memory samples", cmdVMMetrics},
+		{"vm metrics", "<vm>", "show the latest CPU, memory and disk usage", cmdVMMetrics},
 		{"vm egress", "<vm>", "show egress proxy hosts and CA of a VM", cmdVMEgress},
 		{"vm integrations", "<vm>", "show the integrations a VM gets", cmdVMIntegrations},
 	}
@@ -517,23 +517,26 @@ func cmdVMMetrics(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	var m struct {
-		Samples []struct {
-			At         time.Time `json:"at"`
-			CPUPercent float64   `json:"cpuPercent"`
-			MemTotalMB int       `json:"memTotalMB"`
-			MemUsedMB  int       `json:"memUsedMB"`
-		} `json:"samples"`
+	var v struct {
+		Usage *struct {
+			At          time.Time `json:"at"`
+			CPUPercent  float64   `json:"cpuPercent"`
+			MemUsedMB   int       `json:"memUsedMB"`
+			MemTotalMB  int       `json:"memTotalMB"`
+			DiskUsedMB  int       `json:"diskUsedMB"`
+			DiskTotalMB int       `json:"diskTotalMB"`
+		} `json:"usage"`
 	}
-	_, raw, err := c.vmGet(pos[0], "/metrics", &m)
+	_, raw, err := c.vmGet(pos[0], "", &v)
 	if err != nil {
 		return err
 	}
-	rows := make([][]string, len(m.Samples))
-	for i, s := range m.Samples {
-		rows[i] = []string{s.At.In(c.now().Location()).Format("15:04:05"), fmt.Sprintf("%.0f%%", s.CPUPercent), gb(s.MemUsedMB) + " / " + gb(s.MemTotalMB)}
+	if v.Usage == nil {
+		return fmt.Errorf("no usage data for vm %s", pos[0])
 	}
-	return c.emit(raw, []string{"time", "cpu", "memory"}, rows)
+	u := v.Usage
+	return c.emit(raw, []string{"time", "cpu", "memory", "disk"}, [][]string{{u.At.In(c.now().Location()).Format("15:04:05"),
+		fmt.Sprintf("%.0f%%", u.CPUPercent), gb(u.MemUsedMB) + " / " + gb(u.MemTotalMB), gb(u.DiskUsedMB) + " / " + gb(u.DiskTotalMB)}})
 }
 
 func cmdVMEgress(c *cli, args []string) error {

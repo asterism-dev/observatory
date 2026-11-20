@@ -142,7 +142,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			f.updateErrs[node.ID] = cmp.Or(m.Update.Error, "update failed")
 			f.mu.Unlock()
 		case m.Type == "metrics":
-			f.NoteMetrics(ctx, node.ID, m.Metrics)
+			// Old nodes still send these; VM usage now comes from the telemetry store.
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
 		case m.Type == "disks":

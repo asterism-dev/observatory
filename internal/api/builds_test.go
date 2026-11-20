@@ -31,7 +31,6 @@ type buildEnv struct {
 	sched     *builds.Scheduler
 	agent     http.Handler
 	manifests *fakeManifests
-	deleted   []uuid.UUID // builder VMs the scheduler reported deleted
 }
 
 // withBuilds wires a scheduler whose nodes are all online, and the agent and registry endpoints.
@@ -40,8 +39,7 @@ func (e *env) withBuilds() *buildEnv {
 	m := e.withManifests()
 	m.manifests = map[string]registry.Manifest{}
 	be := &buildEnv{env: e, manifests: m}
-	sched := builds.New(e.store, "http://hub.internal:8090/", builderRef, nil, e.api.fleet.NotifyOrg, func(uuid.UUID) bool { return true },
-		func(vm uuid.UUID) { be.deleted = append(be.deleted, vm) })
+	sched := builds.New(e.store, "http://hub.internal:8090/", builderRef, nil, e.api.fleet.NotifyOrg, func(uuid.UUID) bool { return true })
 	e.api.builds = sched
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {
@@ -331,9 +329,6 @@ func TestBuildTimeoutDeletesVM(t *testing.T) {
 	if _, err := e.store.VM(ctx, org, *b.VMID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("builder VM kept: %v", err)
 	}
-	if !slices.Equal(e.deleted, []uuid.UUID{*b.VMID}) {
-		t.Fatalf("deleted builder VMs reported: %v", e.deleted)
-	}
 	if _, _, finished, err := e.store.BuildLogSince(ctx, b.ID, 0); err != nil || !finished {
 		t.Fatalf("log not finished: %v", err)
 	}
@@ -368,8 +363,8 @@ func TestOrphanBuilderVMDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.tick()
-	if !slices.Equal(e.deleted, []uuid.UUID{v.ID}) {
-		t.Fatalf("deleted builder VMs reported: %v", e.deleted)
+	if _, err := e.store.VM(context.Background(), org, v.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("orphan builder VM kept: %v", err)
 	}
 }
 

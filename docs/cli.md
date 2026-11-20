@@ -96,7 +96,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `vm delete <vm> [--wait]` | delete (confirms) |
 | `vm auto-suspend <vm> <minutes\|off>` | suspend after 5–1440 idle minutes |
 | `vm delete-after <vm> <30m\|1h\|2d\|time\|off>` | [delete the VM automatically](vm-lifecycle.md#delete-after) at that time; `off` clears it |
-| `vm metrics <vm>` / `vm egress <vm>` / `vm integrations <vm>` | CPU/RAM samples; egress proxy hosts and CA; integrations the VM gets |
+| `vm metrics <vm>` / `vm egress <vm>` / `vm integrations <vm>` | latest CPU/RAM/disk usage; egress proxy hosts and CA; integrations the VM gets |
 | `snapshot list <vm>` | snapshots of a VM |
 | `snapshot create <vm> <name> [--memory] [--wait]` | snapshot (`--memory` includes RAM) |
 | `snapshot restore <vm> <snap> [--memory] [--restart] [--wait]` | roll back (confirms; a running VM needs `--restart`) |
