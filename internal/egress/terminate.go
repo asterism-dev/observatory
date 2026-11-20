@@ -112,6 +112,9 @@ func (b countingBody) Read(p []byte) (int, error) {
 func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		r = r.WithContext(ctx)
 		t := p.table.Load()
 		st := &reqStats{}
 		var names []string
@@ -131,7 +134,7 @@ func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 			}
 			r.Header.Set("Accept-Encoding", "identity")
 			r.Header.Del("Sec-WebSocket-Extensions")
-			p.reverseProxy(sni, st, t, sent, acct).ServeHTTP(w, r)
+			p.reverseProxy(sni, st, t, sent, acct, cancel).ServeHTTP(w, r)
 		}
 		line := "egress vm=%s host=%s method=%s path=%s status=%d bytes=%d dur=%s vars=%s"
 		args := []any{p.VMID, sni, r.Method, redactPath(r.URL.Path, t), st.status, st.bytes, time.Since(start), strings.Join(names, ",")}
@@ -170,7 +173,7 @@ func redactPath(path string, t *table) string {
 }
 
 // reverseProxy wraps acct, if not nil, around the upstream transport.
-func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string, acct *accountTransport) *httputil.ReverseProxy {
+func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string, acct *accountTransport, cancel context.CancelFunc) *httputil.ReverseProxy {
 	pats := scrubPatterns(t.scrub, sent)
 	var tr http.RoundTripper = scrub1xx{p.upstream(), pats}
 	if acct != nil {
@@ -193,7 +196,15 @@ func (p *Proxy) reverseProxy(sni string, st *reqStats, t *table, sent []string, 
 			if res.StatusCode != http.StatusSwitchingProtocols {
 				res.Body = countingBody{res.Body, &st.bytes}
 			}
-			return scrubResponse(res, pats)
+			watch := watchStream(sni, res)
+			if watch {
+				res.Body = newIdleReader(res.Body, streamIdleTimeout, cancel)
+			}
+			if err := scrubResponse(res, pats); err != nil || !watch {
+				return err
+			}
+			res.Body = &stallBody{ReadCloser: res.Body, timeout: streamIdleTimeout, st: st}
+			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
 			var encErr unsupportedEncodingError
