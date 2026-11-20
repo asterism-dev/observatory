@@ -719,8 +719,14 @@ func (f *Fleet) PollUsage(ctx context.Context, u integrations.ClaudeUsage, every
 				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
 				backoffs[a.AccountRef] = backoff{until: now.Add(b.wait), wait: b.wait}
 				slog.Error("usage poll failed", "id", a.ID, "err", err)
+				if err := f.store.MarkPollFailed(ctx, a.AccountRef, true); err != nil {
+					slog.Error("mark usage poll failed", "id", a.ID, "err", err)
+				}
 			default:
 				delete(backoffs, a.AccountRef)
+				if err := f.store.MarkPollFailed(ctx, a.AccountRef, false); err != nil {
+					slog.Error("clear usage poll error", "id", a.ID, "err", err)
+				}
 				f.recordUsage(ctx, store.UsageObservation{Account: a.ID, FiveHourPct: usage.FiveHourPct, WeekPct: usage.WeekPct,
 					FiveHourResetsAt: usage.FiveHourResetsAt, WeekResetsAt: usage.WeekResetsAt, LimitedUntil: limitedUntil(usage, now), Source: "poll", ObservedAt: now}, now)
 			}

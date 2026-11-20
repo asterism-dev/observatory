@@ -2081,11 +2081,13 @@ func TestUsageReportSwitchesAndPushes(t *testing.T) {
 		len(s.Alternates) != 1 || s.Alternates[0].Account != second.ID.String() || s.Alternates[0].Value != claudeTok2 {
 		t.Fatalf("before: %s %s %d", s.ID, s.Account, len(s.Alternates))
 	}
+	placeholder := s.Placeholder
 	until := time.Now().Add(time.Hour).UTC()
 	node.send(proto.Message{Type: "usage", Usage: []proto.UsageObservation{{Integration: cl.ID.String(), Account: first.ID.String(), LimitedUntil: &until, ObservedAt: time.Now()}}})
 	s = desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
-	if s.Account != second.ID.String() || s.Value != claudeTok2 {
-		t.Fatalf("after: account %s", s.Account)
+	// The guest's env holds the placeholder, so a switch must not change it.
+	if s.Account != second.ID.String() || s.Value != claudeTok2 || placeholder == "" || s.Placeholder != placeholder {
+		t.Fatalf("after: account %s, placeholder changed %v", s.Account, s.Placeholder != placeholder)
 	}
 	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
 	if err != nil || list[0].Active || !list[1].Active || list[0].LimitedUntil == nil || list[0].Usage.Source != "proxy" {
@@ -2214,6 +2216,40 @@ func TestPollUsageSetupTokenRejectedStops(t *testing.T) {
 	if u.n(claudeTok1) != n {
 		t.Fatal("kept polling a rejected setup token")
 	}
+}
+
+func TestPollUsageErrorShownThenCleared(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e := newEnv(t)
+	cl, _, _ := e.claudeAccounts()
+	var failing atomic.Bool
+	failing.Store(true)
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		if failing.Load() {
+			return integrations.Usage{}, errors.New("claude: HTTP 500 " + claudeTok1)
+		}
+		return integrations.Usage{}, nil
+	}}
+	e.runPoll(u)
+	lastError := func() string {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list[0].LastError
+	}
+	waitFor(t, func() bool { return lastError() != "" })
+	if got := lastError(); got != "usage poll failed" {
+		t.Fatalf("last error %q", got)
+	}
+	failing.Store(false)
+	offset.Store(int64(time.Hour))
+	waitFor(t, func() bool { return lastError() == "" })
 }
 
 func TestUsageReportClampsNodeTimes(t *testing.T) {

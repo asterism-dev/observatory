@@ -297,6 +297,9 @@
     "resets": "resets {time}",
     "switchedNote": "Switched automatically at {time}: {from} reached its limit.",
     "allLimited": "All accounts limited until {time}.",
+    "noUsageData": "no usage data",
+    "pollFailed": "usage poll failed",
+    "refreshFailed": "refresh failed",
     "modeMultiHint": "Remove accounts until only one is left to change the mode.",
     "vmLine": "Integrations",
     "emptyText": "Connect an integration so your VMs can use it. By default, VMs only get a placeholder and the proxy adds the token."

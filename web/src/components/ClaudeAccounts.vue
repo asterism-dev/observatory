@@ -33,9 +33,16 @@ const lastLeft = computed(() => ordered.value.length === 1)
 const canRemove = computed(() => props.integration.canEdit && (!lastLeft.value || props.integration.canDelete))
 
 const limitedUntil = computed(() => {
-  const times = ordered.value.map((a) => (a.usage.limitedUntil ? Date.parse(a.usage.limitedUntil) : 0))
-  return times.length > 1 && times.every((v) => v > Date.now()) ? new Date(Math.min(...times)) : null
+  const times = ordered.value.filter((a) => a.status !== 'expired').map((a) => (a.usage.limitedUntil ? Date.parse(a.usage.limitedUntil) : 0))
+  return ordered.value.length > 1 && times.length > 0 && times.every((v) => v > Date.now()) ? new Date(Math.min(...times)) : null
 })
+
+const errorKeys: Record<string, string> = {
+  'no usage data': 'integrations.noUsageData',
+  'usage poll failed': 'integrations.pollFailed',
+  'refresh failed': 'integrations.refreshFailed',
+}
+const errorText = (e: string) => (errorKeys[e] ? t(errorKeys[e]) : e)
 
 const switchNote = computed(() => {
   const s = props.integration.lastSwitch
@@ -151,8 +158,9 @@ function onDrop(id: string) {
         </button>
         <ul class="inner">
           <ResourceRow :title="label(a)" :tone="a.status === 'expired' ? 'danger' : undefined">
-            <template v-if="a.status === 'expired'" #tags>
-              <Tag tone="danger" :title="a.lastError">{{ t('integrations.expired') }}</Tag>
+            <template v-if="a.status === 'expired' || a.lastError" #tags>
+              <Tag v-if="a.status === 'expired'" tone="danger" :title="a.lastError">{{ t('integrations.expired') }}</Tag>
+              <Tag v-else :tone="a.lastError === 'no usage data' ? 'muted' : 'warning'">{{ errorText(a.lastError) }}</Tag>
             </template>
             <span class="usage">
               <Meter :label="t('integrations.fiveHour')" :percent="a.usage.fiveHourPct" />

@@ -297,6 +297,9 @@
     "resets": "zurückgesetzt {time}",
     "switchedNote": "Automatisch umgeschaltet um {time}: {from} hat das Limit erreicht.",
     "allLimited": "Alle Konten limitiert bis {time}.",
+    "noUsageData": "keine Nutzungsdaten",
+    "pollFailed": "Nutzungsabfrage fehlgeschlagen",
+    "refreshFailed": "Erneuerung fehlgeschlagen",
     "modeMultiHint": "Entferne Konten, bis nur eines übrig ist, um den Modus zu ändern.",
     "vmLine": "Integrationen",
     "emptyText": "Verbinde eine Integration, damit deine VMs sie nutzen können. Standardmäßig bekommen VMs nur einen Platzhalter und der Proxy setzt das Token ein."
