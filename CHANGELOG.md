@@ -1,3 +1,9 @@
+## v0.12.1 (2026-11-20)
+
+### Fix
+
+- **registry**: token realm on the hub URL the client used (#32)
+
 ## v0.12.0 (2026-11-20)
 
 ### Feat
