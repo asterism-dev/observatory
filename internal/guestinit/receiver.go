@@ -3,11 +3,15 @@ package guestinit
 import (
 	"compress/gzip"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -16,7 +20,41 @@ import (
 	gproto "google.golang.org/protobuf/proto"
 )
 
-const maxReceiverBody = 1 << 20
+const (
+	maxReceiverBody  = 1 << 20
+	maxReceiverConns = 64
+)
+
+// cappedListener closes connections beyond the slot count so an app cannot exhaust PID 1's descriptors.
+type cappedListener struct {
+	net.Listener
+	slots chan struct{}
+}
+
+func (l *cappedListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.slots <- struct{}{}:
+			return &cappedConn{Conn: c, release: sync.OnceFunc(func() { <-l.slots })}, nil
+		default:
+			_ = c.Close()
+		}
+	}
+}
+
+type cappedConn struct {
+	net.Conn
+	release func()
+}
+
+func (c *cappedConn) Close() error {
+	c.release()
+	return c.Conn.Close()
+}
 
 // startReceiver serves OTLP/HTTP logs and metrics from apps on httpAddr into stream app; a busy port is logged and skipped.
 func startReceiver(ctx context.Context, sink *Sink, httpAddr string) (stop func(), err error) {
@@ -39,12 +77,20 @@ func startReceiver(ctx context.Context, sink *Sink, httpAddr string) (stop func(
 		}
 		sink.Metrics("app", data.ResourceMetrics)
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 	l, err := net.Listen("tcp", httpAddr)
 	if err != nil {
 		logf("init: otlp receiver %s: %v", httpAddr, err)
 		return func() {}, nil
 	}
+	l = &cappedListener{Listener: l, slots: make(chan struct{}, maxReceiverConns)}
 	go func() {
 		if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
 			logf("init: otlp receiver: %v", err)
@@ -81,7 +127,9 @@ func receive(w http.ResponseWriter, r *http.Request, msg gproto.Message) bool {
 	case "application/x-protobuf":
 		err = gproto.Unmarshal(raw, msg)
 	case "application/json":
-		err = protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(raw, msg)
+		if raw, err = hexIDsToBase64(raw); err == nil {
+			err = protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(raw, msg)
+		}
 	default:
 		http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 		return false
@@ -95,4 +143,33 @@ func receive(w http.ResponseWriter, r *http.Request, msg gproto.Message) bool {
 		_, _ = w.Write([]byte("{}"))
 	}
 	return true
+}
+
+// hexIDsToBase64 rewrites OTLP/JSON trace and span ids, which are hex there but base64 in protojson.
+func hexIDsToBase64(raw []byte) ([]byte, error) {
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			for k, e := range v {
+				if s, ok := e.(string); ok && (k == "traceId" || k == "spanId" || k == "parentSpanId") {
+					if b, err := hex.DecodeString(s); err == nil {
+						v[k] = base64.StdEncoding.EncodeToString(b)
+					}
+					continue
+				}
+				walk(e)
+			}
+		case []any:
+			for _, e := range v {
+				walk(e)
+			}
+		}
+	}
+	walk(doc)
+	return json.Marshal(doc)
 }

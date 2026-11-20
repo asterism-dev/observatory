@@ -13,7 +13,7 @@ const debBundleAbs = "/" + debBundle
 
 var withPath = []string{trustBlock[0], trustBlock[1], trustBlock[2], otelBlock[0], otelBlock[1], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[3], trustBlock[4]}
 
-var otelBlock = []string{`OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:14318"`, `OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"`}
+var otelBlock = []string{`OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:14318"`, `OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"`}
 
 var trustBlock = []string{
 	`CURL_CA_BUNDLE="` + debBundleAbs + `"`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="` + debBundleAbs + `"`, `NODE_EXTRA_CA_CERTS="` + debBundleAbs + `"`,
@@ -248,11 +248,11 @@ func TestWriteEnvOTLPDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://localhost:14318" || env["OTEL_EXPORTER_OTLP_PROTOCOL"] != "http/protobuf" {
+	if env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://127.0.0.1:14318" || env["OTEL_EXPORTER_OTLP_PROTOCOL"] != "http/protobuf" {
 		t.Fatalf("defaults missing: %v", env)
 	}
 	conf := get(t, r, "etc/systemd/system.conf.d/50-observatory.conf")
-	for _, want := range []string{`"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318"`, `"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"`} {
+	for _, want := range []string{`"OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318"`, `"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"`} {
 		if !strings.Contains(conf, want) {
 			t.Fatalf("systemd conf lacks %s:\n%s", want, conf)
 		}

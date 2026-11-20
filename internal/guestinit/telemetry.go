@@ -20,6 +20,8 @@ import (
 
 const (
 	maxSinkQueue = 256
+	// Metrics bodies are queued unsplit, so the count limit alone would allow hundreds of MiB.
+	maxSinkQueueBytes = 16 << 20
 	// 64 KiB per request keeps the full queue at 16 MiB and a request well inside the node's 1 MiB body and 256 KiB/s byte rate.
 	maxRequestBytes   = 64 << 10
 	maxRequestRecords = 500
@@ -38,14 +40,16 @@ type Sink struct {
 	connected  atomic.Bool
 	wake       chan struct{}
 
-	mu    sync.Mutex
-	queue []sinkRequest
+	mu         sync.Mutex
+	queue      []sinkRequest
+	queueBytes int
 }
 
 type sinkRequest struct {
 	signal, stream string
 	// LogsData and MetricsData encode like the collector's Export*ServiceRequest, whose packages would pull gRPC into the init.
-	msg gproto.Message
+	msg  gproto.Message
+	size int
 }
 
 func newSink(dial func(context.Context) (net.Conn, error)) *Sink {
@@ -84,16 +88,17 @@ func (s *Sink) Logs(stream string, recs []*logspb.LogRecord) {
 				break
 			}
 		}
-		s.enqueue(sinkRequest{"logs", stream, &logspb.LogsData{ResourceLogs: []*logspb.ResourceLogs{{Resource: res, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: recs[:n]}}}}}})
+		s.enqueue(sinkRequest{signal: "logs", stream: stream, msg: &logspb.LogsData{ResourceLogs: []*logspb.ResourceLogs{{Resource: res, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: recs[:n]}}}}}})
 		recs = recs[n:]
 	}
 }
 
 func (s *Sink) Metrics(stream string, rms []*metricspb.ResourceMetrics) {
-	s.enqueue(sinkRequest{"metrics", stream, &metricspb.MetricsData{ResourceMetrics: rms}})
+	s.enqueue(sinkRequest{signal: "metrics", stream: stream, msg: &metricspb.MetricsData{ResourceMetrics: rms}})
 }
 
 func (s *Sink) enqueue(r sinkRequest) {
+	r.size = gproto.Size(r.msg)
 	s.requeue(r, false)
 	select {
 	case s.wake <- struct{}{}:
@@ -110,10 +115,16 @@ func (s *Sink) requeue(r sinkRequest, front bool) {
 	} else {
 		s.queue = append(s.queue, r)
 	}
-	if over := len(s.queue) - maxSinkQueue; over > 0 {
-		clear(s.queue[:over])
-		s.queue = s.queue[over:]
+	s.queueBytes += r.size
+	over := 0
+	for dropped := s.queueBytes; len(s.queue)-over > maxSinkQueue || (dropped > maxSinkQueueBytes && over < len(s.queue)-1); over++ {
+		dropped -= s.queue[over].size
 	}
+	for _, d := range s.queue[:over] {
+		s.queueBytes -= d.size
+	}
+	clear(s.queue[:over])
+	s.queue = s.queue[over:]
 }
 
 func (s *Sink) pop() (sinkRequest, bool) {
@@ -123,6 +134,7 @@ func (s *Sink) pop() (sinkRequest, bool) {
 		return sinkRequest{}, false
 	}
 	r := s.queue[0]
+	s.queueBytes -= r.size
 	s.queue[0] = sinkRequest{}
 	s.queue = s.queue[1:]
 	return r, true

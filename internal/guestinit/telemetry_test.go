@@ -20,6 +20,7 @@ import (
 
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	gproto "google.golang.org/protobuf/proto"
 )
 
@@ -198,5 +199,21 @@ func TestConsolefAlsoWritesStderrWhenConnected(t *testing.T) {
 	waitFor(t, func() bool { return len(node.requests()) == 2 })
 	if r := node.requests()[1]; r.stream != "system" || decodeLogs(t, r.body)[0].GetBody().GetStringValue() != "init: reboot: failed" {
 		t.Fatalf("request = %+v", r)
+	}
+}
+
+func TestSinkQueueByteBudget(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	dial, _ := startFakeNode(t, &down)
+	s := newSink(dial)
+	big := strings.Repeat("x", 900<<10)
+	for range 40 {
+		s.Metrics("app", []*metricspb.ResourceMetrics{{ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{{Name: big}}}}}})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.queueBytes > maxSinkQueueBytes+(1<<20) || len(s.queue) > 20 || len(s.queue) == 0 {
+		t.Fatalf("queue = %d requests, %d bytes", len(s.queue), s.queueBytes)
 	}
 }

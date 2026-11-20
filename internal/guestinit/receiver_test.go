@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
@@ -48,8 +49,12 @@ func post(t *testing.T, url, ct string, body []byte, gz bool) *http.Response {
 	if gz {
 		var b bytes.Buffer
 		zw := gzip.NewWriter(&b)
-		zw.Write(body)
-		zw.Close()
+		if _, err := zw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
 		body = b.Bytes()
 	}
 	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
@@ -140,4 +145,55 @@ func TestReceiverPortTaken(t *testing.T) {
 	if !strings.Contains(out.String(), "otlp receiver") {
 		t.Fatalf("no log: %q", out.String())
 	}
+}
+
+func TestReceiverJSONHexIDs(t *testing.T) {
+	url, node := startTestReceiver(t)
+	body := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174","body":{"stringValue":"id"}}]}]}]}`
+	if resp := post(t, url+"/v1/logs", "application/json", []byte(body), false); resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	waitFor(t, func() bool { return len(node.requests()) == 1 })
+	rec := decodeLogs(t, node.requests()[0].body)[0]
+	if hex.EncodeToString(rec.TraceId) != "5b8efff798038103d269b633813fc60c" || hex.EncodeToString(rec.SpanId) != "eee19b7ec3c1b174" {
+		t.Fatalf("ids = %x %x", rec.TraceId, rec.SpanId)
+	}
+}
+
+func TestReceiverConnectionCap(t *testing.T) {
+	url, _ := startTestReceiver(t)
+	addr := strings.TrimPrefix(url, "http://")
+	var held []net.Conn
+	for range maxReceiverConns {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+	}
+	defer func() {
+		for _, c := range held {
+			c.Close()
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	extra, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("extra connection read = %v, want EOF", err)
+	}
+	held[0].Close()
+	held = held[1:]
+	waitFor(t, func() bool {
+		resp, err := http.Get(url + "/v1/traces")
+		if err != nil {
+			return false
+		}
+		resp.Body.Close()
+		return resp.StatusCode == 404
+	})
 }

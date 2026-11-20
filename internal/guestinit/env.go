@@ -17,7 +17,7 @@ const (
 )
 
 var otelDefaults = map[string]string{
-	"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:14318",
+	"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:14318",
 	"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
 }
 
