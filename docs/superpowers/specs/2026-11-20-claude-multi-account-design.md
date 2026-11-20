@@ -107,7 +107,7 @@ kind and scope" rule and resolution).
   source (`oauth`/`setup-token`), nonce + ciphertext (token or access token), refresh_nonce + refresh_ciphertext
   (oauth only), access_expires_at, status (`ok`/`expired`), last_error, usage (five_hour_pct, five_hour_resets_at,
   week_pct, week_resets_at, usage_source `poll`/`proxy`, usage_at), limited_until, created_by/at, updated_by/at.
-  Seal AAD `integration-account:<org>:<account id>:<field>`.
+  Seal AAD `integration:<org>:<account id>:<field>`; a migrated first account reuses its integration's id, so its sealed bytes move unchanged.
 - **Migration** *(Our call)*: every existing Claude integration gets one account row carrying its current token
   fields, source, account, status. From then on Claude tokens are read only from `integration_accounts`; whether the
   token columns of Claude rows in `integrations` are dropped or set null is the builder's call, reading from two
