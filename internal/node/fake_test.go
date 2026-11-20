@@ -467,8 +467,8 @@ func (pr *fakeProc) Send(t proto.Egress) error {
 	return pr.h.failSend
 }
 
-func (pr *fakeProc) Ready() <-chan struct{} { return pr.ready }
-func (pr *fakeProc) Done() <-chan struct{}  { return pr.done }
+func (pr *fakeProc) Ready() <-chan struct{}               { return pr.ready }
+func (pr *fakeProc) Done() <-chan struct{}                { return pr.done }
 func (pr *fakeProc) Usage() <-chan proto.UsageObservation { return pr.usage }
-func (pr *fakeProc) Kill()                  { pr.h.p.record("kill"); pr.crash() }
-func (pr *fakeProc) crash()                 { pr.once.Do(func() { close(pr.done) }) }
+func (pr *fakeProc) Kill()                                { pr.h.p.record("kill"); pr.crash() }
+func (pr *fakeProc) crash()                               { pr.once.Do(func() { close(pr.done) }) }
