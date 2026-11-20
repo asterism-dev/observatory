@@ -49,7 +49,7 @@ The command sends the local ADC file to the hub (or pastes it on the Integration
 replaces its token, so the daily command is always the same. A quota project from `--quota-project` or the file is
 stored and can be edited on the integration page (`PATCH /api/orgs/{org}/integrations/{id}` `{"quotaProject": "…"}`,
 empty or a project id; audited as `integration:set`, action `quota-project`). The hub verifies the login by refreshing
-it and refreshes the access token 10 minutes before it expires. If Google answers `invalid_grant` the status becomes
+it and refreshes the access token 10 minutes before it expires; failures retry after 1, then every 2 minutes. If Google answers `invalid_grant` the status becomes
 `expired` ("sign in again"): run the two commands above.
 
 What the guest gets:

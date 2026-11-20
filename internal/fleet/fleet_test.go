@@ -1661,12 +1661,16 @@ func TestRefreshIntegrationsPushes(t *testing.T) {
 type fakeGoogle struct {
 	mu   sync.Mutex
 	adcs []string
+	err  error
 }
 
 func (f *fakeGoogle) Refresh(_ context.Context, adc string) (integrations.OAuthTokens, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.adcs = append(f.adcs, adc)
+	if f.err != nil {
+		return integrations.OAuthTokens{}, f.err
+	}
 	return integrations.OAuthTokens{Access: "ya29.new-dummy-0000", Refresh: adc, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
@@ -1770,6 +1774,30 @@ func TestRefreshIntegrationsBackoff(t *testing.T) {
 			t.Fatalf("token in log: %s", logs)
 		}
 	}
+}
+
+// gcloud refreshes only 10 minutes ahead, so its backoff stops at 2 minutes.
+func TestRefreshGcloudBackoffCap(t *testing.T) {
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+
+	e := newEnv(t)
+	exp := base.Add(5 * time.Minute)
+	adc := integrations.ADC{ClientID: "cid", ClientSecret: "dummy-secret", RefreshToken: intRefresh}.Marshal()
+	e.integration(integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &e.owner, integrations.ModeProxy,
+		store.IntegrationSecret{Token: "ya29.old-dummy-0000", Refresh: adc, AccessExpiresAt: &exp})
+	g := &fakeGoogle{err: fmt.Errorf("%w: gcloud: HTTP 503", integrations.ErrUnreachable)}
+	e.runRefresh(&fakeOAuth{}, g)
+	waitFor(t, func() bool { return g.n() == 1 })
+	offset.Store(int64(61 * time.Second))
+	waitFor(t, func() bool { return g.n() == 2 })
+	offset.Store(int64(182 * time.Second))
+	waitFor(t, func() bool { return g.n() == 3 })
+	offset.Store(int64(303 * time.Second))
+	waitFor(t, func() bool { return g.n() == 4 })
 }
 
 func TestDesiredIntegrationsUnresolvedKeepsOtherVMs(t *testing.T) {

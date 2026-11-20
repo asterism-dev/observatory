@@ -604,14 +604,14 @@ const (
 
 var clock = time.Now
 
-// RefreshIntegrations refreshes Claude sign-ins and gcloud ADC integrations that are due and pushes the new access tokens; failures back off per account from 1 to 15 minutes. It returns when ctx ends.
+// RefreshIntegrations refreshes Claude sign-ins and gcloud ADC integrations that are due and pushes the new access tokens; failures back off per account from 1 to 15 minutes (gcloud: 2). It returns when ctx ends.
 func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.ClaudeOAuth, google integrations.GoogleOAuth, every time.Duration) {
 	type backoff struct {
 		until time.Time
 		wait  time.Duration
 	}
 	backoffs := map[store.AccountRef]backoff{}
-	refresh := func(ref store.AccountRef, run func(context.Context, store.AccountRef, time.Time) (bool, error)) {
+	refresh := func(ref store.AccountRef, maxWait time.Duration, run func(context.Context, store.AccountRef, time.Time) (bool, error)) {
 		b := backoffs[ref]
 		now := clock()
 		if now.Before(b.until) {
@@ -623,7 +623,7 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 		cancel()
 		switch {
 		case err != nil:
-			b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
+			b.wait = min(max(2*b.wait, time.Minute), maxWait)
 			backoffs[ref] = backoff{until: now.Add(b.wait), wait: b.wait}
 			slog.Error("integration refresh failed", "id", ref.ID, "err", err)
 		case ok:
@@ -662,10 +662,10 @@ func (f *Fleet) RefreshIntegrations(ctx context.Context, oauth integrations.Clau
 			return !slices.Contains(refs, r) && !slices.Contains(adcRefs, r)
 		})
 		for _, ref := range refs {
-			refresh(ref, claude)
+			refresh(ref, 15*time.Minute, claude)
 		}
 		for _, ref := range adcRefs {
-			refresh(ref, gcloud)
+			refresh(ref, 2*time.Minute, gcloud)
 		}
 	}
 }
