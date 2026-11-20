@@ -73,7 +73,7 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp, sdkmetric.WithInterval(10*time.Second), sdkmetric.WithTimeout(telemetryTimeout))),
 	)
 
-	otelHandler := defaultSource{otelslog.NewHandler(telemetryMeterName, otelslog.WithLoggerProvider(logProvider))}
+	otelHandler := defaultSource{Handler: otelslog.NewHandler(telemetryMeterName, otelslog.WithLoggerProvider(logProvider))}
 	slog.SetDefault(slog.New(slog.NewMultiHandler(slog.NewTextHandler(os.Stderr, nil), otelHandler)))
 
 	return &Telemetry{
@@ -87,24 +87,35 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 func (t *Telemetry) Shutdown(ctx context.Context) error { return t.shutdown(ctx) }
 
 // defaultSource tags records without a source attribute as coming from the node agent.
-type defaultSource struct{ slog.Handler }
+type defaultSource struct {
+	slog.Handler
+	hasSource bool
+}
 
 func (h defaultSource) Handle(ctx context.Context, r slog.Record) error {
-	hasSource := false
-	r.Attrs(func(a slog.Attr) bool {
-		hasSource = hasSource || a.Key == "source"
-		return !hasSource
-	})
-	if !hasSource {
+	if !h.hasSource {
+		r.Attrs(func(a slog.Attr) bool {
+			h.hasSource = h.hasSource || a.Key == "source"
+			return !h.hasSource
+		})
+	}
+	if !h.hasSource {
 		r.AddAttrs(slog.String("source", "observatory-node"))
 	}
 	return h.Handler.Handle(ctx, r)
 }
 
 func (h defaultSource) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return defaultSource{h.Handler.WithAttrs(attrs)}
+	for _, a := range attrs {
+		h.hasSource = h.hasSource || a.Key == "source"
+	}
+	h.Handler = h.Handler.WithAttrs(attrs)
+	return h
 }
 
+// Records under a group would get a prefixed source, so none is added.
 func (h defaultSource) WithGroup(name string) slog.Handler {
-	return defaultSource{h.Handler.WithGroup(name)}
+	h.hasSource = true
+	h.Handler = h.Handler.WithGroup(name)
+	return h
 }

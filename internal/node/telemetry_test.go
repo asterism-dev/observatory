@@ -137,6 +137,39 @@ func TestTelemetryKeepsExplicitSource(t *testing.T) {
 	}
 }
 
+func TestTelemetryLoggerSourceAndGroups(t *testing.T) {
+	c := &logCollector{}
+	hub := httptest.NewServer(c)
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Default().With("source", "firecracker").Info("with")
+	slog.Default().WithGroup("g").Info("grouped", "k", "v")
+	shutdownTelemetry(t, tel)
+
+	for _, r := range c.records() {
+		var sources []string
+		for _, kv := range r.Attributes {
+			if kv.Key == "source" {
+				sources = append(sources, kv.Value.GetStringValue())
+			}
+		}
+		switch r.Body.GetStringValue() {
+		case "with":
+			if len(sources) != 1 || sources[0] != "firecracker" {
+				t.Fatalf("with: source attrs = %v", sources)
+			}
+		case "grouped":
+			if len(sources) != 0 {
+				t.Fatalf("grouped: source attrs = %v", sources)
+			}
+		}
+	}
+	if len(c.records()) != 2 {
+		t.Fatalf("records = %d, want 2", len(c.records()))
+	}
+}
+
 func TestTelemetryLegacyLogBridged(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
