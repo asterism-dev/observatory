@@ -55,7 +55,12 @@ function tail(f: LogFilter) {
   stream = new EventSource(`${base()}/tail?${p}`)
   // The stream may end without notice; EventSource reconnects and the dedupe drops lines already shown.
   stream.onmessage = (e) => {
-    const l = JSON.parse(e.data) as LogLine
+    let l: LogLine
+    try {
+      l = JSON.parse(e.data)
+    } catch {
+      return
+    }
     const k = lineKey(l)
     if (seen.has(k)) return
     seen.add(k)
