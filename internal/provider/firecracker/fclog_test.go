@@ -5,9 +5,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 )
 
 func TestParseFCLogLine(t *testing.T) {
@@ -116,5 +120,72 @@ func TestTailFCLogDrainsOnStop(t *testing.T) {
 	tailFCLog(ctx, path, "vm1", "web")
 	if recs := h.records(); len(recs) != 1 || recs[0].Level != slog.LevelError {
 		t.Errorf("records = %v, want the last line written before the VM exited", recs)
+	}
+}
+
+func TestTailLinesFromOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	old := "old boot line\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		tailLines(ctx, path, int64(len(old)), func(l string) { mu.Lock(); got = append(got, l); mu.Unlock() })
+		close(done)
+	}()
+	lines := func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), got...) }
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	f.WriteString("one\ntw")
+	time.Sleep(1500 * time.Millisecond)
+	if l := lines(); len(l) != 1 || l[0] != "one" {
+		t.Fatalf("lines = %q, want only the complete one", l)
+	}
+	f.WriteString("o\nlast\n")
+	cancel()
+	<-done
+	if l := lines(); len(l) != 3 || l[1] != "two" || l[2] != "last" {
+		t.Errorf("lines = %q, want one, two, last", l)
+	}
+}
+
+func TestConsoleStreamEmitted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	if err := os.WriteFile(path, []byte("login: \r\n"+strings.Repeat("x", 20<<10)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	vm := uuid.New()
+	type got struct {
+		vm     uuid.UUID
+		stream string
+		recs   []*logspb.LogRecord
+	}
+	var emitted []got
+	tailConsole(ctx, path, 0, vm, func(id uuid.UUID, stream string, recs []*logspb.LogRecord) {
+		emitted = append(emitted, got{id, stream, recs})
+	})
+	if len(emitted) != 2 {
+		t.Fatalf("emitted %d batches, want 2", len(emitted))
+	}
+	for _, e := range emitted {
+		if e.vm != vm || e.stream != "console" || len(e.recs) != 1 || e.recs[0].SeverityText != "INFO" || e.recs[0].TimeUnixNano == 0 {
+			t.Errorf("emitted = %+v", e)
+		}
+	}
+	if b := emitted[0].recs[0].Body.GetStringValue(); b != "login: " {
+		t.Errorf("body = %q", b)
+	}
+	if n := len(emitted[1].recs[0].Body.GetStringValue()); n != 16<<10 {
+		t.Errorf("long line body = %d bytes, want 16 KiB", n)
 	}
 }

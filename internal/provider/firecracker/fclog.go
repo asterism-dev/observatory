@@ -3,10 +3,16 @@ package firecracker
 import (
 	"bufio"
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 )
 
 // fcLogName is Firecracker's own log in the jail root; the guest's serial console stays in console.log, which never leaves the node.
@@ -36,12 +42,38 @@ func parseFCLogLine(line string) (slog.Level, string) {
 
 // tailFCLog logs each line of path until ctx is done, then reads once more for the lines written as the VM exited.
 func tailFCLog(ctx context.Context, path, vmID, vmName string) {
-	f, err := os.Open(path)
+	err := tailLines(ctx, path, 0, func(line string) {
+		level, msg := parseFCLogLine(line)
+		// ctx only signals the VM's end; the last lines must still go out.
+		slog.Log(context.Background(), level, msg, "source", "firecracker", "vm", vmID, "vm_name", vmName)
+	})
 	if err != nil {
 		slog.Warn("firecracker log", "vm", vmID, "err", err)
-		return
+	}
+}
+
+type logEmitter func(vmID uuid.UUID, stream string, records []*logspb.LogRecord)
+
+// tailConsole emits the lines the guest console gets from offset on.
+func tailConsole(ctx context.Context, path string, offset int64, vmID uuid.UUID, emit logEmitter) {
+	err := tailLines(ctx, path, offset, func(line string) {
+		emit(vmID, "console", []*logspb.LogRecord{vmtelemetry.LineRecord(strings.TrimSuffix(line, "\r"))})
+	})
+	if err != nil {
+		slog.Warn("console log", "vm", vmID, "err", err)
+	}
+}
+
+// tailLines calls emit for each complete line of path from offset until ctx is done, then once more for the lines written as the VM exited.
+func tailLines(ctx context.Context, path string, offset int64, emit func(line string)) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
 	defer f.Close()
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
 	r := bufio.NewReader(f)
 	var partial string
 	t := time.NewTicker(time.Second)
@@ -53,13 +85,11 @@ func tailFCLog(ctx context.Context, path, vmID, vmName string) {
 			if err != nil {
 				break
 			}
-			level, msg := parseFCLogLine(strings.TrimSuffix(partial, "\n"))
+			emit(strings.TrimSuffix(partial, "\n"))
 			partial = ""
-			// ctx only signals the VM's end; the last lines must still go out.
-			slog.Log(context.Background(), level, msg, "source", "firecracker", "vm", vmID, "vm_name", vmName)
 		}
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		select {
 		case <-ctx.Done():

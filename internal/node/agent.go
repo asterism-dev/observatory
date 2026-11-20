@@ -131,6 +131,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if vs, ok := a.Provider.(VMTelemetryServer); ok && a.VMTelemetry != nil {
 		vs.SetVMTelemetry(a.VMTelemetry)
 	}
+	if et, ok := a.Egress.(EgressTelemetry); ok && a.VMTelemetry != nil {
+		et.SetVMTelemetry(a.VMTelemetry)
+	}
 	if gi, ok := a.Provider.(GuestImages); ok {
 		go gi.RunGuestImages(ctx, a.setImage)
 	}

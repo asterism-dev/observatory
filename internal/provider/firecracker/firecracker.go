@@ -518,6 +518,11 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		ctx, stop := context.WithCancel(context.Background())
 		go func() { <-proc.Done(); stop() }()
 		go tailFCLog(ctx, fcLog, f.Spec.ID, f.Spec.Name)
+		if vmID, perr := uuid.Parse(f.Spec.ID); perr == nil {
+			if sink := p.telemetry.Load(); sink != nil {
+				go tailConsole(ctx, proc.Console, proc.Offset, vmID, sink.Emit)
+			}
+		}
 	}
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {

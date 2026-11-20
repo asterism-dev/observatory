@@ -24,6 +24,7 @@ import (
 
 const (
 	maxBody        = 1 << 20
+	maxLine        = 16 << 10
 	logRate        = 100
 	logBurst       = 500
 	maxSeries      = 2000
@@ -158,6 +159,16 @@ func (s *Sink) Register(vmID uuid.UUID) {
 	if t := s.forgets[vmID]; t != nil {
 		t.Stop()
 		delete(s.forgets, vmID)
+	}
+}
+
+// LineRecord is an info-level record of line, truncated at maxLine bytes, stamped now.
+func LineRecord(line string) *logspb.LogRecord {
+	now := uint64(time.Now().UnixNano())
+	return &logspb.LogRecord{
+		TimeUnixNano: now, ObservedTimeUnixNano: now,
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_INFO, SeverityText: "INFO",
+		Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: strings.ToValidUTF8(line[:min(len(line), maxLine)], "")}},
 	}
 }
 

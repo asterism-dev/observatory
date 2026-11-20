@@ -42,6 +42,9 @@ type TokenServer interface{ SetTokenLookup(TokenLookup) }
 // VMTelemetryServer is a provider that serves each VM's telemetry socket with the sink.
 type VMTelemetryServer interface{ SetVMTelemetry(*vmtelemetry.Sink) }
 
+// EgressTelemetry is an egress host that sends each proxy's output lines to the sink.
+type EgressTelemetry interface{ SetVMTelemetry(*vmtelemetry.Sink) }
+
 // ServeTokens answers token requests on l, the listener of vmID only, until l is closed.
 func ServeTokens(l net.Listener, vmID string, lookup TokenLookup) {
 	slots := make(chan struct{}, maxTokenRequests)
