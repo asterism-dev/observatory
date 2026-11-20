@@ -1,9 +1,7 @@
 package guestinit
 
 import (
-	"fmt"
 	"net"
-	"os"
 	"os/exec"
 
 	"golang.org/x/sys/unix"
@@ -35,9 +33,9 @@ func startDesktop(root Root, agent *Agent, spawn func(*exec.Cmd) error) func() {
 	d.Allow = peerAllowed
 	l, err := d.Listen()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: desktop:", err)
+		logf("init: desktop: %v", err)
 		return d.Stop
 	}
-	go func() { fmt.Fprintln(os.Stderr, "init: desktop:", d.Serve(l)) }()
+	go func() { logf("init: desktop: %v", d.Serve(l)) }()
 	return d.Stop
 }

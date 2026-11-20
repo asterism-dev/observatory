@@ -4,9 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -117,11 +115,11 @@ func (a *Agent) setSeedKeys(keys []string) {
 // applyEnv writes the guest environment and makes it the one SSH sessions get; a failed write is logged and the merged env still used.
 func (a *Agent) applyEnv(seed proto.GuestSeed) map[string]string {
 	if err := a.Root.WriteContext(seed.Context); err != nil {
-		fmt.Fprintln(os.Stderr, "agent: context:", err)
+		logf("agent: context: %v", err)
 	}
 	env, err := a.Root.WriteEnv(seed.Env, seed.Image.Env)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "agent: environment:", err)
+		logf("agent: environment: %v", err)
 	}
 	if env == nil {
 		env = map[string]string{"PATH": platformBin + ":" + defaultPath}
@@ -134,7 +132,7 @@ func (a *Agent) applyEnv(seed proto.GuestSeed) map[string]string {
 
 func (a *Agent) installCAs(seed proto.GuestSeed) {
 	if _, err := a.Root.InstallCAs(seed.EgressCAs); err != nil {
-		fmt.Fprintln(os.Stderr, "agent: egress CAs:", err)
+		logf("agent: egress CAs: %v", err)
 	}
 }
 

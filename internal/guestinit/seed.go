@@ -40,7 +40,7 @@ func ReadSeed(dev string) (proto.GuestSeed, error) {
 	if !hostnameRE.MatchString(seed.Hostname) {
 		// A bad name must not stop the boot: PID 1 exiting panics the kernel.
 		name := sanitizeHostname(seed.Hostname)
-		fmt.Fprintf(os.Stderr, "init: seed: invalid hostname %q, using %q\n", seed.Hostname, name)
+		logf("init: seed: invalid hostname %q, using %q", seed.Hostname, name)
 		seed.Hostname = name
 	}
 	seed.SSHKeys = slices.DeleteFunc(seed.SSHKeys, func(k string) bool {

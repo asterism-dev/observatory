@@ -52,7 +52,7 @@ type bootStep struct {
 func runSteps(steps []bootStep) {
 	for _, s := range steps {
 		if err := s.safeRun(); err != nil {
-			fmt.Fprintf(os.Stderr, "init: %s: %v\n", s.name, err)
+			logf("init: %s: %v", s.name, err)
 		}
 	}
 }
@@ -68,7 +68,7 @@ func (s bootStep) safeRun() (err error) {
 
 func runInit() int {
 	if err := Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "init:", err)
+		logf("init: %v", err)
 		return 1
 	}
 	return 0

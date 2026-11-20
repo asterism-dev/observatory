@@ -7,6 +7,6 @@ import (
 	"time"
 )
 
-func dialVsock(time.Duration) (tokenConn, error) {
+func dialVsock(uint32, time.Duration) (tokenConn, error) {
 	return nil, errors.New("vsock needs linux")
 }
