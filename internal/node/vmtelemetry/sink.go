@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash/maphash"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"slices"
@@ -30,6 +31,7 @@ const (
 	maxSeries      = 2000
 	maxUsageSeries = 2000 // cpu × state points alone pass 500 above ~60 vCPUs
 	maxAttrs       = 128
+	maxBuckets     = 64 // histogram bounds, exponential histogram buckets or summary quantiles per point
 	seriesWindow   = time.Hour
 	byteRate       = 256 << 10
 	byteBurst      = 2 << 20
@@ -46,16 +48,18 @@ var decodeWait = 5 * time.Second
 var forgetDelay = time.Minute
 
 var (
-	logItems    = [][]protowire.Number{{1}, {2}, {2}}
-	metricItems = [][]protowire.Number{{1}, {2}, {2}, {5, 7, 9, 10, 11}, {1}}
+	logItems        = [][]protowire.Number{{1}, {2}, {2}}
+	metricItems     = [][]protowire.Number{{1}, {2}, {2}, {5, 7, 9, 10, 11}, {1}}
+	histogramBounds = [][]protowire.Number{{1}, {2}, {2}, {9}, {1}, {7}}
 )
 
 // guestStreams are the stream classes a guest may send per signal; console and egress only originate on the node.
 var guestStreams = map[string][]string{"logs": {"service", "system", "app"}, "metrics": {"usage", "app"}}
 
 var (
-	errTooLarge     = errors.New("body too large")
-	errTooManyAttrs = errors.New("too many attributes")
+	errTooLarge       = errors.New("body too large")
+	errTooManyAttrs   = errors.New("too many attributes")
+	errTooManyBuckets = errors.New("too many buckets")
 )
 
 // usageMetrics are the metrics the guest collector sends on stream usage.
@@ -80,6 +84,7 @@ type vmLimits struct {
 	logs, bytes bucket
 	windowStart time.Time
 	series      map[string]map[uint64]struct{} // per stream, the series seen in the current window
+	storeSeries map[string]int
 }
 
 type bucket struct {
@@ -155,7 +160,7 @@ func (s *Sink) Register(vmID uuid.UUID) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.vms[vmID] = &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
+	s.vms[vmID] = &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}, storeSeries: map[string]int{}}
 	if t := s.forgets[vmID]; t != nil {
 		t.Stop()
 		delete(s.forgets, vmID)
@@ -235,7 +240,12 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v 
 	}
 	var n int
 	if err == nil {
-		n, err = countFields(body, items)
+		n, err = countFields(body, items, 0)
+	}
+	if err == nil && signal == "metrics" {
+		var bounds int
+		bounds, err = countFields(body, histogramBounds, 8)
+		n += bounds
 	}
 	if err == nil && n > maxItems {
 		s.dropped(vmID, "body", 1)
@@ -259,7 +269,7 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v 
 	} else if err == nil {
 		out, err = s.admitMetrics(vmID, v, stream, body)
 	}
-	if errors.Is(err, errTooManyAttrs) {
+	if errors.Is(err, errTooManyAttrs) || errors.Is(err, errTooManyBuckets) {
 		s.dropped(vmID, "body", 1)
 	}
 	if err != nil {
@@ -307,8 +317,8 @@ func (v *vmLimits) takeBytes(n int) bool {
 	return true
 }
 
-// countFields counts the length-delimited fields reached by following path, one set of field numbers per nesting level, without decoding.
-func countFields(b []byte, path [][]protowire.Number) (int, error) {
+// countFields counts the fields reached by following path, one set of field numbers per nesting level, without decoding; elemSize > 0 counts the elements of a packed last level instead.
+func countFields(b []byte, path [][]protowire.Number, elemSize int) (int, error) {
 	n := 0
 	for len(b) > 0 {
 		num, typ, l := protowire.ConsumeTag(b)
@@ -320,12 +330,16 @@ func countFields(b []byte, path [][]protowire.Number) (int, error) {
 		if l < 0 {
 			return 0, protowire.ParseError(l)
 		}
-		if typ == protowire.BytesType && slices.Contains(path[0], num) {
-			if len(path) == 1 {
+		if len(path) == 1 && elemSize > 0 && typ == protowire.Fixed64Type && slices.Contains(path[0], num) {
+			n++
+		} else if typ == protowire.BytesType && slices.Contains(path[0], num) {
+			v, _ := protowire.ConsumeBytes(b)
+			if len(path) == 1 && elemSize > 0 {
+				n += len(v) / elemSize
+			} else if len(path) == 1 {
 				n++
 			} else {
-				v, _ := protowire.ConsumeBytes(b)
-				k, err := countFields(v, path[1:])
+				k, err := countFields(v, path[1:], elemSize)
 				if err != nil {
 					return 0, err
 				}
@@ -395,6 +409,7 @@ func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsS
 
 type seriesPoint struct {
 	key     uint64
+	weight  int  // the series the store makes of the point
 	allowed bool // false for a metric the stream does not accept
 }
 
@@ -418,14 +433,19 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 			}
 			for _, m := range sm.GetMetrics() {
 				allowed := stream != "usage" || slices.Contains(usageMetrics, m.GetName())
-				tooMany := false
-				keepPoints(m, func(attrs []*commonpb.KeyValue) bool {
-					tooMany = tooMany || tooManyAttrs(attrs)
-					points = append(points, seriesPoint{s.seriesKey(m.GetName(), resKey, attrs), allowed})
+				var err error
+				keepPoints(m, func(p dataPoint) bool {
+					weight, buckets, layout := pointSeries(p)
+					if tooManyAttrs(p.GetAttributes()) {
+						err = errTooManyAttrs
+					} else if buckets > maxBuckets {
+						err = errTooManyBuckets
+					}
+					points = append(points, seriesPoint{s.seriesKey(m.GetName(), resKey, p.GetAttributes(), layout), weight, allowed})
 					return true
 				})
-				if tooMany {
-					return nil, errTooManyAttrs
+				if err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -440,6 +460,7 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 	v.mu.Lock()
 	if now.Sub(v.windowStart) >= seriesWindow {
 		clear(v.series)
+		clear(v.storeSeries)
 		v.windowStart = now
 	}
 	seen := v.series[stream]
@@ -450,8 +471,9 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 	for i, p := range points {
 		if _, ok := seen[p.key]; ok && p.allowed {
 			keep[i] = true
-		} else if p.allowed && len(seen) < limit {
+		} else if p.allowed && v.storeSeries[stream]+p.weight <= limit {
 			seen[p.key] = struct{}{}
+			v.storeSeries[stream] += p.weight
 			keep[i] = true
 		} else {
 			dropped++
@@ -469,7 +491,7 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 		for _, rm := range req.ResourceMetrics {
 			for _, sm := range rm.GetScopeMetrics() {
 				sm.Metrics = slices.DeleteFunc(sm.Metrics, func(m *metricspb.Metric) bool {
-					return !keepPoints(m, func([]*commonpb.KeyValue) bool { i++; return keep[i-1] })
+					return !keepPoints(m, func(dataPoint) bool { i++; return keep[i-1] })
 				})
 			}
 		}
@@ -477,8 +499,29 @@ func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []b
 	return gproto.Marshal(&req)
 }
 
-// keepPoints filters m's data points by their attributes and reports whether any are left.
-func keepPoints(m *metricspb.Metric, keep func([]*commonpb.KeyValue) bool) bool {
+type dataPoint interface{ GetAttributes() []*commonpb.KeyValue }
+
+// pointSeries returns the series the store makes of p (histograms: one per bucket plus _sum and _count), its buckets or quantiles, and the layout naming them.
+func pointSeries(p dataPoint) (series, buckets int, layout []float64) {
+	switch p := p.(type) {
+	case *metricspb.HistogramDataPoint:
+		return len(p.ExplicitBounds) + 3, len(p.ExplicitBounds), p.ExplicitBounds
+	case *metricspb.ExponentialHistogramDataPoint:
+		pos, neg := p.GetPositive(), p.GetNegative()
+		n := len(pos.GetBucketCounts()) + len(neg.GetBucketCounts())
+		return n + 3, n, []float64{float64(p.Scale), float64(pos.GetOffset()), float64(len(pos.GetBucketCounts())), float64(neg.GetOffset()), float64(len(neg.GetBucketCounts()))}
+	case *metricspb.SummaryDataPoint:
+		qs := make([]float64, len(p.QuantileValues))
+		for i, q := range p.QuantileValues {
+			qs[i] = q.GetQuantile()
+		}
+		return len(qs) + 2, len(qs), qs
+	}
+	return 1, 0, nil
+}
+
+// keepPoints filters m's data points and reports whether any are left.
+func keepPoints(m *metricspb.Metric, keep func(dataPoint) bool) bool {
 	switch d := m.Data.(type) {
 	case *metricspb.Metric_Gauge:
 		if d.Gauge != nil {
@@ -509,8 +552,8 @@ func keepPoints(m *metricspb.Metric, keep func([]*commonpb.KeyValue) bool) bool 
 	return false
 }
 
-func filterPoints[P interface{ GetAttributes() []*commonpb.KeyValue }](pts []P, keep func([]*commonpb.KeyValue) bool) []P {
-	return slices.DeleteFunc(pts, func(p P) bool { return !keep(p.GetAttributes()) })
+func filterPoints[P dataPoint](pts []P, keep func(dataPoint) bool) []P {
+	return slices.DeleteFunc(pts, func(p P) bool { return !keep(p) })
 }
 
 // attrsKey hashes attributes independent of their order.
@@ -528,13 +571,16 @@ func (s *Sink) attrsKey(attrs []*commonpb.KeyValue) uint64 {
 	return h.Sum64()
 }
 
-// seriesKey hashes the metric name with the resource and point attributes, which the store turns into labels.
-func (s *Sink) seriesKey(name string, resKey uint64, attrs []*commonpb.KeyValue) uint64 {
+// seriesKey hashes the metric name with the resource and point attributes and the bucket layout, which the store turns into labels.
+func (s *Sink) seriesKey(name string, resKey uint64, attrs []*commonpb.KeyValue, layout []float64) uint64 {
 	var h maphash.Hash
 	h.SetSeed(s.seed)
 	h.WriteString(name)
 	h.WriteByte(0)
 	maphash.WriteComparable(&h, resKey)
 	maphash.WriteComparable(&h, s.attrsKey(attrs))
+	for _, f := range layout {
+		maphash.WriteComparable(&h, math.Float64bits(f))
+	}
 	return h.Sum64()
 }

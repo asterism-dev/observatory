@@ -44,7 +44,8 @@ Limits, per VM and enforced on the node. Over a limit the data is dropped and th
 | Limit | Value |
 |---|---|
 | Logs | 100 lines/s, burst 500 |
-| App metric series | 2 000 per hour |
+| App metric series | 2 000 per hour; a histogram point counts one per bucket plus `_sum` and `_count` |
+| Buckets | 64 bounds, exponential buckets or quantiles per point |
 | Usage | only the 8 `system.*` names, 2 000 series |
 | Request body | 1 MiB, at most 128 attributes per resource, scope, point or record |
 | Connections | 2 concurrent |

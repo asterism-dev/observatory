@@ -470,3 +470,72 @@ func TestVMSinkKeepsQueueAfterExit(t *testing.T) {
 		t.Fatal("queue of a VM registered again was forgotten")
 	}
 }
+
+// histogramBody has one histogram point per label value, each with bounds explicit bounds.
+func histogramBody(t *testing.T, bounds int, values ...string) []byte {
+	pts := make([]*metricspb.HistogramDataPoint, len(values))
+	for i, v := range values {
+		pts[i] = &metricspb.HistogramDataPoint{ExplicitBounds: make([]float64, bounds),
+			Attributes: []*commonpb.KeyValue{{Key: "k", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}}}
+		for j := range bounds {
+			pts[i].ExplicitBounds[j] = float64(j)
+		}
+	}
+	m := &metricspb.Metric{Name: "latency", Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{DataPoints: pts}}}
+	return marshal(t, &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{m}}}}}})
+}
+
+func (h *fakeHub) histogramPoints(t *testing.T) int {
+	n := 0
+	for _, r := range h.requests() {
+		var req colmetricspb.ExportMetricsServiceRequest
+		if r.path != "/otlp/v1/metrics" || gproto.Unmarshal(r.body, &req) != nil {
+			continue
+		}
+		for _, rm := range req.ResourceMetrics {
+			for _, sm := range rm.ScopeMetrics {
+				for _, m := range sm.Metrics {
+					n += len(m.GetHistogram().GetDataPoints())
+				}
+			}
+		}
+	}
+	return n
+}
+
+func TestVMSinkHistogramSeriesWeight(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	// Each point is 60 buckets + 1 + _sum + _count = 63 series: 31 fit in 2 000, the other 9 are dropped.
+	if code := post(t, c, "/v1/metrics", "app", histogramBody(t, 60, seq(0, 40)...), false); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	eventually(t, "histograms", func() bool { return e.hub.histogramPoints(t) > 0 })
+	if n := e.hub.histogramPoints(t); n != 31 || e.drops.get("series") != 9 {
+		t.Fatalf("forwarded %d points, series drops %d", n, e.drops.get("series"))
+	}
+
+	// The same attributes with other bounds are new series.
+	e2 := newTestEnv(t)
+	c2 := e2.serve(t, vm)
+	post(t, c2, "/v1/metrics", "app", histogramBody(t, 60, seq(0, 31)...), false)
+	post(t, c2, "/v1/metrics", "app", histogramBody(t, 61, "0"), false)
+	time.Sleep(50 * time.Millisecond)
+	if e2.drops.get("series") != 1 {
+		t.Fatalf("changed bounds: series drops %d", e2.drops.get("series"))
+	}
+
+	if code := post(t, c, "/v1/metrics", "app", histogramBody(t, maxBuckets+1, "x"), false); code != http.StatusBadRequest || e.drops.get("body") != 1 {
+		t.Fatalf("%d bounds: status %d, body drops %d", maxBuckets+1, code, e.drops.get("body"))
+	}
+}
+
+func TestVMSinkPreScanCountsBounds(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	if code := post(t, c, "/v1/metrics", "app", histogramBody(t, maxItems, "x"), true); code != http.StatusRequestEntityTooLarge || e.drops.get("body") != 1 {
+		t.Fatalf("%d packed bounds: status %d, body drops %d", maxItems, code, e.drops.get("body"))
+	}
+}
