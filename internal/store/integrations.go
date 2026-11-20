@@ -24,7 +24,9 @@ const (
 )
 
 // ErrIntegrationRefresh is checked before sealing so a CHECK violation, whose detail would carry the row, never surfaces.
-var ErrIntegrationRefresh = errors.New("a refresh token is required for oauth sign-ins and not allowed otherwise")
+var ErrIntegrationRefresh = errors.New("a refresh token is required for oauth and adc sign-ins and not allowed otherwise")
+
+var ErrInvalidQuotaProject = errors.New("invalid quota project")
 
 // AccountRef names an oauth account; an integration's first account shares its id.
 type AccountRef struct{ OrgID, ID uuid.UUID }
@@ -47,9 +49,10 @@ type Integration struct {
 	LastSwitchAt                       *time.Time
 	LastSwitchFrom, LastSwitchTo       *uuid.UUID // account ids of the last automatic switch
 	AutoSwitch                         bool
+	QuotaProject                       string
 }
 
-// IntegrationSecret is the token to store; Refresh is set only for oauth sources.
+// IntegrationSecret is the token to store; Refresh is set only for oauth and adc sources.
 type IntegrationSecret struct {
 	Token, Refresh  string
 	AccessExpiresAt *time.Time
@@ -74,14 +77,14 @@ func (ResolvedIntegration) MarshalJSON() ([]byte, error) { return []byte(`"redac
 // A Claude integration shows its active account's source, account, expiry and status.
 const integrationCols = `i.id, i.org_id, i.kind, coalesce(a.source, i.source), i.scope, coalesce(i.team_id, i.user_id), i.mode, coalesce(a.account, i.account),
 	i.scopes_info, i.provider_expires_at, coalesce(a.access_expires_at, i.access_expires_at), coalesce(a.status, i.status), coalesce(a.last_error, i.last_error),
-	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at, i.last_switch_at, i.last_switch_from, i.last_switch_to, i.auto_switch`
+	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at, i.last_switch_at, i.last_switch_from, i.last_switch_to, i.auto_switch, i.quota_project`
 
 const integrationFrom = " FROM integrations i LEFT JOIN integration_accounts a ON a.integration_id = i.id AND a.active "
 
 func scanIntegration(r pgx.Row, extra ...any) (v Integration, err error) {
 	dest := append([]any{&v.ID, &v.OrgID, &v.Kind, &v.Source, &v.Scope, &v.OwnerID, &v.Mode, &v.Account, &v.ScopesInfo, &v.ProviderExpiresAt,
 		&v.AccessExpiresAt, &v.Status, &v.LastError, &v.WasInVM, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt,
-		&v.LastSwitchAt, &v.LastSwitchFrom, &v.LastSwitchTo, &v.AutoSwitch}, extra...)
+		&v.LastSwitchAt, &v.LastSwitchFrom, &v.LastSwitchTo, &v.AutoSwitch, &v.QuotaProject}, extra...)
 	err = r.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
@@ -93,12 +96,16 @@ func integrationAAD(org, id uuid.UUID, field string) []byte {
 	return []byte("integration:" + org.String() + ":" + id.String() + ":" + field)
 }
 
-// checkIntegrationSecret drops an access expiry for non-oauth sources.
+func refreshes(source integrations.Source) bool {
+	return source == integrations.SourceOAuth || source == integrations.SourceADC
+}
+
+// checkIntegrationSecret drops an access expiry for sources without a refresh token.
 func checkIntegrationSecret(source integrations.Source, sec IntegrationSecret) (IntegrationSecret, error) {
-	if (source == integrations.SourceOAuth) != (sec.Refresh != "") {
+	if refreshes(source) != (sec.Refresh != "") {
 		return sec, ErrIntegrationRefresh
 	}
-	if source != integrations.SourceOAuth {
+	if !refreshes(source) {
 		sec.AccessExpiresAt = nil
 	}
 	return sec, nil
@@ -158,6 +165,9 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 	if v.Mode == "" {
 		v.Mode = integrations.ModeProxy
 	}
+	if !integrations.ValidQuotaProject(v.QuotaProject) {
+		return Integration{}, ErrInvalidQuotaProject
+	}
 	sec, err := checkIntegrationSecret(v.Source, sec)
 	if err != nil {
 		return Integration{}, err
@@ -187,11 +197,11 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 		teamID, userID := envOwnerColumns(integrationOwner(v))
 		err = tx.q.QueryRow(ctx, `
 			INSERT INTO integrations (id, org_id, kind, source, scope, team_id, user_id, mode, account, scopes_info, provider_expires_at,
-			  nonce, ciphertext, refresh_nonce, refresh_ciphertext, access_expires_at, placeholder, was_in_vm, created_by, updated_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $8 = 'vm', $18, $18)
+			  nonce, ciphertext, refresh_nonce, refresh_ciphertext, access_expires_at, placeholder, was_in_vm, created_by, updated_by, quota_project)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $8 = 'vm', $18, $18, $19)
 			RETURNING status, last_error, was_in_vm, created_at, updated_at`,
 			v.ID, v.OrgID, v.Kind, source, v.Scope, teamID, userID, v.Mode, account, v.ScopesInfo, v.ProviderExpiresAt,
-			nonce, ct, rnonce, rct, accessExpiresAt, placeholder, v.CreatedBy).Scan(&v.Status, &v.LastError, &v.WasInVM, &v.CreatedAt, &v.UpdatedAt)
+			nonce, ct, rnonce, rct, accessExpiresAt, placeholder, v.CreatedBy, v.QuotaProject).Scan(&v.Status, &v.LastError, &v.WasInVM, &v.CreatedAt, &v.UpdatedAt)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -273,8 +283,17 @@ func (s *Store) replaceActiveAccountToken(ctx context.Context, key seal.Key, old
 
 // DueOAuthRefreshes lists working oauth accounts whose access token expires before before.
 func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]AccountRef, error) {
-	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM integration_accounts
-		WHERE source = 'oauth' AND status = 'ok' AND access_expires_at < $1 ORDER BY access_expires_at`, before)
+	return s.dueRefreshes(ctx, "integration_accounts", integrations.SourceOAuth, before)
+}
+
+// DueADCRefreshes lists working adc integrations whose access token expires before before.
+func (s *Store) DueADCRefreshes(ctx context.Context, before time.Time) ([]AccountRef, error) {
+	return s.dueRefreshes(ctx, "integrations", integrations.SourceADC, before)
+}
+
+func (s *Store) dueRefreshes(ctx context.Context, table string, source integrations.Source, before time.Time) ([]AccountRef, error) {
+	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM `+table+`
+		WHERE source = $1 AND status = 'ok' AND access_expires_at < $2 ORDER BY access_expires_at`, source, before)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +303,17 @@ func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]Acco
 // RefreshIntegration runs refresh under the row lock, since the provider rotates refresh tokens; false, nil when the row is locked elsewhere or no longer due.
 func (s *Store) RefreshIntegration(ctx context.Context, ref AccountRef, before time.Time,
 	refresh func(ctx context.Context, refreshToken string) (integrations.OAuthTokens, error)) (bool, error) {
+	return s.refreshRow(ctx, "integration_accounts", integrations.SourceOAuth, ref, before, refresh)
+}
+
+// RefreshADCIntegration is RefreshIntegration for a gcloud integration; the sealed ADC blob is kept, since Google does not rotate it.
+func (s *Store) RefreshADCIntegration(ctx context.Context, ref AccountRef, before time.Time,
+	refresh func(ctx context.Context, adc string) (integrations.OAuthTokens, error)) (bool, error) {
+	return s.refreshRow(ctx, "integrations", integrations.SourceADC, ref, before, refresh)
+}
+
+func (s *Store) refreshRow(ctx context.Context, table string, source integrations.Source, ref AccountRef, before time.Time,
+	refresh func(ctx context.Context, refreshToken string) (integrations.OAuthTokens, error)) (bool, error) {
 	var refreshed bool
 	var refreshErr error
 	// Once the provider has rotated the refresh token, cancelling ctx must not roll back the write; it gets its own 10 s instead.
@@ -292,9 +322,9 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref AccountRef, before t
 	var deadline *time.Timer
 	err := s.InTx(dbctx, func(tx *Store) error {
 		var rnonce, rct []byte
-		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM integration_accounts
-			WHERE org_id = $1 AND id = $2 AND source = 'oauth' AND status = 'ok' AND access_expires_at < $3
-			FOR UPDATE SKIP LOCKED`, ref.OrgID, ref.ID, before).Scan(&rnonce, &rct)
+		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM `+table+`
+			WHERE org_id = $1 AND id = $2 AND source = $4 AND status = 'ok' AND access_expires_at < $3
+			FOR UPDATE SKIP LOCKED`, ref.OrgID, ref.ID, before, source).Scan(&rnonce, &rct)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -311,14 +341,17 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref AccountRef, before t
 		}
 		t, err := refresh(ctx, string(old))
 		deadline = time.AfterFunc(10*time.Second, cancel)
+		if source == integrations.SourceADC {
+			t.Refresh = string(old)
+		}
 		var sec IntegrationSecret
 		if err == nil {
-			sec, err = checkIntegrationSecret(integrations.SourceOAuth, IntegrationSecret{Token: t.Access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt})
+			sec, err = checkIntegrationSecret(source, IntegrationSecret{Token: t.Access, Refresh: t.Refresh, AccessExpiresAt: &t.ExpiresAt})
 		}
 		if refreshErr = err; err != nil {
 			// Our own shutdown or timeout must never make the one-way switch to expired.
 			ours := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-			_, err := tx.q.Exec(dbctx, `UPDATE integration_accounts SET
+			_, err := tx.q.Exec(dbctx, `UPDATE `+table+` SET
 				status = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'expired' ELSE 'ok' END,
 				last_error = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'sign in again' ELSE 'refresh failed' END
 				WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, errors.Is(err, integrations.ErrInvalidGrant), !ours)
@@ -328,7 +361,7 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref AccountRef, before t
 		if err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(dbctx, `UPDATE integration_accounts SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
+		_, err = tx.q.Exec(dbctx, `UPDATE `+table+` SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
 			access_expires_at = $7, last_error = '' WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, nonce, ct, rnonce, rct, sec.AccessExpiresAt)
 		refreshed = err == nil
 		return err
@@ -368,6 +401,16 @@ func (s *Store) SetIntegrationMode(ctx context.Context, old Integration, mode in
 func (s *Store) SetIntegrationAutoSwitch(ctx context.Context, old Integration, on bool, by uuid.UUID) error {
 	tag, err := s.q.Exec(ctx, "UPDATE integrations SET auto_switch = $7, updated_by = $8, updated_at = now() WHERE "+envGuard,
 		integrationGuardArgs(old, on, by)...)
+	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
+}
+
+// SetIntegrationQuotaProject sets the project gcloud bills API quota to; empty leaves it to the client.
+func (s *Store) SetIntegrationQuotaProject(ctx context.Context, old Integration, project string, by uuid.UUID) error {
+	if !integrations.ValidQuotaProject(project) {
+		return ErrInvalidQuotaProject
+	}
+	tag, err := s.q.Exec(ctx, "UPDATE integrations SET quota_project = $7, updated_by = $8, updated_at = now() WHERE "+envGuard,
+		integrationGuardArgs(old, project, by)...)
 	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
 }
 
