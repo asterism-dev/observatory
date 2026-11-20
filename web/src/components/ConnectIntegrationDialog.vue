@@ -7,19 +7,8 @@ import { api, ApiError } from '@/api'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import { defaultSource, kindLabels, type ClaudeAccount, type Integration, type IntegrationKind, type IntegrationMode, type IntegrationScope } from '@/composables/integrations'
 
-const props = defineProps<{
-  open: boolean
-  orgId: string
-  scopes: IntegrationScope[]
-  replacing: Integration | null
-  addTo?: Integration | null
-  replaceAccount?: ClaudeAccount | null
-}>()
-const emit = defineEmits<{
-  'update:open': [boolean]
-  saved: []
-  conflict: []
-}>()
+const props = defineProps<{ open: boolean; orgId: string; scopes: IntegrationScope[]; replacing: Integration | null; addTo?: Integration | null; replaceAccount?: ClaudeAccount | null }>()
+const emit = defineEmits<{ 'update:open': [boolean]; saved: []; conflict: [] }>()
 
 const { t } = useI18n()
 const kind = ref<IntegrationKind>('github')
@@ -33,17 +22,9 @@ const signIn = ref<{ url: string; state: string } | null>(null)
 const busy = ref(false)
 const error = ref('')
 
-const kindOptions = (Object.keys(kindLabels) as IntegrationKind[]).map((k) => ({
-  value: k,
-  label: kindLabels[k],
-}))
+const kindOptions = (Object.keys(kindLabels) as IntegrationKind[]).map((k) => ({ value: k, label: kindLabels[k] }))
 const freeScopes = computed(() => props.scopes.filter((s) => !s.connected.includes(kind.value)))
-const scopeOptions = computed(() =>
-  freeScopes.value.map((s) => ({
-    value: scopeKey(s),
-    label: scopeLabel(s, t),
-  })),
-)
+const scopeOptions = computed(() => freeScopes.value.map((s) => ({ value: scopeKey(s), label: scopeLabel(s, t) })))
 const target = computed(() => freeScopes.value.find((s) => scopeKey(s) === scope.value))
 const signingIn = computed(() => kind.value === 'claude' && claudeSource.value === 'oauth')
 const source = computed(() => (kind.value === 'claude' ? claudeSource.value : defaultSource[kind.value]))
@@ -98,31 +79,14 @@ const base = () => `/api/orgs/${props.orgId}/integrations`
 
 async function check() {
   if (!target.value) return
-  const body = {
-    kind: kind.value,
-    source: source.value,
-    ...scopeRef(target.value),
-    token: token.value,
-    dryRun: true,
-  }
-  const res = await call(() =>
-    api<{ account: string }>(base(), {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  )
+  const body = { kind: kind.value, source: source.value, ...scopeRef(target.value), token: token.value, dryRun: true }
+  const res = await call(() => api<{ account: string }>(base(), { method: 'POST', body: JSON.stringify(body) }))
   if (res) checked.value = res.account
 }
 
 async function connect() {
   if (!target.value) return
-  const body = {
-    kind: kind.value,
-    source: source.value,
-    ...scopeRef(target.value),
-    mode: mode.value,
-    token: token.value,
-  }
+  const body = { kind: kind.value, source: source.value, ...scopeRef(target.value), mode: mode.value, token: token.value }
   const res = await call(() => api(base(), { method: 'POST', body: JSON.stringify(body) }))
   token.value = ''
   if (res !== undefined) done()
@@ -140,12 +104,7 @@ async function replace() {
 async function addAccount() {
   if (!props.addTo) return
   const body = { source: 'setup-token', token: token.value }
-  const res = await call(() =>
-    api(`${base()}/${props.addTo?.id}/accounts`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  )
+  const res = await call(() => api(`${base()}/${props.addTo?.id}/accounts`, { method: 'POST', body: JSON.stringify(body) }))
   token.value = ''
   if (res !== undefined) done()
 }
@@ -158,12 +117,7 @@ async function startSignIn() {
       : props.replacing
         ? { replaceId: props.replacing.id }
         : { ...(target.value ? scopeRef(target.value) : {}), mode: mode.value }
-  const res = await call(() =>
-    api<{ url: string; state: string }>(`${base()}/claude/sign-in`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  )
+  const res = await call(() => api<{ url: string; state: string }>(`${base()}/claude/sign-in`, { method: 'POST', body: JSON.stringify(body) }))
   if (!res) return
   signIn.value = res
   window.open(res.url, '_blank', 'noopener,noreferrer')
@@ -172,12 +126,7 @@ async function startSignIn() {
 async function finishSignIn() {
   if (!signIn.value) return
   const body = { state: signIn.value.state, code: code.value.trim() }
-  const res = await call(() =>
-    api(`${base()}/claude/sign-in/finish`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  )
+  const res = await call(() => api(`${base()}/claude/sign-in/finish`, { method: 'POST', body: JSON.stringify(body) }))
   code.value = ''
   if (res !== undefined) done()
   else if (error.value) signIn.value = null
@@ -190,11 +139,7 @@ function done() {
 </script>
 
 <template>
-  <Dialog
-    :open="open"
-    :title="addTo ? t('integrations.addAccountTitle') : replacing ? t('integrations.replaceTitle', { kind: kindLabels[replacing.kind] }) : t('integrations.connectTitle')"
-    @update:open="(o) => !busy && emit('update:open', o)"
-  >
+  <Dialog :open="open" :title="addTo ? t('integrations.addAccountTitle') : replacing ? t('integrations.replaceTitle', { kind: kindLabels[replacing.kind] }) : t('integrations.connectTitle')" @update:open="(o) => !busy && emit('update:open', o)">
     <template v-if="!replacing && !addTo">
       <Select v-model="kind" :options="kindOptions" :aria-label="t('integrations.kind')" />
       <Select v-if="scopeOptions.length" v-model="scope" :options="scopeOptions" :aria-label="t('integrations.scope')" />
@@ -212,15 +157,11 @@ function done() {
     </template>
     <template v-else>
       <TextInput v-model="token" type="password" autocomplete="off" spellcheck="false" :aria-label="t('integrations.token')" :placeholder="t('integrations.token')" />
-      <p v-if="checked" role="status">
-        {{ t('integrations.checked', { account: checked || '–' }) }}
-      </p>
+      <p v-if="checked" role="status">{{ t('integrations.checked', { account: checked || '–' }) }}</p>
     </template>
     <template v-if="!replacing && !addTo">
       <RadioGroup v-model="mode" :options="modeOptions" :aria-label="t('integrations.delivery')" />
-      <p v-if="teamVmWarning" role="alert">
-        {{ t('integrations.teamVmWarning') }}
-      </p>
+      <p v-if="teamVmWarning" role="alert">{{ t('integrations.teamVmWarning') }}</p>
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>

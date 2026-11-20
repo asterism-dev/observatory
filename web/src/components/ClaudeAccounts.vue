@@ -111,6 +111,7 @@ function onDragStart(e: DragEvent, id: string) {
   dragId.value = id
   if (!e.dataTransfer) return
   e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', id)
   const item = (e.target as HTMLElement).closest('li')
   if (item) e.dataTransfer.setDragImage(item, 0, 0)
 }
