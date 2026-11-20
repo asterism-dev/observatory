@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -280,6 +281,23 @@ func TestReplaceAccountToken(t *testing.T) {
 			t.Fatalf("account %+v", x)
 		}
 	}
+	now := time.Now().Truncate(time.Second)
+	if _, err := s.RecordUsage(ctx, limitObs(b, now, now.Add(time.Hour)), now); err != nil {
+		t.Fatal(err)
+	}
+	execSQL(t, pool, "UPDATE integration_accounts SET activated_manually = true WHERE id = $1", b)
+	if err := s.ReplaceAccountToken(ctx, acct, integrations.SourceSetupToken, "b@example.com", store.IntegrationSecret{Token: "again"}, uid); err != nil {
+		t.Fatal(err)
+	}
+	if x := mustAccounts(t, s, org.ID, cl.ID)[1]; x.LimitedUntil == nil || x.Usage.At == nil || !x.ActivatedManually {
+		t.Fatalf("same email dropped state %+v", x)
+	}
+	if err := s.ReplaceAccountToken(ctx, acct, integrations.SourceSetupToken, "other@example.com", store.IntegrationSecret{Token: "new"}, uid); err != nil {
+		t.Fatal(err)
+	}
+	if x := mustAccounts(t, s, org.ID, cl.ID)[1]; x.Account != "other@example.com" || x.LimitedUntil != nil || x.ActivatedManually || x.Usage != (store.AccountUsage{}) {
+		t.Fatalf("new email kept old state %+v", x)
+	}
 	acct.ID = uuid.New()
 	if err := s.ReplaceAccountToken(ctx, acct, integrations.SourceSetupToken, "b@example.com", store.IntegrationSecret{Token: "x"}, uid); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown account: %v", err)
@@ -296,7 +314,8 @@ func TestActivateAccountSwapsActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := mustAccounts(t, s, org.ID, cl.ID)
-	if got[0].Active || !got[1].Active || got[1].ID != b || !got[1].ActivatedManually {
+	// Only a choice made while the account is limited counts as manual.
+	if got[0].Active || !got[1].Active || got[1].ID != b || got[1].ActivatedManually {
 		t.Fatalf("accounts %+v", got)
 	}
 }
@@ -503,18 +522,97 @@ func TestRecordUsageManualActiveNoSwitch(t *testing.T) {
 	ctx := context.Background()
 	s, pool, uid, cl, a, _ := twoAccounts(t)
 	now := time.Now().Truncate(time.Second)
-	execSQL(t, pool, "UPDATE integrations SET last_switch_at = now(), last_switch_from = $2, last_switch_to = $2 WHERE id = $1", cl.ID, a)
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now, now.Add(time.Hour)), now); err != nil || sw == nil {
+		t.Fatalf("first limit %v: %v", sw, err)
+	}
 	if err := s.ActivateAccount(ctx, mustAccounts(t, s, cl.OrgID, cl.ID)[0], true, uid); err != nil {
 		t.Fatal(err)
 	}
 	if from, to := lastSwitch(t, pool, cl.ID); from != nil || to != nil {
 		t.Fatalf("manual activation kept last switch %v → %v", from, to)
 	}
-	if sw, err := s.RecordUsage(ctx, limitObs(a, now, now.Add(time.Hour)), now); err != nil || sw != nil {
+	if !mustAccounts(t, s, cl.OrgID, cl.ID)[0].ActivatedManually {
+		t.Fatal("limited account activated manually not marked")
+	}
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now.Add(time.Second), now.Add(2*time.Hour)), now); err != nil || sw != nil {
 		t.Fatalf("switch %v: %v", sw, err)
 	}
 	if id := activeID(t, s, cl); id != a {
 		t.Fatalf("active %v", id)
+	}
+}
+
+func TestRecordUsageManualUnlimitedThenLimitSwitches(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, cl, a, b := twoAccounts(t)
+	if err := s.ActivateAccount(ctx, mustAccounts(t, s, cl.OrgID, cl.ID)[1], true, uid); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Truncate(time.Second)
+	sw, err := s.RecordUsage(ctx, limitObs(b, now, now.Add(time.Hour)), now)
+	if err != nil || sw == nil || sw.From != b || sw.To != a {
+		t.Fatalf("switch %+v: %v", sw, err)
+	}
+}
+
+func TestManualLimitedAccountSwitchesAfterItsLimitPassed(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, cl, a, b := twoAccounts(t)
+	now := time.Now().Truncate(time.Second)
+	execSQL(t, pool, "UPDATE integration_accounts SET limited_until = $2 WHERE id = $1", a, now.Add(time.Hour))
+	if err := s.ActivateAccount(ctx, mustAccounts(t, s, cl.OrgID, cl.ID)[0], true, uid); err != nil {
+		t.Fatal(err)
+	}
+	execSQL(t, pool, "UPDATE integration_accounts SET limited_until = $2 WHERE id = $1", b, now.Add(150*time.Minute))
+	// a's own limit has passed; a new limit while b is still limited cannot switch, but must not stay manual.
+	later := now.Add(2 * time.Hour)
+	if sw, err := s.RecordUsage(ctx, limitObs(a, later, now.Add(5*time.Hour)), later); err != nil || sw != nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	if mustAccounts(t, s, cl.OrgID, cl.ID)[0].ActivatedManually {
+		t.Fatal("manual flag outlived the limit it was chosen under")
+	}
+	sws, err := s.ResumeLimited(ctx, now.Add(3*time.Hour))
+	if err != nil || len(sws) != 1 || sws[0].From != a || sws[0].To != b {
+		t.Fatalf("switches %+v: %v", sws, err)
+	}
+}
+
+func TestConcurrentActivateAndAutoSwitchKeepOneActive(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, cl, a, b := twoAccounts(t)
+	insertAccount(t, pool, cl, "c@example.com", "c", store.IntegrationOK)
+	accts := mustAccounts(t, s, cl.OrgID, cl.ID)
+	now := time.Now().Truncate(time.Second)
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	for i := range 4 {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			errs <- s.ActivateAccount(ctx, accts[i%3], true, uid)
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := s.RecordUsage(ctx, limitObs(a, now.Add(time.Duration(i)*time.Second), now.Add(time.Hour)), now)
+			errs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := s.RecordUsage(ctx, limitObs(b, now.Add(time.Duration(i)*time.Second), now.Add(time.Hour)), now)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM integration_accounts WHERE integration_id = $1 AND active", cl.ID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("active accounts %d: %v", n, err)
 	}
 }
 

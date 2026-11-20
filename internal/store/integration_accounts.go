@@ -213,7 +213,11 @@ func (s *Store) ReplaceAccountToken(ctx context.Context, a IntegrationAccount, s
 	}
 	tag, err := s.q.Exec(ctx, `
 		UPDATE integration_accounts SET source = $3, account = $4, nonce = $5, ciphertext = $6, refresh_nonce = $7, refresh_ciphertext = $8,
-		  access_expires_at = $9, status = 'ok', last_error = '', updated_by = $10, updated_at = now()
+		  access_expires_at = $9, status = 'ok', last_error = '', updated_by = $10, updated_at = now(),
+		  five_hour_pct = CASE WHEN account = $4 THEN five_hour_pct END, week_pct = CASE WHEN account = $4 THEN week_pct END,
+		  five_hour_resets_at = CASE WHEN account = $4 THEN five_hour_resets_at END, week_resets_at = CASE WHEN account = $4 THEN week_resets_at END,
+		  usage_source = CASE WHEN account = $4 THEN usage_source ELSE '' END, usage_at = CASE WHEN account = $4 THEN usage_at END,
+		  limited_until = CASE WHEN account = $4 THEN limited_until END, activated_manually = activated_manually AND account = $4
 		WHERE org_id = $1 AND id = $2`, a.OrgID, a.ID, src, email, nonce, ct, rnonce, rct, sec.AccessExpiresAt, by)
 	return s.guardedWriteResult(ctx, "integration_accounts", a.OrgID, a.ID, tag.RowsAffected(), err)
 }
@@ -224,13 +228,13 @@ func (s *Store) activate(ctx context.Context, org, integration, id uuid.UUID, ma
 		return err
 	}
 	// by is uuid.Nil for an automatic switch, which keeps the last human editor.
-	tag, err := s.q.Exec(ctx, `UPDATE integration_accounts SET active = true, activated_manually = $4,
+	tag, err := s.q.Exec(ctx, `UPDATE integration_accounts SET active = true, activated_manually = $4 AND coalesce(limited_until > now(), false),
 		  updated_by = coalesce(nullif($5::uuid, '00000000-0000-0000-0000-000000000000'), updated_by), updated_at = now()
 		WHERE org_id = $1 AND integration_id = $2 AND id = $3`, org, integration, id, manual, by)
 	return s.guardedWriteResult(ctx, "integration_accounts", org, id, tag.RowsAffected(), err)
 }
 
-// ActivateAccount makes a the account VMs use; manual keeps the automatic switch from overriding the choice.
+// ActivateAccount makes a the account VMs use; manual on a limited account keeps the automatic switch from overriding the choice until that limit passes.
 func (s *Store) ActivateAccount(ctx context.Context, a IntegrationAccount, manual bool, by uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		if err := tx.lockIntegration(ctx, a.OrgID, a.IntegrationID); err != nil {
@@ -358,10 +362,10 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 		if err := tx.lockIntegration(ctx, org, integration); err != nil {
 			return err
 		}
-		var active, manual bool
+		var active bool
 		var limitedUntil, usageAt *time.Time
-		if err := tx.q.QueryRow(ctx, "SELECT active, activated_manually, limited_until, usage_at FROM integration_accounts WHERE id = $1 FOR UPDATE",
-			obs.Account).Scan(&active, &manual, &limitedUntil, &usageAt); err != nil {
+		if err := tx.q.QueryRow(ctx, "SELECT active, limited_until, usage_at FROM integration_accounts WHERE id = $1 FOR UPDATE",
+			obs.Account).Scan(&active, &limitedUntil, &usageAt); err != nil {
 			return err
 		}
 		// Poll and proxy stamp ObservedAt on different clocks, so only usage follows the newest report; a limit always applies and only grows.
@@ -373,13 +377,15 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 			}
 		}
 		if obs.LimitedUntil != nil {
-			if _, err := tx.q.Exec(ctx, "UPDATE integration_accounts SET limited_until = greatest(limited_until, $2) WHERE id = $1",
-				obs.Account, obs.LimitedUntil); err != nil {
+			// A new limit after the one the account was chosen under ends the manual choice.
+			if _, err := tx.q.Exec(ctx, `UPDATE integration_accounts SET limited_until = greatest(limited_until, $2),
+				activated_manually = activated_manually AND coalesce(limited_until > $3, false) WHERE id = $1`,
+				obs.Account, obs.LimitedUntil, now); err != nil {
 				return err
 			}
 		}
 		wasLimited := limitedUntil != nil && limitedUntil.After(now)
-		if !active || manual || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {
+		if !active || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {
 			return nil
 		}
 		var err error
@@ -485,6 +491,13 @@ func (s *Store) PollableAccounts(ctx context.Context) ([]PollAccount, error) {
 		out = append(out, PollAccount{AccountRef: AccountRef{OrgID: a.Org, ID: a.ID}, Active: a.Active, Source: a.Source, Token: string(plain)})
 	}
 	return out, nil
+}
+
+// MarkPollFailed shows a failed usage poll on the account, or clears that after a successful one, leaving other errors in place.
+func (s *Store) MarkPollFailed(ctx context.Context, ref AccountRef, failed bool) error {
+	_, err := s.q.Exec(ctx, `UPDATE integration_accounts SET last_error = CASE WHEN $3 THEN 'usage poll failed' ELSE '' END
+		WHERE org_id = $1 AND id = $2 AND last_error = CASE WHEN $3 THEN '' ELSE 'usage poll failed' END`, ref.OrgID, ref.ID, failed)
+	return err
 }
 
 // MarkNoUsageData stops polling an account whose token the usage endpoint rejects, until its token is replaced.
