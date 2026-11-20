@@ -78,6 +78,7 @@ const (
 	ActionVMSnapshotDelete    = "vm:snapshot-delete"
 	ActionVMRestore           = "vm:restore"
 	ActionVMFork              = "vm:fork"
+	ActionVMMetrics           = "vm:metrics"
 	ActionDiskCreate          = "disk:create"
 	ActionDiskCopy            = "disk:copy"
 	ActionDiskGrow            = "disk:grow"

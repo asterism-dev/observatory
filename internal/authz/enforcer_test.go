@@ -227,7 +227,7 @@ func TestExpandActions(t *testing.T) {
 	if got := ExpandActions("audit:read"); !reflect.DeepEqual(got, []string{"audit:read"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork"}) {
+	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics"}) {
 		t.Errorf("vm:*: got %v", got)
 	}
 	if got := ExpandActions("vm:ssh"); len(got) != 0 {
@@ -990,6 +990,29 @@ func TestEnforcerVMLifecycleGrants(t *testing.T) {
 	for _, act := range []string{"vm:snapshot", "vm:restore", "vm:fork"} {
 		if !slices.Contains(ExpandActions("vm:*"), act) {
 			t.Errorf("catalog lacks %s", act)
+		}
+	}
+}
+
+func TestEnforcerVMMetricsGrants(t *testing.T) {
+	f := newVMFixture()
+	e := mustNew(t, f.policy())
+	for _, c := range []struct {
+		name string
+		sub  uuid.UUID
+		vm   uuid.UUID
+		want bool
+	}{
+		{"owner own vm", f.a, f.userVM, true},
+		{"team member team vm", f.tm, f.teamVM, true},
+		{"member other's vm", f.b, f.userVM, false},
+		{"team member user vm", f.tm, f.userVM, false},
+		{"admin user vm", f.admin, f.userVM, true},
+		{"admin team vm", f.admin, f.teamVM, true},
+		{"org owner team vm", f.owner, f.teamVM, true},
+	} {
+		if got := e.Allowed(UserSubject(c.sub), f.org, VMObject(c.vm), "vm:metrics"); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
 		}
 	}
 }
