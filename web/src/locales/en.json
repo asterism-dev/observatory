@@ -377,6 +377,7 @@
     "machine": "Machine",
     "tabs": {
       "overview": "Overview",
+      "metrics": "Metrics",
       "vms": "VMs",
       "settings": "Settings"
     },

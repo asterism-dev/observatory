@@ -25,10 +25,10 @@ const { org } = useOrg()
 const { me } = useMe()
 
 const nodeId = computed(() => String(route.params.nodeId))
-const tabIds = ['overview', 'vms', 'settings']
-const tabs = computed(() => tabIds.map((v) => ({ value: v, label: t(`nodes.tabs.${v}`) })))
+const tabIds = computed(() => (node.value?.canTelemetry ? ['overview', 'metrics', 'vms', 'settings'] : ['overview', 'vms', 'settings']))
+const tabs = computed(() => tabIds.value.map((v) => ({ value: v, label: t(`nodes.tabs.${v}`) })))
 const tab = computed({
-  get: () => (tabIds.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
+  get: () => (tabIds.value.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
   set: (v) => router.replace({ query: { ...route.query, tab: v === 'overview' ? undefined : v } }),
 })
 const pct = (used: number, total: number) => (total ? (used / total) * 100 : null)
@@ -47,6 +47,9 @@ const confirmDelete = ref(false)
 const updateOpen = ref(false)
 const usageRange = ref<UsageRange | null>(null)
 const hoverAt = ref<number | null>(null)
+watch(tab, (v) => {
+  if (v !== 'metrics') usageRange.value = hoverAt.value = null
+})
 
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -164,10 +167,6 @@ watch(
               </Card>
             </div>
           </Section>
-          <template v-if="node.canTelemetry">
-            <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
-            <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" :hover-at="hoverAt" />
-          </template>
           <Section :label="t('nodes.machine')">
             <Card>
               <KeyValueList>
@@ -188,6 +187,11 @@ watch(
               </KeyValueList>
             </Card>
           </Section>
+        </template>
+
+        <template v-if="tab === 'metrics'">
+          <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+          <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" :hover-at="hoverAt" />
         </template>
 
         <VMList v-if="tab === 'vms'" :org-id="org.id" :vms="vms" :empty="t('nodes.noVms')" @changed="load" />
