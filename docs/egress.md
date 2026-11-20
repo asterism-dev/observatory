@@ -79,6 +79,23 @@ Masking keeps the length, so `Content-Length`, chunking and WebSocket framing st
   answered with `502` and never passed on unscrubbed.
 - `Alt-Svc` is removed, so clients do not move a bound host to QUIC.
 
+### Claude requests (`api.anthropic.com`)
+
+- **Retry buffer:** a request to `api.anthropic.com` that carries the placeholder of a multi-account Claude
+  integration ([integrations.md](integrations.md#several-claude-accounts)) is read into memory, up to 32 MiB of body.
+  A confirmed limit (429, `anthropic-ratelimit-unified-status: rejected`, no overage on offer) marks that account
+  limited in this proxy and sends the same request again with the next account in order that is not limited. The 429
+  is held (body capped at 1 MiB) until an answer is known; if every account is limited, the proxy sends the request
+  with the first account only and the client gets that 429. A larger body is streamed without a retry. Upgrades and
+  `CONNECT` are not retried. Other hosts and single-account integrations are never buffered.
+- **Usage:** the proxy reads the `anthropic-ratelimit-unified-*` headers of these responses and reports them to the hub
+  through the node; headers stay in the response.
+- **Stream watchdog:** on every `text/event-stream` response from `api.anthropic.com` (also single-account and
+  unbound), the proxy aborts the upstream request when no bytes arrive for 120 s and appends
+  `event: error` with an `api_error` ("upstream sent nothing for 120s, connection aborted") so the client does not
+  read the cut stream as a normal end. A stall is not a limit: no retry, no switch. Other content types get no idle
+  limit.
+
 ### Logs
 
 The node journal (`journalctl -u observatory-node`) gets one line per request to a bound host:
@@ -192,6 +209,7 @@ Future VM sharing must not reopen this.
     rest is masked when it arrives), and a held tail of 4 bytes or more is masked with `*`, even when it turns out not
     to be a value (innocent data that ends a message with a prefix of a secret);
   - HTTP/1.1 trailers are dropped when the upstream also sends `Content-Length`.
+- **Claude retry:** up to 32 MiB of body is held in memory per in-flight multi-account Claude request.
 - **Node DNS:** the node reads `/etc/resolv.conf` once at start; restart it after the nameservers change.
 - **Tailnet range:** `100.64.0.0/10` is not blocked for VMs or proxies (needed by the current test setup); a node on a
   CGNAT or tailnet underlay exposes those addresses to its VMs.
