@@ -87,7 +87,8 @@ Masking keeps the length, so `Content-Length`, chunking and WebSocket framing st
   limited in this proxy and sends the same request again with the next account in order that is not limited. The 429
   is held (body capped at 1 MiB) until an answer is known; if every account is limited, the proxy sends the request
   with the first account only and the client gets that 429. A larger body is streamed without a retry. Upgrades and
-  `CONNECT` are not retried. Other hosts and single-account integrations are never buffered.
+  `CONNECT` are not retried. Other hosts and single-account integrations are never buffered. All requests of one
+  proxy together buffer at most 256 MiB; a request that would exceed it is streamed without a retry.
 - **Usage:** the proxy reads the `anthropic-ratelimit-unified-*` headers of these responses and reports them to the hub
   through the node; headers stay in the response.
 - **Stream watchdog:** on a `text/event-stream` response from `api.anthropic.com` (also for single-account
@@ -209,7 +210,8 @@ Future VM sharing must not reopen this.
     rest is masked when it arrives), and a held tail of 4 bytes or more is masked with `*`, even when it turns out not
     to be a value (innocent data that ends a message with a prefix of a secret);
   - HTTP/1.1 trailers are dropped when the upstream also sends `Content-Length`.
-- **Claude retry:** up to 32 MiB of body is held in memory per in-flight multi-account Claude request.
+- **Claude retry:** up to 32 MiB of body is held in memory per in-flight multi-account Claude request, 256 MiB per
+  proxy in total; a request beyond that budget is not retried.
 - **Node DNS:** the node reads `/etc/resolv.conf` once at start; restart it after the nameservers change.
 - **Tailnet range:** `100.64.0.0/10` is not blocked for VMs or proxies (needed by the current test setup); a node on a
   CGNAT or tailnet underlay exposes those addresses to its VMs.

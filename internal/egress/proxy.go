@@ -34,6 +34,8 @@ type Proxy struct {
 	active       atomic.Int64
 	upstreamOnce sync.Once
 	upstreamTr   *http.Transport
+
+	retryBuffered atomic.Int64 // request body bytes held for Claude retries, bounded by retryBudget
 }
 
 // table is immutable once stored except for limited, the locally rejected accounts, which a new table forgets.

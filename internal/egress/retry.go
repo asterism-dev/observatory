@@ -18,6 +18,9 @@ const (
 	maxHeldBody = 1 << 20
 )
 
+// retryBudget caps the request bodies all of a proxy's Claude requests hold for a retry; a var so tests can shrink it.
+var retryBudget int64 = 256 << 20
+
 // accountTransport reports Claude usage per response and, if retry is set, resends a limit-rejected request with the next account.
 type accountTransport struct {
 	base    http.RoundTripper
@@ -88,15 +91,26 @@ func (a *accountTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		return res, err
 	}
 	var buf []byte
+	replay := true
 	if req.Body != nil {
-		var err error
-		buf, err = io.ReadAll(io.LimitReader(req.Body, maxRetryBody+1))
-		if err != nil {
-			req.Body.Close()
-			return nil, err
+		reserved := int64(maxRetryBody + 1)
+		if req.ContentLength >= 0 && req.ContentLength <= maxRetryBody {
+			reserved = req.ContentLength
+		}
+		if req.ContentLength > maxRetryBody || !a.p.reserveRetry(reserved) {
+			replay = false
+		} else {
+			var err error
+			buf, err = io.ReadAll(io.LimitReader(req.Body, maxRetryBody+1))
+			a.p.retryBuffered.Add(int64(len(buf)) - reserved)
+			defer a.p.retryBuffered.Add(-int64(len(buf)))
+			if err != nil {
+				req.Body.Close()
+				return nil, err
+			}
+			replay = len(buf) <= maxRetryBody
 		}
 	}
-	replay := len(buf) <= maxRetryBody
 	if replay && req.Body != nil {
 		req.Body.Close()
 	}
@@ -136,6 +150,14 @@ func (a *accountTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		}
 	}
 	return held, nil
+}
+
+func (p *Proxy) reserveRetry(n int64) bool {
+	if p.retryBuffered.Add(n) > retryBudget {
+		p.retryBuffered.Add(-n)
+		return false
+	}
+	return true
 }
 
 func hold(res *http.Response) (*http.Response, error) {

@@ -131,8 +131,8 @@ its email (setup-token accounts: "Setup token"), position and active flag. The s
   does not see the limit ([egress.md](egress.md#claude-requests-apianthropiccom)). It reports the limit at once; the
   hub activates the first account in order that is not limited, not `expired` and not the current one, and pushes to
   all your VMs' nodes.
-- **Transition only:** an account you switched on while limited stays active; the proxy still retries, the hub does
-  not move the switch. An account switched away from automatically is not switched back before its limit ends. If no
+- **Transition only:** an account you switched on while limited stays active until that limit ends; the proxy still
+  retries, the hub does not move the switch. A later limit switches as usual. An account switched away from automatically is not switched back before its limit ends. If no
   account is eligible, the active one stays and the page says all are limited until the earliest reset. When the
   active, non-manual account is still limited and another account's limit has passed, the hub moves to the first
   available one.
@@ -256,7 +256,8 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
   - Proxy readings are throttled to one per account per 30 s; readings within the window are dropped (a limit is
     never dropped).
   - Up to 32 MiB of a request body is buffered in the proxy per in-flight Claude request of a multi-account
-    integration; a larger body is sent without retry.
+    integration, 256 MiB per VM's proxy in total; a larger body, or one that would exceed the total, is sent without
+    retry.
 - **No GitHub App, no OAuth for GitHub or Linear, no GitHub Enterprise Server, no `ghcr.io`/`docker login`.**
 
 ## Real-credential checklist

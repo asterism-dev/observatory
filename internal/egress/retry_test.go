@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -197,6 +198,53 @@ func TestNoRetryOverBodyCap(t *testing.T) {
 	auths, bodies := f.seen()
 	if res.StatusCode != 429 || len(auths) != 1 || len(bodies[0]) != maxRetryBody+1 {
 		t.Fatalf("status %d auths %d", res.StatusCode, len(auths))
+	}
+}
+
+func TestRetryBufferBudget(t *testing.T) {
+	defer func(old int64) { retryBudget = old }(retryBudget)
+	retryBudget = 100
+	f := &fakeClaude{}
+	f.setLimited(tokA)
+	firstAtUpstream, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	f.gate = func(string) {
+		if calls.Add(1) == 1 {
+			close(firstAtUpstream)
+			<-release
+		}
+	}
+	r := newRig(t, []proto.HostBoundSecret{claudeSecret(proto.AlternateValue{Account: "acc-b", Value: tokB})}, f)
+	first := make(chan int)
+	go func() {
+		res, err := r.client(false).Do(claudePost(t, strings.Repeat("1", 60)))
+		if err != nil {
+			t.Error(err)
+			first <- 0
+			return
+		}
+		io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		first <- res.StatusCode
+	}()
+	<-firstAtUpstream
+	res, _ := r.do(r.client(false), claudePost(t, strings.Repeat("2", 60)))
+	close(release)
+	if code := <-first; code != 200 || res.StatusCode != 429 {
+		t.Fatalf("first %d second %d", code, res.StatusCode)
+	}
+	auths, bodies := f.seen()
+	var second int
+	for _, b := range bodies {
+		if strings.HasPrefix(b, "2") {
+			second++
+		}
+	}
+	if len(auths) != 3 || second != 1 {
+		t.Fatalf("upstream calls %d, second request %d", len(auths), second)
+	}
+	if n := r.p.retryBuffered.Load(); n != 0 {
+		t.Fatalf("budget still holds %d bytes", n)
 	}
 }
 
