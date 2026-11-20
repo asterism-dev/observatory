@@ -15,7 +15,7 @@ Metrics, every 10 seconds:
 Logs, from two sources:
 
 - `observatory-node`: the node agent's own log, with structured fields such as `vm`, `disk`, `image` and `err`.
-- `firecracker`: Firecracker's own log per VM, at level Warning.
+- `firecracker`: Firecracker's own log per VM, at level Warning and above.
 
 The guest's serial console (`console.log`) is not shipped. It is VM-internal output, and org admins must not see inside
 VMs.
@@ -23,7 +23,7 @@ VMs.
 ## Access
 
 `node:metrics` gates the usage graphs and logs on the node page. Admins and owners have it; members only through a
-custom role ([permissions.md](permissions.md)). Charts lag about 30 seconds behind now.
+custom role ([permissions.md](permissions.md)). VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
 
 ## Configuration
 
