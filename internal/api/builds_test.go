@@ -324,7 +324,7 @@ func TestBuildTimeoutDeletesVM(t *testing.T) {
 	if got := e.build(queued); got.State != store.BuildQueued {
 		t.Fatalf("placed without room: %+v", got)
 	}
-	e.sched.Now = func() time.Time { return time.Now().Add(builds.Timeout) }
+	e.sched.Now = func() time.Time { return time.Now().Add(builds.Timeout + time.Second) } // slack for the database clock
 	e.tick()
 	if got := e.build(queued); got.State != store.BuildFailed || !strings.Contains(got.Error, "no node") {
 		t.Fatalf("queued timeout: %+v", got)
@@ -606,5 +606,27 @@ func TestBuildRenamesOnVMNameConflict(t *testing.T) {
 	v, err := e.store.VM(context.Background(), org, *b.VMID)
 	if err != nil || v.Kind != store.VMKindBuilder || !strings.HasPrefix(v.Name, taken+"-") || len(v.Name) != len(taken)+5 {
 		t.Fatalf("builder VM: %+v %v", v, err)
+	}
+}
+
+func TestQueuedBuildWaitsWhileHeld(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "tools", `[]`)
+	held := true
+	e.sched.MayStart = func() bool { return !held }
+	id := e.startBuild(aliceTok, org, img)
+	e.tick()
+	if b := e.build(id); b.State != store.BuildQueued {
+		t.Fatalf("held build state %s", b.State)
+	}
+	e.exec("UPDATE image_builds SET queued_at = now() - interval '2 hours' WHERE id = $1", id)
+	e.tick()
+	held = false
+	e.tick()
+	if b := e.build(id); b.State != store.BuildRunning {
+		t.Fatalf("released build state %s", b.State)
 	}
 }

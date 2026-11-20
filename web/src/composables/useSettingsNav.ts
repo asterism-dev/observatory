@@ -41,6 +41,7 @@ export function useSettingsNav() {
           { path: '/admin/orgs', label: t('nav.adminOrgs') },
           { path: '/admin/users', label: t('nav.adminUsers') },
           { path: '/admin/audit', label: t('nav.audit') },
+          { path: '/admin/registry', label: t('nav.adminRegistry') },
         ]
       : [],
   )

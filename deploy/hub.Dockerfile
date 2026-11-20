@@ -2,6 +2,9 @@ ARG GUESTBOOT_TAG=6.18.64-a4c07d7d
 
 FROM --platform=linux/amd64 ghcr.io/asterism-dev/observatory-guestboot:${GUESTBOOT_TAG} AS guestboot
 
+# Same image as the registry service in compose.yaml: the hub runs its garbage-collect.
+FROM registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e AS registry
+
 FROM --platform=$BUILDPLATFORM node:22.23.5 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
@@ -31,6 +34,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY --from=build /hub /usr/local/bin/hub
 COPY --from=build /observatory-node /usr/local/lib/observatory/observatory-node
 COPY --from=build /guestboot.tar /usr/local/lib/observatory/guestboot.tar
+COPY --from=registry /bin/registry /usr/local/bin/registry
 ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar OBSERVATORY_LISTEN=:8090
 USER 65532
 EXPOSE 8090

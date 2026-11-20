@@ -19,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
 )
@@ -38,19 +39,20 @@ type api struct {
 	manifests   ManifestDeleter
 	tags        *TagSync
 	builds      *builds.Scheduler
+	registryGC  *registry.GC
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
 // New takes a nil builds when the hub has no registry; builds are refused then.
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, docsURL, newer, firecracker)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, gc, docsURL, newer, firecracker)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -65,6 +67,8 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
 	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
 	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)
+	mux.HandleFunc("GET /api/admin/registry-gc", h.adminRegistryGC)
+	mux.HandleFunc("POST /api/admin/registry-gc", h.adminRunRegistryGC)
 	mux.HandleFunc("POST /api/orgs", h.createOrg)
 	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
 	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)

@@ -16,6 +16,7 @@ import NodesView from '@/views/NodesView.vue'
 import AdminOrgsView from '@/views/admin/AdminOrgsView.vue'
 import AdminOrgView from '@/views/admin/AdminOrgView.vue'
 import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
+import AdminRegistryView from '@/views/admin/AdminRegistryView.vue'
 import AdminUsersView from '@/views/admin/AdminUsersView.vue'
 import LoginView from '@/views/LoginView.vue'
 import InviteView from '@/views/InviteView.vue'
@@ -82,6 +83,7 @@ export const router = createRouter({
         { path: 'orgs/:orgId', component: AdminOrgView },
         { path: 'users', component: AdminUsersView },
         { path: 'audit', component: AdminAuditView },
+        { path: 'registry', component: AdminRegistryView },
       ],
     },
   ],

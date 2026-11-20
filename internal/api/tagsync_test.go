@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -69,4 +70,28 @@ func TestTagSyncNilIsANoOp(t *testing.T) {
 	}
 	var ts *TagSync
 	ts.Kick(uuid.New())
+}
+
+func TestTagSyncDefersWhileHeld(t *testing.T) {
+	e := newEnv(t)
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	d := e.addVersion(img, 1, "latest")
+	fm := &fakeManifests{}
+	ts := NewTagSync(e.store, fm)
+	var held atomic.Bool
+	held.Store(true)
+	ts.Held = held.Load
+	ts.Kick(img)
+	ts.wait()
+	if len(fm.tags) != 0 {
+		t.Fatalf("synced while held: %v", fm.tags)
+	}
+	held.Store(false)
+	ts.Resume()
+	ts.wait()
+	if fm.tags[imageRepo(img)+":latest"] != d {
+		t.Fatalf("not synced after resume: %v", fm.tags)
+	}
 }

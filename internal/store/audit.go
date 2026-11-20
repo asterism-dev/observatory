@@ -56,6 +56,7 @@ const (
 	ActionLimitSet            = "limit:set"
 	ActionPlatformRevokeAdmin = "platform:revoke-admin"
 	ActionAdminRead           = "admin:read"
+	ActionRegistryGC          = "registry:gc"
 	ActionEnvSet              = "env:set"
 	ActionEnvMove             = "env:move"
 	ActionEnvDelete           = "env:delete"

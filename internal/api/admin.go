@@ -165,3 +165,33 @@ func (h *api) adminSetPlatformAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// adminRegistryGC 404s on hubs without hub-run garbage collection, so the GUI can hide it.
+func (h *api) adminRegistryGC(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlatformAdmin(w, r, store.ActionAdminRead, "admin/registry-gc") {
+		return
+	}
+	if h.registryGC == nil {
+		writeError(w, http.StatusNotFound, "the hub does not garbage-collect the registry")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.registryGC.Status())
+}
+
+func (h *api) adminRunRegistryGC(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlatformAdmin(w, r, store.ActionRegistryGC, "admin/registry-gc") {
+		return
+	}
+	if h.registryGC == nil {
+		writeError(w, http.StatusNotFound, "the hub does not garbage-collect the registry")
+		return
+	}
+	if err := h.registryGC.Trigger(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := h.store.Audit(r.Context(), auditEntry(r, nil, store.ActionRegistryGC, "admin/registry-gc", store.ResultAllowed)); err != nil {
+		slog.Error("audit registry gc", "err", err)
+	}
+	writeJSON(w, http.StatusAccepted, h.registryGC.Status())
+}
