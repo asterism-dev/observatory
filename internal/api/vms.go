@@ -158,7 +158,7 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
 		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
 		Restoring:    v.RestoreState == "node" || v.RestoreState == "storage",
-		CanTelemetry: h.telemetry != nil && e.Allowed(sub, v.OrgID, obj, store.ActionVMMetrics),
+		CanTelemetry: h.telemetry != nil && v.Kind != store.VMKindBuilder && e.Allowed(sub, v.OrgID, obj, store.ActionVMMetrics),
 		DNSName:      v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if n, ok := names.usage[v.ID]; ok {
 		j.Usage = newVMUsageJSON(n)

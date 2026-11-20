@@ -286,3 +286,21 @@ func TestVMProcessesAPI(t *testing.T) {
 		t.Fatalf("offline: %d", rec.Code)
 	}
 }
+
+func TestBuilderVMJSONNoTelemetry(t *testing.T) {
+	te := newVMTelemetryEnv(t)
+	ctx := context.Background()
+	v, err := te.store.VM(ctx, te.org, uuid.MustParse(te.vm))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := te.store.CreateVM(ctx, store.VM{OrgID: te.org, NodeID: v.NodeID, UserID: v.UserID, Name: "builder", Kind: store.VMKindBuilder,
+		CPUs: 1, MemoryMB: 512, DiskGB: 10, CreatedBy: *v.UserID}); err != nil {
+		t.Fatal(err)
+	}
+	var list struct{ VMs []vmUsageTest }
+	decode(t, te.do("GET", "/api/orgs/"+te.org.String()+"/builder-vms", te.adminTok), &list)
+	if len(list.VMs) != 1 || list.VMs[0].CanTelemetry {
+		t.Fatalf("builder VMs: %+v", list.VMs)
+	}
+}
