@@ -1,3 +1,9 @@
+## v0.17.0 (2026-11-20)
+
+### Feat
+
+- **telemetry**: node metrics and logs over OTLP (#38)
+
 ## v0.16.0 (2026-11-20)
 
 ### Feat
