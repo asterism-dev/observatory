@@ -58,12 +58,13 @@ func (c *Client) post(ctx context.Context, url string, header map[string]string,
 
 func (c *Client) httpClient() *http.Client { return c.StoreClient(10 * time.Second) }
 
-// StoreClient is c.HTTP (or a client with timeout) that never follows redirects: a followed POST becomes a GET without the scope params.
+// StoreClient is c.HTTP (or a default client) with timeout that never follows redirects: a followed POST becomes a GET without the scope params.
 func (c *Client) StoreClient(timeout time.Duration) *http.Client {
-	hc := http.Client{Timeout: timeout}
+	var hc http.Client
 	if c.HTTP != nil {
 		hc = *c.HTTP
 	}
+	hc.Timeout = timeout
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &hc
 }

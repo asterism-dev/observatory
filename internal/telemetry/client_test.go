@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -67,5 +68,8 @@ func TestClientRefusesRedirects(t *testing.T) {
 	}
 	if custom.CheckRedirect != nil {
 		t.Fatal("caller's client mutated")
+	}
+	if hc := (&telemetry.Client{HTTP: custom}).StoreClient(time.Second); hc.Timeout != time.Second {
+		t.Fatalf("custom client timeout: %s", hc.Timeout)
 	}
 }
