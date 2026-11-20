@@ -472,3 +472,27 @@ func TestTelemetryDurationsAsStrings(t *testing.T) {
 		t.Fatalf("attrs = %v", attrs)
 	}
 }
+
+func TestTelemetryDurationInGroupAsString(t *testing.T) {
+	c := &logCollector{}
+	hub := httptest.NewServer(c)
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Info("pulled", slog.Group("pull", "took", 2*time.Second))
+	shutdownTelemetry(t, tel)
+
+	recs := c.records()
+	if len(recs) != 1 {
+		t.Fatalf("records = %d, want 1", len(recs))
+	}
+	var took string
+	for _, kv := range recs[0].Attributes {
+		if kv.Key == "pull" {
+			took = attrMap(kv.Value.GetKvlistValue().GetValues())["took"]
+		}
+	}
+	if took != "2s" {
+		t.Fatalf("pull.took = %q, want 2s (attrs %v)", took, recs[0].Attributes)
+	}
+}
