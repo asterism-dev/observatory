@@ -22,7 +22,7 @@ const options = presets.map((p) => ({ value: p, label: p.replace(/(\d+)/, '$1 ')
 const charts = computed(() => {
   const defs: { key: keyof Usage['charts']; unit: Unit; max?: number }[] = [
     { key: 'cpu', unit: '%', max: 100 },
-    { key: 'mem', unit: 'By', max: props.node.memoryMB * 1024 * 1024 },
+    { key: 'mem', unit: 'By' },
     { key: 'disk', unit: '%', max: 100 },
     { key: 'net', unit: 'By/s' },
   ]
