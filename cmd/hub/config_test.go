@@ -192,3 +192,42 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 		t.Fatalf("dev: %+v, %v", cfg, err)
 	}
 }
+
+func TestConfigTelemetryBothOrNeither(t *testing.T) {
+	base := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	load := func(extra map[string]string) (config, error) {
+		return loadConfig(func(k string) string {
+			if v, ok := extra[k]; ok {
+				return v
+			}
+			return base[k]
+		})
+	}
+	cfg, err := load(nil)
+	if err != nil || cfg.MetricsURL != "" || cfg.LogsURL != "" {
+		t.Fatalf("neither set: %+v, %v", cfg, err)
+	}
+	cfg, err = load(map[string]string{"OBSERVATORY_METRICS_URL": "http://m:8428", "OBSERVATORY_LOGS_URL": "http://l:9428"})
+	if err != nil || cfg.MetricsURL != "http://m:8428" || cfg.LogsURL != "http://l:9428" {
+		t.Fatalf("both set: %+v, %v", cfg, err)
+	}
+	for _, c := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"OBSERVATORY_METRICS_URL": "http://m"}, "OBSERVATORY_LOGS_URL"},
+		{map[string]string{"OBSERVATORY_LOGS_URL": "http://l"}, "OBSERVATORY_METRICS_URL"},
+		{map[string]string{"OBSERVATORY_METRICS_URL": "ftp://m", "OBSERVATORY_LOGS_URL": "http://l"}, "OBSERVATORY_METRICS_URL"},
+		{map[string]string{"OBSERVATORY_METRICS_URL": "http://m", "OBSERVATORY_LOGS_URL": "l:9428"}, "OBSERVATORY_LOGS_URL"},
+	} {
+		if _, err := load(c.env); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: error %v does not mention %s", c.env, err, c.want)
+		}
+	}
+}

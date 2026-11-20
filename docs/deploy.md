@@ -90,6 +90,10 @@ cannot read it.
 - `OBSERVATORY_REGISTRY_URL` (the compose file sets `http://registry:5000`), `OBSERVATORY_REGISTRY_KEY_DIR` and
   `OBSERVATORY_REGISTRY_CERT_DIR` turn the registry on; without a URL the hub has no images. The events secret must be
   at least 32 characters.
+- `OBSERVATORY_METRICS_URL` and `OBSERVATORY_LOGS_URL` (the compose file sets both) point at the telemetry stores;
+  both unset turns telemetry off, setting only one is an error. `OBSERVATORY_METRICS_RETENTION` (default `30d`),
+  `OBSERVATORY_LOGS_RETENTION` (`14d`), `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`200000`) and
+  `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`1000000`) are optional; series beyond the limits are dropped.
 - `OBSERVATORY_BUILDER_IMAGE` overrides the builder image repository and `OBSERVATORY_BUILDER_HUB_URL` the hub URL
   builder VMs use (default: the public URL); set the latter when VMs cannot reach the public URL.
 - `OBSERVATORY_BUILDER_CPUS`, `OBSERVATORY_BUILDER_MEMORY_MB` and `OBSERVATORY_BUILDER_DISK_GB` size builder VMs
@@ -122,6 +126,12 @@ new builds wait while running builds finish, then the hub stops issuing push tok
 (7 minutes) and collects. Until it ends, pushes fail (Docker shows `failed to fetch oauth token` with status 503);
 pulls and VMs are not affected. Versions without tags are kept.
 
+## Telemetry stores
+
+The `victoriametrics` and `victorialogs` services hold node metrics and logs in the volumes `metrics-data` and
+`logs-data`. They publish no port; only the hub reaches them. Upgrading an existing deployment: `docker compose up -d`
+starts the stores, and telemetry is on from then.
+
 ## Updating
 
 ```sh
@@ -135,4 +145,4 @@ an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDA
 check off (air-gapped hosts). Builds that are not a release tag never check.
 
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
-`registry-data`, `registry-keys`, `registry-certs` and, with TLS, `caddy-data`.
+`registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data` and, with TLS, `caddy-data`.

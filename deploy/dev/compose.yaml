@@ -40,6 +40,25 @@ services:
       - ../registry/config.yml:/etc/distribution/config.yml:ro
       - registry-data:/var/lib/registry
       - ./registry-certs:/keys:ro
+  # For a hub on the host (make telemetry-up).
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
+    profiles: [telemetry]
+    restart: unless-stopped
+    command: ["-storageDataPath=/storage", "-retentionPeriod=30d", "-opentelemetry.usePrometheusNaming"]
+    ports:
+      - "127.0.0.1:58428:8428"
+    volumes:
+      - metrics-data:/storage
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.54.0@sha256:ee4e820cac3721f5f5d91641b950c22439593adc4224f9655e5333d5a84c1dfe
+    profiles: [telemetry]
+    restart: unless-stopped
+    command: ["-storageDataPath=/storage", "-retentionPeriod=14d"]
+    ports:
+      - "127.0.0.1:59428:9428"
+    volumes:
+      - logs-data:/storage
   # Loads the kernel modules the gateway needs (OrbStack ships openvswitch unloaded); built-in modules make modprobe fail harmlessly.
   modules:
     image: alpine:3.22
@@ -90,6 +109,8 @@ services:
 volumes:
   postgres-data:
   registry-data:
+  metrics-data:
+  logs-data:
   ovn:
   ovs:
   disks:
