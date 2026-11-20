@@ -1,6 +1,8 @@
 package linuxvm
 
 import (
+	"bytes"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -76,5 +78,16 @@ func TestNameservers(t *testing.T) {
 	}
 	if got := nameservers(filepath.Join(t.TempDir(), "missing")); got != nil {
 		t.Fatalf("missing file: %v", got)
+	}
+}
+
+func TestEgressOutputStaysLocal(t *testing.T) {
+	var shipped bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&shipped, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	egressOutputLog.Info("egress proxy output", "line", "GET https://api.example/v1 200")
+	if shipped.Len() != 0 {
+		t.Fatalf("egress output reached the default logger: %q", shipped.String())
 	}
 }

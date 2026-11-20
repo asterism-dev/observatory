@@ -133,7 +133,7 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 		defer readers.Done()
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			slog.Info("egress proxy output", "vm", id, "line", sc.Text())
+			egressOutputLog.Info("egress proxy output", "vm", id, "line", sc.Text())
 		}
 		// An over-long line ends the scanner; draining keeps the proxy from blocking on a full pipe.
 		io.Copy(io.Discard, stderr)
