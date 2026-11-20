@@ -405,6 +405,41 @@ func TestTelemetryRejectedBatchDoesNotBlockLaterLogs(t *testing.T) {
 	}
 }
 
+func TestTelemetryShutdownSendsPendingLogs(t *testing.T) {
+	c := &logCollector{}
+	var down atomic.Bool
+	down.Store(true)
+	c.reject = func(*collogs.ExportLogsServiceRequest) int {
+		if down.Load() {
+			return http.StatusServiceUnavailable
+		}
+		return 0
+	}
+	var refused atomic.Int32
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			refused.Add(1)
+		}
+		c.ServeHTTP(w, r)
+	}))
+	defer hub.Close()
+	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+
+	slog.Warn("held")
+	for deadline := time.Now().Add(5 * time.Second); refused.Load() == 0; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no export attempted while down")
+		}
+	}
+	down.Store(false)
+	shutdownTelemetry(t, tel)
+
+	recs := c.records()
+	if len(recs) != 1 || recs[0].Body.GetStringValue() != "held" {
+		t.Fatalf("records = %v, want held", recs)
+	}
+}
+
 func TestRetryingLogExporterDropsOldestBeyondBound(t *testing.T) {
 	_, inner, export := newFlakyRetrying(http.StatusServiceUnavailable)
 	if export("1", "2") == nil || export("3", "4", "5") == nil {

@@ -226,6 +226,10 @@ func (e *retryingLogExporter) Export(ctx context.Context, records []sdklog.Recor
 	return errors.Join(errs...)
 }
 
+func (e *retryingLogExporter) ForceFlush(ctx context.Context) error {
+	return errors.Join(e.Export(ctx, nil), e.Exporter.ForceFlush(ctx))
+}
+
 type statusRecorder struct {
 	http.RoundTripper
 	status *atomic.Int32
