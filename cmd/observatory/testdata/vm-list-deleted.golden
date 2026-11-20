@@ -1,3 +1,3 @@
-NAME   OWNER         SIZE                    CREATED           BY            DELETED           BY            LIFETIME
-probe  private       1 vCPU · 4 GB · 100 GB  2026-11-18 09:12  Ada Lovelace  2026-11-19 09:12  expired       1d 0h
-wolf   team backend  2 vCPU · 4 GB · 20 GB   2026-11-17 14:03  unknown       2026-11-17 16:40  Ada Lovelace  2h 37m
+NAME   OWNER    SIZE                    CREATED           BY            DELETED           BY            LIFETIME
+probe  private  1 vCPU · 4 GB · 100 GB  2026-11-18 09:12  Ada Lovelace  2026-11-19 09:12  expired       1d 0h
+wolf   unknown  2 vCPU · 4 GB · 20 GB   2026-11-17 14:03  unknown       2026-11-17 16:40  Ada Lovelace  2h 37m

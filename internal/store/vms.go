@@ -274,6 +274,15 @@ func (s *Store) ExpiredVMs(ctx context.Context, now time.Time) ([]VM, error) {
 	return collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE kind = 'vm' AND delete_at <= $1 ORDER BY delete_at", now))
 }
 
+// LockExpiredVM returns ErrNotFound unless the VM is still due at now, so a cleared or extended expiry wins.
+func (s *Store) LockExpiredVM(ctx context.Context, id uuid.UUID, now time.Time) error {
+	err := s.q.QueryRow(ctx, "SELECT id FROM vms WHERE id = $1 AND delete_at <= $2 FOR UPDATE", id, now).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
 // SetVMStatus ignores VMs that are not on the reporting node.
 func (s *Store) SetVMStatus(ctx context.Context, node uuid.UUID, st proto.VMStatus) error {
 	id, err := uuid.Parse(st.ID)

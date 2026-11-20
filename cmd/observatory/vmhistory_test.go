@@ -34,7 +34,7 @@ func TestVMListDeletedGolden(t *testing.T) {
 	h, c, out, _ := vmHub(t, oneNode)
 	h.on("GET /api/orgs/o1/vms/history", 200, `{"vms":[
 		{"id":"v8","name":"probe","owner":{"kind":"user","id":"u1","name":"Ada Lovelace"},"cpus":1,"memoryMB":4096,"diskGB":100,"createdAt":"2026-11-18T09:12:00Z","createdBy":{"id":"u1","name":"Ada Lovelace"},"deletedAt":"2026-11-19T09:12:00Z","deletedBy":null,"reason":"expired"},
-		{"id":"v9","name":"wolf","owner":{"kind":"team","id":"t1","name":"backend"},"cpus":2,"memoryMB":4096,"diskGB":20,"createdAt":"2026-11-17T14:03:00Z","createdBy":{"id":"u2","name":""},"deletedAt":"2026-11-17T16:40:00Z","deletedBy":{"id":"u1","name":"Ada Lovelace"},"reason":"user"}]}`)
+		{"id":"v9","name":"wolf","owner":{"kind":"user","id":"u9","name":""},"cpus":2,"memoryMB":4096,"diskGB":20,"createdAt":"2026-11-17T14:03:00Z","createdBy":{"id":"u2","name":""},"deletedAt":"2026-11-17T16:40:00Z","deletedBy":{"id":"u1","name":"Ada Lovelace"},"reason":"user"}]}`)
 	if code := run(c, []string{"vm", "list", "--deleted"}); code != 0 {
 		t.Fatal(code)
 	}

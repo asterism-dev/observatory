@@ -52,25 +52,34 @@ func (x *VMExpiry) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, v := range vms {
-		err := x.store.InTx(ctx, func(tx *store.Store) error {
-			if err := tx.DeleteVM(ctx, v.OrgID, v.ID, nil, store.DeleteReasonExpired); err != nil {
-				return err
-			}
-			return tx.Audit(ctx, store.AuditEntry{ActorKind: store.ActorSystem, OrgID: &v.OrgID, Action: store.ActionVMDelete,
-				Resource: authz.VMObject(v.ID), Result: store.ResultAllowed, Details: map[string]any{"name": v.Name, "reason": store.DeleteReasonExpired}})
-		})
-		if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			slog.Error("vm expiry", "vm", v.ID, "err", err)
-			continue
-		}
-		if err := x.z.Reload(ctx); err != nil {
-			slog.Error("vm expiry: reload policies", "err", err)
-		}
-		x.fleet.DropMetrics(v.ID)
-		x.fleet.NotifyOrg(v.OrgID)
+		x.expire(ctx, v)
 	}
 	return nil
+}
+
+// expire reports whether it deleted v.
+func (x *VMExpiry) expire(ctx context.Context, v store.VM) bool {
+	err := x.store.InTx(ctx, func(tx *store.Store) error {
+		if err := tx.LockExpiredVM(ctx, v.ID, x.Now()); err != nil {
+			return err
+		}
+		if err := tx.DeleteVM(ctx, v.OrgID, v.ID, nil, store.DeleteReasonExpired); err != nil {
+			return err
+		}
+		return tx.Audit(ctx, store.AuditEntry{ActorKind: store.ActorSystem, OrgID: &v.OrgID, Action: store.ActionVMDelete,
+			Resource: authz.VMObject(v.ID), Result: store.ResultAllowed, Details: map[string]any{"name": v.Name, "reason": store.DeleteReasonExpired}})
+	})
+	if errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrNotFound) {
+		return false
+	}
+	if err != nil {
+		slog.Error("vm expiry", "vm", v.ID, "err", err)
+		return false
+	}
+	if err := x.z.Reload(ctx); err != nil {
+		slog.Error("vm expiry: reload policies", "err", err)
+	}
+	x.fleet.DropMetrics(v.ID)
+	x.fleet.NotifyOrg(v.OrgID)
+	return true
 }

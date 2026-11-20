@@ -45,7 +45,11 @@ func (c *cli) vmListDeleted() error {
 			by = userName(v.DeletedBy)
 		}
 		size := vmJSON{CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB}.size()
-		rows[i] = []string{v.Name, c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name), size,
+		owner := "unknown"
+		if v.Owner.Name != "" {
+			owner = c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name)
+		}
+		rows[i] = []string{v.Name, owner, size,
 			when(v.CreatedAt), userName(v.CreatedBy), when(v.DeletedAt), by, lifetime(v.DeletedAt.Sub(v.CreatedAt))}
 	}
 	return c.emit(raw, []string{"name", "owner", "size", "created", "by", "deleted", "by", "lifetime"}, rows)

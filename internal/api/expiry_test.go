@@ -85,3 +85,26 @@ func TestVMExpirySkipsForkPending(t *testing.T) {
 		t.Fatalf("after fork provisioned: %+v", h)
 	}
 }
+
+func TestVMExpiryKeepsVMClearedAfterListing(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	v := e.createVM(tok, org, vmBody("a", userOwner(), e.enrolledNode(tok, org, "n1")))
+	e.expireVM(v.ID)
+	ctx := context.Background()
+	x := NewVMExpiry(e.store, e.z, &fakeExpiryFleet{})
+	listed, err := e.store.ExpiredVMs(ctx, x.Now())
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("listed: %+v %v", listed, err)
+	}
+	if rec := e.send("PUT", vmsPath(org)+"/"+v.ID+"/delete-after", tok, `{"deleteAfter":null}`); rec.Code != 200 {
+		t.Fatalf("clear: %d", rec.Code)
+	}
+	if deleted := x.expire(ctx, listed[0]); deleted {
+		t.Fatal("deleted a VM whose expiry was cleared")
+	}
+	if l := e.listVMs(tok, org); len(l.VMs) != 1 {
+		t.Fatalf("left: %+v", l.VMs)
+	}
+}
