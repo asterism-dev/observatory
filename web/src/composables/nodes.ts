@@ -128,8 +128,12 @@ export function lifetime(fromISO: string, toISO: string) {
   return `${m}m`
 }
 
-export function relativeTime(iso: string, locale: string) {
-  const sec = Math.round((new Date(iso).getTime() - Date.now()) / 1000)
+export function deletionLabel(iso: string, t: (k: string, p?: Record<string, unknown>) => string, locale: string, now = Date.now()) {
+  return new Date(iso).getTime() <= now ? t('vms.deleting') : t('vms.deletesIn', { rel: relativeTime(iso, locale, now) })
+}
+
+export function relativeTime(iso: string, locale: string, now = Date.now()) {
+  const sec = Math.round((new Date(iso).getTime() - now) / 1000)
   const units: [Intl.RelativeTimeFormatUnit, number][] = [['day', 86400], ['hour', 3600], ['minute', 60]]
   const [unit, size] = units.find(([, s]) => Math.abs(sec) >= s) ?? ['second', 1]
   return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)

@@ -24,7 +24,7 @@ const { org } = useOrg()
 const { me } = useMe()
 
 const data = ref<Listing>({ vms: [], creatableOwners: [], nodes: [] })
-const history = ref<VmHistory[]>([])
+const history = ref<VmHistory[] | null>(null)
 const error = ref('')
 const createOpen = ref(false)
 const tab = ref('all')
@@ -51,7 +51,7 @@ const rows = computed(() => {
 })
 const historyRows = computed(() => {
   const q = search.value.trim().toLowerCase()
-  return history.value.filter((v) => (tab.value === 'mine' ? isMine(v) : tab.value === 'teams' ? v.owner.kind === 'team' : true) && (!q || v.name.includes(q)))
+  return (history.value ?? []).filter((v) => (tab.value === 'mine' ? isMine(v) : tab.value === 'teams' ? v.owner.kind === 'team' : true) && (!q || v.name.includes(q)))
 })
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -81,7 +81,7 @@ watch(
     error.value = ''
     node.value = 'all'
     data.value = { vms: [], creatableOwners: [], nodes: [] }
-    history.value = []
+    history.value = null
     refresh()
   },
   { immediate: true },
@@ -102,7 +102,7 @@ watch(
         <TextInput v-model="search" type="search" :placeholder="t('vms.search')" :aria-label="t('vms.search')" />
       </template>
     </FilterBar>
-    <VMHistoryList v-if="status === 'deleted'" :vms="historyRows" />
+    <template v-if="status === 'deleted'"><VMHistoryList v-if="history" :vms="historyRows" /></template>
     <VMList v-else :org-id="org.id" :vms="rows" :empty="data.vms.length ? t('vms.noMatch') : t('vms.empty')" @changed="refresh" />
     <CreateVMDialog v-model:open="createOpen" :org-id="org.id" :owners="data.creatableOwners" :nodes="data.nodes" @created="refresh" />
   </Page>

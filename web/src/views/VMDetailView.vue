@@ -244,7 +244,11 @@ watch(
         <Section v-if="vm!.canDelete" :label="t('vms.deleteAfter')" :description="t('vms.deleteAfterHint')">
           <Card>
             <span class="muted">{{
-              vm!.deleteAt ? t('vms.deletesAt', { at: new Date(vm!.deleteAt).toLocaleString(locale), rel: relativeTime(vm!.deleteAt, locale) }) : t('vms.deleteAfterNever')
+              !vm!.deleteAt
+                ? t('vms.deleteAfterNever')
+                : Date.parse(vm!.deleteAt) <= Date.now()
+                  ? t('vms.deleting')
+                  : t('vms.deletesAt', { at: new Date(vm!.deleteAt).toLocaleString(locale), rel: relativeTime(vm!.deleteAt, locale) })
             }}</span>
             <p class="row">
               <TextInput v-model="deleteAfter" :aria-label="t('vms.deleteAfter')" placeholder="2d" />

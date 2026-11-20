@@ -456,7 +456,8 @@
       "unknown": "unknown",
       "empty": "No deleted VMs.",
       "size": "Size"
-    }
+    },
+    "deleting": "Deleting…"
   },
   "devices": {
     "subtitle": "WireGuard devices that connect you to your VMs.",

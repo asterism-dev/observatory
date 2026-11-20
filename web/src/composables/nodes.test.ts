@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import de from '../locales/de.json' with { type: 'json' }
 import en from '../locales/en.json' with { type: 'json' }
-import { imageLine, lifetime, type NodeInfo } from './nodes.ts'
+import { deletionLabel, imageLine, lifetime, type NodeInfo } from './nodes.ts'
 
 type Image = NonNullable<NodeInfo['image']>
 const translator = (messages: typeof en) => (key: string, params: Record<string, unknown> = {}) => {
@@ -37,4 +37,11 @@ test('lifetime shows the two largest units', () => {
   assert.equal(lifetime(at(0), at(157)), '2h 37m')
   assert.equal(lifetime(at(0), at(12)), '12m')
   assert.equal(lifetime(at(0), at(0, 30)), '0m')
+})
+
+test('deletion label says deleting once the time has passed', () => {
+  const now = Date.UTC(2026, 10, 20, 12, 0)
+  assert.equal(deletionLabel(new Date(now - 120000).toISOString(), translator(en), 'en', now), 'Deleting…')
+  assert.equal(deletionLabel(new Date(now - 120000).toISOString(), translator(de), 'de', now), 'Wird gelöscht…')
+  assert.equal(deletionLabel(new Date(now + 2 * 3600000).toISOString(), translator(en), 'en', now), 'deleted in 2 hours')
 })

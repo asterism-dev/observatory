@@ -50,7 +50,7 @@ func TestVMCreateDeleteAfter(t *testing.T) {
 	if got.DeleteAt == nil || time.Until(*got.DeleteAt) < 119*time.Minute || time.Until(*got.DeleteAt) > 121*time.Minute {
 		t.Fatalf("deleteAt: %+v", got)
 	}
-	for _, bad := range []string{"4m", "2w"} {
+	for _, bad := range []string{"4m", "2w", ""} {
 		if rec := e.send("POST", vmsPath(org), tok, withDeleteAfter(vmBody("b", userOwner(), node), bad)); rec.Code != 400 {
 			t.Fatalf("%s: %d", bad, rec.Code)
 		}

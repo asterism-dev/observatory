@@ -287,7 +287,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		NodeID                 uuid.UUID
 		CPUs, MemoryMB, DiskGB int
 		Image                  string
-		DeleteAfter            string
+		DeleteAfter            *string
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -310,8 +310,8 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid owner")
 		return
 	}
-	if body.DeleteAfter != "" {
-		at, err := parseDeleteAfter(body.DeleteAfter, time.Now())
+	if body.DeleteAfter != nil {
+		at, err := parseDeleteAfter(*body.DeleteAfter, time.Now())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

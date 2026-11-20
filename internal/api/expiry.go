@@ -51,8 +51,17 @@ func (x *VMExpiry) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	deleted := false
 	for _, v := range vms {
-		x.expire(ctx, v)
+		if x.expire(ctx, v) {
+			deleted = true
+		}
+	}
+	// One reload covers every VM deleted in this pass.
+	if deleted {
+		if err := x.z.Reload(ctx); err != nil {
+			slog.Error("vm expiry: reload policies", "err", err)
+		}
 	}
 	return nil
 }
@@ -75,9 +84,6 @@ func (x *VMExpiry) expire(ctx context.Context, v store.VM) bool {
 	if err != nil {
 		slog.Error("vm expiry", "vm", v.ID, "err", err)
 		return false
-	}
-	if err := x.z.Reload(ctx); err != nil {
-		slog.Error("vm expiry: reload policies", "err", err)
 	}
 	x.fleet.DropMetrics(v.ID)
 	x.fleet.NotifyOrg(v.OrgID)

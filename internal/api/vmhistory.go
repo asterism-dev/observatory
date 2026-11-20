@@ -72,31 +72,39 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "vm history", err)
 		return
 	}
-	names, err := h.vmNames(r, m.Org.ID)
+	p, _ := auth.PrincipalFrom(r.Context())
+	teamIDs, err := h.store.UserTeamIDs(r.Context(), m.Org.ID, p.User.ID)
 	if err != nil {
-		serverError(w, "vm names", err)
+		serverError(w, "user teams", err)
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
-	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	inTeam := map[uuid.UUID]bool{}
-	for _, t := range names.teamList {
-		members, err := h.store.TeamMembers(r.Context(), m.Org.ID, t.ID)
-		if err != nil {
-			serverError(w, "team members", err)
-			return
-		}
-		for _, tm := range members {
-			if tm.User.ID == p.User.ID {
-				inTeam[t.ID] = true
-			}
-		}
+	for _, id := range teamIDs {
+		inTeam[id] = true
 	}
+	users, teams := map[uuid.UUID]string{}, map[uuid.UUID]string{}
+	members, err := h.store.Members(r.Context(), m.Org.ID)
+	if err != nil {
+		serverError(w, "members", err)
+		return
+	}
+	for _, mb := range members {
+		users[mb.User.ID] = mb.User.Name
+	}
+	teamList, err := h.store.Teams(r.Context(), m.Org.ID)
+	if err != nil {
+		serverError(w, "teams", err)
+		return
+	}
+	for _, t := range teamList {
+		teams[t.ID] = t.Name
+	}
+	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	user := func(id *uuid.UUID) *refJSON {
 		if id == nil {
 			return nil
 		}
-		return &refJSON{*id, names.users[*id]}
+		return &refJSON{*id, users[*id]}
 	}
 	out := []vmHistoryJSON{}
 	for _, row := range rows {
@@ -108,9 +116,9 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 		j := vmHistoryJSON{ID: row.ID, Name: row.Name, CPUs: row.CPUs, MemoryMB: row.MemoryMB, DiskGB: row.DiskGB, Image: row.ImageRef,
 			CreatedAt: row.CreatedAt, CreatedBy: user(row.CreatedBy), DeletedAt: row.DeletedAt, DeletedBy: user(row.DeletedBy), Reason: row.Reason}
 		if row.UserID != nil {
-			j.Owner = ownerJSON{"user", *row.UserID, names.users[*row.UserID]}
+			j.Owner = ownerJSON{"user", *row.UserID, users[*row.UserID]}
 		} else if row.TeamID != nil {
-			j.Owner = ownerJSON{"team", *row.TeamID, names.teams[*row.TeamID]}
+			j.Owner = ownerJSON{"team", *row.TeamID, teams[*row.TeamID]}
 		}
 		out = append(out, j)
 	}
