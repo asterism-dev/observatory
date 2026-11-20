@@ -37,6 +37,10 @@ that goes silent is cut off with a clean error instead of hanging the agent.
 - **The proxy retries a rejected request with the next account**, as `claude-router` does, so Claude Code never sees
   the limit. For that the node holds the access tokens of the member's other eligible accounts too.
 - **Hanging requests must not stall the agent:** a stream watchdog as in `claude-router`.
+- **Automatic switching toggle** (2026-11-20): "Switch automatically" per integration, default off (also for existing
+  ones), for members who may not use a private account automatically. Off: the hub never moves the switch, the node
+  gets only the active account's token, so the proxy does not retry and Claude Code sees the 429. Usage, polling and
+  manual switching work as before. Set with `integration:set` via `PATCH …/integrations/{id}` `{autoSwitch}`.
 
 Everything else is marked *(Our call.)*
 

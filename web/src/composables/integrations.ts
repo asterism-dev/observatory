@@ -46,6 +46,7 @@ export interface Integration extends WritableScope {
   canDelete: boolean
   accounts?: ClaudeAccount[]
   lastSwitch?: ClaudeLastSwitch | null
+  autoSwitch: boolean
 }
 
 export interface IntegrationScope extends WritableScope {

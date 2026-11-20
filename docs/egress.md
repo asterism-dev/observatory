@@ -87,7 +87,8 @@ Masking keeps the length, so `Content-Length`, chunking and WebSocket framing st
   limited in this proxy and sends the same request again with the next account in order that is not limited. The 429
   is held (body capped at 1 MiB) until an answer is known; if every account is limited, the proxy sends the request
   with the first account only and the client gets that 429. A larger body is streamed without a retry. Upgrades and
-  `CONNECT` are not retried. Other hosts and single-account integrations are never buffered. All requests of one
+  `CONNECT` are not retried. Other hosts, single-account integrations and integrations with "Switch automatically"
+  off (the node gets no other accounts for them) are never buffered. All requests of one
   proxy together buffer at most 256 MiB; a request that would exceed it is streamed without a retry.
 - **Usage:** the proxy reads the `anthropic-ratelimit-unified-*` headers of these responses and reports them to the hub
   through the node; headers stay in the response.

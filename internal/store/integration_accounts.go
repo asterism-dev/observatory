@@ -347,7 +347,7 @@ func (s *Store) autoSwitch(ctx context.Context, org, integration, from uuid.UUID
 	return &Switch{OrgID: org, IntegrationID: integration, From: from, To: to, LimitedUntil: until}, nil
 }
 
-// RecordUsage stores obs's usage if newer than the stored usage_at and always applies its limit; when it limits the active, automatically activated account, it activates the next eligible one in the same tx.
+// RecordUsage stores obs's usage if newer than the stored usage_at and always applies its limit; when it limits the active, automatically activated account of an integration with auto_switch, it activates the next eligible one in the same tx.
 func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.Time) (*Switch, error) {
 	var org, integration uuid.UUID
 	err := s.q.QueryRow(ctx, "SELECT org_id, integration_id FROM integration_accounts WHERE id = $1", obs.Account).Scan(&org, &integration)
@@ -362,10 +362,11 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 		if err := tx.lockIntegration(ctx, org, integration); err != nil {
 			return err
 		}
-		var active bool
+		var active, autoSwitch bool
 		var limitedUntil, usageAt *time.Time
-		if err := tx.q.QueryRow(ctx, "SELECT active, limited_until, usage_at FROM integration_accounts WHERE id = $1 FOR UPDATE",
-			obs.Account).Scan(&active, &limitedUntil, &usageAt); err != nil {
+		if err := tx.q.QueryRow(ctx, `SELECT a.active, a.limited_until, a.usage_at, i.auto_switch FROM integration_accounts a
+			JOIN integrations i ON i.id = a.integration_id WHERE a.id = $1 FOR UPDATE OF a`,
+			obs.Account).Scan(&active, &limitedUntil, &usageAt, &autoSwitch); err != nil {
 			return err
 		}
 		// Poll and proxy stamp ObservedAt on different clocks, so only usage follows the newest report; a limit always applies and only grows.
@@ -385,7 +386,7 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 			}
 		}
 		wasLimited := limitedUntil != nil && limitedUntil.After(now)
-		if !active || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {
+		if !autoSwitch || !active || wasLimited || obs.LimitedUntil == nil || !obs.LimitedUntil.After(now) {
 			return nil
 		}
 		var err error
@@ -398,10 +399,10 @@ func (s *Store) RecordUsage(ctx context.Context, obs UsageObservation, now time.
 	return sw, err
 }
 
-// ResumeLimited switches integrations whose active (non-manual) account is still limited to the first account whose limited_until has passed.
+// ResumeLimited switches auto_switch integrations whose active (non-manual) account is still limited to the first account whose limited_until has passed.
 func (s *Store) ResumeLimited(ctx context.Context, now time.Time) ([]Switch, error) {
-	rows, err := s.q.Query(ctx, `SELECT org_id, integration_id FROM integration_accounts a
-		WHERE active AND NOT activated_manually AND limited_until > $1
+	rows, err := s.q.Query(ctx, `SELECT a.org_id, a.integration_id FROM integration_accounts a JOIN integrations i ON i.id = a.integration_id
+		WHERE i.auto_switch AND a.active AND NOT a.activated_manually AND a.limited_until > $1
 		  AND EXISTS (SELECT 1 FROM integration_accounts o WHERE o.integration_id = a.integration_id AND o.id <> a.id
 		    AND o.status = 'ok' AND (o.limited_until IS NULL OR o.limited_until <= $1))`, now)
 	if err != nil {
@@ -422,8 +423,8 @@ func (s *Store) ResumeLimited(ctx context.Context, now time.Time) ([]Switch, err
 			// Re-check under the lock: a manual activation or another switch may have run since the scan.
 			var from uuid.UUID
 			var until time.Time
-			err := tx.q.QueryRow(ctx, `SELECT id, limited_until FROM integration_accounts
-				WHERE integration_id = $1 AND active AND NOT activated_manually AND limited_until > $2`, c.Integration, now).Scan(&from, &until)
+			err := tx.q.QueryRow(ctx, `SELECT a.id, a.limited_until FROM integration_accounts a JOIN integrations i ON i.id = a.integration_id
+				WHERE a.integration_id = $1 AND i.auto_switch AND a.active AND NOT a.activated_manually AND a.limited_until > $2`, c.Integration, now).Scan(&from, &until)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			} else if err != nil {

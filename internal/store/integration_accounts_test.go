@@ -165,6 +165,7 @@ func TestResolveClaudeUsesActiveAccount(t *testing.T) {
 	first := mustAccounts(t, s, org.ID, cl.ID)[0].ID
 	second := insertAccount(t, pool, cl, "two@example.com", dummyAccess+"2", store.IntegrationOK)
 	activate(t, pool, cl.ID, second)
+	setAutoSwitch(t, s, cl, true)
 	r := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid))[integrations.Claude]
 	if r.Token != dummyAccess+"2" || len(r.Accounts) != 2 || r.Accounts[0].ID != second || r.Accounts[1].ID != first ||
 		r.Accounts[0].Token != dummyAccess+"2" || r.Accounts[1].Token != dummyAccess {
@@ -187,6 +188,7 @@ func TestResolveClaudeSkipsExpiredAlternates(t *testing.T) {
 		store.IntegrationSecret{Token: dummyAccess})
 	insertAccount(t, pool, cl, "old@example.com", dummyAccess+"x", store.IntegrationExpired)
 	ok := insertAccount(t, pool, cl, "ok@example.com", dummyAccess+"2", store.IntegrationOK)
+	setAutoSwitch(t, s, cl, true)
 	r := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid))[integrations.Claude]
 	if r.Token != dummyAccess || len(r.Accounts) != 2 || r.Accounts[1].ID != ok {
 		t.Fatalf("%d accounts", len(r.Accounts))
@@ -430,7 +432,16 @@ func twoAccounts(t *testing.T) (*store.Store, *pgxpool.Pool, uuid.UUID, store.In
 	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
 	a := mustAccounts(t, s, org.ID, cl.ID)[0].ID
 	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	setAutoSwitch(t, s, cl, true)
+	cl.AutoSwitch = true
 	return s, pool, uid, cl, a, b
+}
+
+func setAutoSwitch(t *testing.T, s *store.Store, cl store.Integration, on bool) {
+	t.Helper()
+	if err := s.SetIntegrationAutoSwitch(context.Background(), cl, on, cl.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func activeID(t *testing.T, s *store.Store, cl store.Integration) uuid.UUID {
@@ -692,5 +703,41 @@ func TestRecordUsageOlderProxyLimitStillSwitches(t *testing.T) {
 	got := mustAccounts(t, s, cl.OrgID, cl.ID)[0]
 	if got.LimitedUntil == nil || !got.LimitedUntil.Equal(until) || got.Usage.Source != "poll" || *got.Usage.FiveHourPct != 50 {
 		t.Fatalf("account %+v", got)
+	}
+}
+
+func TestAutoSwitchOff(t *testing.T) {
+	ctx := context.Background()
+	s, pool, uid, org, _ := newIntegrationStore(t)
+	cl := newClaude(t, s, org, uid, store.EnvScopeUser, "")
+	a := mustAccounts(t, s, org.ID, cl.ID)[0].ID
+	b := insertAccount(t, pool, cl, "b@example.com", "b", store.IntegrationOK)
+	if mustIntegration(t, s, org.ID, cl.ID).AutoSwitch {
+		t.Fatal("auto switch on by default")
+	}
+	r := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid))[integrations.Claude]
+	if len(r.Accounts) != 1 || r.Accounts[0].ID != a {
+		t.Fatalf("%d accounts resolved without auto switch", len(r.Accounts))
+	}
+	now := time.Now().Truncate(time.Second)
+	until := now.Add(time.Hour)
+	if sw, err := s.RecordUsage(ctx, limitObs(a, now, until), now); err != nil || sw != nil {
+		t.Fatalf("switch %v: %v", sw, err)
+	}
+	if got := mustAccounts(t, s, org.ID, cl.ID)[0]; !got.Active || got.LimitedUntil == nil || !got.LimitedUntil.Equal(until) {
+		t.Fatalf("account %+v", got)
+	}
+	if sws, err := s.ResumeLimited(ctx, now); err != nil || len(sws) != 0 {
+		t.Fatalf("resume: %v %v", sws, err)
+	}
+	if id := activeID(t, s, cl); id != a {
+		t.Fatalf("active %v, not %v", id, b)
+	}
+	setAutoSwitch(t, s, cl, true)
+	if !mustIntegration(t, s, org.ID, cl.ID).AutoSwitch {
+		t.Fatal("auto switch not stored")
+	}
+	if sws, err := s.ResumeLimited(ctx, now); err != nil || len(sws) != 1 || sws[0].To != b {
+		t.Fatalf("resume after on: %+v %v", sws, err)
 	}
 }

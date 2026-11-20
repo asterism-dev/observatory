@@ -521,6 +521,8 @@ type accountJSON struct {
 type claudeListJSON struct {
 	Integrations []struct {
 		ID         string
+		Mode       string
+		AutoSwitch bool
 		Accounts   []accountJSON
 		LastSwitch *struct{ FromID, ToID, From, To string }
 	}
@@ -616,6 +618,9 @@ func TestListShowsAccountsWithoutSecrets(t *testing.T) {
 	}
 	if !strings.Contains(body, `"lastSwitch":null`) || !strings.Contains(body, `"usage":{"fiveHourPct":null`) {
 		t.Fatalf("shape: %s", body)
+	}
+	if rec := e.send("PATCH", integrationsPath(org)+"/"+id, tok, `{"autoSwitch":true}`); rec.Code != 204 {
+		t.Fatalf("auto switch: %d", rec.Code)
 	}
 	until := time.Now().Add(time.Hour)
 	if _, err := e.store.RecordUsage(context.Background(), store.UsageObservation{Account: uuid.MustParse(id), LimitedUntil: &until,
@@ -728,6 +733,53 @@ func TestModePatchRefusedWithTwoAccounts(t *testing.T) {
 	if rec.Code != 409 || got.Error != store.ErrMultiAccountNotAllowed.Error() {
 		t.Fatalf("mode: %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestAutoSwitchPatch(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.verifier.name = "first"
+	id := e.connect(tok, org, claudeSetupBody("user"))
+	path := integrationsPath(org) + "/" + id
+	list := func() claudeListJSON {
+		rec := e.do("GET", integrationsPath(org), tok)
+		var got claudeListJSON
+		decode(t, rec, &got)
+		return got
+	}
+	if l := list(); l.Integrations[0].AutoSwitch {
+		t.Fatal("auto switch on by default")
+	}
+	if rec := e.send("PATCH", path, tok, `{"autoSwitch":true}`); rec.Code != 204 {
+		t.Fatalf("on: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := list(); !l.Integrations[0].AutoSwitch || l.Integrations[0].Mode != "proxy" {
+		t.Fatalf("after on: %+v", l)
+	}
+	es := e.audit(store.ActionIntegrationSet)
+	if len(es) == 0 || es[0].Details["action"] != "auto-switch" || es[0].Details["autoSwitch"] != true {
+		t.Fatalf("audit: %+v", es)
+	}
+	if rec := e.send("PATCH", path, tok, `{"autoSwitch":false,"mode":"vm"}`); rec.Code != 204 {
+		t.Fatalf("off and vm: %d %s", rec.Code, rec.Body.String())
+	}
+	if l := list(); l.Integrations[0].AutoSwitch || l.Integrations[0].Mode != "vm" {
+		t.Fatalf("after off: %+v", l)
+	}
+	if rec := e.send("PATCH", path, tok, `{}`); rec.Code != 400 {
+		t.Fatalf("empty: %d", rec.Code)
+	}
+	if rec := e.send("PATCH", path, bobTok, `{"autoSwitch":true}`); rec.Code != 404 {
+		t.Fatalf("other member: %d", rec.Code)
+	}
+	gh := e.connect(tok, org, githubBody("user", ""))
+	if rec := e.send("PATCH", integrationsPath(org)+"/"+gh, tok, `{"autoSwitch":true}`); rec.Code != 400 {
+		t.Fatalf("github: %d", rec.Code)
+	}
+	e.noSecretsInAudit()
 }
 
 func TestAccountSignIn(t *testing.T) {

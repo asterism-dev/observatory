@@ -46,6 +46,7 @@ type Integration struct {
 	CreatedAt, UpdatedAt               time.Time
 	LastSwitchAt                       *time.Time
 	LastSwitchFrom, LastSwitchTo       *uuid.UUID // account ids of the last automatic switch
+	AutoSwitch                         bool
 }
 
 // IntegrationSecret is the token to store; Refresh is set only for oauth sources.
@@ -73,14 +74,14 @@ func (ResolvedIntegration) MarshalJSON() ([]byte, error) { return []byte(`"redac
 // A Claude integration shows its active account's source, account, expiry and status.
 const integrationCols = `i.id, i.org_id, i.kind, coalesce(a.source, i.source), i.scope, coalesce(i.team_id, i.user_id), i.mode, coalesce(a.account, i.account),
 	i.scopes_info, i.provider_expires_at, coalesce(a.access_expires_at, i.access_expires_at), coalesce(a.status, i.status), coalesce(a.last_error, i.last_error),
-	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at, i.last_switch_at, i.last_switch_from, i.last_switch_to`
+	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at, i.last_switch_at, i.last_switch_from, i.last_switch_to, i.auto_switch`
 
 const integrationFrom = " FROM integrations i LEFT JOIN integration_accounts a ON a.integration_id = i.id AND a.active "
 
 func scanIntegration(r pgx.Row, extra ...any) (v Integration, err error) {
 	dest := append([]any{&v.ID, &v.OrgID, &v.Kind, &v.Source, &v.Scope, &v.OwnerID, &v.Mode, &v.Account, &v.ScopesInfo, &v.ProviderExpiresAt,
 		&v.AccessExpiresAt, &v.Status, &v.LastError, &v.WasInVM, &v.CreatedBy, &v.UpdatedBy, &v.CreatedAt, &v.UpdatedAt,
-		&v.LastSwitchAt, &v.LastSwitchFrom, &v.LastSwitchTo}, extra...)
+		&v.LastSwitchAt, &v.LastSwitchFrom, &v.LastSwitchTo, &v.AutoSwitch}, extra...)
 	err = r.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
@@ -363,6 +364,13 @@ func (s *Store) SetIntegrationMode(ctx context.Context, old Integration, mode in
 	})
 }
 
+// SetIntegrationAutoSwitch turns on or off whether the hub and the proxy switch old's accounts on a limit.
+func (s *Store) SetIntegrationAutoSwitch(ctx context.Context, old Integration, on bool, by uuid.UUID) error {
+	tag, err := s.q.Exec(ctx, "UPDATE integrations SET auto_switch = $7, updated_by = $8, updated_at = now() WHERE "+envGuard,
+		integrationGuardArgs(old, on, by)...)
+	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
+}
+
 func (s *Store) DeleteIntegration(ctx context.Context, old Integration) error {
 	tag, err := s.q.Exec(ctx, "DELETE FROM integrations WHERE "+envGuard, integrationGuardArgs(old)...)
 	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
@@ -427,6 +435,10 @@ func (s *Store) ResolveVMIntegrations(ctx context.Context, e *authz.Enforcer, or
 			}
 			if len(w.Accounts) == 0 {
 				return nil, fmt.Errorf("integration %s has no active account", w.ID)
+			}
+			// Without automatic switching the proxy must not retry with, or even hold, the other accounts' tokens.
+			if !w.AutoSwitch {
+				w.Accounts = w.Accounts[:1]
 			}
 			w.Token = w.Accounts[0].Token
 			out = append(out, w.ResolvedIntegration)

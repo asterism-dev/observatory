@@ -112,6 +112,13 @@ its email (setup-token accounts: "Setup token"), position and active flag. The s
 - **One account is active**; all your VMs use it, with the same placeholder, so a switch needs no guest change.
   Flipping another row's switch activates it at once, even when it is limited. The active one cannot be switched off.
 - **Order is priority:** it decides which account comes next. Reordering never changes the active account.
+- **Switch automatically** (per integration, default off, also for integrations created before it existed): only
+  when on does the hub switch on a limit and does the proxy retry with the next account (Limit, Retry and Transition
+  only below). When off, the hub never switches by itself, the node gets only the active account's token (the other
+  tokens never reach it), and a confirmed 429 reaches Claude Code; switch yourself. Usage, polling and manual
+  switching work either way. Set it with `PATCH /api/orgs/{org}/integrations/{id}` `{"autoSwitch": true|false}`
+  (`mode` may be sent alongside or alone); refused for non-Claude integrations (400); audited as `integration:set`
+  with `action` = `auto-switch`. The list shows `autoSwitch` on each integration.
 - **Add** with the same sign-in or a pasted setup token (`addToId`); the account is appended, switched off. **Sign in
   again** per account (`replaceAccountId` or the token route). **Remove** any account: removing the active one
   activates the next eligible one; removing the last disconnects.
@@ -281,5 +288,5 @@ Agents test with dummy tokens only. These checks need real tokens and are run by
 8. Several accounts: in your private Claude integration (proxy mode) add a second account. Both rows show usage
    within two minutes. Exhaust the active account's window or simulate it (`OBSERVATORY_DEV_CLAUDE_USAGE_URL` with
    dummy accounts reports 100 % but does not exercise the proxy retry), run `claude -p "say ok"` in a VM, and check
-   that it succeeds, the switch moves to the other account and the page shows the automatic-switch note. Flip the
-   switch back by hand and check that it stays.
+   that it succeeds, the switch moves to the other account and the page shows the automatic-switch note (with
+   "Switch automatically" on). Flip the switch back by hand and check that it stays.

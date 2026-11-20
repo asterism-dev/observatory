@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, RadioGroup, Tabs } from '@asterism-dev/lumen'
+import { Button, Dialog, RadioGroup, Switch, Tabs } from '@asterism-dev/lumen'
 import { Plug, Plus } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -117,6 +117,9 @@ const saveMode = () =>
   newMode.value !== modeTarget.value.mode &&
   mutate(() => api(`/api/orgs/${org.value?.id}/integrations/${modeTarget.value?.id}`, { method: 'PATCH', body: JSON.stringify({ mode: newMode.value }) }))
 
+const setAutoSwitch = (v: Integration, on: boolean) =>
+  mutate(() => api(`/api/orgs/${org.value?.id}/integrations/${v.id}`, { method: 'PATCH', body: JSON.stringify({ autoSwitch: on }) }))
+
 const removeAccount = () => {
   const target = accountRemove.value
   if (!target) return
@@ -171,6 +174,7 @@ watch(
               <Meter :label="t('integrations.week')" :percent="soleUsage(v)?.weekPct ?? null" />
             </span>
             <template #actions>
+              <Switch v-if="v.canEdit && multiAccount(v)" :model-value="v.autoSwitch" :disabled="busy" @update:model-value="(on) => setAutoSwitch(v, on)">{{ t('integrations.autoSwitch') }}</Switch>
               <Button v-if="v.canEdit && multiAccount(v)" size="sm" variant="ghost" :icon="Plus" @click="openAddAccount(v)">{{ t('integrations.addAccount') }}</Button>
               <Button v-if="v.canEdit && !multiAccount(v)" size="sm" variant="ghost" @click="openReplace(v)">{{ needsSignIn(v) ? t('integrations.signInAgain') : t('integrations.replace') }}</Button>
               <Button v-if="v.canEdit" size="sm" variant="ghost" :disabled="(v.accounts?.length ?? 0) > 1" :title="(v.accounts?.length ?? 0) > 1 ? t('integrations.modeMultiHint') : undefined" @click="openMode(v)">{{ t('integrations.mode') }}</Button>

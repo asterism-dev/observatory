@@ -2061,11 +2061,31 @@ func (e *env) claudeAccounts() (store.Integration, store.IntegrationAccount, sto
 	if _, err := e.s.AddIntegrationAccount(ctx, cl, store.IntegrationAccount{Account: "two@x.io", Source: integrations.SourceSetupToken, CreatedBy: e.owner}, store.IntegrationSecret{Token: claudeTok2}); err != nil {
 		e.t.Fatal(err)
 	}
+	if err := e.s.SetIntegrationAutoSwitch(ctx, cl, true, e.owner); err != nil {
+		e.t.Fatal(err)
+	}
+	cl.AutoSwitch = true
 	list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
 	if err != nil || len(list) != 2 || !list[0].Active {
 		e.t.Fatalf("accounts = %+v %v", list, err)
 	}
 	return cl, list[0], list[1]
+}
+
+func TestAutoSwitchOffSendsNoAlternates(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	cl, first, _ := e.claudeAccounts()
+	if err := e.s.SetIntegrationAutoSwitch(ctx, cl, false, e.owner); err != nil {
+		t.Fatal(err)
+	}
+	node := e.connect(cred)
+	s := desiredVM(t, node.desired(), v.ID).Egress.Secrets[0]
+	if s.Account != first.ID.String() || s.Value != claudeTok1 || len(s.Alternates) != 0 {
+		t.Fatalf("account %s, %d alternates", s.Account, len(s.Alternates))
+	}
 }
 
 func TestUsageReportSwitchesAndPushes(t *testing.T) {

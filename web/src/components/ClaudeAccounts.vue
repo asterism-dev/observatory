@@ -137,6 +137,7 @@ function onDrop(id: string) {
 <template>
   <div ref="root" class="accounts">
     <p v-if="switchNote" class="note" role="status">{{ switchNote }}</p>
+    <p v-if="!integration.autoSwitch" class="note">{{ t('integrations.autoSwitchOff') }}</p>
     <p v-if="limitedUntil" class="note" role="alert">
       {{ t('integrations.allLimited', { time: time(limitedUntil.toISOString()) }) }}
     </p>

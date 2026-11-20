@@ -286,6 +286,8 @@
     "empty": "Noch keine Integrationen.",
     "setupToken": "Setup-Token",
     "addAccount": "Konto hinzufügen",
+    "autoSwitch": "Automatisch wechseln",
+    "autoSwitchOff": "Bei einem Limit wird nicht gewechselt; wechsle selbst.",
     "addAccountTitle": "Claude-Konto hinzufügen",
     "remove": "Entfernen",
     "removeAccountTitle": "Konto entfernen",

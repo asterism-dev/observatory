@@ -255,6 +255,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		CanDelete         bool                `json:"canDelete"`
 		Accounts          []accountJSON       `json:"accounts,omitempty"`
 		LastSwitch        *switchJSON         `json:"lastSwitch"`
+		AutoSwitch        bool                `json:"autoSwitch"`
 	}
 	type scopeJSON struct {
 		Scope     store.EnvScope      `json:"scope"`
@@ -277,7 +278,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		j := integrationJSON{ID: v.ID, Kind: v.Kind, Source: v.Source, Scope: v.Scope, Mode: v.Mode, Account: v.Account, Scopes: v.ScopesInfo,
-			ProviderExpiresAt: v.ProviderExpiresAt, Status: v.Status, LastError: v.LastError, WasInVM: v.WasInVM, UpdatedAt: v.UpdatedAt,
+			ProviderExpiresAt: v.ProviderExpiresAt, Status: v.Status, LastError: v.LastError, WasInVM: v.WasInVM, UpdatedAt: v.UpdatedAt, AutoSwitch: v.AutoSwitch,
 			CanEdit:   e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationSet),
 			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationDelete)}
 		if v.Scope == store.EnvScopeTeam {
@@ -431,23 +432,44 @@ func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.authorize(w, r, old.OrgID, integrationObject(old.Scope, old.OwnerID), store.ActionIntegrationSet) {
 		return
 	}
-	var body struct{ Mode integrations.Mode }
+	var body struct {
+		Mode       integrations.Mode
+		AutoSwitch *bool
+	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !validMode(body.Mode) {
+	if (body.Mode != "" || body.AutoSwitch == nil) && !validMode(body.Mode) {
 		writeError(w, http.StatusBadRequest, "invalid mode")
+		return
+	}
+	if body.AutoSwitch != nil && old.Kind != integrations.Claude {
+		writeError(w, http.StatusBadRequest, "not a claude integration")
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	v := old
-	v.Mode = body.Mode
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.SetIntegrationMode(r.Context(), old, body.Mode, p.User.ID); err != nil {
+		if body.Mode != "" {
+			v.Mode = body.Mode
+			if err := tx.SetIntegrationMode(r.Context(), old, body.Mode, p.User.ID); err != nil {
+				return err
+			}
+			a := integrationAudit(r, store.ActionIntegrationSet, v)
+			a.Details["previousMode"] = old.Mode
+			if err := tx.Audit(r.Context(), a); err != nil {
+				return err
+			}
+		}
+		if body.AutoSwitch == nil {
+			return nil
+		}
+		v.AutoSwitch = *body.AutoSwitch
+		if err := tx.SetIntegrationAutoSwitch(r.Context(), old, v.AutoSwitch, p.User.ID); err != nil {
 			return err
 		}
 		a := integrationAudit(r, store.ActionIntegrationSet, v)
-		a.Details["previousMode"] = old.Mode
+		a.Details["action"], a.Details["autoSwitch"] = "auto-switch", v.AutoSwitch
 		return tx.Audit(r.Context(), a)
 	}) {
 		return
