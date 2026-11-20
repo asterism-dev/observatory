@@ -220,10 +220,16 @@ func newAccount(email string, by uuid.UUID) store.IntegrationAccount {
 
 func TestAddAccountOnlyPrivateProxy(t *testing.T) {
 	ctx := context.Background()
-	s, _, uid, org, _ := newIntegrationStore(t)
+	s, _, uid, org, team := newIntegrationStore(t)
 	sec := store.IntegrationSecret{Token: dummyAccess + "2"}
 	if _, err := s.AddIntegrationAccount(ctx, newClaude(t, s, org, uid, store.EnvScopeOrg, ""), newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrMultiAccountNotAllowed) {
 		t.Fatalf("org scope: %v", err)
+	}
+	teamClaude := integ(org, uid, integrations.Claude, integrations.SourceSetupToken, store.EnvScopeTeam, &team.ID)
+	teamClaude.Account = "one@example.com"
+	teamClaude = mustCreateIntegration(t, s, teamClaude, store.IntegrationSecret{Token: dummyAccess})
+	if _, err := s.AddIntegrationAccount(ctx, teamClaude, newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrMultiAccountNotAllowed) {
+		t.Fatalf("team scope: %v", err)
 	}
 	user := newClaude(t, s, org, uid, store.EnvScopeUser, integrations.ModeVM)
 	if _, err := s.AddIntegrationAccount(ctx, user, newAccount("two@example.com", uid), sec); !errors.Is(err, store.ErrMultiAccountNotAllowed) {

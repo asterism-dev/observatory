@@ -173,7 +173,7 @@ func (s *Store) AddIntegrationAccount(ctx context.Context, v Integration, a Inte
 			FROM integrations i WHERE i.id = $1`, v.ID).Scan(&scope, &mode, &kind, &position); err != nil {
 			return err
 		}
-		if kind != integrations.Claude || scope == EnvScopeOrg || mode != integrations.ModeProxy {
+		if kind != integrations.Claude || scope != EnvScopeUser || mode != integrations.ModeProxy {
 			return ErrMultiAccountNotAllowed
 		}
 		v.Source, v.Account, v.CreatedBy = a.Source, a.Account, a.CreatedBy
