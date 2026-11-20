@@ -11,7 +11,9 @@ import (
 
 const debBundleAbs = "/" + debBundle
 
-var withPath = []string{trustBlock[0], trustBlock[1], trustBlock[2], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[3], trustBlock[4]}
+var withPath = []string{trustBlock[0], trustBlock[1], trustBlock[2], otelBlock[0], otelBlock[1], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[3], trustBlock[4]}
+
+var otelBlock = []string{`OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:14318"`, `OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"`}
 
 var trustBlock = []string{
 	`CURL_CA_BUNDLE="` + debBundleAbs + `"`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="` + debBundleAbs + `"`, `NODE_EXTRA_CA_CERTS="` + debBundleAbs + `"`,
@@ -180,7 +182,7 @@ func TestWriteEnvRejectsBadNames(t *testing.T) {
 			t.Fatalf("env.sh contains %q", leak)
 		}
 	}
-	if merged["A"] != "1" || merged["C"] != "3" || len(merged) != 3+len(trustBlock) {
+	if merged["A"] != "1" || merged["C"] != "3" || len(merged) != 3+len(trustBlock)+len(otelBlock) {
 		t.Fatalf("merged = %v", merged)
 	}
 	if strings.Contains(err.Error(), "=") {
@@ -229,5 +231,30 @@ func TestWriteEnvErrorDoesNotLeakImageEntry(t *testing.T) {
 	_, err := envRoot(t).WriteEnv(nil, []string{"sekrit-value"})
 	if err == nil || strings.Contains(err.Error(), "sekrit") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestWriteEnvOTLPDefaults(t *testing.T) {
+	r := envRoot(t)
+	put(t, r, "lib/systemd/systemd", "", 0o755)
+	env, err := r.WriteEnv(map[string]string{"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}, []string{"OTEL_EXPORTER_OTLP_ENDPOINT=http://img:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://img:1" || env["OTEL_EXPORTER_OTLP_PROTOCOL"] != "grpc" {
+		t.Fatalf("image and seed must win: %v", env)
+	}
+	env, err = r.WriteEnv(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://localhost:14318" || env["OTEL_EXPORTER_OTLP_PROTOCOL"] != "http/protobuf" {
+		t.Fatalf("defaults missing: %v", env)
+	}
+	conf := get(t, r, "etc/systemd/system.conf.d/50-observatory.conf")
+	for _, want := range []string{`"OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318"`, `"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf"`} {
+		if !strings.Contains(conf, want) {
+			t.Fatalf("systemd conf lacks %s:\n%s", want, conf)
+		}
 	}
 }

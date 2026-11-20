@@ -77,6 +77,12 @@ func Run() error {
 	if fi, err := os.Stat(serviceLog); err == nil {
 		cmdLogStart = fi.Size()
 	}
+	stopReceiver, err := startReceiver(context.Background(), telemetry, "127.0.0.1:14318")
+	if err != nil {
+		logf("init: otlp receiver: %v", err)
+	} else {
+		defer stopReceiver()
+	}
 	// Without the image the guest still serves SSH port forwarding and the agent, so a failed start is not fatal.
 	img, err := StartImage(root, seed.Image, env)
 	if err != nil {

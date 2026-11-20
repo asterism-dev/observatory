@@ -16,6 +16,11 @@ const (
 	maxEnvironmentVal = 1000
 )
 
+var otelDefaults = map[string]string{
+	"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:14318",
+	"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+}
+
 var (
 	envName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	trustVars = []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"}
@@ -30,6 +35,7 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 			env[n] = "/" + found[0]
 		}
 	}
+	maps.Copy(env, otelDefaults)
 	set := func(n, v string) {
 		if !envName.MatchString(n) || strings.ContainsRune(v, 0) {
 			bad = append(bad, fmt.Sprintf("%q", n))
@@ -111,6 +117,9 @@ func (r Root) writeSystemdEnv(env map[string]string) error {
 		if v, ok := env[n]; ok {
 			vars[n] = v
 		}
+	}
+	for n := range otelDefaults {
+		vars[n] = env[n]
 	}
 	var line strings.Builder
 	for _, n := range slices.Sorted(maps.Keys(vars)) {
