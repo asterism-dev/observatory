@@ -40,14 +40,6 @@ services:
       - ../registry/config.yml:/etc/distribution/config.yml:ro
       - registry-data:/var/lib/registry
       - ./registry-certs:/keys:ro
-  registry-gc:
-    image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
-    profiles: [maintenance]
-    restart: "no"
-    command: ["garbage-collect", "/etc/distribution/config.yml"]
-    volumes:
-      - ../registry/config.yml:/etc/distribution/config.yml:ro
-      - registry-data:/var/lib/registry
   # Loads the kernel modules the gateway needs (OrbStack ships openvswitch unloaded); built-in modules make modprobe fail harmlessly.
   modules:
     image: alpine:3.22

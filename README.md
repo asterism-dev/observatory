@@ -40,7 +40,7 @@ Nodes and devices reach the gateway on UDP 51820/51821 at `OBSERVATORY_GATEWAY_H
 than `localhost` in `OBSERVATORY_PUBLIC_URL` then. [docs/network.md](docs/network.md) covers the address plan, the
 gateway, devices, networks and the isolation model; [docs/disks.md](docs/disks.md) covers disks and the storage server.
 
-For images, start the registry (`make registry-up`; `registry-down` stops it, `registry-gc` collects garbage). It
+For images, start the registry (`make registry-up`; `registry-down` stops it; the dev hub does not collect its garbage). It
 appends `OBSERVATORY_REGISTRY_URL`, `OBSERVATORY_REGISTRY_KEY_DIR`, `OBSERVATORY_REGISTRY_CERT_DIR` and
 `OBSERVATORY_REGISTRY_EVENTS_SECRET` to
 `deploy/dev/hub.env` if missing, listens on `localhost:55000` and reports pushes to the hub at `HUB_URL`. It restarts
