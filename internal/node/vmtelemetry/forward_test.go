@@ -279,3 +279,27 @@ func TestVMForwarderRejectedLogsOncePerVM(t *testing.T) {
 		t.Fatalf("log:\n%s", logs.b.String())
 	}
 }
+
+func TestVMForwarderRejectedAfterForget(t *testing.T) {
+	hub := newFakeHub(t, func(int) int { return http.StatusForbidden })
+	f := newTestForwarder(t, hub.URL)
+	vm := uuid.New()
+	f.Forget(vm)
+	// A 403 whose response arrives after the VM was forgotten.
+	f.post(context.Background(), vm, item{signal: "logs", stream: "app", body: gz(t, "x")})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.rejected) != 0 {
+		t.Fatalf("rejected kept for a forgotten VM: %v", f.rejected)
+	}
+}
+
+func gz(t *testing.T, s string) []byte {
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	zw.Write([]byte(s))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}

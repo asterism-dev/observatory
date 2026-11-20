@@ -172,7 +172,10 @@ func (f *Forwarder) post(qctx context.Context, vmID uuid.UUID, it item) bool {
 	case code == http.StatusForbidden:
 		f.mu.Lock()
 		logged := f.rejected[vmID]
-		f.rejected[vmID] = true
+		// A response that arrives after Forget must not leave an entry behind.
+		if _, known := f.queues[vmID]; known {
+			f.rejected[vmID] = true
+		}
 		f.mu.Unlock()
 		if !logged {
 			slog.Info("vm telemetry rejected", "vm", vmID, "stream", it.stream, "status", code)
