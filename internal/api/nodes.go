@@ -31,6 +31,7 @@ type nodeJSON struct {
 	UsedMemoryMB     int                `json:"usedMemoryMB"`
 	CanUpdate        bool               `json:"canUpdate"`
 	CanDelete        bool               `json:"canDelete"`
+	CanTelemetry     bool               `json:"canTelemetry"`
 	Underlay         *underlayJSON      `json:"underlay"`
 	Quarantined      bool               `json:"quarantined"`
 	Image            *proto.ImageStatus `json:"image"`
@@ -79,6 +80,7 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	j.CanUpdate = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeUpdate)
 	j.CanDelete = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeDelete)
+	j.CanTelemetry = h.telemetry != nil && e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeMetrics)
 	return j, nil
 }
 
