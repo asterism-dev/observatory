@@ -169,8 +169,8 @@ func gcloudMain(args []string) int {
 	}
 	adc := filepath.Join(home, ".config/gcloud/application_default_credentials.json")
 	if os.Getenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE") == "" && !gcloudLoggedIn(home) {
-		if tok, project, code := TokenInfo("gcloud"); code == 0 {
-			if data, err := readNoFollow(adc); err == nil && string(data) == gcloudADC(tok, project) {
+		if tok, _, code := TokenInfo("gcloud"); code == 0 {
+			if data, err := readNoFollow(adc); err == nil && isPlaceholderADC(data, tok) {
 				env = append(withoutEnv(env, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"), "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="+adc)
 				if ca := os.Getenv("SSL_CERT_FILE"); ca != "" && os.Getenv("CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE") == "" {
 					env = append(withoutEnv(env, "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE"), "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE="+ca)
@@ -183,15 +183,33 @@ func gcloudMain(args []string) int {
 	return 126
 }
 
-// gcloudLoggedIn reports whether the active configuration names an account; no other gcloud file is read.
+// isPlaceholderADC reports whether data is our placeholder ADC file; the quota project may lag a change until the next sync.
+func isPlaceholderADC(data []byte, placeholder string) bool {
+	var adc struct {
+		Type         string `json:"type"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	return json.Unmarshal(data, &adc) == nil && adc.Type == "authorized_user" &&
+		adc.ClientID == placeholder && adc.ClientSecret == placeholder && adc.RefreshToken == placeholder
+}
+
+// gcloudLoggedIn reports whether the environment or the active configuration names an account; no other gcloud file is read.
 func gcloudLoggedIn(home string) bool {
+	if os.Getenv("CLOUDSDK_CORE_ACCOUNT") != "" {
+		return true
+	}
 	dir := os.Getenv("CLOUDSDK_CONFIG")
 	if dir == "" {
 		dir = filepath.Join(home, ".config/gcloud")
 	}
-	name := "default"
-	if data, err := os.ReadFile(filepath.Join(dir, "active_config")); err == nil && strings.TrimSpace(string(data)) != "" {
-		name = strings.TrimSpace(string(data))
+	name := strings.TrimSpace(os.Getenv("CLOUDSDK_ACTIVE_CONFIG_NAME"))
+	if name == "" {
+		name = "default"
+		if data, err := os.ReadFile(filepath.Join(dir, "active_config")); err == nil && strings.TrimSpace(string(data)) != "" {
+			name = strings.TrimSpace(string(data))
+		}
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "configurations", "config_"+name))
 	if err != nil {

@@ -884,7 +884,8 @@ func gcloudEnv(t *testing.T, answers *tokenAnswers) (env []string, home string) 
 	os.MkdirAll(filepath.Join(home, ".config/gcloud"), 0o700)
 	os.WriteFile(filepath.Join(home, ".config/gcloud/application_default_credentials.json"), []byte(gcloudADC(dummyGcloud, gcloudProject)), 0o600)
 	return []string{"PATH=" + bin, "HOME=" + home, "VMM_TOKEN_UNIX=" + tokenServer(t, answers), "SSL_CERT_FILE=/etc/ssl/ca.pem",
-		"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=", "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE=", "CLOUDSDK_CONFIG="}, home
+		"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=", "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE=", "CLOUDSDK_CONFIG=",
+		"CLOUDSDK_ACTIVE_CONFIG_NAME=", "CLOUDSDK_CORE_ACCOUNT="}, home
 }
 
 func TestGcloudWrapperSetsEnv(t *testing.T) {
@@ -892,6 +893,15 @@ func TestGcloudWrapperSetsEnv(t *testing.T) {
 	want := filepath.Join(home, ".config/gcloud/application_default_credentials.json") + "|/etc/ssl/ca.pem"
 	if out, code := runTool(t, env, "gcloud", "storage", "ls"); out != want || code != 7 {
 		t.Fatalf("got %q, %d; want %q", out, code, want)
+	}
+}
+
+func TestGcloudWrapperIgnoresQuotaProject(t *testing.T) {
+	env, home := gcloudEnv(t, newAnswers(map[string]string{"gcloud": okProjectAnswer(dummyGcloud, gcloudProject)}))
+	adc := filepath.Join(home, ".config/gcloud/application_default_credentials.json")
+	os.WriteFile(adc, []byte(gcloudADC(dummyGcloud, "old-project")), 0o600)
+	if out, code := runTool(t, env, "gcloud"); out != adc+"|/etc/ssl/ca.pem" || code != 7 {
+		t.Fatalf("old quota project: %q, %d", out, code)
 	}
 }
 
@@ -920,6 +930,18 @@ func TestGcloudWrapperStepsAside(t *testing.T) {
 		{"user ADC file", connected, func(home string) []string {
 			os.WriteFile(filepath.Join(home, ".config/gcloud/application_default_credentials.json"), []byte(`{"type":"authorized_user"}`), 0o600)
 			return nil
+		}, "|"},
+		{"other refresh token", connected, func(home string) []string {
+			adc := strings.Replace(gcloudADC(dummyGcloud, gcloudProject), `"refresh_token":"`+dummyGcloud, `"refresh_token":"1//mine`, 1)
+			os.WriteFile(filepath.Join(home, ".config/gcloud/application_default_credentials.json"), []byte(adc), 0o600)
+			return nil
+		}, "|"},
+		{"account env", connected, func(string) []string { return []string{"CLOUDSDK_CORE_ACCOUNT=me@x"} }, "|"},
+		{"own login, config env", connected, func(home string) []string {
+			os.MkdirAll(filepath.Join(home, ".config/gcloud/configurations"), 0o700)
+			os.WriteFile(filepath.Join(home, ".config/gcloud/active_config"), []byte("default\n"), 0o600)
+			os.WriteFile(filepath.Join(home, ".config/gcloud/configurations/config_work"), []byte("[core]\naccount = me@x\n"), 0o600)
+			return []string{"CLOUDSDK_ACTIVE_CONFIG_NAME=work"}
 		}, "|"},
 	} {
 		env, home := gcloudEnv(t, tc.answers)
