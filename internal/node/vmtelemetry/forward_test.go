@@ -2,6 +2,8 @@ package vmtelemetry
 
 import (
 	"bytes"
+	"log/slog"
+	"strings"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -116,7 +118,7 @@ func TestVMForwarderRetryClass(t *testing.T) {
 		t.Fatalf("retried request = %+v", got)
 	}
 
-	for _, code := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusTemporaryRedirect} {
+	for _, code := range []int{http.StatusForbidden, http.StatusTemporaryRedirect} {
 		rejected := newFakeHub(t, func(int) int { return code })
 		f := newTestForwarder(t, rejected.URL)
 		f.Send(vm, "metrics", "usage", []byte("x"), 0)
@@ -208,5 +210,72 @@ func TestVMForwarderCountsEvictions(t *testing.T) {
 	f.Send(vm, "logs", "console", []byte("l"), 3)
 	if d.get("logs") != 3 {
 		t.Fatalf("logs body evicted: drops %v", d.n)
+	}
+}
+
+type logLines struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logLines) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logLines) count(substr string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.b.String(), substr)
+}
+
+func captureLog(t *testing.T) *logLines {
+	l := &logLines{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(l, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return l
+}
+
+func TestVMForwarderHubTelemetryOff(t *testing.T) {
+	fastRetry(t)
+	old := hubOffPause
+	hubOffPause = 300 * time.Millisecond
+	t.Cleanup(func() { hubOffPause = old })
+	logs := captureLog(t)
+	hub := newFakeHub(t, func(int) int { return http.StatusNotFound })
+	f := newTestForwarder(t, hub.URL)
+	a, b := uuid.New(), uuid.New()
+	f.Send(a, "logs", "app", []byte("x"), 1)
+	eventually(t, "first request", func() bool { return len(hub.requests()) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	f.Send(a, "logs", "app", []byte("y"), 1)
+	f.Send(b, "logs", "app", []byte("z"), 1)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(hub.requests()); n != 1 || queued(f, a) != nil || queued(f, b) != nil {
+		t.Fatalf("while paused: %d requests, queues %q %q", n, queued(f, a), queued(f, b))
+	}
+	time.Sleep(hubOffPause)
+	f.Send(b, "logs", "app", []byte("probe"), 1)
+	eventually(t, "re-probe after the pause", func() bool { return len(hub.requests()) == 2 })
+	if logs.count("level=INFO") != 1 || logs.count("level=WARN") != 0 {
+		t.Fatalf("log:\n%s", logs.b.String())
+	}
+}
+
+func TestVMForwarderRejectedLogsOncePerVM(t *testing.T) {
+	logs := captureLog(t)
+	hub := newFakeHub(t, func(int) int { return http.StatusForbidden })
+	f := newTestForwarder(t, hub.URL)
+	a, b := uuid.New(), uuid.New()
+	for range 3 {
+		f.Send(a, "logs", "app", []byte("x"), 1)
+		f.Send(b, "metrics", "app", []byte("y"), 0)
+	}
+	eventually(t, "all sent", func() bool { return len(hub.requests()) == 6 })
+	time.Sleep(20 * time.Millisecond)
+	if logs.count("vm="+a.String()) != 1 || logs.count("vm="+b.String()) != 1 {
+		t.Fatalf("log:\n%s", logs.b.String())
 	}
 }

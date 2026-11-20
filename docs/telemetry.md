@@ -24,7 +24,8 @@ the VM page under `vm:metrics` (stream `console`, see below).
 ## VMs
 
 The VM page has a Metrics tab with usage graphs, the live process list and log streams. VMs on the new guest init send
-telemetry; builder VMs never do, and a VM started before this feature sends none until it reboots.
+telemetry; a VM started before this feature sends none until it reboots. Builder VMs send it too, but the hub rejects
+it, so it is never stored or shown (the node logs this once per VM).
 
 Usage, every 10 seconds, with the node's `system.*` names minus paging: `system.cpu.time`, `system.cpu.load_average.1m`,
 `.5m` and `.15m`, `system.memory.usage`, `system.filesystem.usage` and `system.filesystem.limit`, and `system.network.io`.
@@ -66,7 +67,7 @@ Hub settings are listed in [deploy.md](deploy.md#configuration); the compose fil
 ([deploy.md](deploy.md#telemetry-stores)).
 
 - `OBSERVATORY_METRICS_URL` and `OBSERVATORY_LOGS_URL`: both or neither. Unset turns telemetry off: the OTLP endpoints
-  answer 404 and the node page hides the graphs and logs.
+  answer 404 and the node page hides the graphs and logs. Nodes then drop VM telemetry and check again every 5 minutes.
 - `OBSERVATORY_METRICS_RETENTION` (default `30d`) and `OBSERVATORY_LOGS_RETENTION` (`14d`).
 - `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`500000`) and `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`2000000`); series
   beyond the limits are dropped.

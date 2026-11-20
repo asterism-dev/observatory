@@ -23,6 +23,9 @@ const (
 
 var retryMin = time.Second
 
+// hubOffPause is how long a signal the hub answered 404 for (telemetry off) is dropped before the next probe.
+var hubOffPause = 5 * time.Minute
+
 type item struct {
 	seq            uint64
 	signal, stream string
@@ -46,10 +49,13 @@ type Forwarder struct {
 	wg               sync.WaitGroup
 	dropped          func(vmID uuid.UUID, kind string, n int64) // set by NewSink
 
-	mu     sync.Mutex
-	seq    uint64
-	queues map[uuid.UUID]*queue // a VM has a queue while its sender runs
-	closed bool
+	mu        sync.Mutex
+	seq       uint64
+	queues    map[uuid.UUID]*queue // a VM has a queue while its sender runs
+	closed    bool
+	paused    map[string]time.Time // per signal, until when the hub is taken to have telemetry off
+	offLogged bool
+	rejected  map[uuid.UUID]bool // VMs whose 403 was logged
 }
 
 func NewForwarder(hubBase, credential string, hc *http.Client) *Forwarder {
@@ -58,7 +64,7 @@ func NewForwarder(hubBase, credential string, hc *http.Client) *Forwarder {
 	// A redirect would resend the node credential to wherever the response points.
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Forwarder{base: hubBase, credential: credential, hc: &c, ctx: ctx, cancel: cancel, queues: map[uuid.UUID]*queue{},
-		dropped: func(uuid.UUID, string, int64) {}}
+		dropped: func(uuid.UUID, string, int64) {}, paused: map[string]time.Time{}, rejected: map[uuid.UUID]bool{}}
 }
 
 // Send queues an OTLP protobuf body of signal ("logs" or "metrics") holding records log records for the hub, dropping vmID's oldest bodies past the bound.
@@ -110,8 +116,9 @@ func (f *Forwarder) run(vmID uuid.UUID, q *queue) {
 			return
 		}
 		it := q.items[0]
+		paused := time.Now().Before(f.paused[it.signal])
 		f.mu.Unlock()
-		if f.post(q.ctx, vmID, it) {
+		if !paused && f.post(q.ctx, vmID, it) {
 			delay = min(max(2*delay, retryMin), retryMax)
 			select {
 			case <-q.ctx.Done():
@@ -130,7 +137,7 @@ func (f *Forwarder) run(vmID uuid.UUID, q *queue) {
 	}
 }
 
-// post reports whether it should be retried: no response, 429 and 5xx are; a 403 means the VM left this node.
+// post reports whether it should be retried: no response, 429 and 5xx are; a 404 means the hub has telemetry off, a 403 that the VM left this node or is a builder.
 func (f *Forwarder) post(qctx context.Context, vmID uuid.UUID, it item) bool {
 	ctx, cancel := context.WithTimeout(qctx, sendTimeout)
 	defer cancel()
@@ -153,6 +160,23 @@ func (f *Forwarder) post(qctx context.Context, vmID uuid.UUID, it item) bool {
 	switch code := resp.StatusCode; {
 	case code == http.StatusTooManyRequests || code >= 500:
 		return true
+	case code == http.StatusNotFound:
+		f.mu.Lock()
+		f.paused[it.signal] = time.Now().Add(hubOffPause)
+		logged := f.offLogged
+		f.offLogged = true
+		f.mu.Unlock()
+		if !logged {
+			slog.Info("hub has telemetry off, dropping VM telemetry", "signal", it.signal, "retry", hubOffPause)
+		}
+	case code == http.StatusForbidden:
+		f.mu.Lock()
+		logged := f.rejected[vmID]
+		f.rejected[vmID] = true
+		f.mu.Unlock()
+		if !logged {
+			slog.Info("vm telemetry rejected", "vm", vmID, "stream", it.stream, "status", code)
+		}
 	case code >= 300:
 		slog.Warn("vm telemetry rejected", "vm", vmID, "stream", it.stream, "status", code)
 	}
@@ -163,6 +187,7 @@ func (f *Forwarder) post(qctx context.Context, vmID uuid.UUID, it item) bool {
 func (f *Forwarder) Forget(vmID uuid.UUID) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	delete(f.rejected, vmID)
 	if q := f.queues[vmID]; q != nil {
 		q.items, q.size = nil, 0
 		delete(f.queues, vmID)
