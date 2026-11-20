@@ -12,6 +12,7 @@ const (
 	GitHub Kind = "github"
 	Claude Kind = "claude"
 	Linear Kind = "linear"
+	GCloud Kind = "gcloud"
 )
 
 type Source string
@@ -21,6 +22,7 @@ const (
 	SourceSetupToken Source = "setup-token"
 	SourceOAuth      Source = "oauth"
 	SourceAPIKey     Source = "api-key"
+	SourceADC        Source = "adc"
 )
 
 type Mode string
@@ -36,7 +38,7 @@ type Spec struct {
 	TokenPage      string
 }
 
-// Hosts are sorted so they equal their egress.NormalizeHosts form.
+// Hosts are sorted so they equal their egress.NormalizeHostSet form.
 var Kinds = map[Kind]Spec{
 	GitHub: {
 		Sources:   []Source{SourcePAT},
@@ -55,6 +57,12 @@ var Kinds = map[Kind]Spec{
 		Hosts:     []string{"api.linear.app", "mcp.linear.app"},
 		Headers:   []string{"Authorization"},
 		TokenPage: "https://linear.app/settings/account/security",
+	},
+	GCloud: {
+		Sources:   []Source{SourceADC},
+		Hosts:     []string{"*.googleapis.com"},
+		Headers:   []string{"Authorization"},
+		TokenPage: "https://myaccount.google.com/permissions",
 	},
 }
 
