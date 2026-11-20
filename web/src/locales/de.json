@@ -293,7 +293,6 @@
     "removeAccountTitle": "Konto entfernen",
     "removeAccountBody": "{account} entfernen? Die anderen Konten funktionieren weiter.",
     "reorder": "{account} verschieben (ziehen oder mit den Pfeiltasten hoch und runter)",
-    "useAccount": "{account} verwenden",
     "fiveHour": "5 h",
     "week": "Woche",
     "resets": "zurückgesetzt {time}",
@@ -304,7 +303,19 @@
     "refreshFailed": "Erneuerung fehlgeschlagen",
     "modeMultiHint": "Entferne Konten, bis nur eines übrig ist, um den Modus zu ändern.",
     "vmLine": "Integrationen",
-    "emptyText": "Verbinde eine Integration, damit deine VMs sie nutzen können. Standardmäßig bekommen VMs nur einen Platzhalter und der Proxy setzt das Token ein."
+    "emptyText": "Verbinde eine Integration, damit deine VMs sie nutzen können. Standardmäßig bekommen VMs nur einen Platzhalter und der Proxy setzt das Token ein.",
+    "accounts": "Konten",
+    "active": "Aktiv",
+    "activate": "Aktivieren",
+    "moreActions": "Weitere Aktionen für {account}",
+    "notFound": "Integration nicht gefunden.",
+    "dangerZone": "Gefahrenzone",
+    "connectedTitle": "Verbunden",
+    "availableTitle": "Verfügbar",
+    "connectedTag": "verbunden",
+    "about_github": "git und gh funktionieren in deinen VMs.",
+    "about_claude": "Claude Code ist in deinen VMs angemeldet.",
+    "about_linear": "Die Linear-API und MCP funktionieren in deinen VMs."
   },
   "nodes": {
     "subtitle": "Maschinen, auf denen deine VMs laufen.",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Button, Switch } from '@asterism-dev/lumen'
-import { GripVertical } from '@lucide/vue'
-import { computed, nextTick, ref, watch } from 'vue'
+import { Button } from '@asterism-dev/lumen'
+import { Ellipsis, GripVertical } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
@@ -20,6 +20,7 @@ const ordered = ref<ClaudeAccount[]>([])
 const error = ref('')
 const dragId = ref('')
 const root = ref<HTMLElement>()
+const menuFor = ref('')
 
 watch(
   () => props.integration.accounts,
@@ -76,8 +77,7 @@ function age(a: ClaudeAccount) {
 
 const fail = (e: unknown) => (error.value = e instanceof Error ? e.message : String(e))
 
-async function activate(a: ClaudeAccount, on: boolean) {
-  if (!on || a.active) return
+async function activate(a: ClaudeAccount) {
   error.value = ''
   try {
     await api(`${base.value}/${a.id}/activate`, { method: 'POST' })
@@ -86,6 +86,22 @@ async function activate(a: ClaudeAccount, on: boolean) {
   }
   emit('changed')
 }
+
+function closeMenu(focus = false) {
+  const id = menuFor.value
+  menuFor.value = ''
+  if (focus) root.value?.querySelector<HTMLElement>(`[data-menu="${id}"] > button`)?.focus()
+}
+
+async function toggleMenu(id: string) {
+  menuFor.value = menuFor.value === id ? '' : id
+  await nextTick()
+  if (menuFor.value) root.value?.querySelector<HTMLElement>(`[data-menu="${id}"] [role="menuitem"]`)?.focus()
+}
+
+const onOutside = (e: PointerEvent) => menuFor.value && !(e.target as Element).closest(`[data-menu="${menuFor.value}"]`) && closeMenu()
+onMounted(() => document.addEventListener('pointerdown', onOutside))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside))
 
 async function move(id: string, to: number) {
   const from = ordered.value.findIndex((a) => a.id === id)
@@ -137,7 +153,6 @@ function onDrop(id: string) {
 <template>
   <div ref="root" class="accounts">
     <p v-if="switchNote" class="note" role="status">{{ switchNote }}</p>
-    <p v-if="!integration.autoSwitch" class="note">{{ t('integrations.autoSwitchOff') }}</p>
     <p v-if="limitedUntil" class="note" role="alert">
       {{ t('integrations.allLimited', { time: time(limitedUntil.toISOString()) }) }}
     </p>
@@ -159,6 +174,10 @@ function onDrop(id: string) {
         </button>
         <ul class="inner">
           <ResourceRow :title="label(a)" :tone="a.status === 'expired' ? 'danger' : undefined">
+            <template #title>
+              <Tag v-if="a.active" tone="success">{{ t('integrations.active') }}</Tag>
+              <span :title="label(a)">{{ label(a) }}</span>
+            </template>
             <template v-if="a.status === 'expired' || a.lastError" #tags>
               <Tag v-if="a.status === 'expired'" tone="danger" :title="a.lastError">{{ t('integrations.expired') }}</Tag>
               <Tag v-else :tone="a.lastError === 'no usage data' ? 'muted' : 'warning'">{{ errorText(a.lastError) }}</Tag>
@@ -175,9 +194,26 @@ function onDrop(id: string) {
               <span class="age">{{ age(a) }}</span>
             </span>
             <template v-if="integration.canEdit" #actions>
-              <Switch :model-value="a.active" :disabled="a.active" :aria-label="t('integrations.useAccount', { account: label(a) })" @update:model-value="(v) => activate(a, v)" />
-              <Button size="sm" variant="ghost" @click="emit('signIn', a)">{{ t('integrations.signInAgain') }}</Button>
-              <Button v-if="canRemove" size="sm" variant="ghost" @click="emit('remove', a)">{{ t('integrations.remove') }}</Button>
+              <Button v-if="!a.active" size="sm" @click="activate(a)">{{ t('integrations.activate') }}</Button>
+              <div class="menu" :data-menu="a.id" @keydown.esc="closeMenu(true)">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  :icon="Ellipsis"
+                  aria-haspopup="menu"
+                  :aria-expanded="menuFor === a.id"
+                  :aria-label="t('integrations.moreActions', { account: label(a) })"
+                  @click="toggleMenu(a.id)"
+                />
+                <ul v-if="menuFor === a.id" role="menu" class="menu__list">
+                  <li role="none">
+                    <button type="button" role="menuitem" @click="closeMenu(), emit('signIn', a)">{{ t('integrations.signInAgain') }}</button>
+                  </li>
+                  <li v-if="canRemove" role="none">
+                    <button type="button" role="menuitem" class="danger" @click="closeMenu(), emit('remove', a)">{{ t('integrations.remove') }}</button>
+                  </li>
+                </ul>
+              </div>
             </template>
           </ResourceRow>
         </ul>
@@ -190,7 +226,6 @@ function onDrop(id: string) {
 .accounts {
   display: grid;
   gap: 8px;
-  padding-left: 24px;
 }
 .note {
   margin: 0;
@@ -229,6 +264,42 @@ function onDrop(id: string) {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
+}
+.menu {
+  position: relative;
+}
+.menu__list {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  min-width: 160px;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  list-style: none;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+.menu__list button {
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu__list button:hover,
+.menu__list button:focus-visible {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.menu__list .danger {
+  color: var(--danger);
 }
 .reset,
 .age {

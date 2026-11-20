@@ -61,3 +61,10 @@ export const tokenPages: Record<IntegrationKind, string> = {
   claude: 'https://claude.ai/settings/claude-code',
   linear: 'https://linear.app/settings/account/security',
 }
+
+export const daysLeft = (v: Integration) => (v.providerExpiresAt ? Math.max(0, Math.ceil((Date.parse(v.providerExpiresAt) - Date.now()) / 86_400_000)) : null)
+export const statusTone = (v: Integration) => (v.status === 'expired' ? 'danger' : (daysLeft(v) ?? Infinity) <= 7 ? 'warning' : 'success')
+export const statusLabel = (v: Integration, t: (key: string, args?: Record<string, unknown>) => string) =>
+  v.status === 'expired' ? t('integrations.expired') : daysLeft(v) === null ? t('integrations.ok') : t('integrations.okExpires', { n: daysLeft(v) })
+export const multiAccount = (v: Integration) => v.kind === 'claude' && v.scope === 'user' && v.mode === 'proxy' && !!v.accounts?.length
+export const shownAccount = (v: Integration) => v.accounts?.find((a) => a.active)?.account || v.account

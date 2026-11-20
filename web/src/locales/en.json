@@ -293,7 +293,6 @@
     "removeAccountTitle": "Remove account",
     "removeAccountBody": "Remove {account}? The other accounts keep working.",
     "reorder": "Move {account} (drag, or use the up and down arrow keys)",
-    "useAccount": "Use {account}",
     "fiveHour": "5h",
     "week": "week",
     "resets": "resets {time}",
@@ -304,7 +303,19 @@
     "refreshFailed": "refresh failed",
     "modeMultiHint": "Remove accounts until only one is left to change the mode.",
     "vmLine": "Integrations",
-    "emptyText": "Connect an integration so your VMs can use it. By default, VMs only get a placeholder and the proxy adds the token."
+    "emptyText": "Connect an integration so your VMs can use it. By default, VMs only get a placeholder and the proxy adds the token.",
+    "accounts": "Accounts",
+    "active": "Active",
+    "activate": "Activate",
+    "moreActions": "More actions for {account}",
+    "notFound": "Integration not found.",
+    "dangerZone": "Danger zone",
+    "connectedTitle": "Connected",
+    "availableTitle": "Available",
+    "connectedTag": "connected",
+    "about_github": "git and gh work in your VMs.",
+    "about_claude": "Claude Code is signed in in your VMs.",
+    "about_linear": "The Linear API and MCP work in your VMs."
   },
   "nodes": {
     "subtitle": "Machines that run your VMs.",

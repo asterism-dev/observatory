@@ -7,7 +7,7 @@ import { api, ApiError } from '@/api'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import { defaultSource, kindLabels, type ClaudeAccount, type Integration, type IntegrationKind, type IntegrationMode, type IntegrationScope } from '@/composables/integrations'
 
-const props = defineProps<{ open: boolean; orgId: string; scopes: IntegrationScope[]; replacing: Integration | null; addTo?: Integration | null; replaceAccount?: ClaudeAccount | null }>()
+const props = defineProps<{ open: boolean; orgId: string; scopes: IntegrationScope[]; replacing: Integration | null; addTo?: Integration | null; replaceAccount?: ClaudeAccount | null; initialKind?: IntegrationKind }>()
 const emit = defineEmits<{ 'update:open': [boolean]; saved: []; conflict: [] }>()
 
 const { t } = useI18n()
@@ -48,7 +48,7 @@ watch(
     error.value = ''
     mode.value = 'proxy'
     claudeSource.value = (props.replaceAccount?.source ?? props.replacing?.source) === 'setup-token' ? 'setup-token' : 'oauth'
-    kind.value = props.replacing?.kind ?? props.addTo?.kind ?? 'github'
+    kind.value = props.replacing?.kind ?? props.addTo?.kind ?? props.initialKind ?? 'github'
     scope.value = scopeOptions.value[0]?.value ?? ''
   },
 )
