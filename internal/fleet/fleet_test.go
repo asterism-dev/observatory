@@ -2238,6 +2238,41 @@ func TestPollUsageSetupTokenRejectedStops(t *testing.T) {
 	}
 }
 
+func TestPollUsageSetupTokenRejectedAfterPollFailureStops(t *testing.T) {
+	ctx := context.Background()
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e := newEnv(t)
+	cl, _, _ := e.claudeAccounts()
+	var rejected atomic.Bool
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		if rejected.Load() {
+			return integrations.Usage{}, fmt.Errorf("%w: claude: HTTP 403", integrations.ErrRejected)
+		}
+		return integrations.Usage{}, errors.New("claude: HTTP 500")
+	}}
+	e.runPoll(u)
+	lastError := func() string {
+		list, err := e.s.IntegrationAccounts(ctx, e.org.ID, cl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list[0].LastError
+	}
+	waitFor(t, func() bool { return lastError() == "usage poll failed" })
+	rejected.Store(true)
+	offset.Store(int64(time.Hour))
+	waitFor(t, func() bool { return lastError() == "no usage data" })
+	n := u.n(claudeTok1)
+	time.Sleep(30 * time.Millisecond)
+	if u.n(claudeTok1) != n {
+		t.Fatal("kept polling a rejected setup token")
+	}
+}
+
 func TestPollUsageErrorShownThenCleared(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now()

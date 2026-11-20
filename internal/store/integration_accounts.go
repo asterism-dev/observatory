@@ -503,6 +503,6 @@ func (s *Store) MarkPollFailed(ctx context.Context, ref AccountRef, failed bool)
 
 // MarkNoUsageData stops polling an account whose token the usage endpoint rejects, until its token is replaced.
 func (s *Store) MarkNoUsageData(ctx context.Context, ref AccountRef) error {
-	_, err := s.q.Exec(ctx, "UPDATE integration_accounts SET last_error = 'no usage data' WHERE org_id = $1 AND id = $2 AND last_error = ''", ref.OrgID, ref.ID)
+	_, err := s.q.Exec(ctx, "UPDATE integration_accounts SET last_error = 'no usage data' WHERE org_id = $1 AND id = $2 AND last_error IN ('', 'usage poll failed')", ref.OrgID, ref.ID)
 	return err
 }
