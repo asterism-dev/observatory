@@ -352,3 +352,30 @@ func TestEgressSendFailureRespawns(t *testing.T) {
 		t.Fatalf("events = %v", ev)
 	}
 }
+
+func TestNodeForwardsUsage(t *testing.T) {
+	a, _, h := newEgressAgent(t)
+	got := make(chan proto.Message, 4)
+	a.mu.Lock()
+	a.send = func(m proto.Message) error { got <- m; return nil }
+	a.mu.Unlock()
+	a.reconcile(context.Background(), 0, []proto.DesiredVM{withEgress(dv("a", "a", proto.PowerRunning, 1), "tok-secret-value")})
+	waitState(t, a, "a", proto.StateRunning, 1)
+	pct := 42.0
+	obs := proto.UsageObservation{Integration: "i1", Account: "acc1", FiveHourPct: &pct, ObservedAt: time.Now().UTC()}
+	h.last().usage <- obs
+	for {
+		select {
+		case m := <-got:
+			if m.Type != "usage" {
+				continue
+			}
+			if len(m.Usage) != 1 || m.Usage[0].Account != "acc1" || m.Usage[0].Integration != "i1" || *m.Usage[0].FiveHourPct != 42 {
+				t.Fatalf("usage = %+v", m.Usage)
+			}
+			return
+		case <-time.After(5 * time.Second):
+			t.Fatal("no usage message")
+		}
+	}
+}

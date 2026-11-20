@@ -88,7 +88,7 @@ func newRig(t *testing.T, secrets []proto.HostBoundSecret, h http.Handler, opts 
 	if h == nil {
 		h = http.HandlerFunc(r.record)
 	}
-	upCA, err := NewCA([]string{"a.test", "b.test"}, time.Now())
+	upCA, err := NewCA([]string{"a.test", "b.test", claudeHost, "*.googleapis.com"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func newRig(t *testing.T, secrets []proto.HostBoundSecret, h http.Handler, opts 
 	r.upPool = x509.NewCertPool()
 	r.upPool.AppendCertsFromPEM([]byte(upCA.CertPEM))
 
-	vmCA, err := NewCA([]string{"a.test", "b.test"}, time.Now())
+	vmCA, err := NewCA([]string{"a.test", "b.test", claudeHost, "*.googleapis.com"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,5 +811,21 @@ func TestWebSocketPrefixTailNotStalled(t *testing.T) {
 	_, msg, err := c.Read(rctx)
 	if err != nil || string(msg) != "plainhello "+ghValue[:1] {
 		t.Fatalf("msg %q err %v", msg, err)
+	}
+}
+
+func TestWildcardTermination(t *testing.T) {
+	opt, spliced := origListener(t)
+	r := newRig(t, []proto.HostBoundSecret{ghSecret("*.googleapis.com")}, nil, opt)
+	res, _ := r.do(r.client(false), get(t, "https://logging.googleapis.com/", "Authorization", "Bearer "+ghPH))
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if got := r.last().header.Get("Authorization"); got != "Bearer "+ghValue {
+		t.Fatalf("upstream saw %q", got)
+	}
+	tlsDial(t, r.addr, &tls.Config{ServerName: "example.com", InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
+	if spliced.Load() != 1 {
+		t.Fatalf("example.com spliced %d times", spliced.Load())
 	}
 }

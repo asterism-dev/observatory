@@ -43,6 +43,8 @@ func (v HTTPVerifier) Verify(ctx context.Context, kind Kind, source Source, toke
 		return v.github(ctx, token)
 	case Linear:
 		return v.linear(ctx, token)
+	case GCloud:
+		return Account{}, fmt.Errorf("%w: %s: verified through Google OAuth", ErrRejected, kind)
 	default:
 		return v.claude(ctx, source, token)
 	}

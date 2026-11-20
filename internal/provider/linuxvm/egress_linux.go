@@ -99,7 +99,7 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &egressProc{cmd: cmd, stdin: stdin, ready: make(chan struct{}), exited: make(chan struct{}), done: make(chan struct{})}
+	p := &egressProc{cmd: cmd, stdin: stdin, ready: make(chan struct{}), exited: make(chan struct{}), done: make(chan struct{}), usage: make(chan proto.UsageObservation, 64)}
 	var readers sync.WaitGroup
 	readers.Add(2)
 	started := make(chan error, 1)
@@ -122,9 +122,28 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	go func() {
 		defer readers.Done()
 		sc := bufio.NewScanner(stdout)
+		var warned bool
 		for sc.Scan() {
-			if sc.Text() == "ready" {
+			line := sc.Text()
+			if line == "ready" {
 				p.readyOnce.Do(func() { close(p.ready) })
+				continue
+			}
+			if !strings.HasPrefix(line, "usage ") {
+				continue
+			}
+			o, ok := parseUsageLine(line)
+			if !ok {
+				if !warned {
+					warned = true
+					slog.Warn("malformed egress usage line", "vm", id)
+				}
+				continue
+			}
+			// Never blocks: a stalled reader would stall the proxy's writes and keep Done from closing.
+			select {
+			case p.usage <- o:
+			default:
 			}
 		}
 		io.Copy(io.Discard, stdout)
@@ -150,6 +169,7 @@ type egressProc struct {
 	exited    chan struct{}
 	done      chan struct{}
 	doneOnce  sync.Once
+	usage     chan proto.UsageObservation
 }
 
 // Send writes t as one JSON line; json.Marshal never emits newlines, so the line is never blank or split.
@@ -168,8 +188,9 @@ func (p *egressProc) Send(t proto.Egress) error {
 	return err
 }
 
-func (p *egressProc) Ready() <-chan struct{} { return p.ready }
-func (p *egressProc) Done() <-chan struct{}  { return p.done }
+func (p *egressProc) Ready() <-chan struct{}               { return p.ready }
+func (p *egressProc) Done() <-chan struct{}                { return p.done }
+func (p *egressProc) Usage() <-chan proto.UsageObservation { return p.usage }
 
 // Kill closes Done once the process is reaped or egressKillWait passed, so a stuck process cannot block the supervisor.
 func (p *egressProc) Kill() {

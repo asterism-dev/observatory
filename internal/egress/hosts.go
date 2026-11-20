@@ -23,16 +23,21 @@ var ErrInvalidHost = errors.New("invalid host")
 
 var labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-func NormalizeHosts(in []string) ([]string, error) { return normalizeHosts(in, MaxHosts) }
+func NormalizeHosts(in []string) ([]string, error) { return normalizeHosts(in, MaxHosts, false) }
 
-func NormalizeHostSet(in []string) ([]string, error) { return normalizeHosts(in, MaxCAHosts) }
+// NormalizeHostSet also accepts "*.<domain>" patterns, which only built-in integration kinds bind.
+func NormalizeHostSet(in []string) ([]string, error) { return normalizeHosts(in, MaxCAHosts, true) }
 
-func normalizeHosts(in []string, limit int) ([]string, error) {
+func normalizeHosts(in []string, limit int, wildcards bool) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, h := range in {
 		h = strings.ToLower(strings.TrimSpace(h))
-		if err := validHost(h); err != nil {
+		check := validHost
+		if wildcards {
+			check = validPattern
+		}
+		if err := check(h); err != nil {
 			return nil, err
 		}
 		if !seen[h] {
@@ -45,6 +50,24 @@ func normalizeHosts(in []string, limit int) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func validPattern(p string) error {
+	if d, ok := strings.CutPrefix(p, "*."); ok {
+		if err := validHost(d); err != nil {
+			return fmt.Errorf("%w: %q", ErrInvalidHost, p)
+		}
+		return nil
+	}
+	return validHost(p)
+}
+
+// HostMatches reports whether host, already NormalizeSNI-ed, is bound by pattern: an exact name or "*.<domain>" for any subdomain.
+func HostMatches(pattern, host string) bool {
+	if d, ok := strings.CutPrefix(pattern, "*."); ok {
+		return strings.HasSuffix(host, "."+d)
+	}
+	return pattern == host
 }
 
 func validHost(h string) error {

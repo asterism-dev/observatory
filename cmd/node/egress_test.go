@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 type syncBuf struct {
@@ -103,5 +107,47 @@ func TestEgressMainDiscardsGlobalLog(t *testing.T) {
 	}
 	if got := stderr.String(); got != "egress: invalid table\n" {
 		t.Fatalf("stderr %q", got)
+	}
+}
+
+func TestEgressUsageLinesThrottled(t *testing.T) {
+	out := newSyncBuf()
+	report := usageReporter(&lockedWriter{w: out})
+	pct := 10.0
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := range 5 {
+		p := pct + float64(i)
+		report(proto.UsageObservation{Integration: "i1", Account: "acc1", FiveHourPct: &p, ObservedAt: now})
+		time.Sleep(200 * time.Millisecond)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 1 {
+		t.Fatalf("lines = %q", out.String())
+	}
+	until := now.Add(time.Hour)
+	report(proto.UsageObservation{Integration: "i1", Account: "acc1", LimitedUntil: &until, ObservedAt: now})
+	deadline := time.Now().Add(time.Second)
+	for strings.Count(out.String(), "\n") < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("lines = %q", lines)
+	}
+	for i, l := range lines {
+		b, ok := strings.CutPrefix(l, "usage ")
+		var o proto.UsageObservation
+		if !ok || json.Unmarshal([]byte(b), &o) != nil || o.Account != "acc1" || o.Integration != "i1" {
+			t.Fatalf("line %d = %q", i, l)
+		}
+		if i == 1 && (o.LimitedUntil == nil || !o.LimitedUntil.Equal(until)) {
+			t.Fatalf("limit line = %q", l)
+		}
+		var fields map[string]any
+		json.Unmarshal([]byte(b), &fields)
+		for k := range fields {
+			if !slices.Contains([]string{"integration", "account", "fiveHourPct", "limitedUntil", "observedAt"}, k) {
+				t.Fatalf("unexpected field %q in %q", k, l)
+			}
+		}
 	}
 }

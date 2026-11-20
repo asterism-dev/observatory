@@ -18,20 +18,21 @@ org:
   org audit [flags]  show the org's audit log
 
 vm:
-  vm list                             list VMs
-  vm show <vm>                        show a VM
-  vm create <name> [flags]            create a VM
-  vm start <vm> [--wait]              start a stopped VM
-  vm resume <vm> [--wait]             resume a paused or hibernated VM
-  vm pause <vm> [--wait]              pause a running VM
-  vm hibernate <vm> [--wait]          hibernate a running VM
-  vm stop <vm> [--force] [--wait]     shut a VM down (--force: power off)
-  vm restart <vm> [--force] [--wait]  stop, then start a VM
-  vm delete <vm> [--wait]             delete a VM
-  vm auto-suspend <vm> <minutes|off>  suspend an idle VM after N minutes (5-1440)
-  vm metrics <vm>                     show recent CPU and memory samples
-  vm egress <vm>                      show egress proxy hosts and CA of a VM
-  vm integrations <vm>                show the integrations a VM gets
+  vm list [--deleted]                        list VMs (--deleted: deleted VMs)
+  vm show <vm>                               show a VM
+  vm create <name> [flags]                   create a VM
+  vm start <vm> [--wait]                     start a stopped VM
+  vm resume <vm> [--wait]                    resume a paused or hibernated VM
+  vm pause <vm> [--wait]                     pause a running VM
+  vm hibernate <vm> [--wait]                 hibernate a running VM
+  vm stop <vm> [--force] [--wait]            shut a VM down (--force: power off)
+  vm restart <vm> [--force] [--wait]         stop, then start a VM
+  vm delete <vm> [--wait]                    delete a VM
+  vm auto-suspend <vm> <minutes|off>         suspend an idle VM after N minutes (5-1440)
+  vm delete-after <vm> <30m|1h|2d|time|off>  delete a VM automatically at a time
+  vm metrics <vm>                            show recent CPU and memory samples
+  vm egress <vm>                             show egress proxy hosts and CA of a VM
+  vm integrations <vm>                       show the integrations a VM gets
 
 ssh-key:
   ssh-key list                   list your SSH keys
@@ -75,12 +76,12 @@ var:
   var delete <name> [--scope S] [--team T]                                                    delete a variable
 
 integration:
-  integration list                                                                                   list integrations
-  integration connect github|linear|claude [--scope S] [--team T] [--mode proxy|vm] [--from-file F]  connect an integration (token from stdin or --from-file)
-  integration sign-in claude [--scope S] [--team T] [--mode proxy|vm] [--replace]                    connect Claude by signing in with your browser
-  integration replace <kind> [--scope S] [--team T] [--from-file F]                                  replace an integration's token (from stdin or --from-file)
-  integration mode <kind> proxy|vm [--scope S] [--team T]                                            change how the token reaches VMs
-  integration disconnect <kind> [--scope S] [--team T]                                               disconnect an integration
+  integration list                                                                                                              list integrations
+  integration connect github|linear|claude|gcloud [--scope S] [--team T] [--mode proxy|vm] [--from-file F] [--quota-project P]  connect an integration (token from stdin or --from-file)
+  integration sign-in claude [--scope S] [--team T] [--mode proxy|vm] [--replace]                                               connect Claude by signing in with your browser
+  integration replace <kind> [--scope S] [--team T] [--from-file F]                                                             replace an integration's token (from stdin or --from-file)
+  integration mode <kind> proxy|vm [--scope S] [--team T]                                                                       change how the token reaches VMs
+  integration disconnect <kind> [--scope S] [--team T]                                                                          disconnect an integration
 
 image:
   image list                                                                                    list images

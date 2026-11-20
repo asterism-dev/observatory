@@ -193,7 +193,7 @@ func TestDetachMarksReleasing(t *testing.T) {
 	if _, _, err := e.s.SetVMDisks(ctx, e.org.ID, vm2.ID, []store.VMDisk{{DiskID: d2.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.DeleteVM(ctx, e.org.ID, vm2.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm2.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	if x := exportOf(t, e, d2.ID); x == nil || !x.releasing {

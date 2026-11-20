@@ -77,6 +77,7 @@ export interface VmInfo {
   createdAt: string
   canPower: boolean
   autoSuspendMinutes: number
+  deleteAt: string | null
   canDelete: boolean
   image: string
   imageRef: string
@@ -106,8 +107,34 @@ export const powerActions = (state: VmInfo['state']) => {
   return ['start']
 }
 
-export function relativeTime(iso: string, locale: string) {
-  const sec = Math.round((new Date(iso).getTime() - Date.now()) / 1000)
+export interface VmHistory {
+  id: string
+  name: string
+  owner: { kind: 'user' | 'team'; id: string; name: string }
+  cpus: number
+  memoryMB: number
+  diskGB: number
+  createdAt: string
+  createdBy: { id: string; name: string } | null
+  deletedAt: string
+  deletedBy: { id: string; name: string } | null
+  reason: 'user' | 'expired'
+}
+
+/** Two largest units, like the CLI: 1d 0h, 2h 37m, 12m. */
+export function lifetime(fromISO: string, toISO: string) {
+  const m = Math.floor((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 60000)
+  if (m >= 1440) return `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`
+  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`
+  return `${m}m`
+}
+
+export function deletionLabel(iso: string, t: (k: string, p?: Record<string, unknown>) => string, locale: string, now = Date.now()) {
+  return new Date(iso).getTime() <= now ? t('vms.deleting') : t('vms.deletesIn', { rel: relativeTime(iso, locale, now) })
+}
+
+export function relativeTime(iso: string, locale: string, now = Date.now()) {
+  const sec = Math.round((new Date(iso).getTime() - now) / 1000)
   const units: [Intl.RelativeTimeFormatUnit, number][] = [['day', 86400], ['hour', 3600], ['minute', 60]]
   const [unit, size] = units.find(([, s]) => Math.abs(sec) >= s) ?? ['second', 1]
   return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(Math.round(sec / size), unit)

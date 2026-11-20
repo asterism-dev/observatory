@@ -49,7 +49,7 @@ func substitute(h http.Header, host string, secrets []proto.HostBoundSecret) (na
 }
 
 func boundTo(s proto.HostBoundSecret, host string) bool {
-	return slices.ContainsFunc(s.Hosts, func(h string) bool { return NormalizeSNI(h) == host })
+	return slices.ContainsFunc(s.Hosts, func(h string) bool { return HostMatches(NormalizeSNI(h), host) })
 }
 
 func allowedIn(s proto.HostBoundSecret, header string) bool {

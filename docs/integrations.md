@@ -1,7 +1,7 @@
-# Integrations (GitHub, Claude, Linear)
+# Integrations (GitHub, Claude, Linear, gcloud)
 
 An integration is a login a member connects once (on the org, a team or privately), so every VM they are entitled
-to has working `git`/`gh`, Claude Code and the Linear MCP server without any setup inside the guest. By default the
+to has working `git`/`gh`, Claude Code, the Linear MCP server and `gcloud` without any setup inside the guest. By default the
 VM holds only a placeholder and the egress proxy puts the real token into requests ([egress.md](egress.md)); per
 integration the owner can deliver the real token into the VM instead.
 
@@ -18,6 +18,7 @@ git clone git@github.com:me/private  # works: rewritten to HTTPS, the credential
 | `github` | `pat` (classic or fine-grained) | `GET api.github.com/user` | login, scopes, expiry when GitHub sends it | `github.com`, `api.github.com`, `uploads.github.com` |
 | `claude` | `setup-token` (`claude setup-token`, `sk-ant-oat…`), `oauth` (sign-in) | `GET api.anthropic.com/v1/models` | email after sign-in; none for setup tokens | `api.anthropic.com` |
 | `linear` | `api-key` | GraphQL `{ viewer { email } }` | email | `api.linear.app`, `mcp.linear.app` |
+| `gcloud` | `adc` (`authorized_user` ADC file of `gcloud auth application-default login`) | token refresh at `oauth2.googleapis.com`, email from the token | email | `*.googleapis.com` |
 
 The proxy substitutes the `Authorization` header only.
 
@@ -26,9 +27,55 @@ The proxy substitutes the `Authorization` header only.
   `objects.githubusercontent.com` with a short-lived token in the URL, so they need no binding.
 - **Claude:** Claude Code sends its token only to `api.anthropic.com`; `claude.ai` is not bound.
 - **Linear:** the GraphQL API and the remote MCP server.
+- **gcloud:** every `*.googleapis.com` host; see [gcloud](#gcloud).
 
 A token is verified before it is stored; if verification fails nothing changes. GitHub's expiry is shown as a warning
 7 days ahead. There is no periodic re-verification.
+
+## gcloud
+
+gcloud, Terraform and Google SDKs (Python and others, REST and gRPC) use your Google login in your VMs. It is a
+personal login: **private scope and proxy mode only**, one account; org and team scope and `vm` mode are refused.
+The token page is <https://myaccount.google.com/permissions>.
+
+Connect after your daily local login:
+
+```
+gcloud auth application-default login
+observatory integration connect gcloud [--quota-project P] [--from-file F]
+```
+
+The command sends the local ADC file to the hub (or pastes it on the Integrations page) and creates the integration or
+replaces its token, so the daily command is always the same. A quota project from `--quota-project` or the file is
+stored and can be edited on the integration page (`PATCH /api/orgs/{org}/integrations/{id}` `{"quotaProject": "…"}`,
+empty or a project id; audited as `integration:set`, action `quota-project`). The hub verifies the login by refreshing
+it and refreshes the access token 10 minutes before it expires; failures retry after 1, then every 2 minutes. If Google answers `invalid_grant` the status becomes
+`expired` ("sign in again"): run the two commands above.
+
+What the guest gets:
+
+- `~/.config/gcloud/application_default_credentials.json` with `type` `authorized_user`, the placeholder as
+  `client_id`, `client_secret` and `refresh_token`, and `quota_project_id` when set. Written only if missing or still
+  the file the sync wrote, removed only if still ours. Google libraries find it themselves; their refresh is answered
+  by the proxy ([egress.md](egress.md#wildcard-bindings)).
+- A `gcloud` wrapper in `/.observatory/bin` that sets `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` to that file and
+  `CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE` to `$SSL_CERT_FILE`. It does so only when gcloud is connected, neither variable
+  is set already, the active gcloud configuration has no `[core] account` (no `gcloud auth login` in the VM), and the
+  ADC file is still ours; otherwise your `gcloud` runs unchanged. Set the project with `gcloud config set project`.
+- `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` among the system-wide trust variables, for gRPC clients.
+
+Known limits of gcloud:
+
+- **`revoke` on your computer** (`gcloud auth application-default revoke`, `gcloud auth revoke`) also kills the hub's
+  login, which is a copy of your refresh token. A plain new local login does not.
+- **`gcloud auth list`** shows no account while the override is active.
+- **Team VMs never get gcloud**, because it is private and team VMs never receive private integrations.
+- **Programs that call `gcloud` by absolute path** bypass the wrapper and get no override.
+- **The quota project** is used by SDKs (Python and others) only. gcloud sends its own project, and Terraform only with
+  `user_project_override`.
+- **After expiry** Google answers 401; the proxy sends no synthetic `invalid_grant`.
+- **A token in a query parameter** is not substituted (headers only).
+- **Not in the standard image:** gcloud and Terraform are yours to install.
 
 ## Scopes and resolution
 
@@ -68,12 +115,17 @@ Integrations page (`/orgs/:orgId/integrations`, tabs All / Org / Teams / Private
 
 | Method and path | Does |
 |---|---|
-| `GET /api/orgs/{org}/integrations` | List (kind, source, scope, mode, account, status, expiry; never a token or placeholder) and the scopes the caller may write |
+| `GET /api/orgs/{org}/integrations` | List (kind, source, scope, mode, account, status, expiry; Claude also `accounts` and `lastSwitch`; never a token or placeholder) and the scopes the caller may write |
 | `POST /api/orgs/{org}/integrations` | Connect a pasted token: `kind`, `source`, `scope`, `teamId`, `mode`, `token`; `dryRun` only verifies |
 | `PUT /api/orgs/{org}/integrations/{id}/token` | Replace the token |
 | `PATCH /api/orgs/{org}/integrations/{id}` | Change the mode |
 | `DELETE /api/orgs/{org}/integrations/{id}` | Disconnect |
-| `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below) |
+| `POST /api/orgs/{org}/integrations/{id}/accounts` | Add a Claude account by pasted setup token (`source`, `token`); 201 with the account id |
+| `PUT /api/orgs/{org}/integrations/{id}/accounts/{accountId}/token` | Replace one account's token |
+| `POST /api/orgs/{org}/integrations/{id}/accounts/{accountId}/activate` | Make the account active |
+| `PUT /api/orgs/{org}/integrations/{id}/accounts/order` | Set the order: `{"ids":[…]}`, every account once |
+| `DELETE /api/orgs/{org}/integrations/{id}/accounts/{accountId}` | Remove an account; the last one disconnects the integration (needs `integration:delete` too) |
+| `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below); `addToId` (integration) adds an account, `replaceAccountId` replaces one |
 
 From the CLI, the token comes from stdin, never an argument: `printf %s "$TOKEN" | observatory integration connect github`
 (see [cli.md](cli.md#secrets-input)).
@@ -96,6 +148,58 @@ hub memory for 10 minutes and is bound to you and the org; after a hub restart, 
   it runs out.
 - Proxy mode: the proxy's value changes, the placeholder does not, so the next request uses the new token. `vm` mode:
   the guest sync rewrites the credentials file within 5 minutes, well inside the remaining hour.
+
+### Several Claude accounts
+
+A private Claude integration in `proxy` mode can hold several accounts (your own subscriptions, e.g. work and
+private). Org and team Claude integrations, and `vm` mode, keep exactly one: the mode cannot be changed while there is
+more than one account (409), and adding an account to such an integration is refused (409). Each account is a row with
+its email (setup-token accounts: "Setup token"), position and active flag. The same email cannot be added twice.
+
+- **One account is active**; all your VMs use it, with the same placeholder, so a switch needs no guest change.
+  Flipping another row's switch activates it at once, even when it is limited. The active one cannot be switched off.
+- **Order is priority:** it decides which account comes next. Reordering never changes the active account.
+- **Switch automatically** (per integration, default off, also for integrations created before it existed): only
+  when on does the hub switch on a limit and does the proxy retry with the next account (Limit, Retry and Transition
+  only below). When off, the hub never switches by itself, the node gets only the active account's token (the other
+  tokens never reach it), and a confirmed 429 reaches Claude Code; switch yourself. Usage, polling and manual
+  switching work either way. Set it with `PATCH /api/orgs/{org}/integrations/{id}` `{"autoSwitch": true|false}`
+  (`mode` may be sent alongside or alone); refused for non-Claude integrations (400); audited as `integration:set`
+  with `action` = `auto-switch`. The list shows `autoSwitch` on each integration.
+- **Add** with the same sign-in or a pasted setup token (`addToId`); the account is appended, switched off. **Sign in
+  again** per account (`replaceAccountId` or the token route). **Remove** any account: removing the active one
+  activates the next eligible one; removing the last disconnects.
+- **Refresh:** the hub refreshes every `oauth` account that is due, not only the active one. An `expired` account is
+  never switched to and not sent to the node.
+- **Usage:** the hub polls each `oauth` account's usage (5-hour and weekly window, percent and reset) every minute for
+  the active account and every 15 minutes for the others; errors back off 1 to 15 minutes and keep the last values.
+  The egress proxy also reads the rate-limit headers of Anthropic's responses for the account that served the request; the newer
+  reading wins and the row shows its source and age. Setup-token accounts that the usage endpoint rejects show "no
+  usage data" until proxy readings arrive while active.
+- **Limit:** a 429 with `anthropic-ratelimit-unified-status: rejected` and an overage status that is absent or
+  `rejected`. Until is the unified reset header, else `retry-after`, clamped to 5 s to 7 days. A 429 without these
+  headers passes through unchanged. A polled account counts as limited at 100 % in either window with the reset in
+  the future.
+- **Retry:** the hub sends each VM's proxy the active account's token plus the other non-`expired` accounts in order.
+  On a confirmed limit the proxy resends the same request with the next account that is not limited, so Claude Code
+  does not see the limit ([egress.md](egress.md#claude-requests-apianthropiccom)). It reports the limit at once; the
+  hub activates the first account in order that is not limited, not `expired` and not the current one, and pushes to
+  all your VMs' nodes.
+- **Transition only:** an account you switched on while limited stays active until that limit ends; the proxy still
+  retries, the hub does not move the switch. A later limit switches as usual. An account switched away from automatically is not switched back before its limit ends. If no
+  account is eligible, the active one stays and the page says all are limited until the earliest reset. When the
+  active, non-manual account is still limited and another account's limit has passed, the hub moves to the first
+  available one.
+- **Page:** after an automatic switch the integration shows "Switched automatically at <time>: <email> reached its
+  limit" until the next manual action. Automatic switches are logged, not audited. Adding, replacing, removing,
+  activating and ordering are audited as `integration:set` (`action` = `account-add`, `account-replace`,
+  `account-remove`, `account-activate`, `account-order`); removing the last account is one `integration:delete` row.
+- **Permissions:** `integration:set` on your private integration; no new actions.
+
+List JSON (Claude): `accounts: [{id, account, source, position, active, status, lastError, usage: {fiveHourPct,
+fiveHourResetsAt, weekPct, weekResetsAt, limitedUntil, source, at}}]` and `lastSwitch: {at, fromId, from, toId, to}`
+or `null`. `from` and `to` are empty for setup-token accounts. Top-level `account`, `source` and `status` are the
+active account's.
 
 ## In the guest
 
@@ -168,6 +272,7 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
 - `OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY=1` stores any well-formed token as account "unverified".
 - `OBSERVATORY_DEV_CLAUDE_TOKEN_URL=<url>` sends the Claude code exchange and refreshes to a local fake token
   endpoint.
+- `OBSERVATORY_DEV_CLAUDE_USAGE_URL=<url>` sends the usage poll to a local fake usage endpoint.
 
 ## Known limits
 
@@ -193,6 +298,20 @@ Only for local testing with dummy tokens; refused at hub start unless `OBSERVATO
   retry a minute later succeeds.
 - **`LINEAR_API_KEY` after disconnect:** shells opened before the disconnect keep the exported value (the
   placeholder, or the key in `vm` mode) until they exit.
+- **Several Claude accounts:**
+  - The usage endpoint (`api.anthropic.com/api/oauth/usage`) and the `anthropic-ratelimit-unified-*` headers are
+    undocumented and may change; polling or limit detection then stops working while `setup-token` and `oauth` keep
+    working.
+  - Setup-token accounts usually have no polled usage (the endpoint rejects them); they show "no usage data" until
+    the proxy reads headers while they are active.
+  - A revoked token (401) does not trigger a switch; the account stays active until you switch it.
+  - Each other VM may send one more request to a limited account before the hub's push reaches its node; the proxy
+    retries it locally with the next account.
+  - Proxy readings are throttled to one per account per 30 s; readings within the window are dropped (a limit is
+    never dropped).
+  - Up to 32 MiB of a request body is buffered in the proxy per in-flight Claude request of a multi-account
+    integration, 256 MiB per VM's proxy in total; a larger body, or one that would exceed the total, is sent without
+    retry.
 - **No GitHub App, no OAuth for GitHub or Linear, no GitHub Enterprise Server, no `ghcr.io`/`docker login`.**
 
 ## Real-credential checklist
@@ -213,3 +332,8 @@ Agents test with dummy tokens only. These checks need real tokens and are run by
    the leak check is skipped), switch back to proxy and rotate the tokens at the providers as the page says.
 6. Disconnect each integration and check that the next `gh api user`, `claude -p "say ok"` and Linear call fail.
 7. Revoke the PAT and the Linear key at the providers.
+8. Several accounts: in your private Claude integration (proxy mode) add a second account. Both rows show usage
+   within two minutes. Exhaust the active account's window or simulate it (`OBSERVATORY_DEV_CLAUDE_USAGE_URL` with
+   dummy accounts reports 100 % but does not exercise the proxy retry), run `claude -p "say ok"` in a VM, and check
+   that it succeeds, the switch moves to the other account and the page shows the automatic-switch note (with
+   "Switch automatically" on). Flip the switch back by hand and check that it stays.

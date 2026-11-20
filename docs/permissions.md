@@ -192,6 +192,7 @@ so their actions are on the VM object; listing snapshots and reading metrics nee
 | Action | Allows |
 |---|---|
 | `vm:power` | start, shut down, stop, pause, hibernate, resume, set auto-suspend |
+| `vm:delete` | delete the VM; set, change or clear its [delete-after](vm-lifecycle.md#delete-after) time |
 | `vm:snapshot` | take and delete snapshots |
 | `vm:restore` | restore the VM to one of its snapshots |
 | `vm:fork` | create a new VM from a snapshot; the owner also needs `vm:create` for the new VM |

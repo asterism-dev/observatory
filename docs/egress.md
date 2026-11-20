@@ -19,7 +19,7 @@ count toward the 100-host cap and the VM's CA, and the proxy log names them by k
 On the Environment page, check "secret" and fill in "Bind to hosts", or send `hosts` with `POST`/`PATCH
 /api/orgs/{org}/env[/{id}]`:
 
-- 1–10 exact DNS names, no wildcard, no IP literal, no port. Input is case-insensitive; names are stored lower-cased. Only secrets can be bound, and the value must
+- 1–10 exact DNS names, no wildcard (only built-in integration kinds bind one, see below), no IP literal, no port. Input is case-insensitive; names are stored lower-cased. Only secrets can be bound, and the value must
   be at least 12 bytes (shorter values would mask unrelated response bytes).
 - Scopes and resolution are unchanged: a user VM gets its owner's private scope, a team VM never a private one, the
   narrowest scope wins per name ([permissions.md](permissions.md#environment-variables)).
@@ -58,6 +58,19 @@ with the placeholder: no substitution, so nothing leaks, but those requests fail
 HTTP/1.1, HTTP/2 (including gRPC), WebSocket over HTTP/1.1, server-sent events and other streaming bodies work on
 bound hosts. A proxy handles up to 1 024 connections; terminated connections close after 5 min idle.
 
+### Wildcard bindings
+
+Only built-in integration kinds bind a wildcard host: `gcloud` binds `*.googleapis.com` (one or more labels;
+`googleapis.com` itself is not matched). The VM's CA permits `googleapis.com` and its subdomains, and leaves are still
+issued per concrete host (cached, at most 256). The proxy therefore terminates TLS for **every** `*.googleapis.com`
+connection of a VM with the integration, public hosts like `fonts.googleapis.com` included; only the placeholder in
+`Authorization` is replaced.
+
+For `oauth2.googleapis.com` the proxy answers `POST /token` itself, without forwarding it, when the form has
+`grant_type=refresh_token` and the integration's placeholder as `refresh_token`: `200` with the placeholder as
+`access_token` and `expires_in` 3600. Google clients then "refresh" against the proxy and send the placeholder, which
+the proxy replaces with the hub's current access token. Other requests to that host pass through normally.
+
 ### Substitution
 
 - **Request header values only.** Every placeholder bound to the request's host is replaced by its value.
@@ -78,6 +91,25 @@ Masking keeps the length, so `Content-Length`, chunking and WebSocket framing st
 - gzip and deflate responses are decoded and sent on uncompressed. Any other `Content-Encoding` (br, zstd) is
   answered with `502` and never passed on unscrubbed.
 - `Alt-Svc` is removed, so clients do not move a bound host to QUIC.
+
+### Claude requests (`api.anthropic.com`)
+
+- **Retry buffer:** a request to `api.anthropic.com` that carries the placeholder of a multi-account Claude
+  integration ([integrations.md](integrations.md#several-claude-accounts)) is read into memory, up to 32 MiB of body.
+  A confirmed limit (429, `anthropic-ratelimit-unified-status: rejected`, no overage on offer) marks that account
+  limited in this proxy and sends the same request again with the next account in order that is not limited. The 429
+  is held (body capped at 1 MiB) until an answer is known; if every account is limited, the proxy sends the request
+  with the first account only and the client gets that 429. A larger body is streamed without a retry. Upgrades and
+  `CONNECT` are not retried. Other hosts, single-account integrations and integrations with "Switch automatically"
+  off (the node gets no other accounts for them) are never buffered. All requests of one
+  proxy together buffer at most 256 MiB; a request that would exceed it is streamed without a retry.
+- **Usage:** the proxy reads the `anthropic-ratelimit-unified-*` headers of these responses and reports them to the hub
+  through the node; headers stay in the response.
+- **Stream watchdog:** on a `text/event-stream` response from `api.anthropic.com` (also for single-account
+  integrations; it applies whenever a Claude integration binds `api.anthropic.com`), the proxy aborts the upstream
+  request when no bytes arrive for 120 s and appends `event: error` with an `api_error` ("upstream sent nothing for
+  2m0s, connection aborted") so the client does not read the cut stream as a normal end. A stall is not a limit: no
+  retry, no switch. Other content types get no idle limit.
 
 ### Logs
 
@@ -105,7 +137,7 @@ issues 24 h leaves from the **oldest** valid CA covering the host, so processes 
   `trust` request. Go, curl, git, OpenSSL and Java (with `ca-certificates-java`) use the system store directly.
 - Constant variables, always set in every VM, point the other runtimes at the system bundle
   `/etc/ssl/certs/ca-certificates.crt`: `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
-  `CURL_CA_BUNDLE`. They are in the `/etc/environment` block, `/etc/vmm/env.sh` and `DefaultEnvironment=` in
+  `CURL_CA_BUNDLE`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` (gRPC ignores the others). They are in the `/etc/environment` block, `/etc/vmm/env.sh` and `DefaultEnvironment=` in
   `/etc/systemd/system.conf.d/` and `user.conf.d/`, so services get them too. They never change, so a VM's first bound
   secret needs no reboot.
 - Processes read trust at start. A process started before its VM got a CA for a new host does not trust that host
@@ -192,6 +224,8 @@ Future VM sharing must not reopen this.
     rest is masked when it arrives), and a held tail of 4 bytes or more is masked with `*`, even when it turns out not
     to be a value (innocent data that ends a message with a prefix of a secret);
   - HTTP/1.1 trailers are dropped when the upstream also sends `Content-Length`.
+- **Claude retry:** up to 32 MiB of body is held in memory per in-flight multi-account Claude request, 256 MiB per
+  proxy in total; a request beyond that budget is not retried.
 - **Node DNS:** the node reads `/etc/resolv.conf` once at start; restart it after the nameservers change.
 - **Tailnet range:** `100.64.0.0/10` is not blocked for VMs or proxies (needed by the current test setup); a node on a
   CGNAT or tailnet underlay exposes those addresses to its VMs.

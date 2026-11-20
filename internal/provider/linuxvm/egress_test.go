@@ -91,3 +91,14 @@ func TestEgressOutputStaysLocal(t *testing.T) {
 		t.Fatalf("egress output reached the default logger: %q", shipped.String())
 	}
 }
+
+func TestParseUsageLine(t *testing.T) {
+	if o, ok := parseUsageLine(`usage {"integration":"i1","account":"a1","observedAt":"2026-11-20T10:00:00Z"}`); !ok || o.Integration != "i1" || o.Account != "a1" {
+		t.Fatalf("valid = %+v %v", o, ok)
+	}
+	for _, l := range []string{"ready", "usage", "usage {", `usage {"integration":"i1"}`, `usagex {"integration":"i1","account":"a1"}`} {
+		if _, ok := parseUsageLine(l); ok {
+			t.Errorf("%q accepted", l)
+		}
+	}
+}

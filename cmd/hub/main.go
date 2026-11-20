@@ -109,14 +109,19 @@ func run() error {
 	api.StorageEndpoints(mux, dh)
 	nodeAssets(mux, cfg.NodeBinary, cfg.Guestboot)
 	oauth := &integrations.HTTPClaudeOAuth{TokenURL: cfg.DevClaudeTokenURL}
-	go f.RefreshIntegrations(ctx, oauth, time.Minute)
-	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth}
+	google := integrations.HTTPGoogleOAuth{}
+	go f.RefreshIntegrations(ctx, oauth, google, time.Minute)
+	go f.PollUsage(ctx, integrations.HTTPClaudeUsage{URL: cfg.DevClaudeUsageURL}, time.Minute)
+	ig := api.Integrations{Verifier: integrations.HTTPVerifier{}, OAuth: oauth, Google: google}
 	if cfg.DevSkipVerify {
 		ig.Verifier = integrations.SkipVerifier{}
 		slog.Warn("dev mode: integration verification skipped")
 	}
 	if cfg.DevClaudeTokenURL != "" {
 		slog.Warn("dev mode: claude token endpoint overridden", "url", cfg.DevClaudeTokenURL)
+	}
+	if cfg.DevClaudeUsageURL != "" {
+		slog.Warn("dev mode: claude usage endpoint overridden", "url", cfg.DevClaudeUsageURL)
 	}
 	newer := func() string { return "" }
 	if release.Enabled(os.Getenv) {
@@ -165,6 +170,7 @@ func run() error {
 		go sched.Run(ctx, 10*time.Second)
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
+	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc))
 	mux.Handle("/", spa(dist))
 

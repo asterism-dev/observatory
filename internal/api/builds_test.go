@@ -181,6 +181,33 @@ func TestBuildRequiresRefUse(t *testing.T) {
 	}
 }
 
+func TestBootEnvSkipsGcloud(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.connect(aliceTok, org, gcloudBody("user", adcJSON("authorized_user", dummyGRefres, "my-project"), ""))
+	img := e.recipeImage(aliceTok, org, "tools", "")
+	b, _ := e.running(aliceTok, org, img)
+	// The API refuses such a recipe; a revision stored before that rule must still not hand out the token.
+	e.exec(`UPDATE recipe_revisions SET refs = jsonb_build_array(jsonb_build_object('Kind', 'integration', 'Scope', 'user', 'OwnerID', $1::text, 'Name', 'gcloud')) WHERE image_id = $2`, alice.ID.String(), img)
+	ctx := context.Background()
+	v, err := e.store.VM(ctx, org, *b.VMID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, tokens, err := e.sched.BootEnv(ctx, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Listed without a token, so the agent fails the build naming it.
+	if len(tokens) != 0 || env["OBSERVATORY_BUILD_INTEGRATIONS"] != "gcloud" {
+		t.Fatalf("gcloud handed to a build: %v %+v", env, tokens)
+	}
+	if igs := e.listIntegrations(aliceTok, org).Integrations; len(igs) != 1 || igs[0].WasInVM {
+		t.Fatalf("gcloud marked as in a VM: %+v", igs)
+	}
+}
+
 func TestBuildCreatesHiddenBuilderVM(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	alice, aliceTok := e.user("alice")

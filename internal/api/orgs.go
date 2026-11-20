@@ -110,6 +110,8 @@ var storeErrorStatus = []struct {
 	{store.ErrSubnetOverlap, http.StatusConflict},
 	{store.ErrAddressesExhausted, http.StatusConflict},
 	{netaddr.ErrInvalidSubnet, http.StatusBadRequest},
+	{store.ErrMultiAccountNotAllowed, http.StatusConflict},
+	{store.ErrInvalid, http.StatusBadRequest},
 }
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.

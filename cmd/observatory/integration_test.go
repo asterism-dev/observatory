@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -9,7 +11,8 @@ const (
 	igGitHub    = `{"id":"i1","kind":"github","source":"pat","scope":"user","mode":"proxy","account":"ada","scopes":"repo","providerExpiresAt":"2026-12-30T14:03:00Z","status":"ok","lastError":"","wasInVm":false,"updatedAt":"2026-11-19T13:50:00Z","canEdit":true,"canDelete":true}`
 	igClaude    = `{"id":"i2","kind":"claude","source":"oauth","scope":"team","teamId":"t1","teamName":"backend","mode":"vm","account":"ada@example.test","scopes":"","providerExpiresAt":null,"status":"ok","lastError":"","wasInVm":true,"updatedAt":"2026-11-19T11:00:00Z","canEdit":true,"canDelete":true}`
 	igLinear    = `{"id":"i3","kind":"linear","source":"api-key","scope":"org","mode":"proxy","account":"","scopes":"","providerExpiresAt":null,"status":"expired","lastError":"token rejected","wasInVm":false,"updatedAt":"2026-11-10T09:00:00Z","canEdit":true,"canDelete":true}`
-	igBody      = `{"integrations":[` + igGitHub + `,` + igClaude + `,` + igLinear + `],"writableScopes":[]}`
+	igGcloud    = `{"id":"i4","kind":"gcloud","source":"adc","scope":"user","mode":"proxy","account":"ada@example.test","quotaProject":"proj-1","scopes":"","providerExpiresAt":null,"status":"expired","lastError":"refresh rejected","wasInVm":false,"updatedAt":"2026-11-20T07:00:00Z","canEdit":true,"canDelete":true}`
+	igBody      = `{"integrations":[` + igGitHub + `,` + igClaude + `,` + igLinear + `,` + igGcloud + `],"writableScopes":[]}`
 	igRoute     = "/api/orgs/o1/integrations"
 	dummyGitHub = "ghp_dummy0000000000000000"
 )
@@ -147,5 +150,97 @@ func TestIntegrationUnknownKind(t *testing.T) {
 	}
 	if len(h.reqs) != 0 {
 		t.Fatalf("requests sent: %v", h.reqs)
+	}
+}
+
+const dummyADC = `{"type":"authorized_user","client_id":"c","client_secret":"s","refresh_token":"rt"}`
+
+func gcloudHub(t *testing.T) (*fakeHub, *cli, func() string, func() string, string) {
+	h, c, out, errb := igHub(t)
+	cfg := t.TempDir()
+	t.Setenv("CLOUDSDK_CONFIG", cfg)
+	t.Setenv("HOME", cfg)
+	return h, c, out, errb, cfg + "/application_default_credentials.json"
+}
+
+func TestConnectGcloudCreates(t *testing.T) {
+	h, c, out, errb, adc := gcloudHub(t)
+	h.on("GET "+igRoute, 200, `{"integrations":[],"writableScopes":[]}`)
+	h.on("POST "+igRoute, 201, `{"id":"i9","account":"ada@example.test"}`)
+	if err := os.WriteFile(adc, []byte(dummyADC), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(c, []string{"integration", "connect", "gcloud"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	b := body(t, h.calls("POST " + igRoute)[0])
+	if b["token"] != dummyADC || b["kind"] != "gcloud" || b["source"] != "adc" || b["scope"] != "user" || b["mode"] != "proxy" {
+		t.Errorf("body %v", b)
+	}
+	if _, ok := b["quotaProject"]; ok {
+		t.Errorf("quotaProject sent: %v", b)
+	}
+	if out() != "Connected gcloud as ada@example.test (private, proxy).\n" {
+		t.Errorf("stdout %q", out())
+	}
+	if code := run(c, []string{"integration", "connect", "gcloud", "--quota-project", "p1"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	if b := body(t, h.calls("POST " + igRoute)[1]); b["quotaProject"] != "p1" {
+		t.Errorf("body %v", b)
+	}
+	if !strings.HasSuffix(out(), "(private, proxy, quota project p1).\n") || strings.Contains(out()+errb(), "refresh_token") {
+		t.Errorf("stdout %q", out())
+	}
+}
+
+func TestConnectGcloudReplaces(t *testing.T) {
+	h, c, out, errb, adc := gcloudHub(t)
+	h.on("PUT "+igRoute+"/i4/token", 200, `{"account":"ada@example.test"}`)
+	if err := os.WriteFile(adc, []byte(dummyADC), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(c, []string{"integration", "connect", "gcloud"}); code != 0 {
+		t.Fatal(code, errb())
+	}
+	if got, want := h.calls("PUT " + igRoute + "/i4/token")[0].Body, `{"token":`+strconv.Quote(dummyADC)+`,"source":"adc"}`; got != want {
+		t.Errorf("body %s", got)
+	}
+	if len(h.calls("POST "+igRoute)) != 0 || out() != "Connected gcloud as ada@example.test (private, proxy, quota project proj-1).\n" {
+		t.Errorf("stdout %q", out())
+	}
+}
+
+func TestConnectGcloudBadFileHint(t *testing.T) {
+	h, c, _, errb, adc := gcloudHub(t)
+	h.on("POST "+igRoute, 400, `{"error":"invalid token"}`)
+	h.on("GET "+igRoute, 200, `{"integrations":[],"writableScopes":[]}`)
+	if err := os.WriteFile(adc, []byte(dummyADC), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(c, []string{"integration", "connect", "gcloud"}); code != 1 {
+		t.Fatal(code, errb())
+	}
+	if !strings.Contains(errb(), "gcloud auth application-default login") {
+		t.Errorf("stderr %q", errb())
+	}
+}
+
+func TestConnectGcloudMissingFile(t *testing.T) {
+	_, c, _, errb, adc := gcloudHub(t)
+	if code := run(c, []string{"integration", "connect", "gcloud"}); code == 0 {
+		t.Fatal("want failure")
+	}
+	if want := "no gcloud login found at " + adc + ": run gcloud auth application-default login"; !strings.Contains(errb(), want) {
+		t.Errorf("stderr %q", errb())
+	}
+}
+
+func TestConnectGcloudRefusesScope(t *testing.T) {
+	_, c, _, _, _ := gcloudHub(t)
+	for _, a := range [][]string{{"--scope", "org"}, {"--team", "backend"}, {"--mode", "vm"}} {
+		if code := run(c, append([]string{"integration", "connect", "gcloud"}, a...)); code != 2 {
+			t.Errorf("%v: code %d", a, code)
+		}
 	}
 }

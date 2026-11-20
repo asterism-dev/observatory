@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,24 +28,42 @@ type Proxy struct {
 	// UpstreamAddr and UpstreamRoots are for tests; nil means host:443 and the system roots.
 	UpstreamAddr  func(host string) string
 	UpstreamRoots *x509.CertPool
+	// Report receives Claude usage seen in responses; it runs on the request path, so it must return quickly.
+	Report func(proto.UsageObservation)
 
 	table        atomic.Pointer[table]
 	active       atomic.Int64
 	upstreamOnce sync.Once
 	upstreamTr   *http.Transport
+
+	retryBuffered atomic.Int64 // request body bytes held for Claude retries, bounded by retryBudget
 }
 
-// table is immutable once stored; SetTable swaps in a new one, issuer included.
+// table is immutable once stored except for limited, the locally rejected accounts, which a new table forgets.
 type table struct {
 	bound  map[string][]proto.HostBoundSecret
+	wild   []proto.HostBoundSecret // secrets with a "*.<domain>" host; each appears once per such host
 	issuer *Issuer
 	scrub  [][]byte
+
+	limitedMu sync.Mutex
+	limited   map[string]time.Time
 }
 
 func New(vmID string, l *log.Logger) *Proxy {
 	p := &Proxy{VMID: vmID, Policy: DefaultPolicy(), OrigDst: OriginalDst, Log: l, MaxConns: 1024}
 	p.table.Store(&table{})
 	return p
+}
+
+func (t *table) secretsFor(host string) []proto.HostBoundSecret {
+	out := t.bound[host]
+	for _, s := range t.wild {
+		if boundTo(s, host) {
+			out = append(out[:len(out):len(out)], s)
+		}
+	}
+	return out
 }
 
 func (p *Proxy) SetTable(e proto.Egress) error {
@@ -56,9 +75,16 @@ func (p *Proxy) SetTable(e proto.Egress) error {
 	for _, s := range e.Secrets {
 		for _, h := range s.Hosts {
 			h = NormalizeSNI(h)
+			if strings.HasPrefix(h, "*.") {
+				t.wild = append(t.wild, s)
+				continue
+			}
 			t.bound[h] = append(t.bound[h], s)
 		}
 		t.scrub = append(t.scrub, []byte(s.Value))
+		for _, a := range s.Alternates {
+			t.scrub = append(t.scrub, []byte(a.Value))
+		}
 	}
 	p.table.Store(t)
 	return nil
@@ -113,7 +139,7 @@ func (p *Proxy) handle(c net.Conn) {
 	if hello != nil {
 		sni = NormalizeSNI(hello.ServerName)
 	}
-	if hello != nil && len(p.table.Load().bound[sni]) > 0 && httpALPN(hello.SupportedProtos) {
+	if hello != nil && len(p.table.Load().secretsFor(sni)) > 0 && httpALPN(hello.SupportedProtos) {
 		p.terminate(c, raw, sni)
 		return
 	}

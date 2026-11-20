@@ -88,13 +88,14 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 
 | Command | Does |
 |---|---|
-| `vm list` / `vm show <vm>` | list; show incl. disks, networks, auto-suspend, image |
-| `vm create <name> [--node N] [--team T] [--image REF] [--cpus 2] [--memory 4G] [--disk 20] [--wait]` | create a VM (node defaults to the org's only node; image defaults to the owner's [default image](images.md#default-image)) |
+| `vm list [--deleted]` / `vm show <vm>` | list (`--deleted`: [deleted VMs](vm-lifecycle.md#history)); show incl. disks, networks, auto-suspend, delete-at, image |
+| `vm create <name> [--node N] [--team T] [--image REF] [--cpus 2] [--memory 4G] [--disk 20] [--delete-after 2d] [--wait]` | create a VM (node defaults to the org's only node; image defaults to the owner's [default image](images.md#default-image); `--delete-after` takes `30m`, `1h`, `2d` or an RFC 3339 time) |
 | `vm start\|resume\|pause\|hibernate <vm> [--wait]` | power actions |
 | `vm stop <vm> [--force] [--wait]` | graceful shutdown; `--force` powers off |
 | `vm restart <vm> [--force] [--wait]` | stop, wait for `stopped`, start |
 | `vm delete <vm> [--wait]` | delete (confirms) |
 | `vm auto-suspend <vm> <minutes\|off>` | suspend after 5–1440 idle minutes |
+| `vm delete-after <vm> <30m\|1h\|2d\|time\|off>` | [delete the VM automatically](vm-lifecycle.md#delete-after) at that time; `off` clears it |
 | `vm metrics <vm>` / `vm egress <vm>` / `vm integrations <vm>` | CPU/RAM samples; egress proxy hosts and CA; integrations the VM gets |
 | `snapshot list <vm>` | snapshots of a VM |
 | `snapshot create <vm> <name> [--memory] [--wait]` | snapshot (`--memory` includes RAM) |
@@ -124,6 +125,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `var delete <name> [--scope S] [--team T]` | delete (confirms) |
 | `integration list` | integrations you can see |
 | `integration connect github\|linear\|claude [--scope S] [--team T] [--mode proxy\|vm] [--from-file F]` | connect with a pasted token |
+| `integration connect gcloud [--quota-project P] [--from-file F]` | hand over the local `gcloud auth application-default login` (default `$CLOUDSDK_CONFIG/application_default_credentials.json`); replaces the token if gcloud is already connected; private scope, proxy mode |
 | `integration sign-in claude [--scope S] [--team T] [--mode proxy\|vm] [--replace]` | prints a URL, reads the code from stdin |
 | `integration replace <kind> [--scope S] [--team T] [--from-file F]` | replace the token |
 | `integration mode <kind> proxy\|vm [--scope S] [--team T]` | change how the token reaches VMs |

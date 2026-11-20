@@ -189,6 +189,18 @@ type UpdateReport struct {
 	Error string `json:"error,omitempty"`
 }
 
+// UsageObservation is one Claude usage reading for an account; it holds ids only, no secrets.
+type UsageObservation struct {
+	Integration      string     `json:"integration"`
+	Account          string     `json:"account"`
+	FiveHourPct      *float64   `json:"fiveHourPct,omitempty"`
+	WeekPct          *float64   `json:"weekPct,omitempty"`
+	FiveHourResetsAt *time.Time `json:"fiveHourResetsAt,omitempty"`
+	WeekResetsAt     *time.Time `json:"weekResetsAt,omitempty"`
+	LimitedUntil     *time.Time `json:"limitedUntil,omitempty"`
+	ObservedAt       time.Time  `json:"observedAt"`
+}
+
 const (
 	ImagePulling = "pulling"
 	ImageReady   = "ready"
@@ -225,7 +237,7 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics" and "image" (node→hub).
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image" and "usage" (node→hub).
 // VMMetrics is one sample of a running VM; MemTotalMB 0 means the VM has no balloon statistics.
 type VMMetrics struct {
 	ID         string  `json:"id"`
@@ -241,13 +253,14 @@ type Message struct {
 	Status   *VMStatus `json:"status,omitempty"`
 	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
-	Desired    []DesiredVM   `json:"desired,omitempty"`
-	DisksInUse []string      `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
-	Seq        uint64        `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
-	AppliedSeq uint64        `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Metrics    []VMMetrics   `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
-	Image      *ImageStatus  `json:"image,omitempty"`      // type "image": the guest image changed state
-	Update     *UpdateReport `json:"update,omitempty"`     // type "update": an update attempt failed
+	Desired    []DesiredVM        `json:"desired,omitempty"`
+	DisksInUse []string           `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
+	Seq        uint64             `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
+	AppliedSeq uint64             `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
+	Metrics    []VMMetrics        `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
+	Image      *ImageStatus       `json:"image,omitempty"`      // type "image": the guest image changed state
+	Update     *UpdateReport      `json:"update,omitempty"`     // type "update": an update attempt failed
+	Usage      []UsageObservation `json:"usage,omitempty"`      // type "usage": Claude usage the node's egress proxies saw
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }
@@ -323,7 +336,18 @@ type HostBoundSecret struct {
 	Value       string   `json:"value"`
 	Hosts       []string `json:"hosts"`
 	Headers     []string `json:"headers,omitempty"`
+	// Account and Alternates are set for a multi-account Claude integration: Value is Account's, Alternates follow in retry order.
+	Account    string           `json:"account,omitempty"`
+	Alternates []AlternateValue `json:"alternates,omitempty"`
 }
+
+type AlternateValue struct {
+	Account string `json:"account"`
+	Value   string `json:"value"`
+}
+
+func (AlternateValue) String() string   { return "AlternateValue{redacted}" }
+func (AlternateValue) GoString() string { return "AlternateValue{redacted}" }
 
 func (HostBoundSecret) String() string   { return "HostBoundSecret{redacted}" }
 func (HostBoundSecret) GoString() string { return "HostBoundSecret{redacted}" }
@@ -332,6 +356,7 @@ type IntegrationToken struct {
 	Kind      string     `json:"kind"`
 	Token     string     `json:"token"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Project   string     `json:"project,omitempty"`
 }
 
 func (IntegrationToken) String() string   { return "IntegrationToken{redacted}" }

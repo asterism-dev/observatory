@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -111,7 +112,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, v := range orphans {
-		if err := s.store.DeleteVM(ctx, v.OrgID, v.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := s.store.DeleteVM(ctx, v.OrgID, v.ID, nil, store.DeleteReasonUser); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		s.vmDeleted(v.ID)
@@ -276,7 +277,7 @@ func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg
 			return err
 		}
 		org = img.OrgID
-		if err := tx.DeleteVM(ctx, org, *b.VMID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := tx.DeleteVM(ctx, org, *b.VMID, nil, store.DeleteReasonUser); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		return nil
@@ -336,7 +337,8 @@ func (s *Scheduler) BootEnv(ctx context.Context, v store.VM) (map[string]string,
 			i := slices.IndexFunc(igs, func(g store.Integration) bool {
 				return g.Scope == ref.Scope && sameOwner(g.OwnerID, ref.OwnerID) && string(g.Kind) == ref.Name
 			})
-			if i < 0 {
+			// The real Google token must never reach a guest; the API refuses such recipes too.
+			if i < 0 || igs[i].Kind == integrations.GCloud {
 				continue
 			}
 			tok, err := s.store.IntegrationToken(ctx, igs[i])

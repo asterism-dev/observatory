@@ -111,6 +111,7 @@ References reach the build as BuildKit secrets with a stable id: the variable na
 integration (`github`, `linear`, `claude`). Nothing is added to `RUN` steps implicitly: use
 `RUN --mount=type=secret,id=<id>`. The value exists only for that step and never lands in a layer. The same Dockerfile
 works locally with `docker build --secret id=<id>,src=<file>`.
+A recipe cannot reference `gcloud`: its real Google token never leaves the hub, so builds cannot use it.
 
 Clone a private repository with the GitHub integration (reference `integration:private/github`):
 

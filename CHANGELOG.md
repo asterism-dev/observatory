@@ -1,3 +1,21 @@
+## v0.16.0 (2026-11-20)
+
+### Feat
+
+- **integrations**: gcloud integration via egress placeholders (#37)
+
+## v0.15.0 (2026-11-20)
+
+### Feat
+
+- **integrations**: several Claude accounts with limits and switching (#36)
+
+## v0.14.0 (2026-11-20)
+
+### Feat
+
+- **vms**: delete-after and deleted VM history (#35)
+
 ## v0.13.0 (2026-11-20)
 
 ### Feat

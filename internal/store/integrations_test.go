@@ -170,7 +170,8 @@ func TestIntegrationSealed(t *testing.T) {
 	if cl.AccessExpiresAt == nil || !mustIntegration(t, s, org.ID, cl.ID).AccessExpiresAt.Equal(accessExp) {
 		t.Fatalf("access expiry %+v", cl)
 	}
-	rows, err := pool.Query(ctx, "SELECT ciphertext, coalesce(refresh_ciphertext, '') FROM integrations")
+	rows, err := pool.Query(ctx, `SELECT coalesce(ciphertext, ''), coalesce(refresh_ciphertext, '') FROM integrations
+		UNION ALL SELECT ciphertext, coalesce(refresh_ciphertext, '') FROM integration_accounts`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestIntegrationSealed(t *testing.T) {
 		t.Fatalf("claude resolves to %d integrations", len(res))
 	}
 
-	execSQL(t, pool, "UPDATE integrations SET nonce = refresh_nonce, ciphertext = refresh_ciphertext WHERE id = $1", cl.ID)
+	execSQL(t, pool, "UPDATE integration_accounts SET nonce = refresh_nonce, ciphertext = refresh_ciphertext WHERE id = $1", cl.ID)
 	if _, err := s.ResolveVMIntegrations(ctx, e, org.ID, authz.UserSubject(uid)); err == nil {
 		t.Fatal("refresh token opened with the access AAD")
 	}
@@ -402,7 +403,7 @@ func TestIntegrationRefreshNonceRequired(t *testing.T) {
 	exp := time.Now().Add(time.Hour)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeOrg, nil),
 		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
-	if _, err := pool.Exec(ctx, "UPDATE integrations SET refresh_nonce = NULL WHERE id = $1", v.ID); err == nil {
+	if _, err := pool.Exec(ctx, "UPDATE integration_accounts SET refresh_nonce = NULL WHERE id = $1", v.ID); err == nil {
 		t.Fatal("oauth row without refresh nonce accepted")
 	}
 }
@@ -460,12 +461,12 @@ func (f *fakeRefresh) calls() []string {
 	return slices.Clone(f.got)
 }
 
-func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.IntegrationRef {
+func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.AccountRef {
 	t.Helper()
 	exp := time.Now().Add(in)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &uid),
 		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
-	return store.IntegrationRef{OrgID: org.ID, ID: v.ID}
+	return store.AccountRef{OrgID: org.ID, ID: v.ID}
 }
 
 func TestRefreshIntegrationRotates(t *testing.T) {
@@ -614,5 +615,120 @@ func TestRefreshIntegrationNotDue(t *testing.T) {
 	}
 	if len(f.calls()) != 0 {
 		t.Fatal("refresh called for a row not due")
+	}
+}
+
+const dummyADC = `{"type":"authorized_user","client_id":"cid","client_secret":"csecret","refresh_token":"1//dummyrefresh"}`
+
+func dueGcloud(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.AccountRef {
+	t.Helper()
+	exp := time.Now().Add(in)
+	v := mustCreateIntegration(t, s, integ(org, uid, integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &uid),
+		store.IntegrationSecret{Token: "ya29.dummyaccess", Refresh: dummyADC, AccessExpiresAt: &exp})
+	return store.AccountRef{OrgID: org.ID, ID: v.ID}
+}
+
+func TestCreateGcloudIntegration(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, team := newIntegrationStore(t)
+	exp := time.Now().Add(time.Hour)
+	v := integ(org, uid, integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &uid)
+	v.QuotaProject = "my-project-1"
+	created := mustCreateIntegration(t, s, v, store.IntegrationSecret{Token: "ya29.dummyaccess", Refresh: dummyADC, AccessExpiresAt: &exp})
+	got := mustIntegration(t, s, org.ID, created.ID)
+	if got.QuotaProject != "my-project-1" || got.Source != integrations.SourceADC || got.AccessExpiresAt == nil {
+		t.Fatalf("got %+v", got)
+	}
+	res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid))
+	if r := res[integrations.GCloud]; r.Token != "ya29.dummyaccess" || !strings.HasPrefix(r.Placeholder, "obsph_") || r.QuotaProject != "my-project-1" {
+		t.Fatalf("resolved %v", r)
+	}
+	if res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.TeamSubject(team.ID)); len(res) != 0 {
+		t.Fatalf("team resolved %d", len(res))
+	}
+	if err := s.SetIntegrationQuotaProject(ctx, got, "other-project", uid); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustIntegration(t, s, org.ID, created.ID); got.QuotaProject != "other-project" {
+		t.Fatalf("quota project %q", got.QuotaProject)
+	}
+	if err := s.SetIntegrationQuotaProject(ctx, got, "Bad Project!", uid); err == nil {
+		t.Fatal("invalid quota project accepted")
+	}
+	v.Scope, v.OwnerID, v.QuotaProject = store.EnvScopeOrg, nil, "Bad Project!"
+	if _, err := s.CreateIntegration(ctx, v, store.IntegrationSecret{Token: "ya29.x", Refresh: dummyADC, AccessExpiresAt: &exp}); err == nil {
+		t.Fatal("create with invalid quota project accepted")
+	}
+	v.QuotaProject = ""
+	if _, err := s.CreateIntegration(ctx, v, store.IntegrationSecret{Token: "ya29.x"}); !errors.Is(err, store.ErrIntegrationRefresh) {
+		t.Fatalf("adc without refresh: %v", err)
+	}
+}
+
+func TestRefreshADCIntegration(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	ref := dueGcloud(t, s, org, uid, 10*time.Minute)
+	dueClaude(t, s, org, uid, 10*time.Minute)
+	before := time.Now().Add(time.Hour)
+	due, err := s.DueADCRefreshes(ctx, before)
+	if err != nil || len(due) != 1 || due[0] != ref {
+		t.Fatalf("due %v %v", due, err)
+	}
+	var got []string
+	refresh := func(_ context.Context, adc string) (integrations.OAuthTokens, error) {
+		got = append(got, adc)
+		return integrations.OAuthTokens{Access: "ya29.new", ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}
+	if ok, err := s.RefreshADCIntegration(ctx, ref, before, refresh); !ok || err != nil {
+		t.Fatalf("refresh %v %v", ok, err)
+	}
+	if res := resolveIntegrations(t, s, enforcer(t, s), org.ID, authz.UserSubject(uid)); res[integrations.GCloud].Token != "ya29.new" {
+		t.Fatal("resolution after refresh")
+	}
+	v := mustIntegration(t, s, org.ID, ref.ID)
+	if v.Status != store.IntegrationOK || v.LastError != "" || v.AccessExpiresAt == nil || time.Until(*v.AccessExpiresAt) < 50*time.Minute {
+		t.Fatalf("after refresh %+v", v)
+	}
+	if ok, err := s.RefreshADCIntegration(ctx, ref, time.Now().Add(2*time.Hour), refresh); !ok || err != nil {
+		t.Fatalf("second refresh %v %v", ok, err)
+	}
+	if !slices.Equal(got, []string{dummyADC, dummyADC}) {
+		t.Fatalf("refresh blob not kept: %d calls", len(got))
+	}
+}
+
+func TestRefreshADCIntegrationErrors(t *testing.T) {
+	ctx := context.Background()
+	s, _, uid, org, _ := newIntegrationStore(t)
+	before := time.Now().Add(time.Hour)
+	ref := dueGcloud(t, s, org, uid, 10*time.Minute)
+	f := &fakeRefresh{err: integrations.ErrUnreachable}
+	if ok, err := s.RefreshADCIntegration(ctx, ref, before, f.refresh); ok || !errors.Is(err, integrations.ErrUnreachable) {
+		t.Fatalf("unreachable: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationOK || got.LastError != "refresh failed" {
+		t.Fatalf("after failure %+v", got)
+	}
+	past := time.Now().Add(-time.Minute)
+	stale := mustCreateIntegration(t, s, integ(org, uid, integrations.GCloud, integrations.SourceADC, store.EnvScopeOrg, nil),
+		store.IntegrationSecret{Token: "ya29.dummyaccess", Refresh: dummyADC, AccessExpiresAt: &past})
+	cctx, cancel := context.WithCancel(ctx)
+	f = &fakeRefresh{err: integrations.ErrUnreachable, after: cancel}
+	if ok, err := s.RefreshADCIntegration(cctx, store.AccountRef{OrgID: org.ID, ID: stale.ID}, before, f.refresh); ok || !errors.Is(err, integrations.ErrUnreachable) {
+		t.Fatalf("cancelled: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, stale.ID); got.Status != store.IntegrationOK {
+		t.Fatalf("cancel expired the row %+v", got)
+	}
+	f = &fakeRefresh{err: integrations.ErrInvalidGrant}
+	if ok, err := s.RefreshADCIntegration(ctx, ref, before, f.refresh); ok || !errors.Is(err, integrations.ErrInvalidGrant) {
+		t.Fatalf("invalid grant: %v %v", ok, err)
+	}
+	if got := mustIntegration(t, s, org.ID, ref.ID); got.Status != store.IntegrationExpired || got.LastError != "sign in again" {
+		t.Fatalf("after invalid grant %+v", got)
+	}
+	if due, err := s.DueADCRefreshes(ctx, before); err != nil || len(due) != 1 || due[0].ID != stale.ID {
+		t.Fatalf("expired still due: %v %v", due, err)
 	}
 }

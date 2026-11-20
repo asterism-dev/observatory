@@ -65,3 +65,37 @@ func TestNormalizeHostSet(t *testing.T) {
 		t.Fatalf("NewCA with %d hosts: err = %v", len(hosts), err)
 	}
 }
+
+func TestHostMatches(t *testing.T) {
+	for _, c := range []struct {
+		p, h string
+		want bool
+	}{
+		{"*.googleapis.com", "logging.googleapis.com", true},
+		{"*.googleapis.com", "us-central1-aiplatform.googleapis.com", true},
+		{"*.googleapis.com", "a.b.googleapis.com", true},
+		{"*.googleapis.com", "googleapis.com", false},
+		{"*.googleapis.com", "xgoogleapis.com", false},
+		{"*.googleapis.com", "googleapis.com.evil.test", false},
+		{"api.github.com", "api.github.com", true},
+		{"api.github.com", "x.api.github.com", false},
+	} {
+		if got := HostMatches(c.p, c.h); got != c.want {
+			t.Errorf("HostMatches(%q, %q) = %v", c.p, c.h, got)
+		}
+	}
+}
+
+func TestWildcardOnlyInHostSet(t *testing.T) {
+	if _, err := NormalizeHosts([]string{"*.googleapis.com"}); !errors.Is(err, ErrInvalidHost) {
+		t.Fatal(err)
+	}
+	if _, err := NormalizeHostSet([]string{"*.googleapis.com"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"*.com", "*", "a.*.com", "**.googleapis.com", "*.1.2"} {
+		if _, err := NormalizeHostSet([]string{bad}); !errors.Is(err, ErrInvalidHost) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

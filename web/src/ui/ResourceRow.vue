@@ -12,8 +12,8 @@ const open = () => props.to && router.push(props.to)
   <li class="row" :class="{ 'row--link': to }" @click="open">
     <StatusDot v-if="tone" :tone="tone" />
     <div class="row__ident">
-      <router-link v-if="to" :to="to" class="row__title" @click.stop>{{ title }}</router-link>
-      <span v-else class="row__title">{{ title }}</span>
+      <router-link v-if="to" :to="to" class="row__title" @click.stop><slot name="title">{{ title }}</slot></router-link>
+      <span v-else class="row__title"><slot name="title">{{ title }}</slot></span>
       <span v-if="meta || $slots.meta" class="row__meta"><slot name="meta">{{ meta }}</slot></span>
     </div>
     <span v-if="$slots.tags" class="row__tags"><slot name="tags" /></span>
