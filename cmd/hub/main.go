@@ -30,6 +30,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/telemetry"
 	"github.com/asterism-dev/observatory/web"
 )
 
@@ -97,7 +98,12 @@ func run() error {
 	defer f.Close()
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
+	var tc *telemetry.Client
+	if cfg.MetricsURL != "" {
+		tc = &telemetry.Client{MetricsURL: cfg.MetricsURL, LogsURL: cfg.LogsURL}
+	}
 	api.NodeEndpoints(mux, s, f)
+	api.OTLPEndpoints(mux, s, tc)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)
 	api.StorageEndpoints(mux, dh)
