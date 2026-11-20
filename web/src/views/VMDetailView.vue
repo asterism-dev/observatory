@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, NumberInput, Select, Tabs } from '@asterism-dev/lumen'
+import { Button, Dialog, NumberInput, Select, Tabs, TextInput } from '@asterism-dev/lumen'
 import { ArrowUpRight, Box } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -15,12 +15,12 @@ import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
 import { defaultSourceLabel } from '@/composables/images'
 import { kindLabels, type IntegrationKind } from '@/composables/integrations'
-import { gb, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
+import { gb, powerActions, relativeTime, vmTones, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import { Card, CommandBox, KeyValue, KeyValueList, PageHeader, Section, Tag } from '@/ui'
 
-const { t, d } = useI18n()
+const { t, d, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { org } = useOrg()
@@ -115,6 +115,13 @@ watch(
   },
   { immediate: true },
 )
+
+const deleteAfter = ref('')
+const setDeleteAfter = (value: string | null) =>
+  run(async () => {
+    vm.value = await api<VmInfo>(`${base()}/delete-after`, { method: 'PUT', body: JSON.stringify({ deleteAfter: value }) })
+    deleteAfter.value = ''
+  })
 
 const remove = () =>
   run(async () => {
@@ -231,6 +238,18 @@ watch(
                 <NumberInput v-model="customMinutes" :aria-label="t('vms.autoSuspendCustom')" :invalid="!customValid" />
                 <Button :disabled="busy || !customValid" @click="setAutoSuspend(customMinutes)">{{ t('vms.autoSuspendApply') }}</Button>
               </template>
+            </p>
+          </Card>
+        </Section>
+        <Section v-if="vm!.canDelete" :label="t('vms.deleteAfter')" :description="t('vms.deleteAfterHint')">
+          <Card>
+            <span class="muted">{{
+              vm!.deleteAt ? t('vms.deletesAt', { at: new Date(vm!.deleteAt).toLocaleString(locale), rel: relativeTime(vm!.deleteAt, locale) }) : t('vms.deleteAfterNever')
+            }}</span>
+            <p class="row">
+              <TextInput v-model="deleteAfter" :aria-label="t('vms.deleteAfter')" placeholder="2d" />
+              <Button :disabled="busy || !deleteAfter.trim()" @click="setDeleteAfter(deleteAfter.trim())">{{ t('vms.autoSuspendApply') }}</Button>
+              <Button v-if="vm!.deleteAt" :disabled="busy" @click="setDeleteAfter(null)">{{ t('vms.deleteAfterClear') }}</Button>
             </p>
           </Card>
         </Section>

@@ -6,8 +6,9 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import CreateVMDialog from '@/components/CreateVMDialog.vue'
+import VMHistoryList from '@/components/VMHistoryList.vue'
 import VMList from '@/components/VMList.vue'
-import type { VmInfo } from '@/composables/nodes'
+import type { VmHistory, VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { FilterBar, Page } from '@/ui'
@@ -23,6 +24,7 @@ const { org } = useOrg()
 const { me } = useMe()
 
 const data = ref<Listing>({ vms: [], creatableOwners: [], nodes: [] })
+const history = ref<VmHistory[]>([])
 const error = ref('')
 const createOpen = ref(false)
 const tab = ref('all')
@@ -31,12 +33,12 @@ const node = ref('all')
 const search = ref('')
 
 const tabs = computed(() => ['all', 'mine', 'teams'].map((v) => ({ value: v, label: t(`vms.tab.${v}`) })))
-const statuses = computed(() => ['all', 'running', 'paused', 'hibernated', 'stopped'].map((v) => ({ value: v, label: v === 'all' ? t('vms.tab.all') : t(`vms.states.${v}`) })))
+const statuses = computed(() => ['all', 'running', 'paused', 'hibernated', 'stopped', 'deleted'].map((v) => ({ value: v, label: v === 'all' ? t('vms.tab.all') : t(`vms.states.${v}`) })))
 const nodeOptions = computed(() => [
   { value: 'all', label: t('vms.allNodes') },
   ...[...new Map(data.value.vms.map((v) => [v.node.id, v.node.name])).entries()].map(([value, label]) => ({ value, label })),
 ])
-const isMine = (v: VmInfo) => v.owner.kind === 'user' && v.owner.id === me.value?.user.id
+const isMine = (v: Pick<VmInfo, 'owner'>) => v.owner.kind === 'user' && v.owner.id === me.value?.user.id
 const rows = computed(() => {
   const q = search.value.trim().toLowerCase()
   return data.value.vms.filter(
@@ -47,6 +49,10 @@ const rows = computed(() => {
       (!q || v.name.includes(q)),
   )
 })
+const historyRows = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  return history.value.filter((v) => (tab.value === 'mine' ? isMine(v) : tab.value === 'teams' ? v.owner.kind === 'team' : true) && (!q || v.name.includes(q)))
+})
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
@@ -55,6 +61,10 @@ async function refresh() {
   try {
     const res = await api<Listing>(`/api/orgs/${id}/vms`)
     if (id === org.value?.id) data.value = res
+    if (status.value === 'deleted') {
+      const h = await api<{ vms: VmHistory[] }>(`/api/orgs/${id}/vms/history`)
+      if (id === org.value?.id) history.value = h.vms
+    }
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
   }
@@ -63,12 +73,15 @@ async function refresh() {
 const timer = window.setInterval(() => document.visibilityState === 'visible' && refresh(), 5000)
 onBeforeUnmount(() => window.clearInterval(timer))
 
+watch(status, (s) => s === 'deleted' && refresh())
+
 watch(
   () => org.value?.id,
   () => {
     error.value = ''
     node.value = 'all'
     data.value = { vms: [], creatableOwners: [], nodes: [] }
+    history.value = []
     refresh()
   },
   { immediate: true },
@@ -85,11 +98,12 @@ watch(
       <Tabs v-model="tab" :tabs="tabs" variant="underline" />
       <SegmentedControl v-model="status" :options="statuses" size="sm" />
       <template #end>
-        <Select v-model="node" :options="nodeOptions" :aria-label="t('vms.node')" />
+        <Select v-if="status !== 'deleted'" v-model="node" :options="nodeOptions" :aria-label="t('vms.node')" />
         <TextInput v-model="search" type="search" :placeholder="t('vms.search')" :aria-label="t('vms.search')" />
       </template>
     </FilterBar>
-    <VMList :org-id="org.id" :vms="rows" :empty="data.vms.length ? t('vms.noMatch') : t('vms.empty')" @changed="refresh" />
+    <VMHistoryList v-if="status === 'deleted'" :vms="historyRows" />
+    <VMList v-else :org-id="org.id" :vms="rows" :empty="data.vms.length ? t('vms.noMatch') : t('vms.empty')" @changed="refresh" />
     <CreateVMDialog v-model:open="createOpen" :org-id="org.id" :owners="data.creatableOwners" :nodes="data.nodes" @created="refresh" />
   </Page>
 </template>

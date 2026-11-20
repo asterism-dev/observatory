@@ -30,6 +30,7 @@ const cpus = ref<number | null>(2)
 const memoryGB = ref<number | null>(4)
 const diskGB = ref<number | null>(20)
 const image = ref('')
+const deleteAfter = ref('')
 const cascade = ref<ImageDefault['effective'] | null>(null)
 const busy = ref(false)
 const error = ref('')
@@ -63,6 +64,7 @@ watch(
     memoryGB.value = 4
     diskGB.value = 20
     image.value = ''
+    deleteAfter.value = ''
     error.value = ''
   },
 )
@@ -92,6 +94,7 @@ async function create() {
         memoryMB: memoryMB.value,
         diskGB: diskGB.value,
         ...(image.value ? { image: image.value } : {}),
+        ...(deleteAfter.value.trim() ? { deleteAfter: deleteAfter.value.trim() } : {}),
       }),
     })
     emit('created')
@@ -141,6 +144,11 @@ async function create() {
         <NumberInput v-model="diskGB" :aria-label="t('vms.disk')" :invalid="!!problems.disk" />
       </label>
       <small v-if="problems.disk" role="alert">{{ problems.disk }}</small>
+      <label>
+        {{ t('vms.deleteAfter') }}
+        <TextInput v-model="deleteAfter" :aria-label="t('vms.deleteAfter')" :placeholder="t('vms.deleteAfterNever')" />
+      </label>
+      <small>{{ t('vms.deleteAfterHint') }}</small>
     </div>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>

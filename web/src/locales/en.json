@@ -414,7 +414,8 @@
       "hibernated": "Hibernated",
       "suspended": "Suspended, wakes on traffic",
       "error": "Error",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "deleted": "Deleted"
     },
     "egress": "Egress",
     "egressSecrets": "{n} host-bound secrets",
@@ -440,7 +441,22 @@
       "settings": "Settings"
     },
     "egressHosts": "Hosts",
-    "egressCaLabel": "CA"
+    "egressCaLabel": "CA",
+    "deleteAfter": "Delete after",
+    "deleteAfterHint": "Deletes the VM automatically: 30m, 1h, 2d or a time like 2026-11-21T08:00:00+01:00, at least 5 minutes ahead. Attached disks are kept.",
+    "deleteAfterNever": "Never",
+    "deleteAfterClear": "Never delete",
+    "deletesAt": "Deleted on {at} ({rel})",
+    "deletesIn": "deleted {rel}",
+    "history": {
+      "created": "Created",
+      "deleted": "Deleted",
+      "lifetime": "Lifetime",
+      "expired": "expired",
+      "unknown": "unknown",
+      "empty": "No deleted VMs.",
+      "size": "Size"
+    }
   },
   "devices": {
     "subtitle": "WireGuard devices that connect you to your VMs.",

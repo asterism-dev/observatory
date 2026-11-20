@@ -76,6 +76,7 @@ export interface VmInfo {
   createdAt: string
   canPower: boolean
   autoSuspendMinutes: number
+  deleteAt: string | null
   canDelete: boolean
   image: string
   imageRef: string
@@ -103,6 +104,28 @@ export const powerActions = (state: VmInfo['state']) => {
   if (state === 'running') return ['pause', 'hibernate', 'shutdown', 'stop']
   if (state === 'paused' || state === 'hibernated' || state === 'suspended') return ['resume', 'shutdown', 'stop']
   return ['start']
+}
+
+export interface VmHistory {
+  id: string
+  name: string
+  owner: { kind: 'user' | 'team'; id: string; name: string }
+  cpus: number
+  memoryMB: number
+  diskGB: number
+  createdAt: string
+  createdBy: { id: string; name: string } | null
+  deletedAt: string
+  deletedBy: { id: string; name: string } | null
+  reason: 'user' | 'expired'
+}
+
+/** Two largest units, like the CLI: 1d 0h, 2h 37m, 12m. */
+export function lifetime(fromISO: string, toISO: string) {
+  const m = Math.floor((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 60000)
+  if (m >= 1440) return `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`
+  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`
+  return `${m}m`
 }
 
 export function relativeTime(iso: string, locale: string) {

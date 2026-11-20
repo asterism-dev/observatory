@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import de from '../locales/de.json' with { type: 'json' }
 import en from '../locales/en.json' with { type: 'json' }
-import { imageLine, type NodeInfo } from './nodes.ts'
+import { imageLine, lifetime, type NodeInfo } from './nodes.ts'
 
 type Image = NonNullable<NodeInfo['image']>
 const translator = (messages: typeof en) => (key: string, params: Record<string, unknown> = {}) => {
@@ -29,4 +29,12 @@ test('failed image line with error and retry', () => {
   assert.equal(imageLine({ state: 'failed', version: ref, error: 'disk full' }, t, 'en'), `${ref} · failed: disk full`)
   assert.match(imageLine({ state: 'failed', version: ref, error: 'x', retryAt: new Date(Date.now() + 3600e3).toISOString() }, t, 'en'), /next try/)
   assert.equal(imageLine(null, t, 'en'), '–')
+})
+
+test('lifetime shows the two largest units', () => {
+  const at = (min: number, sec = 0) => new Date(Date.UTC(2026, 10, 20, 0, min, sec)).toISOString()
+  assert.equal(lifetime(at(0), at(24 * 60)), '1d 0h')
+  assert.equal(lifetime(at(0), at(157)), '2h 37m')
+  assert.equal(lifetime(at(0), at(12)), '12m')
+  assert.equal(lifetime(at(0), at(0, 30)), '0m')
 })
