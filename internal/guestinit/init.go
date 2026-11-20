@@ -22,6 +22,7 @@ var handlers = map[string]func(args []string) int{
 	"gh":                 ghMain,
 	"agent-browser":      browserMain,
 	"vmm-desktop":        desktopMain,
+	"gcloud":             gcloudMain,
 }
 
 // runSubcommand serves the internal commands of the binary under its own name, such as the image's nsinit shim.

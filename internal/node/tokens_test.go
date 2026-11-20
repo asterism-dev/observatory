@@ -134,6 +134,15 @@ func TestServeTokensProtocol(t *testing.T) {
 	}
 }
 
+func TestServeTokenProject(t *testing.T) {
+	uds := tokenSocket(t, "x", func(vmID, kind string) (proto.IntegrationToken, string) {
+		return proto.IntegrationToken{Kind: kind, Token: "obsph_g", Project: "bna-trader-tf-state"}, ""
+	})
+	if got, want := askToken(t, uds, `{"op":"token","kind":"gcloud"}`+"\n"), `{"ok":true,"token":"obsph_g","expiresAt":null,"project":"bna-trader-tf-state"}`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
 // flakyListener fails the first errs Accept calls, as a full fd table (EMFILE) does.
 type flakyListener struct {
 	net.Listener

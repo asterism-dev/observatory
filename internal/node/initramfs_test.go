@@ -69,7 +69,7 @@ func TestBuildInitramfsLayout(t *testing.T) {
 		".observatory/libexec/mke2fs":       exe("mke2fs bytes"),
 		".observatory/libexec/resize2fs":    exe("resize2fs bytes"),
 	}
-	for _, tool := range []string{"vmm-token", "git-credential-vmm", "gh", "agent-browser", "vmm-desktop"} {
+	for _, tool := range []string{"vmm-token", "git-credential-vmm", "gh", "agent-browser", "vmm-desktop", "gcloud"} {
 		want[".observatory/bin/"+tool] = link("observatory-init")
 	}
 	if len(got) != len(want) {

@@ -805,3 +805,136 @@ func TestIntegrationsWriteContext(t *testing.T) {
 		t.Fatalf("admin file replaced: %q", b)
 	}
 }
+
+const (
+	dummyGcloud   = "obsph_gcloud_dummy000000"
+	gcloudProject = "bna-trader-tf-state"
+)
+
+func okProjectAnswer(tok, project string) string {
+	b, _ := json.Marshal(map[string]any{"ok": true, "token": tok, "expiresAt": nil, "project": project})
+	return string(b)
+}
+
+func TestTokenInfoProject(t *testing.T) {
+	serve(t, newAnswers(map[string]string{
+		"gcloud": okProjectAnswer(dummyGcloud, gcloudProject), "bad": okProjectAnswer(dummyGcloud, "Bad/../x"), "none": okAnswer(dummyGcloud),
+	}))
+	for _, tc := range []struct{ kind, project string }{{"gcloud", gcloudProject}, {"bad", ""}, {"none", ""}} {
+		if tok, project, code := TokenInfo(tc.kind); tok != dummyGcloud || project != tc.project || code != 0 {
+			t.Errorf("TokenInfo(%s) = %q, %q, %d", tc.kind, tok, project, code)
+		}
+	}
+}
+
+func (g *userGuest) adc() string { return g.root.join(gcloudADCRel) }
+
+func TestSyncGcloudWrites(t *testing.T) {
+	answers := newAnswers(map[string]string{"gcloud": okProjectAnswer(dummyGcloud, gcloudProject)})
+	g := newUserGuest(t, answers)
+	g.sync()
+	want := `{"type":"authorized_user","client_id":"` + dummyGcloud + `","client_secret":"` + dummyGcloud + `","refresh_token":"` + dummyGcloud + `","quota_project_id":"` + gcloudProject + "\"}\n"
+	if got := g.read(g.adc()); got != want || got != gcloudADC(dummyGcloud, gcloudProject) {
+		t.Fatalf("adc = %q", got)
+	}
+	if fi, _ := os.Stat(g.adc()); fi.Mode().Perm() != 0o600 {
+		t.Errorf("file mode %v", fi.Mode().Perm())
+	}
+	for _, c := range g.started {
+		if strings.Contains(strings.Join(c.args, " "), dummyGcloud) {
+			t.Fatalf("placeholder on argv: %q", c.args)
+		}
+	}
+	answers.set("gcloud", okAnswer(dummyGcloud))
+	g.sync()
+	if got := g.read(g.adc()); got != gcloudADC(dummyGcloud, "") || strings.Contains(got, "quota_project_id") {
+		t.Fatalf("after project change = %q", got)
+	}
+	answers.del("gcloud")
+	g.sync()
+	if got := g.read(g.adc()); got != "<missing>" {
+		t.Fatalf("not connected = %q", got)
+	}
+}
+
+func TestSyncGcloudKeepsUserFile(t *testing.T) {
+	answers := newAnswers(map[string]string{"gcloud": okProjectAnswer(dummyGcloud, gcloudProject)})
+	g := newUserGuest(t, answers)
+	own := `{"type":"authorized_user","client_id":"mine","client_secret":"mine","refresh_token":"mine"}`
+	os.MkdirAll(filepath.Dir(g.adc()), 0o700)
+	os.WriteFile(g.adc(), []byte(own), 0o600)
+	g.sync()
+	if got := g.read(g.adc()); got != own {
+		t.Fatalf("after ok = %q", got)
+	}
+	answers.del("gcloud")
+	g.sync()
+	if got := g.read(g.adc()); got != own {
+		t.Fatalf("after not-connected = %q", got)
+	}
+}
+
+// gcloudEnv runs the wrapper against a fake gcloud printing the two variables, with a temp HOME holding our ADC file.
+func gcloudEnv(t *testing.T, answers *tokenAnswers) (env []string, home string) {
+	t.Helper()
+	bin := t.TempDir()
+	fake := "#!/bin/sh\nprintf '%s|%s' \"$CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE\" \"$CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE\"\nexit 7\n"
+	os.WriteFile(filepath.Join(bin, "gcloud"), []byte(fake), 0o755)
+	home = t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".config/gcloud"), 0o700)
+	os.WriteFile(filepath.Join(home, ".config/gcloud/application_default_credentials.json"), []byte(gcloudADC(dummyGcloud, gcloudProject)), 0o600)
+	return []string{"PATH=" + bin, "HOME=" + home, "VMM_TOKEN_UNIX=" + tokenServer(t, answers), "SSL_CERT_FILE=/etc/ssl/ca.pem",
+		"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=", "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE=", "CLOUDSDK_CONFIG="}, home
+}
+
+func TestGcloudWrapperSetsEnv(t *testing.T) {
+	env, home := gcloudEnv(t, newAnswers(map[string]string{"gcloud": okProjectAnswer(dummyGcloud, gcloudProject)}))
+	want := filepath.Join(home, ".config/gcloud/application_default_credentials.json") + "|/etc/ssl/ca.pem"
+	if out, code := runTool(t, env, "gcloud", "storage", "ls"); out != want || code != 7 {
+		t.Fatalf("got %q, %d; want %q", out, code, want)
+	}
+}
+
+func TestGcloudWrapperStepsAside(t *testing.T) {
+	connected := newAnswers(map[string]string{"gcloud": okProjectAnswer(dummyGcloud, gcloudProject)})
+	for _, tc := range []struct {
+		name    string
+		answers *tokenAnswers
+		setup   func(home string) []string
+		want    string
+	}{
+		{"not connected", newAnswers(map[string]string{}), nil, "|"},
+		{"var already set", connected, func(string) []string { return []string{"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=/mine.json"} }, "/mine.json|"},
+		{"own login", connected, func(home string) []string {
+			os.MkdirAll(filepath.Join(home, ".config/gcloud/configurations"), 0o700)
+			os.WriteFile(filepath.Join(home, ".config/gcloud/configurations/config_default"), []byte("[core]\naccount = me@x\n"), 0o600)
+			return nil
+		}, "|"},
+		{"own login, other config", connected, func(home string) []string {
+			cfg := t.TempDir()
+			os.WriteFile(filepath.Join(cfg, "active_config"), []byte("work\n"), 0o600)
+			os.MkdirAll(filepath.Join(cfg, "configurations"), 0o700)
+			os.WriteFile(filepath.Join(cfg, "configurations/config_work"), []byte("[compute]\nzone = x\n[core]\nproject = p\naccount=me@x\n"), 0o600)
+			return []string{"CLOUDSDK_CONFIG=" + cfg}
+		}, "|"},
+		{"user ADC file", connected, func(home string) []string {
+			os.WriteFile(filepath.Join(home, ".config/gcloud/application_default_credentials.json"), []byte(`{"type":"authorized_user"}`), 0o600)
+			return nil
+		}, "|"},
+	} {
+		env, home := gcloudEnv(t, tc.answers)
+		if tc.setup != nil {
+			env = append(env, tc.setup(home)...)
+		}
+		if out, code := runTool(t, env, "gcloud"); out != tc.want || code != 7 {
+			t.Errorf("%s: %q, %d", tc.name, out, code)
+		}
+	}
+}
+
+func TestGcloudWrapperNotInstalled(t *testing.T) {
+	env, _ := gcloudEnv(t, newAnswers(map[string]string{}))
+	if out, code := runTool(t, append(env, "PATH="+t.TempDir()), "gcloud", "version"); out != "" || code != 127 {
+		t.Fatalf("no gcloud = %q, %d", out, code)
+	}
+}

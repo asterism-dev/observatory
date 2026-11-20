@@ -11,10 +11,10 @@ import (
 
 const debBundleAbs = "/" + debBundle
 
-var withPath = []string{trustBlock[0], trustBlock[1], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[2], trustBlock[3]}
+var withPath = []string{trustBlock[0], trustBlock[1], trustBlock[2], `PATH="/.observatory/bin:` + defaultPath + `"`, trustBlock[3], trustBlock[4]}
 
 var trustBlock = []string{
-	`CURL_CA_BUNDLE="` + debBundleAbs + `"`, `NODE_EXTRA_CA_CERTS="` + debBundleAbs + `"`,
+	`CURL_CA_BUNDLE="` + debBundleAbs + `"`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="` + debBundleAbs + `"`, `NODE_EXTRA_CA_CERTS="` + debBundleAbs + `"`,
 	`REQUESTS_CA_BUNDLE="` + debBundleAbs + `"`, `SSL_CERT_FILE="` + debBundleAbs + `"`,
 }
 
@@ -113,6 +113,21 @@ func TestWriteEnvTrustVars(t *testing.T) {
 				t.Errorf("%s.conf.d misses %s: %q", d, w, got)
 			}
 		}
+	}
+}
+
+func TestWriteEnvGRPCRoots(t *testing.T) {
+	r := envRoot(t)
+	put(t, r, "lib/systemd/systemd", "", 0o755)
+	merged, err := r.WriteEnv(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"] != debBundleAbs {
+		t.Fatalf("merged = %v", merged)
+	}
+	if got := get(t, r, "etc/systemd/system.conf.d/50-observatory.conf"); !strings.Contains(got, `"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=`+debBundleAbs+`"`) {
+		t.Fatalf("system.conf.d = %q", got)
 	}
 }
 

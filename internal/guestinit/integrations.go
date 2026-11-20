@@ -33,11 +33,14 @@ const (
 	stateRel             = "var/lib/observatory/integrations.json"
 	gitconfigRel         = "etc/observatory/gitconfig"
 	gitconfigBody        = "[credential \"https://github.com\"]\n\thelper = vmm\n[url \"https://github.com/\"]\n\tinsteadOf = git@github.com:\n\tinsteadOf = ssh://git@github.com/\n"
+	gcloudADCRel         = devHome + "/.config/gcloud/application_default_credentials.json"
 	linearProfile        = "if [ -z \"${LINEAR_API_KEY+x}\" ] && command -v vmm-token >/dev/null 2>&1 && vmm_linear=$(vmm-token linear); then export LINEAR_API_KEY=\"$vmm_linear\"; fi\nunset vmm_linear\n"
 )
 
 // A token with a newline would inject lines into git's credential protocol; Go caps repeat counts at 1000, so the upper bound is checked apart.
 var tokenRE = regexp.MustCompile(`\A[A-Za-z0-9._~+/=_-]{12,}\z`)
+
+var gcloudProjectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
 type tokenConn interface {
 	io.ReadWriteCloser
@@ -53,40 +56,50 @@ func dialToken() (tokenConn, error) {
 
 // Token asks the node's token service for kind; the code is 0, tokenNotConnected or tokenUnavailable.
 func Token(kind string) (string, int) {
+	tok, _, code := TokenInfo(kind)
+	return tok, code
+}
+
+// TokenInfo is Token plus the integration's quota project, empty when missing or not a valid project ID.
+func TokenInfo(kind string) (token, project string, code int) {
 	conn, err := dialToken()
 	if err != nil {
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	defer conn.Close()
 	if conn.SetDeadline(time.Now().Add(tokenTimeout)) != nil {
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	req, _ := json.Marshal(map[string]string{"op": "token", "kind": kind})
 	if _, err := conn.Write(append(req, '\n')); err != nil {
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	line, err := bufio.NewReader(io.LimitReader(conn, 16<<10)).ReadBytes('\n')
 	if err != nil && err != io.EOF {
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	var reply struct {
-		OK    bool   `json:"ok"`
-		Token string `json:"token"`
-		Error string `json:"error"`
+		OK      bool   `json:"ok"`
+		Token   string `json:"token"`
+		Project string `json:"project"`
+		Error   string `json:"error"`
 	}
 	if json.Unmarshal(line, &reply) != nil {
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	if reply.OK {
 		if tok := strings.TrimSpace(reply.Token); len(tok) <= 4096 && tokenRE.MatchString(tok) {
-			return tok, 0
+			if gcloudProjectRE.MatchString(reply.Project) {
+				project = reply.Project
+			}
+			return tok, project, 0
 		}
-		return "", tokenUnavailable
+		return "", "", tokenUnavailable
 	}
 	if reply.Error == "not-connected" {
-		return "", tokenNotConnected
+		return "", "", tokenNotConnected
 	}
-	return "", tokenUnavailable
+	return "", "", tokenUnavailable
 }
 
 func tokenMain(args []string) int {
@@ -140,6 +153,62 @@ func ghMain(args []string) int {
 	err := execGH(real, append([]string{"gh"}, args...), env)
 	fmt.Fprintln(os.Stderr, "gh:", err)
 	return 126
+}
+
+// gcloudMain runs the image's own gcloud on the placeholder ADC file, unless the user brought credentials or a login.
+func gcloudMain(args []string) int {
+	real := lookPathWithout("gcloud", platformBin)
+	if real == "" {
+		fmt.Fprintln(os.Stderr, "gcloud: not installed in this VM")
+		return 127
+	}
+	env := os.Environ()
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = devHome
+	}
+	adc := filepath.Join(home, ".config/gcloud/application_default_credentials.json")
+	if os.Getenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE") == "" && !gcloudLoggedIn(home) {
+		if tok, project, code := TokenInfo("gcloud"); code == 0 {
+			if data, err := readNoFollow(adc); err == nil && string(data) == gcloudADC(tok, project) {
+				env = append(withoutEnv(env, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"), "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="+adc)
+				if ca := os.Getenv("SSL_CERT_FILE"); ca != "" && os.Getenv("CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE") == "" {
+					env = append(withoutEnv(env, "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE"), "CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE="+ca)
+				}
+			}
+		}
+	}
+	err := execGH(real, append([]string{"gcloud"}, args...), env)
+	fmt.Fprintln(os.Stderr, "gcloud:", err)
+	return 126
+}
+
+// gcloudLoggedIn reports whether the active configuration names an account; no other gcloud file is read.
+func gcloudLoggedIn(home string) bool {
+	dir := os.Getenv("CLOUDSDK_CONFIG")
+	if dir == "" {
+		dir = filepath.Join(home, ".config/gcloud")
+	}
+	name := "default"
+	if data, err := os.ReadFile(filepath.Join(dir, "active_config")); err == nil && strings.TrimSpace(string(data)) != "" {
+		name = strings.TrimSpace(string(data))
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "configurations", "config_"+name))
+	if err != nil {
+		return false
+	}
+	section := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok && section == "core" && strings.TrimSpace(k) == "account" && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func withoutEnv(env []string, name string) []string {
@@ -200,7 +269,7 @@ func (r Root) WriteContext(text string) error {
 	return os.Symlink("/"+contextRel, link)
 }
 
-// SyncIntegrations brings git, Claude, Linear and Codex in line with the node's token service; startIn runs a command in the image as dev (nil starts it directly), env is the image's environment.
+// SyncIntegrations brings git, Claude, Linear, Codex and gcloud in line with the node's token service; startIn runs a command in the image as dev (nil starts it directly), env is the image's environment.
 func (r Root) SyncIntegrations(ctx context.Context, startIn func(*exec.Cmd) error, env map[string]string) error {
 	if startIn == nil {
 		startIn = (*exec.Cmd).Start
@@ -271,6 +340,7 @@ func (r Root) syncDev(ctx context.Context, startIn func(*exec.Cmd) error, env ma
 		{"claude credentials", func() error { return r.syncClaude(ctx, startIn, env, state) }},
 		{"linear mcp", func() error { return r.syncLinear(ctx, startIn, env, state) }},
 		{"codex agents", func() error { return r.syncCodex(ctx, startIn, env, state) }},
+		{"gcloud adc", func() error { return r.syncGcloud(ctx, startIn, env, state) }},
 	} {
 		if err := part.run(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", part.name, err))
@@ -433,6 +503,50 @@ func (r Root) syncClaude(ctx context.Context, startIn func(*exec.Cmd) error, env
 		}
 	}
 	state["claude"] = digest(tok)
+	return nil
+}
+
+// gcloudADC is the placeholder ADC file; the egress proxy answers its refresh with the real token.
+func gcloudADC(placeholder, project string) string {
+	ph := jsonString(placeholder)
+	adc := `{"type":"authorized_user","client_id":` + ph + `,"client_secret":` + ph + `,"refresh_token":` + ph
+	if project != "" {
+		adc += `,"quota_project_id":` + jsonString(project)
+	}
+	return adc + "}\n"
+}
+
+func (r Root) syncGcloud(ctx context.Context, startIn func(*exec.Cmd) error, env map[string]string, state syncState) error {
+	tok, project, code := TokenInfo("gcloud")
+	if code == tokenUnavailable {
+		return nil
+	}
+	current := ""
+	if data, err := readNoFollow(r.join(gcloudADCRel)); err == nil {
+		current = digest(string(data))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		current = "?"
+	}
+	ours := current != "" && current == state["gcloud"]
+	if code == tokenNotConnected {
+		var err error
+		if ours {
+			err = runDevHelper(ctx, startIn, env, "", "remove-private", gcloudADCRel)
+		}
+		delete(state, "gcloud")
+		return err
+	}
+	if current != "" && !ours {
+		delete(state, "gcloud")
+		return nil
+	}
+	adc := gcloudADC(tok, project)
+	if current != digest(adc) {
+		if err := runDevHelper(ctx, startIn, env, adc, "write-private", gcloudADCRel, "600"); err != nil {
+			return err
+		}
+	}
+	state["gcloud"] = digest(adc)
 	return nil
 }
 
