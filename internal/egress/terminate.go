@@ -125,6 +125,8 @@ func (p *Proxy) boundHandler(sni string) http.HandlerFunc {
 		}
 		if NormalizeSNI(host) != sni {
 			fail(w, st, http.StatusMisdirectedRequest, "egress: host does not match the TLS server name")
+		} else if sni == googleTokenHost && answerGoogleRefresh(w, r, t.secretsFor(sni)) {
+			st.status = http.StatusOK
 		} else {
 			var sent []string
 			acct := p.newAccountTransport(r, sni, t)
