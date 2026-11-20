@@ -26,6 +26,7 @@ const (
 // ErrIntegrationRefresh is checked before sealing so a CHECK violation, whose detail would carry the row, never surfaces.
 var ErrIntegrationRefresh = errors.New("a refresh token is required for oauth sign-ins and not allowed otherwise")
 
+// IntegrationRef names an oauth account; an integration's first account shares its id.
 type IntegrationRef struct{ OrgID, ID uuid.UUID }
 
 // Integration is the metadata of a connected provider account; the token and placeholder never leave the store this way.
@@ -55,6 +56,7 @@ type IntegrationSecret struct {
 type ResolvedIntegration struct {
 	Integration
 	Placeholder, Token string
+	Accounts           []ResolvedAccount // Claude only: active first, then the other working ones in position order
 }
 
 func (IntegrationSecret) String() string               { return "IntegrationSecret{redacted}" }
@@ -66,7 +68,12 @@ func (r ResolvedIntegration) String() string {
 func (r ResolvedIntegration) GoString() string           { return r.String() }
 func (ResolvedIntegration) MarshalJSON() ([]byte, error) { return []byte(`"redacted"`), nil }
 
-const integrationCols = "id, org_id, kind, source, scope, coalesce(team_id, user_id), mode, account, scopes_info, provider_expires_at, access_expires_at, status, last_error, was_in_vm, created_by, updated_by, created_at, updated_at"
+// A Claude integration shows its active account's source, account, expiry and status.
+const integrationCols = `i.id, i.org_id, i.kind, coalesce(a.source, i.source), i.scope, coalesce(i.team_id, i.user_id), i.mode, coalesce(a.account, i.account),
+	i.scopes_info, i.provider_expires_at, coalesce(a.access_expires_at, i.access_expires_at), coalesce(a.status, i.status), coalesce(a.last_error, i.last_error),
+	i.was_in_vm, i.created_by, i.updated_by, i.created_at, i.updated_at`
+
+const integrationFrom = " FROM integrations i LEFT JOIN integration_accounts a ON a.integration_id = i.id AND a.active "
 
 func scanIntegration(r pgx.Row, extra ...any) (v Integration, err error) {
 	dest := append([]any{&v.ID, &v.OrgID, &v.Kind, &v.Source, &v.Scope, &v.OwnerID, &v.Mode, &v.Account, &v.ScopesInfo, &v.ProviderExpiresAt,
@@ -107,7 +114,7 @@ func integrationOwner(v Integration) EnvVar {
 }
 
 func (s *Store) Integrations(ctx context.Context, org uuid.UUID) ([]Integration, error) {
-	rows, err := s.q.Query(ctx, "SELECT "+integrationCols+" FROM integrations WHERE org_id = $1 ORDER BY kind, scope, id", org)
+	rows, err := s.q.Query(ctx, "SELECT "+integrationCols+integrationFrom+"WHERE i.org_id = $1 ORDER BY i.kind, i.scope, i.id", org)
 	if err != nil {
 		return nil, err
 	}
@@ -115,23 +122,25 @@ func (s *Store) Integrations(ctx context.Context, org uuid.UUID) ([]Integration,
 }
 
 func (s *Store) Integration(ctx context.Context, org, id uuid.UUID) (Integration, error) {
-	return scanIntegration(s.q.QueryRow(ctx, "SELECT "+integrationCols+" FROM integrations WHERE org_id = $1 AND id = $2", org, id))
+	return scanIntegration(s.q.QueryRow(ctx, "SELECT "+integrationCols+integrationFrom+"WHERE i.org_id = $1 AND i.id = $2", org, id))
 }
 
-// IntegrationToken returns the decrypted access token of v.
+// IntegrationToken returns the decrypted access token of v, for Claude that of its active account.
 func (s *Store) IntegrationToken(ctx context.Context, v Integration) (string, error) {
 	key, err := s.orgKey(ctx, v.OrgID)
 	if err != nil {
 		return "", err
 	}
+	var id uuid.UUID
 	var nonce, ct []byte
-	err = s.q.QueryRow(ctx, "SELECT nonce, ciphertext FROM integrations WHERE org_id = $1 AND id = $2", v.OrgID, v.ID).Scan(&nonce, &ct)
+	err = s.q.QueryRow(ctx, "SELECT coalesce(a.id, i.id), coalesce(a.nonce, i.nonce), coalesce(a.ciphertext, i.ciphertext)"+integrationFrom+
+		"WHERE i.org_id = $1 AND i.id = $2", v.OrgID, v.ID).Scan(&id, &nonce, &ct)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	} else if err != nil {
 		return "", err
 	}
-	plain, err := seal.Open(key, nonce, ct, integrationAAD(v.OrgID, v.ID, "access"))
+	plain, err := seal.Open(key, nonce, ct, integrationAAD(v.OrgID, id, "access"))
 	return string(plain), err
 }
 
@@ -162,8 +171,13 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 		if err != nil {
 			return err
 		}
-		nonce, ct, rnonce, rct, err := sealIntegration(key, v.OrgID, v.ID, sec)
-		if err != nil {
+		// Claude tokens live in its accounts; the first account shares the integration's id.
+		var source any = v.Source
+		account, accessExpiresAt := v.Account, sec.AccessExpiresAt
+		var nonce, ct, rnonce, rct []byte
+		if v.Kind == integrations.Claude {
+			source, account, accessExpiresAt = nil, "", nil
+		} else if nonce, ct, rnonce, rct, err = sealIntegration(key, v.OrgID, v.ID, sec); err != nil {
 			return err
 		}
 		teamID, userID := envOwnerColumns(integrationOwner(v))
@@ -172,12 +186,15 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 			  nonce, ciphertext, refresh_nonce, refresh_ciphertext, access_expires_at, placeholder, was_in_vm, created_by, updated_by)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $8 = 'vm', $18, $18)
 			RETURNING status, last_error, was_in_vm, created_at, updated_at`,
-			v.ID, v.OrgID, v.Kind, v.Source, v.Scope, teamID, userID, v.Mode, v.Account, v.ScopesInfo, v.ProviderExpiresAt,
-			nonce, ct, rnonce, rct, sec.AccessExpiresAt, placeholder, v.CreatedBy).Scan(&v.Status, &v.LastError, &v.WasInVM, &v.CreatedAt, &v.UpdatedAt)
+			v.ID, v.OrgID, v.Kind, source, v.Scope, teamID, userID, v.Mode, account, v.ScopesInfo, v.ProviderExpiresAt,
+			nonce, ct, rnonce, rct, accessExpiresAt, placeholder, v.CreatedBy).Scan(&v.Status, &v.LastError, &v.WasInVM, &v.CreatedAt, &v.UpdatedAt)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
-		return err
+		if err != nil || v.Kind != integrations.Claude {
+			return err
+		}
+		return tx.insertAccount(ctx, key, v, v.ID, 0, true, sec)
 	})
 	if err != nil {
 		return Integration{}, err
@@ -195,7 +212,7 @@ func (s *Store) integrationWriteResult(ctx context.Context, old Integration, row
 	return s.guardedWriteResult(ctx, "integrations", old.OrgID, old.ID, rows, err)
 }
 
-// ReplaceIntegrationToken stores a new verified token from sec with v's source and account details; the placeholder stays.
+// ReplaceIntegrationToken stores a new verified token from sec with v's source and account details, for Claude in its active account; the placeholder stays.
 func (s *Store) ReplaceIntegrationToken(ctx context.Context, old, v Integration, sec IntegrationSecret) error {
 	sec, err := checkIntegrationSecret(v.Source, sec)
 	if err != nil {
@@ -204,6 +221,9 @@ func (s *Store) ReplaceIntegrationToken(ctx context.Context, old, v Integration,
 	key, err := s.orgKey(ctx, old.OrgID)
 	if err != nil {
 		return err
+	}
+	if old.Kind == integrations.Claude {
+		return s.InTx(ctx, func(tx *Store) error { return tx.replaceActiveAccountToken(ctx, key, old, v, sec) })
 	}
 	nonce, ct, rnonce, rct, err := sealIntegration(key, old.OrgID, old.ID, sec)
 	if err != nil {
@@ -219,9 +239,34 @@ func (s *Store) ReplaceIntegrationToken(ctx context.Context, old, v Integration,
 	return s.integrationWriteResult(ctx, old, tag.RowsAffected(), err)
 }
 
-// DueOAuthRefreshes lists working oauth integrations whose access token expires before before.
+func (s *Store) replaceActiveAccountToken(ctx context.Context, key seal.Key, old, v Integration, sec IntegrationSecret) error {
+	tag, err := s.q.Exec(ctx, `
+		UPDATE integrations SET scopes_info = $7, provider_expires_at = $8, was_in_vm = (mode = 'vm'), updated_by = $9, updated_at = now()
+		WHERE `+envGuard, integrationGuardArgs(old, v.ScopesInfo, v.ProviderExpiresAt, v.UpdatedBy)...)
+	if err := s.integrationWriteResult(ctx, old, tag.RowsAffected(), err); err != nil {
+		return err
+	}
+	var id uuid.UUID
+	if err := s.q.QueryRow(ctx, "SELECT id FROM integration_accounts WHERE integration_id = $1 AND active FOR UPDATE", old.ID).Scan(&id); err != nil {
+		return err
+	}
+	nonce, ct, rnonce, rct, err := sealIntegration(key, old.OrgID, id, sec)
+	if err != nil {
+		return err
+	}
+	_, err = s.q.Exec(ctx, `
+		UPDATE integration_accounts SET source = $2, account = $3, nonce = $4, ciphertext = $5, refresh_nonce = $6, refresh_ciphertext = $7,
+		  access_expires_at = $8, status = 'ok', last_error = '', updated_by = $9, updated_at = now()
+		WHERE id = $1`, id, v.Source, v.Account, nonce, ct, rnonce, rct, sec.AccessExpiresAt, v.UpdatedBy)
+	if isUniqueViolation(err) {
+		return ErrConflict
+	}
+	return err
+}
+
+// DueOAuthRefreshes lists working oauth accounts whose access token expires before before.
 func (s *Store) DueOAuthRefreshes(ctx context.Context, before time.Time) ([]IntegrationRef, error) {
-	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM integrations
+	rows, err := s.q.Query(ctx, `SELECT org_id, id FROM integration_accounts
 		WHERE source = 'oauth' AND status = 'ok' AND access_expires_at < $1 ORDER BY access_expires_at`, before)
 	if err != nil {
 		return nil, err
@@ -240,7 +285,7 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 	var deadline *time.Timer
 	err := s.InTx(dbctx, func(tx *Store) error {
 		var rnonce, rct []byte
-		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM integrations
+		err := tx.q.QueryRow(ctx, `SELECT refresh_nonce, refresh_ciphertext FROM integration_accounts
 			WHERE org_id = $1 AND id = $2 AND source = 'oauth' AND status = 'ok' AND access_expires_at < $3
 			FOR UPDATE SKIP LOCKED`, ref.OrgID, ref.ID, before).Scan(&rnonce, &rct)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -266,7 +311,7 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 		if refreshErr = err; err != nil {
 			// Our own shutdown or timeout must never make the one-way switch to expired.
 			ours := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-			_, err := tx.q.Exec(dbctx, `UPDATE integrations SET
+			_, err := tx.q.Exec(dbctx, `UPDATE integration_accounts SET
 				status = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'expired' ELSE 'ok' END,
 				last_error = CASE WHEN $3 OR ($4 AND access_expires_at <= now()) THEN 'sign in again' ELSE 'refresh failed' END
 				WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, errors.Is(err, integrations.ErrInvalidGrant), !ours)
@@ -276,7 +321,7 @@ func (s *Store) RefreshIntegration(ctx context.Context, ref IntegrationRef, befo
 		if err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(dbctx, `UPDATE integrations SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
+		_, err = tx.q.Exec(dbctx, `UPDATE integration_accounts SET nonce = $3, ciphertext = $4, refresh_nonce = $5, refresh_ciphertext = $6,
 			access_expires_at = $7, last_error = '' WHERE org_id = $1 AND id = $2`, ref.OrgID, ref.ID, nonce, ct, rnonce, rct, sec.AccessExpiresAt)
 		refreshed = err == nil
 		return err
@@ -321,8 +366,8 @@ func (s *Store) ResolveVMIntegrations(ctx context.Context, e *authz.Enforcer, or
 	if !allowed[EnvScopeOrg] && !allowed[ownScope] {
 		return nil, nil
 	}
-	rows, err := s.q.Query(ctx, "SELECT "+integrationCols+`, placeholder, nonce, ciphertext FROM integrations
-		WHERE org_id = $1 AND (scope = 'org' OR (scope = $2 AND coalesce(team_id, user_id) = $3))`, org, ownScope, id)
+	rows, err := s.q.Query(ctx, "SELECT "+integrationCols+", i.placeholder, i.nonce, i.ciphertext"+integrationFrom+
+		"WHERE i.org_id = $1 AND (i.scope = 'org' OR (i.scope = $2 AND coalesce(i.team_id, i.user_id) = $3))", org, ownScope, id)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +401,17 @@ func (s *Store) ResolveVMIntegrations(ctx context.Context, e *authz.Enforcer, or
 	var out []ResolvedIntegration
 	for _, k := range slices.Sorted(maps.Keys(winners)) {
 		w := winners[k]
+		if k == integrations.Claude {
+			if w.Accounts, err = s.resolvedAccounts(ctx, key, org, w.ID); err != nil {
+				return nil, err
+			}
+			if len(w.Accounts) == 0 {
+				return nil, fmt.Errorf("integration %s has no active account", w.ID)
+			}
+			w.Token = w.Accounts[0].Token
+			out = append(out, w.ResolvedIntegration)
+			continue
+		}
 		plain, err := seal.Open(key, w.nonce, w.ct, integrationAAD(org, w.ID, "access"))
 		if err != nil {
 			return nil, fmt.Errorf("decrypt integration %s: %w", w.ID, err)

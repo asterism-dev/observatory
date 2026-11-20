@@ -170,7 +170,8 @@ func TestIntegrationSealed(t *testing.T) {
 	if cl.AccessExpiresAt == nil || !mustIntegration(t, s, org.ID, cl.ID).AccessExpiresAt.Equal(accessExp) {
 		t.Fatalf("access expiry %+v", cl)
 	}
-	rows, err := pool.Query(ctx, "SELECT ciphertext, coalesce(refresh_ciphertext, '') FROM integrations")
+	rows, err := pool.Query(ctx, `SELECT coalesce(ciphertext, ''), coalesce(refresh_ciphertext, '') FROM integrations
+		UNION ALL SELECT ciphertext, coalesce(refresh_ciphertext, '') FROM integration_accounts`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestIntegrationSealed(t *testing.T) {
 		t.Fatalf("claude resolves to %d integrations", len(res))
 	}
 
-	execSQL(t, pool, "UPDATE integrations SET nonce = refresh_nonce, ciphertext = refresh_ciphertext WHERE id = $1", cl.ID)
+	execSQL(t, pool, "UPDATE integration_accounts SET nonce = refresh_nonce, ciphertext = refresh_ciphertext WHERE id = $1", cl.ID)
 	if _, err := s.ResolveVMIntegrations(ctx, e, org.ID, authz.UserSubject(uid)); err == nil {
 		t.Fatal("refresh token opened with the access AAD")
 	}
@@ -402,7 +403,7 @@ func TestIntegrationRefreshNonceRequired(t *testing.T) {
 	exp := time.Now().Add(time.Hour)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeOrg, nil),
 		store.IntegrationSecret{Token: dummyAccess, Refresh: dummyRefresh, AccessExpiresAt: &exp})
-	if _, err := pool.Exec(ctx, "UPDATE integrations SET refresh_nonce = NULL WHERE id = $1", v.ID); err == nil {
+	if _, err := pool.Exec(ctx, "UPDATE integration_accounts SET refresh_nonce = NULL WHERE id = $1", v.ID); err == nil {
 		t.Fatal("oauth row without refresh nonce accepted")
 	}
 }
