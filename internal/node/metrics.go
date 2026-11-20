@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/proto"
+	"github.com/asterism-dev/observatory/internal/sysstat"
 )
 
 var metricsEvery = 10 * time.Second
 
 // USER_HZ is 100 on every Linux architecture we run on.
-const clockTicks = 100
+const clockTicks = sysstat.ClockTicks
 
 // parseProcStatTicks sums utime and stime; the command name may hold spaces, so fields count from the last ")".
 func parseProcStatTicks(stat string) (uint64, error) {
