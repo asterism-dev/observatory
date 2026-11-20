@@ -8,11 +8,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '@/api'
 import UpdateNodesDialog from '@/components/UpdateNodesDialog.vue'
 import InstallCommand from '@/components/InstallCommand.vue'
+import NodeLogs from '@/components/NodeLogs.vue'
+import NodeUsage from '@/components/NodeUsage.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import type { UsageRange } from '@/composables/telemetry'
 import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d, locale } = useI18n()
@@ -42,6 +45,7 @@ const confirmRegen = ref(false)
 const command = ref('')
 const confirmDelete = ref(false)
 const updateOpen = ref(false)
+const usageRange = ref<UsageRange | null>(null)
 
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -159,6 +163,10 @@ watch(
               </Card>
             </div>
           </Section>
+          <template v-if="node.canTelemetry">
+            <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" />
+            <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" />
+          </template>
           <Section :label="t('nodes.machine')">
             <Card>
               <KeyValueList>

@@ -579,6 +579,29 @@
     "dsk": "DSK",
     "diskHint": "DSK ist der Platz, den die VM auf dem Host belegt: die belegten Blöcke ihres Root-Disk-Images, einschließlich des Guest-Images, aus dem sie erstellt wurde. Der Wert liegt höher als df in der VM."
   },
+  "telemetry": {
+    "usage": "Auslastung",
+    "logs": "Logs",
+    "charts": {
+      "cpu": "CPU",
+      "mem": "Arbeitsspeicher",
+      "disk": "Disk",
+      "net": "Netzwerk"
+    },
+    "noData": "Keine Daten in diesem Zeitraum. Ein Node sendet alle 10 Sekunden Auslastungsdaten, sobald er eine Version mit Telemetrie hat.",
+    "zoomHint": "Bereich in einem Graph aufziehen zum Zoomen, Doppelklick setzt zurück. Klick auf einen Legendeneintrag blendet die Linie aus.",
+    "search": "Suchen …",
+    "level": "Level",
+    "source": "Quelle",
+    "allLevels": "Alle Level",
+    "allSources": "Alle Quellen",
+    "live": "Live",
+    "paused": "Pausiert",
+    "noLines": "Keine passenden Logzeilen.",
+    "filterBy": "Nach diesem Feld filtern",
+    "removeFilter": "Filter entfernen",
+    "streamFailed": "Live-Log-Stream beendet. Seite neu laden, um fortzusetzen."
+  },
   "snapshots": {
     "section": "Snapshots",
     "take": "Snapshot erstellen",

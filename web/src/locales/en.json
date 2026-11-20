@@ -579,6 +579,29 @@
     "dsk": "DSK",
     "diskHint": "DSK is the host disk footprint of the VM: allocated blocks of its root disk image, including the guest image it was created from. It runs higher than df inside the VM."
   },
+  "telemetry": {
+    "usage": "Usage",
+    "logs": "Logs",
+    "charts": {
+      "cpu": "CPU",
+      "mem": "Memory",
+      "disk": "Disk",
+      "net": "Network"
+    },
+    "noData": "No data in this range. A node sends usage data every 10 seconds once it runs a version with telemetry.",
+    "zoomHint": "Drag across a graph to zoom, double-click to reset. Click a legend entry to hide its line.",
+    "search": "Search …",
+    "level": "Level",
+    "source": "Source",
+    "allLevels": "All levels",
+    "allSources": "All sources",
+    "live": "Live",
+    "paused": "Paused",
+    "noLines": "No matching log lines.",
+    "filterBy": "Filter by this field",
+    "removeFilter": "Remove filter",
+    "streamFailed": "Live log stream stopped. Reload the page to resume."
+  },
   "snapshots": {
     "section": "Snapshots",
     "take": "Take snapshot",
