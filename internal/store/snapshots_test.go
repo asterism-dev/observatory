@@ -629,13 +629,13 @@ func TestDeleteVMPendingForkSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID); !errors.Is(err, store.ErrConflict) {
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID, nil, store.DeleteReasonUser); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("source of a pending fork: %v", err)
 	}
 	if err := e.s.SetVMStatus(ctx, e.node.ID, proto.VMStatus{ID: fork.ID.String(), State: proto.StateRunning}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatalf("fork provisioned: %v", err)
 	}
 }

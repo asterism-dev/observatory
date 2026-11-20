@@ -70,6 +70,7 @@ const (
 	ActionVMCreate            = "vm:create"
 	ActionVMPower             = "vm:power"
 	ActionVMDelete            = "vm:delete"
+	ActionVMDeleteAfter       = "vm:delete-after"
 	ActionVMNetwork           = "vm:network"
 	ActionVMDisks             = "vm:disks"
 	ActionVMSnapshot          = "vm:snapshot"

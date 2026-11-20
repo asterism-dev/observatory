@@ -33,12 +33,13 @@ type vmJSON struct {
 		IP      string `json:"ip"`
 		DNSName string `json:"dnsName"`
 	} `json:"networks"`
-	CPUs               int       `json:"cpus"`
-	MemoryMB           int       `json:"memoryMB"`
-	DiskGB             int       `json:"diskGB"`
-	AutoSuspendMinutes int       `json:"autoSuspendMinutes"`
-	LegacyRuntime      bool      `json:"legacyRuntime"`
-	CreatedAt          time.Time `json:"createdAt"`
+	CPUs               int        `json:"cpus"`
+	MemoryMB           int        `json:"memoryMB"`
+	DiskGB             int        `json:"diskGB"`
+	AutoSuspendMinutes int        `json:"autoSuspendMinutes"`
+	LegacyRuntime      bool       `json:"legacyRuntime"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	DeleteAt           *time.Time `json:"deleteAt"`
 	Disks              []struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
@@ -59,7 +60,7 @@ func vmCommands() []command {
 		return command{path, "<vm> [--wait]", summary, cmdVMPower(path, target)}
 	}
 	return []command{
-		{"vm list", "", "list VMs", cmdVMListCmd},
+		{"vm list", "[--deleted]", "list VMs (--deleted: deleted VMs)", cmdVMListCmd},
 		{"vm show", "<vm>", "show a VM", cmdVMShow},
 		{"vm create", "<name> [flags]", "create a VM", cmdVMCreate},
 		power("vm start", "start a stopped VM", "running"),
@@ -70,6 +71,7 @@ func vmCommands() []command {
 		{"vm restart", "<vm> [--force] [--wait]", "stop, then start a VM", cmdVMRestart},
 		{"vm delete", "<vm> [--wait]", "delete a VM", cmdVMDelete},
 		{"vm auto-suspend", "<vm> <minutes|off>", "suspend an idle VM after N minutes (5-1440)", cmdVMAutoSuspend},
+		{"vm delete-after", "<vm> <30m|1h|2d|time|off>", "delete a VM automatically at a time", cmdVMDeleteAfter},
 		{"vm metrics", "<vm>", "show recent CPU and memory samples", cmdVMMetrics},
 		{"vm egress", "<vm>", "show egress proxy hosts and CA of a VM", cmdVMEgress},
 		{"vm integrations", "<vm>", "show the integrations a VM gets", cmdVMIntegrations},
@@ -156,13 +158,19 @@ func (v vmJSON) size() string {
 }
 
 func cmdVMListCmd(c *cli, args []string) error {
-	if _, err := c.parse(c.flags("vm list"), args, 0, 0); err != nil {
+	fs := c.flags("vm list")
+	deleted := fs.Bool("deleted", false, "list deleted VMs")
+	if _, err := c.parse(fs, args, 0, 0); err != nil {
 		return err
+	}
+	if *deleted {
+		return c.vmListDeleted()
 	}
 	l, raw, err := c.vmList()
 	if err != nil {
 		return err
 	}
+	withDeleteAt := slices.ContainsFunc(l.VMs, func(v vmJSON) bool { return v.DeleteAt != nil })
 	rows := make([][]string, len(l.VMs))
 	for i, v := range l.VMs {
 		state := v.State
@@ -170,8 +178,15 @@ func cmdVMListCmd(c *cli, args []string) error {
 			state += " (recreate)"
 		}
 		rows[i] = []string{v.Name, state, c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name), v.Node.Name, v.size(), orDash(v.IP)}
+		if withDeleteAt {
+			rows[i] = append(rows[i], c.deleteAtLabel(v.DeleteAt))
+		}
 	}
-	return c.emit(raw, []string{"name", "state", "owner", "node", "size", "ip"}, rows)
+	cols := []string{"name", "state", "owner", "node", "size", "ip"}
+	if withDeleteAt {
+		cols = append(cols, "delete at")
+	}
+	return c.emit(raw, cols, rows)
 }
 
 func orDash(s string) string {
@@ -236,7 +251,7 @@ func cmdVMShow(c *cli, args []string) error {
 		{"name", v.Name}, {"state", state}, {"owner", c.ownerLabel(v.Owner.Kind, v.Owner.ID, v.Owner.Name)}, {"node", v.Node.Name},
 		{"size", v.size()}, {"dns", v.DNSName}, {"ip", orDash(v.IP)},
 		{"networks", orDash(strings.Join(nets, ", "))}, {"disks", orDash(strings.Join(disks, ", "))},
-		{"auto-suspend", suspend}, {"image", image}, {"digest", digest}, {"created", ago(c.now(), v.CreatedAt)},
+		{"auto-suspend", suspend}, {"delete at", c.deleteAtLabel(v.DeleteAt)}, {"image", image}, {"digest", digest}, {"created", ago(c.now(), v.CreatedAt)},
 	})
 }
 
@@ -248,6 +263,7 @@ func cmdVMCreate(c *cli, args []string) error {
 	memory := fs.String("memory", "4G", "memory, e.g. 4G or 512M")
 	disk := fs.Int("disk", 20, "disk size in GB")
 	image := fs.String("image", "", "image `REF` (default: the owner's default image)")
+	deleteAfter := fs.String("delete-after", "", "delete the VM automatically after `30m|1h|2d` or at an RFC 3339 time")
 	wait := fs.Bool("wait", false, "wait until the VM is running")
 	pos, err := c.parse(fs, args, 1, 1)
 	if err != nil {
@@ -296,14 +312,15 @@ func cmdVMCreate(c *cli, args []string) error {
 	}
 	var raw json.RawMessage
 	err = c.call(http.MethodPost, path, struct {
-		Name     string `json:"name"`
-		Owner    owner  `json:"owner"`
-		NodeID   string `json:"nodeId"`
-		CPUs     int    `json:"cpus"`
-		MemoryMB int    `json:"memoryMB"`
-		DiskGB   int    `json:"diskGB"`
-		Image    string `json:"image,omitempty"`
-	}{pos[0], o, nodeID, *cpus, memMB, *disk, *image}, &raw)
+		Name        string `json:"name"`
+		Owner       owner  `json:"owner"`
+		NodeID      string `json:"nodeId"`
+		CPUs        int    `json:"cpus"`
+		MemoryMB    int    `json:"memoryMB"`
+		DiskGB      int    `json:"diskGB"`
+		Image       string `json:"image,omitempty"`
+		DeleteAfter string `json:"deleteAfter,omitempty"`
+	}{pos[0], o, nodeID, *cpus, memMB, *disk, *image, *deleteAfter}, &raw)
 	if err != nil {
 		return err
 	}

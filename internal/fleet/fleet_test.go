@@ -451,7 +451,7 @@ func TestVMDeletedWhileOfflineAbsentOnReconnect(t *testing.T) {
 	}
 	node.sess.Close()
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
-	if err := e.s.DeleteVM(ctx, e.org.ID, drop.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, drop.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	node = e.connect(cred, proto.VMStatus{ID: keep.ID.String(), State: proto.StateStopped}, proto.VMStatus{ID: drop.ID.String(), State: proto.StateRunning})
@@ -990,7 +990,7 @@ func TestDiskErrorsDroppedWithVMOrNode(t *testing.T) {
 			Disks: []proto.Disk{{Name: "d", Error: "NBD connection lost"}}}})
 	}
 	waitFor(t, func() bool { return len(e.f.DiskErrors(gone.ID)) == 1 && len(e.f.DiskErrors(kept.ID)) == 1 })
-	if err := e.s.DeleteVM(ctx, e.org.ID, gone.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, gone.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	e.f.NotifyOrg(e.org.ID)

@@ -111,7 +111,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, v := range orphans {
-		if err := s.store.DeleteVM(ctx, v.OrgID, v.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := s.store.DeleteVM(ctx, v.OrgID, v.ID, nil, store.DeleteReasonUser); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		s.vmDeleted(v.ID)
@@ -276,7 +276,7 @@ func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg
 			return err
 		}
 		org = img.OrgID
-		if err := tx.DeleteVM(ctx, org, *b.VMID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := tx.DeleteVM(ctx, org, *b.VMID, nil, store.DeleteReasonUser); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		return nil

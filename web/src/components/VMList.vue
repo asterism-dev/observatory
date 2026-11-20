@@ -6,13 +6,13 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import OpenVMDialog from '@/components/OpenVMDialog.vue'
-import { gb, liveUsage, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
+import { deletionLabel, gb, liveUsage, powerActions, vmTones, type VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { Meter, ResourceList, ResourceRow, Tag } from '@/ui'
 
 const props = defineProps<{ orgId: string; vms: VmInfo[]; empty: string }>()
 const emit = defineEmits<{ changed: [] }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { me } = useMe()
 
 const error = ref('')
@@ -55,6 +55,7 @@ const remove = (v: VmInfo) => act(() => api(`/api/orgs/${props.orgId}/vms/${v.id
         <Tag strong>{{ v.node.name }}</Tag>
         <Tag>{{ isMine(v) ? t('vms.mine') : v.owner.name }}</Tag>
         <Tag :tone="vmTones[v.state]">{{ t(`vms.states.${v.state}`) }}</Tag>
+        <Tag v-if="v.deleteAt" tone="warning">{{ deletionLabel(v.deleteAt, t, locale) }}</Tag>
         <Tag v-if="v.legacyRuntime" tone="warning">{{ t('vms.legacyRuntime') }}</Tag>
       </template>
       <Meter :label="t('usage.cpu')" :percent="liveUsage(v).cpu" />

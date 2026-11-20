@@ -213,10 +213,10 @@ func TestVMLifecycleAndNodeScoping(t *testing.T) {
 		t.Fatalf("on node: %+v", on)
 	}
 
-	if err := e.s.DeleteVM(ctx, other.ID, vm.ID); !errors.Is(err, store.ErrNotFound) {
+	if err := e.s.DeleteVM(ctx, other.ID, vm.ID, nil, store.DeleteReasonUser); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cross-org delete: %v", err)
 	}
-	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID); err != nil {
+	if err := e.s.DeleteVM(ctx, e.org.ID, vm.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
 	}
 	if vms, _ := e.s.VMs(ctx, e.org.ID); len(vms) != 0 {
@@ -245,8 +245,8 @@ func TestVMOwnersCannotBeRemoved(t *testing.T) {
 	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); !errors.Is(err, store.ErrOwnsResources) {
 		t.Fatalf("team: %v", err)
 	}
-	_ = e.s.DeleteVM(ctx, e.org.ID, vm.ID)
-	_ = e.s.DeleteVM(ctx, e.org.ID, tvm.ID)
+	_ = e.s.DeleteVM(ctx, e.org.ID, vm.ID, nil, store.DeleteReasonUser)
+	_ = e.s.DeleteVM(ctx, e.org.ID, tvm.ID, nil, store.DeleteReasonUser)
 	if err := e.s.RemoveMember(ctx, e.org.ID, b.User.ID); err != nil {
 		t.Fatal(err)
 	}

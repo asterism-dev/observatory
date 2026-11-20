@@ -414,7 +414,8 @@
       "hibernated": "Ruhezustand",
       "suspended": "Schläft, wacht bei Verkehr auf",
       "error": "Fehler",
-      "unknown": "Unbekannt"
+      "unknown": "Unbekannt",
+      "deleted": "Gelöscht"
     },
     "egress": "Egress",
     "egressSecrets": "{n} an Hosts gebundene Secrets",
@@ -440,7 +441,23 @@
       "settings": "Einstellungen"
     },
     "egressHosts": "Hosts",
-    "egressCaLabel": "CA"
+    "egressCaLabel": "CA",
+    "deleteAfter": "Löschen nach",
+    "deleteAfterHint": "Löscht die VM automatisch: 30m, 1h, 2d oder ein Zeitpunkt wie 2026-11-21T08:00:00+01:00, mindestens 5 Minuten in der Zukunft. Angehängte Disks bleiben erhalten.",
+    "deleteAfterNever": "Nie",
+    "deleteAfterClear": "Nie löschen",
+    "deletesAt": "Wird am {at} gelöscht ({rel})",
+    "deletesIn": "gelöscht {rel}",
+    "history": {
+      "created": "Angelegt",
+      "deleted": "Gelöscht",
+      "lifetime": "Laufzeit",
+      "expired": "abgelaufen",
+      "unknown": "unbekannt",
+      "empty": "Keine gelöschten VMs.",
+      "size": "Größe"
+    },
+    "deleting": "Wird gelöscht…"
   },
   "devices": {
     "subtitle": "WireGuard-Geräte, die dich mit deinen VMs verbinden.",

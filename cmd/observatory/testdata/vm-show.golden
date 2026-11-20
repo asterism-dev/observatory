@@ -8,6 +8,7 @@ ip:           –
 networks:     lan 10.1.0.4
 disks:        data → /data (50 GB)
 auto-suspend: 30 min
+delete at:    2026-11-20 09:30 (in 19h 27m)
 image:        v3
 digest:       –
 created:      2026-11-10 09:30

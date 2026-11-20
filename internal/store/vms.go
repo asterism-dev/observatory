@@ -47,7 +47,8 @@ type VM struct {
 	ImageID     *uuid.UUID
 	ImageSource string
 	// Kind is VMKindBuilder for the hidden VMs that run image builds.
-	Kind string
+	Kind     string
+	DeleteAt *time.Time
 }
 
 const (
@@ -55,11 +56,11 @@ const (
 	VMKindBuilder = "builder"
 )
 
-const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime, coalesce(image_ref, ''), coalesce(image_digest, ''), image_id, coalesce(image_source, ''), kind"
+const vmColumns = "id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, power, coalesce(stop_mode, ''), generation, provisioned, state, error, ip, mgmt_ip, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, auto_suspend_minutes, wake_seq, image, restore_state, legacy_runtime, coalesce(image_ref, ''), coalesce(image_digest, ''), image_id, coalesce(image_source, ''), kind, delete_at"
 
 func scanVM(row pgx.Row) (v VM, err error) {
 	err = row.Scan(&v.ID, &v.OrgID, &v.NodeID, &v.UserID, &v.TeamID, &v.Name, &v.CPUs, &v.MemoryMB, &v.DiskGB,
-		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime, &v.ImageRef, &v.ImageDigest, &v.ImageID, &v.ImageSource, &v.Kind)
+		&v.Power, &v.StopMode, &v.Generation, &v.Provisioned, &v.State, &v.Error, &v.IP, &v.MgmtIP, &v.CreatedBy, &v.CreatedAt, &v.AutoSuspendMinutes, &v.WakeSeq, &v.Image, &v.RestoreState, &v.LegacyRuntime, &v.ImageRef, &v.ImageDigest, &v.ImageID, &v.ImageSource, &v.Kind, &v.DeleteAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -166,9 +167,9 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 			return err
 		}
 		out, err = scanVM(tx.q.QueryRow(ctx, `
-			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip, image_ref, image_digest, image_id, image_source, kind)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), nullif($12, ''), $13, nullif($14, ''), coalesce(nullif($15, ''), 'vm')) RETURNING `+vmColumns,
-			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP, v.ImageRef, v.ImageDigest, v.ImageID, v.ImageSource, v.Kind))
+			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip, image_ref, image_digest, image_id, image_source, kind, delete_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), nullif($12, ''), $13, nullif($14, ''), coalesce(nullif($15, ''), 'vm'), $16) RETURNING `+vmColumns,
+			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP, v.ImageRef, v.ImageDigest, v.ImageID, v.ImageSource, v.Kind, v.DeleteAt))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -230,7 +231,8 @@ func (s *Store) SetAutoSuspend(ctx context.Context, org, id uuid.UUID, minutes i
 }
 
 // DeleteVM marks the exports of the VM's disks releasing; the cascade drops the attachments.
-func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID) error {
+// It records the VM in vm_history, except builder VMs; by is nil for automatic deletions.
+func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID, by *uuid.UUID, reason string) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		// The node deletes the VM's snapshot files, which a fork not yet built still copies from.
 		var forkPending bool
@@ -250,9 +252,35 @@ func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID) error {
 			WHERE disk_id IN (SELECT disk_id FROM vm_disks WHERE vm_id = $1)`, id); err != nil {
 			return err
 		}
+		if _, err := tx.q.Exec(ctx, `
+			INSERT INTO vm_history (id, org_id, user_id, team_id, node_id, name, cpus, memory_mb, disk_gb, image_ref, created_by, created_at, deleted_by, reason)
+			SELECT id, org_id, user_id, team_id, node_id, name, cpus, memory_mb, disk_gb, coalesce(image_ref, ''), created_by, created_at, $2, $3
+			FROM vms WHERE id = $1 AND kind = 'vm'`, id, by, reason); err != nil {
+			return err
+		}
 		_, err = tx.q.Exec(ctx, "DELETE FROM vms WHERE id = $1", id)
 		return err
 	})
+}
+
+// SetDeleteAt does not bump the generation: only the hub acts on it.
+func (s *Store) SetDeleteAt(ctx context.Context, org, id uuid.UUID, at *time.Time) (VM, error) {
+	return scanVM(s.q.QueryRow(ctx, `
+		UPDATE vms SET delete_at = $3 WHERE id = $1 AND org_id = $2
+		RETURNING `+vmColumns, id, org, at))
+}
+
+func (s *Store) ExpiredVMs(ctx context.Context, now time.Time) ([]VM, error) {
+	return collectVMs(s.q.Query(ctx, "SELECT "+vmColumns+" FROM vms WHERE kind = 'vm' AND delete_at <= $1 ORDER BY delete_at", now))
+}
+
+// LockExpiredVM returns ErrNotFound unless the VM is still due at now, so a cleared or extended expiry wins.
+func (s *Store) LockExpiredVM(ctx context.Context, id uuid.UUID, now time.Time) error {
+	err := s.q.QueryRow(ctx, "SELECT id FROM vms WHERE id = $1 AND delete_at <= $2 FOR UPDATE", id, now).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // SetVMStatus ignores VMs that are not on the reporting node.
