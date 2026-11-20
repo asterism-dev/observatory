@@ -344,6 +344,18 @@ func TestRefsScopeRule(t *testing.T) {
 	}
 }
 
+func TestRefsRefuseGcloud(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.connect(tok, org, gcloudBody("user", adcJSON("authorized_user", dummyGRefres, "my-project"), ""))
+	img := e.createImage(tok, org, `{"name":"base","scope":"user"}`)
+	rec := e.putRecipe(tok, org, img, recipeTar(t, dockerfile), `[{"kind":"integration","scope":"user","name":"gcloud"}]`)
+	if rec.Code != 422 || !strings.Contains(rec.Body.String(), "gcloud cannot be used in builds") {
+		t.Fatalf("gcloud reference: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestWidenVisibilityNeedsConfirm(t *testing.T) {
 	e := newEnv(t)
 	m := e.withManifests()
