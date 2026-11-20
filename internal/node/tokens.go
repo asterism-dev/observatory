@@ -39,6 +39,7 @@ type TokenLookup func(vmID, kind string) (proto.IntegrationToken, string)
 // TokenServer is a provider that serves each VM's token socket with the lookup.
 type TokenServer interface{ SetTokenLookup(TokenLookup) }
 
+// VMTelemetryServer is a provider that serves each VM's telemetry socket with the sink.
 type VMTelemetryServer interface{ SetVMTelemetry(*vmtelemetry.Sink) }
 
 // ServeTokens answers token requests on l, the listener of vmID only, until l is closed.

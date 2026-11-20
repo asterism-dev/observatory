@@ -244,9 +244,19 @@ func TestVMSinkLimits(t *testing.T) {
 
 	post(t, c, "/v1/metrics", "app", gaugeBody(t, "orders_total", seq(0, maxSeries+1)...), false)
 	post(t, c, "/v1/metrics", "app", gaugeBody(t, "orders_total", "0", "new", fmt.Sprint(maxSeries-1)), false)
+	post(t, c, "/v1/metrics", "app", gaugeBody(t, "orders_total", "new2", "new3"), false)
 	post(t, c, "/v1/metrics", "usage", gaugeBody(t, "system.memory.usage", seq(5000, 5010)...), false)
 	eventually(t, "usage", func() bool { return e.hub.points(t, "usage") > 0 })
-	if app, usage := e.hub.points(t, "app"), e.hub.points(t, "usage"); app != maxSeries+2 || usage != 10 || e.drops.get("series") != 2 {
+	appReqs := 0
+	for _, r := range e.hub.requests() {
+		if r.stream == "app" && r.path == "/otlp/v1/metrics" {
+			appReqs++
+		}
+	}
+	if appReqs != 2 {
+		t.Fatalf("%d app metric requests forwarded, want 2 (the all-dropped one forwards nothing)", appReqs)
+	}
+	if app, usage := e.hub.points(t, "app"), e.hub.points(t, "usage"); app != maxSeries+2 || usage != 10 || e.drops.get("series") != 4 {
 		t.Fatalf("app points %d, usage points %d, series dropped %d", app, usage, e.drops.get("series"))
 	}
 

@@ -158,11 +158,12 @@ func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) 
 	}
 }
 
-// Forget drops vmID's limit state once the VM has exited; requests still in flight keep the state they started with.
+// Forget drops vmID's limit state and forwarder queue once the VM has exited; requests still in flight keep the state they started with.
 func (s *Sink) Forget(vmID uuid.UUID) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.vms, vmID)
+	s.mu.Unlock()
+	s.fw.Forget(vmID)
 }
 
 func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v *vmLimits) {

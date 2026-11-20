@@ -30,8 +30,10 @@ type item struct {
 }
 
 type queue struct {
-	items []item
-	size  int
+	items  []item
+	size   int
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // Forwarder sends VM telemetry to the hub with one queue and sender per VM, so one VM's backlog never evicts another's.
@@ -50,7 +52,10 @@ type Forwarder struct {
 
 func NewForwarder(hubBase, credential string, hc *http.Client) *Forwarder {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Forwarder{base: hubBase, credential: credential, hc: hc, ctx: ctx, cancel: cancel, queues: map[uuid.UUID]*queue{}}
+	c := *hc
+	// A redirect would resend the node credential to wherever the response points.
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Forwarder{base: hubBase, credential: credential, hc: &c, ctx: ctx, cancel: cancel, queues: map[uuid.UUID]*queue{}}
 }
 
 // Send queues an OTLP protobuf body of signal ("logs" or "metrics") for the hub, dropping vmID's oldest bodies past the bound.
@@ -66,7 +71,8 @@ func (f *Forwarder) Send(vmID uuid.UUID, signal, stream string, body []byte) {
 	}
 	q := f.queues[vmID]
 	if q == nil {
-		q = &queue{}
+		ctx, cancel := context.WithCancel(f.ctx)
+		q = &queue{ctx: ctx, cancel: cancel}
 		f.queues[vmID] = q
 		f.wg.Add(1)
 		go f.run(vmID, q)
@@ -88,16 +94,19 @@ func (f *Forwarder) run(vmID uuid.UUID, q *queue) {
 	for {
 		f.mu.Lock()
 		if len(q.items) == 0 {
-			delete(f.queues, vmID)
+			if f.queues[vmID] == q {
+				delete(f.queues, vmID)
+			}
 			f.mu.Unlock()
+			q.cancel()
 			return
 		}
 		it := q.items[0]
 		f.mu.Unlock()
-		if f.post(vmID, it) {
+		if f.post(q.ctx, vmID, it) {
 			delay = min(max(2*delay, retryMin), retryMax)
 			select {
-			case <-f.ctx.Done():
+			case <-q.ctx.Done():
 			case <-time.After(delay):
 			}
 			continue
@@ -114,8 +123,8 @@ func (f *Forwarder) run(vmID uuid.UUID, q *queue) {
 }
 
 // post reports whether it should be retried: no response, 429 and 5xx are; a 403 means the VM left this node.
-func (f *Forwarder) post(vmID uuid.UUID, it item) bool {
-	ctx, cancel := context.WithTimeout(f.ctx, sendTimeout)
+func (f *Forwarder) post(qctx context.Context, vmID uuid.UUID, it item) bool {
+	ctx, cancel := context.WithTimeout(qctx, sendTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.base+"/otlp/v1/"+it.signal, bytes.NewReader(it.body))
 	if err != nil {
@@ -129,7 +138,7 @@ func (f *Forwarder) post(vmID uuid.UUID, it item) bool {
 	req.Header.Set("X-Observatory-Stream", it.stream)
 	resp, err := f.hc.Do(req)
 	if err != nil {
-		return f.ctx.Err() == nil
+		return qctx.Err() == nil
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 	resp.Body.Close()
@@ -140,6 +149,17 @@ func (f *Forwarder) post(vmID uuid.UUID, it item) bool {
 		slog.Warn("vm telemetry rejected", "vm", vmID, "stream", it.stream, "status", code)
 	}
 	return false
+}
+
+// Forget drops vmID's queue and ends its sender, which stops retrying at once.
+func (f *Forwarder) Forget(vmID uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if q := f.queues[vmID]; q != nil {
+		q.items, q.size = nil, 0
+		delete(f.queues, vmID)
+		q.cancel()
+	}
 }
 
 // Close stops taking bodies and delivers the queued ones until ctx ends, then drops the rest.

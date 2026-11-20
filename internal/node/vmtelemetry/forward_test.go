@@ -44,6 +44,7 @@ func newFakeHub(t *testing.T, status func(n int) int) *fakeHub {
 		n := len(h.reqs)
 		h.mu.Unlock()
 		if h.status != nil {
+			w.Header().Set("Location", "/elsewhere")
 			w.WriteHeader(h.status(n))
 		}
 	}))
@@ -115,14 +116,16 @@ func TestVMForwarderRetryClass(t *testing.T) {
 		t.Fatalf("retried request = %+v", got)
 	}
 
-	rejected := newFakeHub(t, func(int) int { return http.StatusNotFound })
-	f := newTestForwarder(t, rejected.URL)
-	f.Send(vm, "metrics", "usage", []byte("x"))
-	f.Send(vm, "metrics", "usage", []byte("y"))
-	eventually(t, "both sent", func() bool { return len(rejected.requests()) == 2 })
-	time.Sleep(50 * time.Millisecond)
-	if reqs := rejected.requests(); len(reqs) != 2 || string(reqs[0].body) != "x" || string(reqs[1].body) != "y" {
-		t.Fatalf("404 retried: %+v", reqs)
+	for _, code := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusTemporaryRedirect} {
+		rejected := newFakeHub(t, func(int) int { return code })
+		f := newTestForwarder(t, rejected.URL)
+		f.Send(vm, "metrics", "usage", []byte("x"))
+		f.Send(vm, "metrics", "usage", []byte("y"))
+		eventually(t, "both sent", func() bool { return len(rejected.requests()) == 2 })
+		time.Sleep(50 * time.Millisecond)
+		if reqs := rejected.requests(); len(reqs) != 2 || string(reqs[0].body) != "x" || string(reqs[1].body) != "y" {
+			t.Fatalf("%d retried: %+v", code, reqs)
+		}
 	}
 }
 
@@ -159,5 +162,30 @@ func TestVMForwarderBounded(t *testing.T) {
 	f.mu.Unlock()
 	if size > maxQueueBytes || n >= 6 {
 		t.Fatalf("queue of c: %d bodies, %d bytes", n, size)
+	}
+}
+
+func TestVMForwarderForget(t *testing.T) {
+	old := retryMin
+	retryMin = 10 * time.Second
+	t.Cleanup(func() { retryMin = old })
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close()
+	f := newTestForwarder(t, down.URL)
+	vm := uuid.New()
+	f.Send(vm, "logs", "app", []byte("a"))
+	time.Sleep(50 * time.Millisecond) // the sender's first post has failed and it waits to retry
+	f.Forget(vm)
+	if got := queued(f, vm); got != nil {
+		t.Fatalf("queue after Forget: %q", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { f.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("sender still running after Forget")
 	}
 }
