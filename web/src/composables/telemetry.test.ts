@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { formatValue, logParams, prettyLine, rangeFor, type LogLine } from './telemetry.ts'
+import { droppedTotal, formatValue, logParams, prettyLine, rangeFor, type LogLine } from './telemetry.ts'
 
 test('rangeFor spans the preset ending at now', () => {
   const now = new Date('2026-11-20T12:00:00Z')
@@ -31,6 +31,18 @@ test('logParams repeats field and skips empty filters', () => {
   assert.equal(p.get('q'), 'pull')
   assert.equal(p.get('source'), 'firecracker')
   assert.equal(p.has('level'), false)
+})
+
+test('logParams sends the stream filter', () => {
+  const p = logParams({ from: new Date(0), to: new Date(1), q: '', level: '', stream: 'service', fields: {} })
+  assert.equal(p.get('stream'), 'service')
+  assert.equal(p.has('source'), false)
+})
+
+test('droppedTotal sums every kind and is 0 without drops', () => {
+  assert.equal(droppedTotal(undefined), 0)
+  assert.equal(droppedTotal({ logs: 0, series: 0, body: 0 }), 0)
+  assert.equal(droppedTotal({ logs: 12, series: 3, body: 1 }), 16)
 })
 
 test('prettyLine makes only non-observatory fields clickable', () => {

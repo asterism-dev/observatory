@@ -49,7 +49,7 @@ export function liveUsage(vm: VmInfo, now = Date.now()) {
   return {
     cpu: u.cpuPercent,
     mem: u.memTotalMB ? (u.memUsedMB / u.memTotalMB) * 100 : null,
-    dsk: vm.diskGB ? (u.diskUsedMB / (vm.diskGB * 1024)) * 100 : null,
+    dsk: u.diskTotalMB ? (u.diskUsedMB / u.diskTotalMB) * 100 : null,
   }
 }
 
@@ -83,7 +83,8 @@ export interface VmInfo {
   imageRef: string
   imageSource: string
   legacyRuntime: boolean
-  usage?: { at: string; cpuPercent: number; memTotalMB: number; memUsedMB: number; diskUsedMB: number }
+  canTelemetry: boolean
+  usage?: { at: string; cpuPercent: number; memUsedMB: number; memTotalMB: number; diskUsedMB: number; diskTotalMB: number }
 }
 
 export const vmTones = {

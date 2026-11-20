@@ -472,6 +472,7 @@
     "connect": "Verbinden",
     "tabs": {
       "overview": "Übersicht",
+      "metrics": "Metriken",
       "networking": "Netzwerk",
       "snapshots": "Snapshots",
       "disks": "Disks",
@@ -624,14 +625,13 @@
     "cpu": "CPU",
     "none": "Noch keine Daten. Messwerte erscheinen, solange die VM läuft.",
     "stale": "Läuft nicht, keine aktuellen Werte.",
-    "noRam": "RAM-Statistiken gibt es nach dem nächsten Kaltstart.",
     "live": "Live",
     "window": "Auslastung · letzte {n} min",
     "ago": "vor {n} min",
     "now": "jetzt",
     "mem": "MEM",
     "dsk": "DSK",
-    "diskHint": "DSK ist der Platz, den die VM auf dem Host belegt: die belegten Blöcke ihres Root-Disk-Images, einschließlich des Guest-Images, aus dem sie erstellt wurde. Der Wert liegt höher als df in der VM."
+    "diskHint": "DSK ist der belegte Platz des Root-Dateisystems in der VM, wie df /."
   },
   "telemetry": {
     "usage": "Auslastung",
@@ -643,18 +643,22 @@
       "net": "Netzwerk"
     },
     "noData": "Keine Daten in diesem Zeitraum. Ein Node sendet alle 10 Sekunden Auslastungsdaten, sobald er eine Version mit Telemetrie hat.",
+    "noDataVm": "Keine Daten in diesem Zeitraum. Eine VM sendet alle 10 Sekunden Auslastungsdaten, solange sie läuft; VMs, die vor der Telemetrie auf dem Node gestartet wurden, senden erst nach dem nächsten Boot.",
     "zoomHint": "Bereich in einem Graph aufziehen zum Zoomen, Doppelklick setzt zurück. Klick auf einen Legendeneintrag blendet die Linie aus.",
     "search": "Suchen …",
     "level": "Level",
     "source": "Quelle",
+    "stream": "Stream",
     "allLevels": "Alle Level",
     "allSources": "Alle Quellen",
+    "allStreams": "Alle Streams",
     "live": "Live",
     "paused": "Pausiert",
     "noLines": "Keine passenden Logzeilen.",
     "filterBy": "Nach diesem Feld filtern",
     "removeFilter": "Filter entfernen",
-    "streamFailed": "Live-Log-Stream beendet. Seite neu laden, um fortzusetzen."
+    "streamFailed": "Live-Log-Stream beendet. Seite neu laden, um fortzusetzen.",
+    "dropped": "Der Node hat in diesem Zeitraum Daten dieser VM verworfen, weil sie ihre Limits überschritten hat: {logs} Logzeilen, {series} Metrik-Serien, {body} zu große Anfragen."
   },
   "snapshots": {
     "section": "Snapshots",
@@ -890,5 +894,16 @@
       "closed": "Pushes gesperrt, wartet auf ausgegebene Tokens",
       "collecting": "Bereinigt"
     }
+  },
+  "processes": {
+    "title": "Prozesse",
+    "pid": "PID",
+    "command": "Befehl",
+    "cpu": "CPU % / Kern",
+    "memory": "Speicher",
+    "user": "Benutzer",
+    "empty": "Keine Prozesse.",
+    "notRunning": "VM läuft nicht. Die Prozessliste erscheint, solange sie läuft.",
+    "cpuHint": "CPU % gilt pro Kern: 100 % ist ein voll ausgelasteter Kern, ein Prozess auf mehreren Kernen kann also über 100 % liegen."
   }
 }

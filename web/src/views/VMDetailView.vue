@@ -7,10 +7,13 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
 import OpenVMDialog from '@/components/OpenVMDialog.vue'
+import TelemetryLogs from '@/components/TelemetryLogs.vue'
+import TelemetryUsage from '@/components/TelemetryUsage.vue'
 import VMDisksDialog from '@/components/VMDisksDialog.vue'
 import VMDisksTab from '@/components/VMDisksTab.vue'
 import VMNetworkingTab from '@/components/VMNetworkingTab.vue'
 import VMNetworksDialog from '@/components/VMNetworksDialog.vue'
+import VMProcesses from '@/components/VMProcesses.vue'
 import VMSnapshots from '@/components/VMSnapshots.vue'
 import VMUsage from '@/components/VMUsage.vue'
 import { defaultSourceLabel } from '@/composables/images'
@@ -18,6 +21,7 @@ import { kindLabels, type IntegrationKind } from '@/composables/integrations'
 import { deletionLabel, gb, powerActions, relativeTime, vmTones, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
+import type { UsageRange } from '@/composables/telemetry'
 import { Card, CommandBox, KeyValue, KeyValueList, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d, locale } = useI18n()
@@ -27,10 +31,10 @@ const { org } = useOrg()
 const { setCrumbs } = useCrumbs()
 
 const vmId = computed(() => String(route.params.vmId))
-const tabIds = ['overview', 'networking', 'snapshots', 'disks', 'settings']
-const tabs = computed(() => tabIds.map((v) => ({ value: v, label: t(`vms.tabs.${v}`) })))
+const tabIds = computed(() => (vm.value?.canTelemetry ? ['overview', 'metrics', 'networking', 'snapshots', 'disks', 'settings'] : ['overview', 'networking', 'snapshots', 'disks', 'settings']))
+const tabs = computed(() => tabIds.value.map((v) => ({ value: v, label: t(`vms.tabs.${v}`) })))
 const tab = computed({
-  get: () => (tabIds.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
+  get: () => (tabIds.value.includes(String(route.query.tab)) ? String(route.query.tab) : 'overview'),
   set: (v) => router.replace({ query: { ...route.query, tab: v === 'overview' ? undefined : v } }),
 })
 const vm = ref<VmInfo | null>(null)
@@ -42,6 +46,12 @@ const disksOpen = ref(false)
 const openOpen = ref(false)
 const egress = ref<{ secrets: number; hosts: string[]; caNotAfter: string | null; trustChanged: boolean } | null>(null)
 const integrations = ref<{ kind: IntegrationKind; scope?: string; teamName?: string; mode?: string }[]>([])
+const usageRange = ref<UsageRange | null>(null)
+const hoverAt = ref<number | null>(null)
+watch(tab, (v) => {
+  if (v !== 'metrics') usageRange.value = hoverAt.value = null
+})
+const vmLogFilter = { key: 'stream' as const, options: ['service', 'console', 'app', 'system', 'egress'] }
 
 watchEffect(() => {
   if (vm.value && org.value) setCrumbs(route.path, [{ label: vm.value.name, to: route.path }, { label: t(`vms.tabs.${tab.value}`) }])
@@ -174,7 +184,7 @@ watch(
       <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
       <template v-if="tab === 'overview'">
-        <VMUsage :org-id="org.id" :vm="vm" />
+        <VMUsage v-if="vm.canTelemetry" :org-id="org.id" :vm="vm" />
         <Section :label="t('vms.connect')">
           <Card>
             <template v-if="vm.dnsName">
@@ -217,6 +227,11 @@ watch(
         </div>
       </template>
 
+      <template v-if="tab === 'metrics'">
+        <TelemetryUsage :url="`${base()}/usage`" :no-data="t('telemetry.noDataVm')" :mem-max="vm!.memoryMB * 2 ** 20" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+        <VMProcesses :org-id="org.id" :vm-id="vm!.id" :running="vm!.state === 'running'" />
+        <TelemetryLogs v-if="usageRange" :url="`${base()}/logs`" :range="usageRange" :hover-at="hoverAt" :filter="vmLogFilter" />
+      </template>
       <VMNetworkingTab v-if="tab === 'networking'" :vm="vm!" :egress="egress" :busy="busy" @edit="networksOpen = true" />
       <VMDisksTab v-if="tab === 'disks'" :vm="vm!" :busy="busy" @edit="disksOpen = true" />
 
@@ -291,6 +306,10 @@ watch(
 <style scoped>
 .load-error {
   margin: var(--page-y) var(--page-x);
+}
+/* Without it the tab bar's full width sets the column and the page scrolls sideways on phones. */
+.page-body {
+  grid-template-columns: minmax(0, 1fr);
 }
 .split {
   display: grid;
