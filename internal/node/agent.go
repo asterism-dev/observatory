@@ -29,6 +29,8 @@ import (
 const (
 	reconnectDelay = 2 * time.Second
 	ipTimeout      = 120 * time.Second
+	// The hub gives up after 3 s too; a later reply is dropped.
+	guestProcessesTimeout = 3 * time.Second
 
 	underlayMTU = 1420
 
@@ -228,6 +230,8 @@ func (a *Agent) connect(ctx context.Context) error {
 		switch {
 		case m.Type == "desired":
 			a.reconcile(ctx, m.Seq, m.Desired)
+		case m.Type == "processes" && m.ReqID != "":
+			go func() { _ = send(a.processes(ctx, m)) }()
 		case m.Type == "underlay" && m.Underlay != nil:
 			go a.startChassis(ctx, *m.Underlay)
 		case m.Type == "update":
@@ -243,6 +247,30 @@ func (a *Agent) connect(ctx context.Context) error {
 			})
 		}
 	}
+}
+
+// processes answers the hub's request for one VM's live process list.
+func (a *Agent) processes(ctx context.Context, req proto.Message) proto.Message {
+	reply := proto.Message{Type: "processes", ReqID: req.ReqID, VM: req.VM}
+	var inst Instance
+	paused := false
+	a.mu.Lock()
+	if e := a.vms[req.VM]; e != nil {
+		inst, paused = e.inst, e.paused
+	}
+	a.mu.Unlock()
+	if !alive(inst) || paused {
+		reply.Error = proto.ErrVMNotRunning
+		return reply
+	}
+	ctx, cancel := context.WithTimeout(ctx, guestProcessesTimeout)
+	defer cancel()
+	ps, err := inst.GuestProcesses(ctx)
+	if err != nil {
+		reply.Error = err.Error()
+	}
+	reply.Processes = ps
+	return reply
 }
 
 func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {

@@ -237,7 +237,20 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image" and "usage" (node→hub).
+const ErrVMNotRunning = "vm not running"
+
+// GuestProcess is one entry of a VM's live process list; CPUPercent is of one core, so a multi-threaded process can exceed 100.
+type GuestProcess struct {
+	PID        int     `json:"pid"`
+	PPID       int     `json:"ppid"`
+	User       string  `json:"user"`
+	Command    string  `json:"command"`
+	State      string  `json:"state"`
+	CPUPercent float64 `json:"cpuPercent"`
+	RSSBytes   int64   `json:"rssBytes"`
+}
+
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -251,6 +264,10 @@ type Message struct {
 	Image      *ImageStatus       `json:"image,omitempty"`      // type "image": the guest image changed state
 	Update     *UpdateReport      `json:"update,omitempty"`     // type "update": an update attempt failed
 	Usage      []UsageObservation `json:"usage,omitempty"`      // type "usage": Claude usage the node's egress proxies saw
+	ReqID      string             `json:"reqId,omitempty"`      // type "processes"
+	VM         string             `json:"vm,omitempty"`         // type "processes"
+	Processes  []GuestProcess     `json:"processes,omitempty"`  // type "processes" reply
+	Error      string             `json:"error,omitempty"`      // type "processes" reply
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

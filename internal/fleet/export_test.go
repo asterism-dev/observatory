@@ -60,3 +60,12 @@ func AttachStalledConn(f *Fleet, node, org uuid.UUID) (end func()) {
 	f.attach(&conn{node: node, org: org, sess: sess, update: make(chan struct{}), done: done, seen: map[string]bool{}})
 	return func() { close(done) }
 }
+
+func PendingRequests(f *Fleet, node uuid.UUID) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c := f.conns[node]; c != nil {
+		return len(c.pending)
+	}
+	return 0
+}

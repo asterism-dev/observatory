@@ -96,6 +96,11 @@ func (i *fakeInstance) GuestTrust(_ context.Context, cas map[string]string) erro
 	return nil
 }
 
+func (i *fakeInstance) GuestProcesses(context.Context) ([]proto.GuestProcess, error) {
+	i.p.record("guest-processes")
+	return []proto.GuestProcess{{PID: 1, Command: "/sbin/init"}}, nil
+}
+
 func (i *fakeInstance) SaveState(dir string) error {
 	i.p.record("savestate:" + dir)
 	i.p.mu.Lock()

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
@@ -97,9 +98,6 @@ func TestVMUsageOwner(t *testing.T) {
 	}
 	if u.Dropped["logs"] != 3 || !strings.Contains(rec.Body.String(), `"dropped":{"body":0,"logs":3,"series":0}`) {
 		t.Fatalf("dropped: %s", rec.Body.String())
-	}
-	if rec := te.do("GET", te.path("/processes"), te.ownerTok); rec.Code != 501 {
-		t.Fatalf("processes: %d", rec.Code)
 	}
 }
 
@@ -229,5 +227,60 @@ func TestVMJSONUsageStoreHangs(t *testing.T) {
 	}
 	if rec.Code != 200 || strings.Contains(rec.Body.String(), `"usage"`) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVMProcessesAPI(t *testing.T) {
+	te := newVMTelemetryEnv(t)
+	alice, _ := te.user("alice")
+	n, ctrl := te.onlineNodeConn(alice, te.org, "n2", "v1", nil)
+	vm := te.createVM(te.ownerTok, te.org, vmBody("b", userOwner(), n.ID.String()))
+	path := vmsPath(te.org) + "/" + vm.ID + "/processes"
+	if rec := te.do("GET", path, te.ownerTok); rec.Code != 409 {
+		t.Fatalf("not running: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := te.do("GET", path, te.otherTok); rec.Code != 403 {
+		t.Fatalf("other member: %d", rec.Code)
+	}
+	if err := te.store.SetVMStatus(context.Background(), n.ID, proto.VMStatus{ID: vm.ID, State: proto.StateRunning}); err != nil {
+		t.Fatal(err)
+	}
+	answer := make(chan proto.Message, 1)
+	go func() {
+		dec, enc := json.NewDecoder(ctrl), json.NewEncoder(ctrl)
+		for {
+			var m proto.Message
+			if dec.Decode(&m) != nil {
+				return
+			}
+			if m.Type == "processes" {
+				reply := <-answer
+				reply.Type, reply.ReqID = "processes", m.ReqID
+				_ = enc.Encode(reply)
+			}
+		}
+	}()
+	answer <- proto.Message{Processes: []proto.GuestProcess{{PID: 1, User: "root", Command: "/sbin/init", State: "S", CPUPercent: 1.5, RSSBytes: 4096}}}
+	rec := te.do("GET", path, te.ownerTok)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"processes":[{"pid":1,"ppid":0,"user":"root","command":"/sbin/init","state":"S","cpuPercent":1.5,"rssBytes":4096}]`) {
+		t.Fatalf("owner: %d %s", rec.Code, rec.Body.String())
+	}
+	answer <- proto.Message{}
+	if rec := te.do("GET", path, te.adminTok); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"processes":[]`) {
+		t.Fatalf("admin: %d %s", rec.Code, rec.Body.String())
+	}
+	answer <- proto.Message{Error: proto.ErrVMNotRunning}
+	if rec := te.do("GET", path, te.ownerTok); rec.Code != 409 {
+		t.Fatalf("node says not running: %d", rec.Code)
+	}
+	start := time.Now()
+	if rec := te.do("GET", path, te.ownerTok); rec.Code != 504 || time.Since(start) < 3*time.Second {
+		t.Fatalf("timeout: %d after %s", rec.Code, time.Since(start))
+	}
+	close(answer)
+	ctrl.Close()
+	te.api.fleet.Disconnect(n.ID)
+	if rec := te.do("GET", path, te.ownerTok); rec.Code != 502 {
+		t.Fatalf("offline: %d", rec.Code)
 	}
 }

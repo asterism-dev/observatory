@@ -3,6 +3,8 @@ package fleet
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"maps"
@@ -126,6 +128,54 @@ func (f *Fleet) Online(node uuid.UUID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.conns[node] != nil
+}
+
+var (
+	ErrNodeOffline  = errors.New("node offline")
+	ErrVMNotRunning = errors.New("vm not running")
+)
+
+// Processes asks the VM's node for its live process list; ctx bounds the wait for the reply.
+func (f *Fleet) Processes(ctx context.Context, node, vm uuid.UUID) ([]proto.GuestProcess, error) {
+	id := make([]byte, 16)
+	rand.Read(id)
+	req := proto.Message{Type: "processes", ReqID: hex.EncodeToString(id), VM: vm.String()}
+	reply := make(chan proto.Message, 1)
+	f.mu.Lock()
+	c := f.conns[node]
+	if c == nil || c.pending == nil {
+		f.mu.Unlock()
+		return nil, ErrNodeOffline
+	}
+	c.pending[req.ReqID] = reply
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(c.pending, req.ReqID)
+		f.mu.Unlock()
+	}()
+	select {
+	case c.requests <- req:
+	case <-c.done:
+		return nil, ErrNodeOffline
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case m := <-reply:
+		switch m.Error {
+		case "":
+			return m.Processes, nil
+		case proto.ErrVMNotRunning:
+			return nil, ErrVMNotRunning
+		default:
+			return nil, errors.New(m.Error)
+		}
+	case <-c.done:
+		return nil, ErrNodeOffline
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // NotifyOrg schedules a fresh desired list for every connected node of the org; it never waits on a node.

@@ -842,3 +842,26 @@ func TestPrepareRejectsLegacyVM(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeHandlesProcessesRequest(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.hub.send(proto.Message{Type: "processes", ReqID: "r1", VM: vm.ID})
+	env.hub.send(proto.Message{Type: "processes", ReqID: "r2", VM: "nope"})
+	eventually(t, "replies", func() bool { return len(env.hub.processReplies()) == 2 })
+	for _, r := range env.hub.processReplies() {
+		switch r.ReqID {
+		case "r1":
+			if r.Error != "" || r.VM != vm.ID || len(r.Processes) != 1 || r.Processes[0].Command != "/sbin/init" {
+				t.Fatalf("r1 = %+v", r)
+			}
+		case "r2":
+			if r.Error != proto.ErrVMNotRunning || r.Processes != nil {
+				t.Fatalf("r2 = %+v", r)
+			}
+		default:
+			t.Fatalf("reply %+v", r)
+		}
+	}
+}

@@ -43,6 +43,7 @@ type Agent struct {
 	// Sync and StopDesktop are nil-safe: the integrations and desktop tasks are wired in by Run.
 	Sync        func()
 	StopDesktop func()
+	Proc        string
 
 	mu        sync.Mutex // serializes takeoff, resume and trust
 	stateMu   sync.RWMutex
@@ -63,9 +64,10 @@ type agentRequest struct {
 }
 
 type agentReply struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
-	Version string `json:"version,omitempty"`
+	OK        bool                 `json:"ok"`
+	Error     string               `json:"error,omitempty"`
+	Version   string               `json:"version,omitempty"`
+	Processes []proto.GuestProcess `json:"processes,omitempty"`
 }
 
 func (a *Agent) readyChan() chan struct{} {
@@ -145,8 +147,16 @@ func (a *Agent) handle(line []byte) agentReply {
 	case <-time.After(pingBootTimeout):
 		return agentReply{Error: "booting"}
 	}
-	if req.Op == "ping" {
+	switch req.Op {
+	case "ping":
 		return agentReply{OK: true, Version: version.Version}
+	case "processes":
+		// Read-only, so it never waits behind a takeoff.
+		ps, err := listProcesses(a.Proc, a.Root.join("etc/passwd"), time.Sleep)
+		if err != nil {
+			return agentReply{Error: err.Error()}
+		}
+		return agentReply{OK: true, Processes: ps}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

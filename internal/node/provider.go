@@ -40,6 +40,8 @@ type Instance interface {
 	GuestResume(ctx context.Context) error
 	// GuestTrust makes the running guest trust exactly cas (CA id → cert PEM).
 	GuestTrust(ctx context.Context, cas map[string]string) error
+	// GuestProcesses lists the guest's processes, as the guest agent sees them.
+	GuestProcesses(ctx context.Context) ([]proto.GuestProcess, error)
 	// ReloadSeed makes the VM read the seed Reseed last wrote, so a paused guest resumes with the current keys and variables.
 	ReloadSeed() error
 }

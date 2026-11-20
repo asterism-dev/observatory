@@ -32,6 +32,8 @@ func newAgent(root Root) *Agent {
 		ConfigureNICs: ConfigureNICs,
 		GrowRoot:      func() error { return growFS(rootDevice, root.Path) },
 		MountDisks:    MountDisks,
+		// After hideInitMounts, /proc is the image's: its PID namespace, where SSH and integration children run too.
+		Proc: "/proc",
 	}
 }
 

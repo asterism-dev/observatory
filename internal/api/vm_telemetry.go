@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
@@ -31,6 +34,7 @@ func newVMUsageJSON(n telemetry.VMNow) *vmUsageJSON {
 const (
 	vmLatestTimeout     = 2 * time.Second
 	vmListLatestTimeout = 5 * time.Second
+	vmProcessesTimeout  = 3 * time.Second
 )
 
 // vmLatest loads the newest usage of those vms the caller may see metrics of; a store error only drops the usage.
@@ -125,7 +129,31 @@ func (h *api) tailVMLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) vmProcesses(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.vmFromPath(w, r, store.ActionVMMetrics); ok {
-		writeError(w, http.StatusNotImplemented, "not implemented yet")
+	v, ok := h.vmFromPath(w, r, store.ActionVMMetrics)
+	if !ok {
+		return
+	}
+	if v.State != proto.StateRunning {
+		writeError(w, http.StatusConflict, "vm is not running")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), vmProcessesTimeout)
+	defer cancel()
+	ps, err := h.fleet.Processes(ctx, v.NodeID, v.ID)
+	switch {
+	case errors.Is(err, fleet.ErrVMNotRunning):
+		writeError(w, http.StatusConflict, "vm is not running")
+	case errors.Is(err, fleet.ErrNodeOffline):
+		writeError(w, http.StatusBadGateway, "node offline")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusGatewayTimeout, "node did not answer in time")
+	case err != nil:
+		slog.Warn("vm processes", "vm", v.ID, "err", err)
+		writeError(w, http.StatusBadGateway, "process list unavailable")
+	default:
+		if ps == nil {
+			ps = []proto.GuestProcess{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"processes": ps})
 	}
 }

@@ -633,6 +633,11 @@ func (i *instance) GuestResume(ctx context.Context) error {
 	return err
 }
 
+func (i *instance) GuestProcesses(ctx context.Context) ([]proto.GuestProcess, error) {
+	r, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "processes"})
+	return r.Processes, err
+}
+
 func (i *instance) GuestTrust(ctx context.Context, cas map[string]string) error {
 	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "trust", Certs: cas})
 	return err

@@ -2433,3 +2433,60 @@ func TestFleetIgnoresMetricsMessage(t *testing.T) {
 		return err == nil && got.State == proto.StateRunning
 	})
 }
+
+func TestFleetProcessesRoundTrip(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	v := e.vm(e.org.ID, n.ID, "a", &e.owner, nil)
+	ctx := context.Background()
+	if _, err := e.f.Processes(ctx, n.ID, v.ID); !errors.Is(err, fleet.ErrNodeOffline) {
+		t.Fatalf("offline: %v", err)
+	}
+	node := e.connect(cred)
+	node.desired()
+
+	type result struct {
+		ps  []proto.GuestProcess
+		err error
+	}
+	ask := func(ctx context.Context) chan result {
+		out := make(chan result, 1)
+		go func() { ps, err := e.f.Processes(ctx, n.ID, v.ID); out <- result{ps, err} }()
+		return out
+	}
+	got := ask(ctx)
+	req := node.next()
+	if req.Type != "processes" || req.ReqID == "" || req.VM != v.ID.String() {
+		t.Fatalf("request %+v", req)
+	}
+	node.send(proto.Message{Type: "processes", ReqID: "other", Processes: []proto.GuestProcess{{PID: 9}}})
+	node.send(proto.Message{Type: "processes", ReqID: req.ReqID, VM: req.VM, Processes: []proto.GuestProcess{{PID: 1, Command: "init"}}})
+	if r := <-got; r.err != nil || len(r.ps) != 1 || r.ps[0].Command != "init" {
+		t.Fatalf("result %+v", r)
+	}
+
+	got = ask(ctx)
+	req = node.next()
+	node.send(proto.Message{Type: "processes", ReqID: req.ReqID, Error: proto.ErrVMNotRunning})
+	if r := <-got; !errors.Is(r.err, fleet.ErrVMNotRunning) {
+		t.Fatalf("not running: %+v", r)
+	}
+
+	tctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	got = ask(tctx)
+	node.next()
+	if r := <-got; !errors.Is(r.err, context.DeadlineExceeded) {
+		t.Fatalf("timeout: %+v", r)
+	}
+	if p := fleet.PendingRequests(e.f, n.ID); p != 0 {
+		t.Fatalf("%d pending requests left", p)
+	}
+
+	got = ask(ctx)
+	node.next()
+	e.f.Disconnect(n.ID)
+	if r := <-got; !errors.Is(r.err, fleet.ErrNodeOffline) {
+		t.Fatalf("disconnect: %+v", r)
+	}
+}

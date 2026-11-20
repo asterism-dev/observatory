@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 const GuestAgentPort = 1050
@@ -25,11 +27,12 @@ type GuestRequest struct {
 	Certs map[string]string `json:"certs,omitempty"`
 }
 
-// GuestReply is the agent's answer; Version is set on ping.
+// GuestReply is the agent's answer; Version is set on ping, Processes on processes.
 type GuestReply struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error"`
-	Version string `json:"version"`
+	OK        bool                 `json:"ok"`
+	Error     string               `json:"error"`
+	Version   string               `json:"version"`
+	Processes []proto.GuestProcess `json:"processes"`
 }
 
 // CallGuest sends req to the guest agent through Firecracker's vsock uds and waits for its reply.
