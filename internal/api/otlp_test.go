@@ -357,8 +357,11 @@ func (o *otlpEnv) requireVMForbidden(vm string) {
 func TestIngestVMBadStream(t *testing.T) {
 	o := newOTLPEnv(t)
 	vm := o.createVM(o.org, o.node, "vm01")
-	for _, c := range []struct{ path, stream string }{{logsPath, "usage"}, {metricsPath, "console"}, {logsPath, ""}, {metricsPath, ""}, {logsPath, "observatory"}} {
-		if rec := o.postVM(c.path, o.credential, protobuf, "", vm, c.stream, logsBody(t)); rec.Code != 400 {
+	for _, c := range []struct {
+		path, stream string
+		body         []byte
+	}{{logsPath, "usage", logsBody(t)}, {metricsPath, "console", metricsBody(t)}, {logsPath, "", logsBody(t)}, {metricsPath, "", metricsBody(t)}, {logsPath, "observatory", logsBody(t)}} {
+		if rec := o.postVM(c.path, o.credential, protobuf, "", vm, c.stream, c.body); rec.Code != 400 {
 			t.Fatalf("%s %q: %d", c.path, c.stream, rec.Code)
 		}
 	}
@@ -366,6 +369,31 @@ func TestIngestVMBadStream(t *testing.T) {
 		t.Fatalf("bad vm id: %d", rec.Code)
 	}
 	if o.vl.received()+o.vm.received() != 0 {
+		t.Fatal("forwarded")
+	}
+}
+
+func TestIngestVMBuilder(t *testing.T) {
+	o := newOTLPEnv(t)
+	v, err := o.store.CreateVM(context.Background(), store.VM{OrgID: o.org, NodeID: uuid.MustParse(o.node), UserID: &o.alice.ID, Name: "builder", Kind: store.VMKindBuilder,
+		CPUs: 1, MemoryMB: 512, DiskGB: 10, CreatedBy: o.alice.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.requireVMForbidden(v.ID.String())
+}
+
+func TestIngestVMQuarantinedFirst(t *testing.T) {
+	o := newOTLPEnv(t)
+	vm := o.createVM(o.org, o.node, "vm01")
+	if err := o.net.SetStatus(context.Background(), proto.GatewayStatus{Quarantined: []string{o.node}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := o.postVM(logsPath, o.credential, protobuf, "", vm, "app", logsBody(t))
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "node quarantined") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if o.vl.received() != 0 {
 		t.Fatal("forwarded")
 	}
 }

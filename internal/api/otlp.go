@@ -79,7 +79,8 @@ func ingest(s *store.Store, c *telemetry.Client, streams []string, write func(*h
 				return
 			}
 			v, err := s.VM(r.Context(), node.OrgID, vmID)
-			if errors.Is(err, store.ErrNotFound) || err == nil && v.NodeID != node.ID {
+			// Builder VMs are hidden from users and may carry build secrets.
+			if errors.Is(err, store.ErrNotFound) || err == nil && (v.NodeID != node.ID || v.Kind == store.VMKindBuilder) {
 				http.Error(w, "vm not on this node", http.StatusForbidden)
 				return
 			}
