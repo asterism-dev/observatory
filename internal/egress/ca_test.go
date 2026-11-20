@@ -356,3 +356,15 @@ func TestWildcardCA(t *testing.T) {
 		t.Fatalf("apex: %v", err)
 	}
 }
+
+func TestLeafCacheBounded(t *testing.T) {
+	iss := issuerFor(t, t0, mustCA(t, t0, "*.googleapis.com"))
+	for n := 0; n < maxLeafCache+10; n++ {
+		if _, err := iss.Leaf(fmt.Sprintf("h%d.googleapis.com", n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(iss.cache) > maxLeafCache {
+		t.Fatalf("cache has %d entries", len(iss.cache))
+	}
+}

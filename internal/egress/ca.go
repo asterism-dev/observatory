@@ -27,6 +27,9 @@ const (
 	backdate      = time.Hour
 )
 
+// maxLeafCache bounds the cache now that a wildcard CA lets the guest pick any subdomain.
+const maxLeafCache = 256
+
 var ErrNoCA = errors.New("no CA covers host")
 
 type MintedCA struct {
@@ -170,6 +173,16 @@ func (i *Issuer) Leaf(host string) (*tls.Certificate, error) {
 	leaf, err := i.issue(*pick, host, now)
 	if err != nil {
 		return nil, err
+	}
+	if len(i.cache) >= maxLeafCache {
+		for h, c := range i.cache {
+			if !now.Before(c.expires) {
+				delete(i.cache, h)
+			}
+		}
+		if len(i.cache) >= maxLeafCache {
+			clear(i.cache)
+		}
 	}
 	i.cache[host] = cachedLeaf{leaf, leaf.Leaf.NotAfter.Add(-time.Hour)}
 	return leaf, nil
