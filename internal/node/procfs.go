@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -114,8 +115,8 @@ func parseLoadAvg(r io.Reader) (l1, l5, l15 float64, err error) {
 	return
 }
 
-// Each tap carries VM traffic that the guests' own NICs would double count; the prefix mirrors linuxvm.TapName, which this package cannot import.
-const vmTapPrefix = "vmm"
+// Each tap carries VM traffic that the guests' own NICs would double count; the shape mirrors linuxvm.TapName, which this package cannot import.
+var vmTapName = regexp.MustCompile(`^vmm[0-9a-f]{8}[0-9]+$`)
 
 func parseNetDev(r io.Reader) (map[string][2]int64, error) {
 	out := map[string][2]int64{}
@@ -126,7 +127,7 @@ func parseNetDev(r io.Reader) (map[string][2]int64, error) {
 			continue
 		}
 		name = strings.TrimSpace(name)
-		if name == "lo" || strings.HasPrefix(name, "tap") || strings.HasPrefix(name, vmTapPrefix) {
+		if name == "lo" || strings.HasPrefix(name, "tap") || vmTapName.MatchString(name) {
 			continue
 		}
 		f := strings.Fields(rest)

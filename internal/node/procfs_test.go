@@ -84,6 +84,8 @@ const netDevFixture = `Inter-|   Receive                                        
     lo: 1000 10 0 0 0 0 0 0 1000 10 0 0 0 0 0 0
   eth0: 123456 100 0 0 0 0 0 0 654321 90 0 0 0 0 0 0
 vmm1a2b3c4d0: 777 7 0 0 0 0 0 0 888 8 0 0 0 0 0 0
+vmmdeadbeef12: 777 7 0 0 0 0 0 0 888 8 0 0 0 0 0 0
+  vmm0: 300 3 0 0 0 0 0 0 400 4 0 0 0 0 0 0
 tap0: 5 1 0 0 0 0 0 0 6 1 0 0 0 0 0 0
 `
 
@@ -92,7 +94,7 @@ func TestParseNetDevSkipsLoAndTaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got["eth0"] != [2]int64{123456, 654321} {
+	if len(got) != 2 || got["eth0"] != [2]int64{123456, 654321} || got["vmm0"] != [2]int64{300, 400} {
 		t.Fatalf("got %v", got)
 	}
 }
