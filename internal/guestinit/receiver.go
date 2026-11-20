@@ -1,6 +1,7 @@
 package guestinit
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -146,8 +147,14 @@ func receive(w http.ResponseWriter, r *http.Request, msg gproto.Message) bool {
 // hexIDsToBase64 rewrites OTLP/JSON trace and span ids, which are hex there but base64 in protojson.
 func hexIDsToBase64(raw []byte) ([]byte, error) {
 	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	// Numbers stay json.Number: as float64 an int64 like timeUnixNano would lose precision.
+	d.UseNumber()
+	if err := d.Decode(&doc); err != nil {
 		return nil, err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, errors.New("invalid JSON: data after the top-level value")
 	}
 	var walk func(v any)
 	walk = func(v any) {

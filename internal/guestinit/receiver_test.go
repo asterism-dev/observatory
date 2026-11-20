@@ -226,3 +226,18 @@ func TestReceiverKeepsResourceAndScope(t *testing.T) {
 		t.Fatalf("scopes = %v", scopes)
 	}
 }
+
+func TestReceiverJSONKeepsLargeNumbers(t *testing.T) {
+	url, node := startTestReceiver(t)
+	body := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"timeUnixNano":1700000000123456789,"body":{"stringValue":"n"}}]}]}]}`
+	if resp := post(t, url+"/v1/logs", "application/json", []byte(body), false); resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	waitFor(t, func() bool { return len(node.requests()) == 1 })
+	if got := decodeLogs(t, node.requests()[0].body)[0].TimeUnixNano; got != 1700000000123456789 {
+		t.Fatalf("timeUnixNano = %d", got)
+	}
+	if resp := post(t, url+"/v1/logs", "application/json", []byte(`{} trailing`), false); resp.StatusCode != 400 {
+		t.Fatalf("trailing data: status = %d", resp.StatusCode)
+	}
+}
