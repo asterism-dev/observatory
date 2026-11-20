@@ -90,11 +90,11 @@ Masking keeps the length, so `Content-Length`, chunking and WebSocket framing st
   `CONNECT` are not retried. Other hosts and single-account integrations are never buffered.
 - **Usage:** the proxy reads the `anthropic-ratelimit-unified-*` headers of these responses and reports them to the hub
   through the node; headers stay in the response.
-- **Stream watchdog:** on every `text/event-stream` response from `api.anthropic.com` (also single-account and
-  unbound), the proxy aborts the upstream request when no bytes arrive for 120 s and appends
-  `event: error` with an `api_error` ("upstream sent nothing for 120s, connection aborted") so the client does not
-  read the cut stream as a normal end. A stall is not a limit: no retry, no switch. Other content types get no idle
-  limit.
+- **Stream watchdog:** on a `text/event-stream` response from `api.anthropic.com` (also for single-account
+  integrations; it applies whenever a Claude integration binds `api.anthropic.com`), the proxy aborts the upstream
+  request when no bytes arrive for 120 s and appends `event: error` with an `api_error` ("upstream sent nothing for
+  2m0s, connection aborted") so the client does not read the cut stream as a normal end. A stall is not a limit: no
+  retry, no switch. Other content types get no idle limit.
 
 ### Logs
 

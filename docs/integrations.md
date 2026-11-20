@@ -119,7 +119,7 @@ its email (setup-token accounts: "Setup token"), position and active flag. The s
   never switched to and not sent to the node.
 - **Usage:** the hub polls each `oauth` account's usage (5-hour and weekly window, percent and reset) every minute for
   the active account and every 15 minutes for the others; errors back off 1 to 15 minutes and keep the last values.
-  For the active account the egress proxy also reads the rate-limit headers of Anthropic's responses; the newer
+  The egress proxy also reads the rate-limit headers of Anthropic's responses for the account that served the request; the newer
   reading wins and the row shows its source and age. Setup-token accounts that the usage endpoint rejects show "no
   usage data" until proxy readings arrive while active.
 - **Limit:** a 429 with `anthropic-ratelimit-unified-status: rejected` and an overage status that is absent or
