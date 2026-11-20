@@ -225,7 +225,7 @@ The guest init listens on `127.0.0.1:14318` for OTLP/HTTP metrics and logs (prot
 [telemetry.md](telemetry.md#vms).
 
 For the command, SSH sessions and systemd units the init sets `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318` and
-`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, unless the image or seed sets them. An SDK needs no code for the endpoint:
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, unless the image or seed sets either one. An SDK needs no code for the endpoint:
 
 ```python
 # pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http

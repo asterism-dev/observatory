@@ -35,7 +35,6 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 			env[n] = "/" + found[0]
 		}
 	}
-	maps.Copy(env, otelDefaults)
 	set := func(n, v string) {
 		if !envName.MatchString(n) || strings.ContainsRune(v, 0) {
 			bad = append(bad, fmt.Sprintf("%q", n))
@@ -53,6 +52,12 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 	}
 	for n, v := range seed {
 		set(n, v)
+	}
+	// An image or seed with its own exporter setup must not get half of ours.
+	_, endpoint := env["OTEL_EXPORTER_OTLP_ENDPOINT"]
+	_, protocol := env["OTEL_EXPORTER_OTLP_PROTOCOL"]
+	if !endpoint && !protocol {
+		maps.Copy(env, otelDefaults)
 	}
 	slices.Sort(bad)
 	path := env["PATH"]
@@ -119,7 +124,9 @@ func (r Root) writeSystemdEnv(env map[string]string) error {
 		}
 	}
 	for n := range otelDefaults {
-		vars[n] = env[n]
+		if v, ok := env[n]; ok {
+			vars[n] = v
+		}
 	}
 	var line strings.Builder
 	for _, n := range slices.Sorted(maps.Keys(vars)) {

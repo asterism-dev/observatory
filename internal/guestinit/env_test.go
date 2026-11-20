@@ -258,3 +258,25 @@ func TestWriteEnvOTLPDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteEnvOTLPDefaultsOnlyWhenUnset(t *testing.T) {
+	r := envRoot(t)
+	put(t, r, "lib/systemd/systemd", "", 0o755)
+	env, err := r.WriteEnv(nil, []string{"OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := env["OTEL_EXPORTER_OTLP_PROTOCOL"]; ok || env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://collector:4317" {
+		t.Fatalf("image endpoint got our protocol: %v", env)
+	}
+	if conf := get(t, r, "etc/systemd/system.conf.d/50-observatory.conf"); strings.Contains(conf, "OTEL_EXPORTER_OTLP_PROTOCOL") {
+		t.Fatalf("systemd conf:\n%s", conf)
+	}
+	env, err = r.WriteEnv(map[string]string{"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := env["OTEL_EXPORTER_OTLP_ENDPOINT"]; ok {
+		t.Fatalf("seed protocol got our endpoint: %v", env)
+	}
+}
