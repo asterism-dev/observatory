@@ -39,6 +39,7 @@ type LogWriter struct {
 	mu       sync.Mutex
 	queue    []queuedLine
 	lastWarn time.Time
+	dropped  int
 }
 
 func NewLogWriter(c *Client, streamFields string, maxQueue int) *LogWriter {
@@ -50,10 +51,12 @@ func (w *LogWriter) Write(resource []*commonpb.KeyValue, lines []string) {
 	now := time.Now()
 	w.mu.Lock()
 	for _, l := range lines {
-		w.queue = append(w.queue, queuedLine{resource, truncateUTF8(l, logMaxBody), now})
+		w.queue = append(w.queue, queuedLine{resource, strings.Clone(truncateUTF8(l, logMaxBody)), now})
 	}
 	if drop := len(w.queue) - w.maxQueue; drop > 0 {
-		w.queue = append(w.queue[:0], w.queue[drop:]...)
+		clear(w.queue[:drop])
+		w.queue = w.queue[drop:]
+		w.dropped += drop
 	}
 	full := len(w.queue) >= logBatchLines
 	w.mu.Unlock()
@@ -111,19 +114,22 @@ func (w *LogWriter) take(all bool) []queuedLine {
 		return nil
 	}
 	batch := append([]queuedLine(nil), w.queue[:n]...)
-	w.queue = append(w.queue[:0], w.queue[n:]...)
+	clear(w.queue[:n])
+	w.queue = w.queue[n:]
 	return batch
 }
 
 func (w *LogWriter) warn(err error, lines int) {
 	w.mu.Lock()
 	ok := time.Since(w.lastWarn) >= logWarnEvery
+	dropped := w.dropped
 	if ok {
 		w.lastWarn = time.Now()
+		w.dropped = 0
 	}
 	w.mu.Unlock()
 	if ok {
-		slog.Warn("telemetry log write failed; dropping batch", "lines", lines, "error", err)
+		slog.Warn("telemetry log write failed; dropping batch", "lines", lines, "queue_overflow_dropped", dropped, "error", err)
 	}
 }
 

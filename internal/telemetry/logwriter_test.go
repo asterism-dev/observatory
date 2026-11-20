@@ -5,9 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -84,20 +86,8 @@ func TestLogWriterBatches(t *testing.T) {
 
 func TestLogWriterBounded(t *testing.T) {
 	release := make(chan struct{})
-	var mu sync.Mutex
-	var got int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-release
-		body, _ := io.ReadAll(r.Body)
-		req := &collogspb.ExportLogsServiceRequest{}
-		_ = proto.Unmarshal(body, req)
-		mu.Lock()
-		for _, rl := range req.ResourceLogs {
-			for _, sl := range rl.ScopeLogs {
-				got += len(sl.LogRecords)
-			}
-		}
-		mu.Unlock()
 	}))
 	defer srv.Close()
 	defer close(release)
@@ -168,5 +158,23 @@ func TestLogWriterTruncates(t *testing.T) {
 	}
 	if rec.SeverityText != "INFO" || rec.SeverityNumber != 9 || rec.TimeUnixNano == 0 {
 		t.Fatalf("record %+v", rec)
+	}
+}
+
+func TestLogWriterTruncatesOnRuneBoundary(t *testing.T) {
+	fake := &fakeVL{}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+	w := telemetry.NewLogWriter(&telemetry.Client{LogsURL: srv.URL}, "a", 10)
+	w.Write(attrs("x"), []string{"a" + strings.Repeat("é", 10<<10)})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.Run(ctx)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	body := fake.reqs[0].ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue()
+	if !utf8.ValidString(body) || len(body) != 16<<10-1 {
+		t.Fatalf("valid=%v len=%d", utf8.ValidString(body), len(body))
 	}
 }
