@@ -106,39 +106,48 @@ func TestVictoriaLogsScopesUserQueries(t *testing.T) {
 	}
 	sidA, sidB := streamID(orgA), streamID(orgB)
 
-	// oracle cases return org A rows only when a subquery saw org B's values.
+	// oracle cases return org A rows only when a subquery saw org B's values; sub cases hold a subquery the outer scope must not cover.
 	cases := []struct {
 		construct, query string
-		oracle           bool
+		oracle, sub      bool
 	}{
-		{"word filter", mB, false},
-		{"org field filter", fmt.Sprintf("observatory.org:=%q", orgB.String()), false},
-		{"_stream filter", fmt.Sprintf("_stream:{observatory.org=%q}", orgB.String()), false},
-		{"_stream_id filter", "_stream_id:" + sidB, false},
-		{"or", mA + " or " + mB, false},
-		{"options(ignore_global_time_filter)", "options(ignore_global_time_filter=true) " + mB, false},
-		{"options(global_filter)", fmt.Sprintf("options(global_filter=(observatory.org:=%q)) %s", orgB.String(), mB), false},
-		{"in", fmt.Sprintf("%s k:in(%s | fields k)", mA, mB), true},
-		{"in with options", fmt.Sprintf("%s k:in(options(ignore_global_time_filter=true) %s | fields k)", mA, mB), true},
-		{"contains_any", fmt.Sprintf("%s _msg:contains_any(%s | fields k)", mA, mB), true},
+		{"word filter", mB, false, false},
+		{"org field filter", fmt.Sprintf("observatory.org:=%q", orgB.String()), false, false},
+		{"_stream filter", fmt.Sprintf("_stream:{observatory.org=%q}", orgB.String()), false, false},
+		{"_stream_id filter", "_stream_id:" + sidB, false, false},
+		{"or", mA + " or " + mB, false, false},
+		{"options(ignore_global_time_filter)", "options(ignore_global_time_filter=true) " + mB, false, false},
+		{"options(global_filter)", fmt.Sprintf("options(global_filter=(observatory.org:=%q)) %s", orgB.String(), mB), false, false},
+		{"in", fmt.Sprintf("%s k:in(%s | fields k)", mA, mB), true, true},
+		{"in with options", fmt.Sprintf("%s k:in(options(ignore_global_time_filter=true) %s | fields k)", mA, mB), true, true},
+		{"contains_any", fmt.Sprintf("%s _msg:contains_any(%s | fields k)", mA, mB), true, true},
 		// contains_all of an empty set is true, so the oracle negates a value org A lacks.
-		{"contains_all", fmt.Sprintf("%s -_msg:contains_all(%s | fields %s)", mA, mB, mB), true},
-		{"_stream_id:in", fmt.Sprintf("_stream_id:in(%s | fields _stream_id)", mB), false},
-		{"filter pipe with in", fmt.Sprintf("%s | filter k:in(%s | fields k)", mA, mB), true},
-		{"stats if with in", fmt.Sprintf("%s | stats by (observatory.org) count() if (k:in(%s | fields k)) c | filter c:>0", mA, mB), true},
-		{"union", fmt.Sprintf("%s | union (%s)", mA, mB), false},
-		{"union with options", fmt.Sprintf("%s | union (options(ignore_global_time_filter=true) %s)", mA, mB), false},
-		{"union with stream_context", fmt.Sprintf("%s | union (%s | stream_context before 10 after 10)", mA, mB), false},
-		{"join", fmt.Sprintf("%s | join by (probe) (%s | fields probe, observatory.org, %s)", mA, mB, mB), false},
-		{"join inner", fmt.Sprintf("%s | join by (probe) (%s | fields probe, %s) inner", mA, mB, mB), false},
-		{"stream_context", "probe:=" + run + " | stream_context before 10 after 10", false},
-		{"facets pipe", "probe:=" + run + " | facets", false},
-		{"stats pipe", "probe:=" + run + " | stats by (observatory.org) count() c", false},
-		{"field_values pipe", "probe:=" + run + " | field_values observatory.org", false},
-		{"field_names pipe", "probe:=" + run + " | field_names", false},
-		{"uniq pipe", "probe:=" + run + " | uniq by (observatory.org)", false},
-		{"top pipe", "probe:=" + run + " | top 10 by (observatory.org)", false},
+		{"contains_all", fmt.Sprintf("%s -_msg:contains_all(%s | fields %s)", mA, mB, mB), true, true},
+		{"_stream_id:in", fmt.Sprintf("_stream_id:in(%s | fields _stream_id)", mB), false, false},
+		{"filter pipe with in", fmt.Sprintf("%s | filter k:in(%s | fields k)", mA, mB), true, true},
+		{"stats if with in", fmt.Sprintf("%s | stats by (observatory.org) count() if (k:in(%s | fields k)) c | filter c:>0", mA, mB), true, true},
+		{"union", fmt.Sprintf("%s | union (%s)", mA, mB), false, true},
+		{"union with options", fmt.Sprintf("%s | union (options(ignore_global_time_filter=true) %s)", mA, mB), false, true},
+		{"union with stream_context", fmt.Sprintf("%s | union (%s | stream_context before 10 after 10)", mA, mB), false, true},
+		{"join", fmt.Sprintf("%s | join by (probe) (%s | fields probe, observatory.org, %s)", mA, mB, mB), false, true},
+		{"join inner", fmt.Sprintf("%s | join by (probe) (%s | fields probe, %s) inner", mA, mB, mB), false, true},
+		{"stream_context", "probe:=" + run + " | stream_context before 10 after 10", false, false},
+		{"facets pipe", "probe:=" + run + " | facets", false, false},
+		{"stats pipe", "probe:=" + run + " | stats by (observatory.org) count() c", false, false},
+		{"field_values pipe", "probe:=" + run + " | field_values observatory.org", false, false},
+		{"field_names pipe", "probe:=" + run + " | field_names", false, false},
+		{"uniq pipe", "probe:=" + run + " | uniq by (observatory.org)", false, false},
+		{"top pipe", "probe:=" + run + " | top 10 by (observatory.org)", false, false},
+		{"in(in(B))", fmt.Sprintf("%s k:in(probe:=%s k:in(%s | fields k) | fields k)", mA, run, mB), true, true},
+		{"in(B in(...))", fmt.Sprintf("%s k:in(%s k:in(probe:=%s | fields k) | fields k)", mA, mB, run), true, true},
+		{"union(B join(B))", fmt.Sprintf("%s | union (%s | join by (probe) (%s | fields probe, %s))", mA, mB, mB, mB), false, true},
+		{"union(join(B))", fmt.Sprintf("%s | union (probe:=%s | join by (probe) (%s | fields probe, %s) inner)", mA, run, mB, mB), false, true},
+		{"join(union(B))", fmt.Sprintf("%s | join by (probe) (%s | union (%s) | fields probe, %s) inner", mA, mA, mB, mB), false, true},
+		{"union(in(B))", fmt.Sprintf("vlprobex%s | union (%s k:in(%s | fields k))", run, mA, mB), true, true},
+		{"filter in(in(B))", fmt.Sprintf("%s | filter k:in(probe:=%s k:in(%s | fields k) | fields k)", mA, run, mB), true, true},
+		{"filter in(B in(...))", fmt.Sprintf("%s | filter k:in(%s k:in(probe:=%s | fields k) | fields k)", mA, mB, run), true, true},
 	}
+
 	seesB := func(body string) bool {
 		return strings.Contains(body, `":"`+mB) || strings.Contains(body, orgB.String()) || strings.Contains(body, sidB)
 	}
@@ -175,8 +184,19 @@ func TestVictoriaLogsScopesUserQueries(t *testing.T) {
 				}
 				continue
 			}
+			if c.sub {
+				if _, partial := call(ep, fmt.Sprintf("observatory.org:=%q %s", orgA.String(), c.query), field, uuid.Nil); !leaks(partial) {
+					t.Errorf("%s %s: outer-only scope not detected as a leak: %q -> %.300s", ep, c.construct, c.query, partial)
+				}
+			}
 			status, body = call(ep, c.query, field, orgA)
-			leaked := status == http.StatusOK && leaks(body)
+			leaked := leaks(body)
+			if status != http.StatusOK {
+				// Error bodies echo the query, so only org B markers the query itself lacks count.
+				leaked = slices.ContainsFunc([]string{mB, orgB.String(), sidB}, func(m string) bool {
+					return strings.Contains(body, m) && !strings.Contains(c.query, m)
+				})
+			}
 			t.Logf("PROBE | %s | %s | leaks=%v (%d) | %q | %.200s", ep, c.construct, leaked, status, c.query, body)
 			if leaked != slices.Contains(telemetry.LeakingLogsQL, c.construct) {
 				t.Errorf("%s %s: leaked=%v disagrees with LeakingLogsQL: %q -> %.300s", ep, c.construct, leaked, c.query, body)
