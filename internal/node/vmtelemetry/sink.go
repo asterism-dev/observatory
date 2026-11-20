@@ -18,7 +18,7 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
-	"golang.org/x/net/netutil"
+	"google.golang.org/protobuf/encoding/protowire"
 	gproto "google.golang.org/protobuf/proto"
 )
 
@@ -30,8 +30,20 @@ const (
 	maxUsageSeries = 500
 	maxAttrs       = 128
 	seriesWindow   = time.Hour
-	// maxConns bounds what one guest can make the node buffer at once.
-	maxConns = 4
+	byteRate       = 256 << 10
+	byteBurst      = 2 << 20
+	// maxItems bounds records or points per request: decoding inflates a body of empty items about a hundredfold.
+	maxItems = 100_000
+	// maxConns and maxDecodes bound the memory decoding takes, per VM and node-wide.
+	maxConns   = 2
+	maxDecodes = 4
+)
+
+var decodeWait = 5 * time.Second
+
+var (
+	logItems    = [][]protowire.Number{{1}, {2}, {2}}
+	metricItems = [][]protowire.Number{{1}, {2}, {2}, {5, 7, 9, 10, 11}, {1}}
 )
 
 // guestStreams are the stream classes a guest may send per signal; console and egress only originate on the node.
@@ -51,6 +63,7 @@ type Sink struct {
 	fw      *Forwarder
 	dropped func(vmID uuid.UUID, kind string, n int64)
 	seed    maphash.Seed
+	decodes chan struct{}
 
 	mu  sync.Mutex
 	vms map[uuid.UUID]*vmLimits // VMs being served
@@ -59,7 +72,7 @@ type Sink struct {
 // vmLimits is one VM's limit state; its own lock keeps one VM's admission from holding up another's.
 type vmLimits struct {
 	mu          sync.Mutex
-	logs        bucket
+	logs, bytes bucket
 	windowStart time.Time
 	series      map[string]map[uint64]struct{} // per stream, the series seen in the current window
 }
@@ -80,13 +93,13 @@ func NewSink(fw *Forwarder, dropped func(vmID uuid.UUID, kind string, n int64)) 
 	if dropped == nil {
 		dropped = func(uuid.UUID, string, int64) {}
 	}
-	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), vms: map[uuid.UUID]*vmLimits{}}
+	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), decodes: make(chan struct{}, maxDecodes), vms: map[uuid.UUID]*vmLimits{}}
 }
 
 // Serve answers OTLP/HTTP requests on l, the listener of vmID only, until l is closed; it starts vmID with fresh limits.
 func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
 	now := time.Now()
-	v := &vmLimits{logs: bucket{logBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
+	v := &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}}
 	s.mu.Lock()
 	s.vms[vmID] = v
 	s.mu.Unlock()
@@ -97,7 +110,38 @@ func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    16 << 10,
 	}
-	srv.Serve(netutil.LimitListener(l, maxConns))
+	srv.Serve(capListener{l, make(chan struct{}, maxConns)})
+}
+
+// capListener closes connections past the cap; unlike netutil.LimitListener it never waits for a slot, so closing l ends Serve.
+type capListener struct {
+	net.Listener
+	slots chan struct{}
+}
+
+func (l capListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.slots <- struct{}{}:
+			return &slotConn{Conn: c, release: sync.OnceFunc(func() { <-l.slots })}, nil
+		default:
+			c.Close()
+		}
+	}
+}
+
+type slotConn struct {
+	net.Conn
+	release func()
+}
+
+func (c *slotConn) Close() error {
+	c.release()
+	return c.Conn.Close()
 }
 
 // Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not being served are dropped.
@@ -138,6 +182,35 @@ func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v 
 		s.dropped(vmID, "body", 1)
 		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
 		return
+	}
+	if err == nil && !v.takeBytes(len(body)) {
+		s.dropped(vmID, "body", 1)
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		return
+	}
+	items := logItems
+	if signal == "metrics" {
+		items = metricItems
+	}
+	var n int
+	if err == nil {
+		n, err = countFields(body, items)
+	}
+	if err == nil && n > maxItems {
+		s.dropped(vmID, "body", 1)
+		http.Error(w, "too many items", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err == nil {
+		t := time.NewTimer(decodeWait)
+		select {
+		case s.decodes <- struct{}{}:
+			t.Stop()
+			defer func() { <-s.decodes }()
+		case <-t.C:
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	var out []byte
 	if err == nil && signal == "logs" {
@@ -180,6 +253,47 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 		return nil, errTooLarge
 	}
 	return body, err
+}
+
+func (v *vmLimits) takeBytes(n int) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.bytes.refill(time.Now(), byteRate, byteBurst)
+	if float64(n) > v.bytes.tokens {
+		return false
+	}
+	v.bytes.tokens -= float64(n)
+	return true
+}
+
+// countFields counts the length-delimited fields reached by following path, one set of field numbers per nesting level, without decoding.
+func countFields(b []byte, path [][]protowire.Number) (int, error) {
+	n := 0
+	for len(b) > 0 {
+		num, typ, l := protowire.ConsumeTag(b)
+		if l < 0 {
+			return 0, protowire.ParseError(l)
+		}
+		b = b[l:]
+		l = protowire.ConsumeFieldValue(num, typ, b)
+		if l < 0 {
+			return 0, protowire.ParseError(l)
+		}
+		if typ == protowire.BytesType && slices.Contains(path[0], num) {
+			if len(path) == 1 {
+				n++
+			} else {
+				v, _ := protowire.ConsumeBytes(b)
+				k, err := countFields(v, path[1:])
+				if err != nil {
+					return 0, err
+				}
+				n += k
+			}
+		}
+		b = b[l:]
+	}
+	return n, nil
 }
 
 func tooManyAttrs(attrs ...[]*commonpb.KeyValue) bool {

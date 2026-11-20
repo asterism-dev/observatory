@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,5 +348,72 @@ func TestVMSinkUsageAllowlist(t *testing.T) {
 		if bytes.Contains(r.body, []byte("orders_total")) {
 			t.Fatal("non-usage metric forwarded on usage")
 		}
+	}
+}
+
+func TestVMSinkConnectionCap(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	sock := c.Transport.(*http.Transport).DialContext
+	var idle []net.Conn
+	for range maxConns {
+		conn, err := sock(context.Background(), "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		idle = append(idle, conn)
+	}
+	c.Timeout = 300 * time.Millisecond
+	if _, err := do(c, "/v1/logs", "app", logsBody(t, 1), false); err == nil {
+		t.Fatal("request served past the connection cap")
+	}
+	idle[0].Close()
+	eventually(t, "served after a connection closed", func() bool {
+		code, err := do(c, "/v1/logs", "app", logsBody(t, 1), false)
+		return err == nil && code == http.StatusOK
+	})
+}
+
+func TestVMSinkDecodeBounds(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	if code := post(t, c, "/v1/logs", "app", logsBody(t, maxItems+1), true); code != http.StatusRequestEntityTooLarge || e.drops.get("body") != 1 {
+		t.Fatalf("too many records: status %d, body drops %d", code, e.drops.get("body"))
+	}
+
+	old := decodeWait
+	decodeWait = 50 * time.Millisecond
+	t.Cleanup(func() { decodeWait = old })
+	for range maxDecodes {
+		e.sink.decodes <- struct{}{}
+	}
+	if code := post(t, c, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusServiceUnavailable {
+		t.Fatalf("all decode slots taken: status %d", code)
+	}
+	<-e.sink.decodes
+	if code := post(t, c, "/v1/logs", "app", logsBody(t, 1), false); code != http.StatusOK {
+		t.Fatalf("a decode slot free: status %d", code)
+	}
+}
+
+func TestVMSinkByteRate(t *testing.T) {
+	e := newTestEnv(t)
+	vm := uuid.New()
+	c := e.serve(t, vm)
+	big := func() []byte {
+		return marshal(t, &collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{ScopeLogs: []*logspb.ScopeLogs{{LogRecords: []*logspb.LogRecord{
+			{Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: strings.Repeat("x", 900<<10)}}},
+		}}}}}})
+	}
+	for i := range 2 {
+		if code := post(t, c, "/v1/logs", "app", big(), true); code == http.StatusTooManyRequests {
+			t.Fatalf("request %d within the burst: status %d", i, code)
+		}
+	}
+	if code := post(t, c, "/v1/logs", "app", big(), true); code != http.StatusTooManyRequests || e.drops.get("body") != 1 {
+		t.Fatalf("past the burst: status %d, body drops %d", code, e.drops.get("body"))
 	}
 }
