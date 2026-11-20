@@ -294,7 +294,7 @@ func TestVMLogsScoped(t *testing.T) {
 	if form["query"][0] != `"observatory.stream":="service"` {
 		t.Fatalf("query %v", form["query"])
 	}
-	if len(lines) != 1 || lines[0].Stream != "service" {
+	if len(lines) != 1 || lines[0].Stream != "service" || len(lines[0].Fields) != 0 {
 		t.Fatalf("lines %+v", lines)
 	}
 }
@@ -322,6 +322,8 @@ func TestVMLatestBatch(t *testing.T) {
 			return `{"status":"success","data":{"result":[{"metric":{"observatory_vm":"` + testVM.String() + `"},"value":[1700000000,"` + v + `"]}]}}`
 		}
 		switch {
+		case strings.Contains(q, "timestamp("):
+			_, _ = w.Write([]byte(val("1699999990")))
 		case strings.Contains(q, "cpu_time"):
 			_, _ = w.Write([]byte(val("12.5")))
 		case strings.Contains(q, "used|cached|free"):
@@ -340,7 +342,7 @@ func TestVMLatestBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 5 {
+	if len(queries) != 6 {
 		t.Fatalf("queries: %v", queries)
 	}
 	for _, q := range queries {
@@ -348,7 +350,7 @@ func TestVMLatestBatch(t *testing.T) {
 			t.Errorf("unscoped %s", q)
 		}
 	}
-	want := VMNow{At: time.Unix(1700000000, 0), CPUPercent: 12.5, MemUsedBytes: 500, MemTotalBytes: 2000, DiskUsedBytes: 70, DiskTotalBytes: 100}
+	want := VMNow{At: time.Unix(1699999990, 0), CPUPercent: 12.5, MemUsedBytes: 500, MemTotalBytes: 2000, DiskUsedBytes: 70, DiskTotalBytes: 100}
 	if len(got) != 1 || got[testVM] != want {
 		t.Fatalf("got %+v", got)
 	}
@@ -371,7 +373,7 @@ func TestVMDrops(t *testing.T) {
 	if got["logs"] != 42 || got["body"] != 2 || len(got) != 2 {
 		t.Fatalf("got %v", got)
 	}
-	if q := form["query"][0]; !strings.Contains(q, `{vm="`+testVM.String()+`"}[3600s]`) || form["extra_label"][0] != "observatory_org="+testOrg.String() {
+	if q := form["query"][0]; !strings.Contains(q, `{vm="`+testVM.String()+`",observatory_vm="",observatory_node!=""}[3600s]`) || form["extra_label"][0] != "observatory_org="+testOrg.String() {
 		t.Fatalf("form %v", form)
 	}
 }

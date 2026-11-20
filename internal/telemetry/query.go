@@ -254,7 +254,7 @@ func toLogLine(rec map[string]string) LogLine {
 	l := LogLine{Time: t, Level: strings.ToLower(rec["severity_text"]), Source: rec["source"], Stream: rec["observatory.stream"], Msg: rec["_msg"], Fields: map[string]any{}}
 	for k, v := range rec {
 		switch k {
-		case "_time", "_msg", "_stream", "_stream_id", "severity_text", "source":
+		case "_time", "_msg", "_stream", "_stream_id", "severity_text", "source", "observatory.stream":
 		default:
 			l.Fields[k] = v
 		}
@@ -344,15 +344,24 @@ func (c *Client) VMLatest(ctx context.Context, org uuid.UUID, vms []uuid.UUID) (
 		}
 		for _, r := range res {
 			vm, err := uuid.Parse(r.Metric["observatory_vm"])
-			v, at, ok := r.number()
+			v, _, ok := r.number()
 			if err != nil || !ok {
 				continue
 			}
 			n := out[vm]
 			m.set(&n, v)
-			if at.After(n.At) {
-				n.At = at
-			}
+			out[vm] = n
+		}
+	}
+	stamps, err := c.instant(ctx, org, `max by (observatory_vm) (timestamp(system_memory_usage_bytes{`+sel+`,state="used"}))`, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range stamps {
+		vm, perr := uuid.Parse(r.Metric["observatory_vm"])
+		v, _, ok := r.number()
+		if n, found := out[vm]; perr == nil && ok && found {
+			n.At = time.Unix(int64(v), 0)
 			out[vm] = n
 		}
 	}
@@ -362,7 +371,7 @@ func (c *Client) VMLatest(ctx context.Context, org uuid.UUID, vms []uuid.UUID) (
 // VMDrops returns telemetry records the node dropped for the VM in [from, to], by kind.
 func (c *Client) VMDrops(ctx context.Context, org, vm uuid.UUID, from, to time.Time) (map[string]int64, error) {
 	window := max(int64(to.Sub(from).Seconds()), 1)
-	q := fmt.Sprintf(`sum by (kind) (increase(observatory_vm_telemetry_dropped_total{vm=%s}[%ds]))`, strconv.Quote(vm.String()), window)
+	q := fmt.Sprintf(`sum by (kind) (increase(observatory_vm_telemetry_dropped_total{vm=%s,observatory_vm="",observatory_node!=""}[%ds]))`, strconv.Quote(vm.String()), window)
 	res, err := c.instant(ctx, org, q, to)
 	if err != nil {
 		return nil, err
