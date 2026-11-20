@@ -96,6 +96,7 @@ func ingest(s *store.Store, c *telemetry.Client, write func(*http.Request, []byt
 			http.Error(w, "telemetry store unavailable", http.StatusServiceUnavailable)
 			return
 		case err != nil:
+			slog.Warn("telemetry ingest rejected", "node", node.ID, "err", err)
 			http.Error(w, "invalid telemetry", http.StatusBadRequest)
 			return
 		}

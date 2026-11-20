@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -235,5 +236,20 @@ func TestIngestInvalidProtobuf(t *testing.T) {
 	o := newOTLPEnv(t)
 	if rec := o.post(metricsPath, o.credential, protobuf, "", []byte{0xff, 0xff}); rec.Code != 400 {
 		t.Fatalf("%d", rec.Code)
+	}
+}
+
+func TestIngestStoreRejectedLogged(t *testing.T) {
+	o := newOTLPEnv(t)
+	o.vm.status = 400
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	if rec := o.post(metricsPath, o.credential, protobuf, "", metricsBody(t)); rec.Code != 400 {
+		t.Fatalf("%d", rec.Code)
+	}
+	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "status 400") {
+		t.Fatalf("log = %q", buf.String())
 	}
 }
