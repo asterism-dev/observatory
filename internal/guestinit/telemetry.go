@@ -74,22 +74,31 @@ func newSink(dial func(context.Context) (net.Conn, error)) *Sink {
 // Connected reports whether the last connection attempt to the node succeeded.
 func (s *Sink) Connected() bool { return s != nil && s.connected.Load() }
 
-// Logs queues recs for stream, split into requests of at most maxRequestRecords and maxRequestBytes.
+// Logs queues recs for stream.
 func (s *Sink) Logs(stream string, recs []*logspb.LogRecord) {
 	var res *resourcepb.Resource
 	if stream == "system" {
 		res = initResource
 	}
-	for len(recs) > 0 {
-		n, size := 0, 0
-		for ; n < len(recs) && n < maxRequestRecords; n++ {
-			size += gproto.Size(recs[n])
-			if n > 0 && size > maxRequestBytes {
-				break
+	s.LogsData(stream, &logspb.ResourceLogs{Resource: res, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: recs}}})
+}
+
+// LogsData queues rl's records for stream with their resource and scope, split into requests of at most maxRequestRecords and maxRequestBytes.
+func (s *Sink) LogsData(stream string, rl *logspb.ResourceLogs) {
+	for _, sl := range rl.GetScopeLogs() {
+		recs := sl.GetLogRecords()
+		for len(recs) > 0 {
+			n, size := 0, 0
+			for ; n < len(recs) && n < maxRequestRecords; n++ {
+				size += gproto.Size(recs[n])
+				if n > 0 && size > maxRequestBytes {
+					break
+				}
 			}
+			scope := &logspb.ScopeLogs{Scope: sl.GetScope(), SchemaUrl: sl.GetSchemaUrl(), LogRecords: recs[:n]}
+			s.enqueue(sinkRequest{signal: "logs", stream: stream, msg: &logspb.LogsData{ResourceLogs: []*logspb.ResourceLogs{{Resource: rl.GetResource(), SchemaUrl: rl.GetSchemaUrl(), ScopeLogs: []*logspb.ScopeLogs{scope}}}}})
+			recs = recs[n:]
 		}
-		s.enqueue(sinkRequest{signal: "logs", stream: stream, msg: &logspb.LogsData{ResourceLogs: []*logspb.ResourceLogs{{Resource: res, ScopeLogs: []*logspb.ScopeLogs{{LogRecords: recs[:n]}}}}}})
-		recs = recs[n:]
 	}
 }
 

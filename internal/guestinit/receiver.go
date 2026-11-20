@@ -65,9 +65,7 @@ func startReceiver(ctx context.Context, sink *Sink, httpAddr string) (stop func(
 			return
 		}
 		for _, rl := range data.ResourceLogs {
-			for _, sl := range rl.ScopeLogs {
-				sink.Logs("app", sl.LogRecords)
-			}
+			sink.LogsData("app", rl)
 		}
 	})
 	mux.HandleFunc("POST /v1/metrics", func(w http.ResponseWriter, r *http.Request) {

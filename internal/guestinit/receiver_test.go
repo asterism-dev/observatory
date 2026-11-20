@@ -197,3 +197,32 @@ func TestReceiverConnectionCap(t *testing.T) {
 		return resp.StatusCode == 404
 	})
 }
+
+func TestReceiverKeepsResourceAndScope(t *testing.T) {
+	url, node := startTestReceiver(t)
+	body := `{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"shop"}}]},` +
+		`"scopeLogs":[{"scope":{"name":"checkout"},"logRecords":[{"body":{"stringValue":"a"}}]},{"scope":{"name":"cart"},"logRecords":[{"body":{"stringValue":"b"}}]}]}]}`
+	if resp := post(t, url+"/v1/logs", "application/json", []byte(body), false); resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	waitFor(t, func() bool { return len(node.requests()) > 0 })
+	time.Sleep(50 * time.Millisecond)
+	var scopes []string
+	for _, r := range node.requests() {
+		var req collogspb.ExportLogsServiceRequest
+		if err := gproto.Unmarshal(r.body, &req); err != nil {
+			t.Fatal(err)
+		}
+		for _, rl := range req.ResourceLogs {
+			if a := rl.GetResource().GetAttributes(); len(a) != 1 || a[0].Key != "service.name" || a[0].Value.GetStringValue() != "shop" {
+				t.Fatalf("resource = %v", rl.GetResource())
+			}
+			for _, sl := range rl.ScopeLogs {
+				scopes = append(scopes, sl.GetScope().GetName()+":"+sl.LogRecords[0].Body.GetStringValue())
+			}
+		}
+	}
+	if strings.Join(scopes, ",") != "checkout:a,cart:b" {
+		t.Fatalf("scopes = %v", scopes)
+	}
+}
