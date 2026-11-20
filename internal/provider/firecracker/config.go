@@ -53,6 +53,6 @@ func vmConfig(f node.VMFile, kernel, initrd string, drives []string) ([]byte, er
 		// An empty balloon only reports guest memory statistics; deflate_on_oom keeps a future inflate from starving the guest.
 		"balloon": map[string]any{"amount_mib": 0, "deflate_on_oom": true, "stats_polling_interval_s": 5},
 		"vsock":   map[string]any{"guest_cid": guestCID, "uds_path": vsockPath},
-		"logger":  map[string]any{"log_path": fcLogName, "level": "Info", "show_level": true, "show_log_origin": false},
+		"logger":  fcLogger,
 	}, "", "  ")
 }

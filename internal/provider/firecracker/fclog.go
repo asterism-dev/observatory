@@ -12,6 +12,9 @@ import (
 // fcLogName is Firecracker's own log in the jail root; the guest's serial console stays in console.log, which never leaves the node.
 const fcLogName = "firecracker.log"
 
+// fcLogger is the logger config for both fc.json and the restore path; Info would log every API request, the balloon polls included.
+var fcLogger = map[string]any{"log_path": fcLogName, "level": "Warning", "show_level": true, "show_log_origin": false}
+
 var fcLevels = map[string]slog.Level{"TRACE": slog.LevelDebug, "DEBUG": slog.LevelDebug, "INFO": slog.LevelInfo, "WARN": slog.LevelWarn, "ERROR": slog.LevelError}
 
 // parseFCLogLine splits "<time> [<id>:<thread>:<LEVEL>] <msg>"; other lines (e.g. panic output) are Info as a whole.

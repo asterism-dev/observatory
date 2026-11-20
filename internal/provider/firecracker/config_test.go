@@ -104,7 +104,7 @@ func TestVMConfigLogger(t *testing.T) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"log_path": "firecracker.log", "level": "Info", "show_level": true, "show_log_origin": false}
+	want := map[string]any{"log_path": "firecracker.log", "level": "Warning", "show_level": true, "show_log_origin": false}
 	if !reflect.DeepEqual(c.Logger, want) {
 		t.Errorf("logger = %v, want %v", c.Logger, want)
 	}
