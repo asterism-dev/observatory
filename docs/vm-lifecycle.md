@@ -119,6 +119,31 @@ Per VM: VM page → Auto-suspend (Off, 15 min, 1 h, 4 h or custom), or `PUT …/
   address instead.
 - An explicitly paused or hibernated VM never wakes on traffic; a suspended VM stays suspended across a node restart.
 
+## Delete after
+
+A VM can be given a time at which the hub deletes it: `deleteAfter` when creating it (`POST …/vms`), or later with
+`PUT …/vms/{id}/delete-after` (`{"deleteAfter": "2d"}`, `null` clears it). The VM shows it as `deleteAt`.
+
+- Accepted: `<n>m`, `<n>h`, `<n>d` (whole minutes, hours, days) or an RFC 3339 time with offset
+  (`2026-11-21T08:00:00+01:00`). The time must be at least 5 minutes ahead; there is no upper bound.
+- Setting, changing or clearing it needs `vm:delete`, since an expiry is a delayed delete. Plain members of a team
+  cannot change it on team VMs.
+- The hub checks once a minute. The deletion is the same as a manual one: root disk and snapshots are deleted,
+  attached disks are released and kept. It is audited as `vm:delete` by `system` with `reason: expired`.
+- A VM that a pending fork still copies from is kept until the fork is provisioned, then deleted on the next check.
+- A VM without a delete-after time is never deleted automatically.
+
+## History
+
+Deleting a VM, by hand or on expiry, records it in the history: `GET …/vms/history` (the **Deleted** filter on the
+VMs page, `observatory vm list --deleted`). Each entry has the name, owner, size, image, creation (when, by whom),
+deletion (when, by whom or `expired`) and so the lifetime. Builder VMs are not recorded.
+
+- Visible to the owning user, to current members of the owning team and to whoever may read the VM through an
+  org-wide rule (admins, owners, custom roles).
+- Entries stay when their user, team or node is deleted; the names then show as unknown.
+- The history starts with the release that added it; VMs deleted earlier are not in it.
+
 ## Templates (fast boot)
 
 The first boot of a new VM restores a pre-booted template instead of booting the image from scratch, and the guest
