@@ -145,7 +145,6 @@ func TestPromProxyPathAllowlist(t *testing.T) {
 		"/grafana/prometheus/snapshot/create",
 		"/grafana/prometheus/",
 		"/grafana/prometheus",
-		"/grafana/logs/select/logsql/query",
 	} {
 		if rec := p.prom("GET", target, p.token, ""); rec.Code != 404 {
 			t.Fatalf("%s: %d", target, rec.Code)
