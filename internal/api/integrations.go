@@ -21,6 +21,7 @@ import (
 type Integrations struct {
 	Verifier integrations.Verifier
 	OAuth    integrations.ClaudeOAuth
+	Google   integrations.GoogleOAuth
 }
 
 type signIn struct {
@@ -33,6 +34,8 @@ type signIn struct {
 }
 
 const signInTTL = 10 * time.Minute
+
+const gcloudProxyOnly = "gcloud integrations use proxy mode only"
 
 func integrationObject(scope store.EnvScope, owner *uuid.UUID) string {
 	switch scope {
@@ -105,6 +108,35 @@ func (h *api) verify(w http.ResponseWriter, r *http.Request, kind integrations.K
 		return "", integrations.Account{}, false
 	}
 	return token, acc, true
+}
+
+// verifyADC checks the pasted ADC file and quota project locally, then refreshes it at Google, which proves the grant works, and reads the email.
+func (h *api) verifyADC(w http.ResponseWriter, r *http.Request, raw string, quotaProject *string) (store.IntegrationSecret, string, string, bool) {
+	adc, err := integrations.ParseADC(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid token")
+		return store.IntegrationSecret{}, "", "", false
+	}
+	project := adc.QuotaProject
+	if quotaProject != nil {
+		project = *quotaProject
+	}
+	if !integrations.ValidQuotaProject(project) {
+		writeError(w, http.StatusBadRequest, store.ErrInvalidQuotaProject.Error())
+		return store.IntegrationSecret{}, "", "", false
+	}
+	blob := adc.Marshal()
+	t, err := h.ig.Google.Refresh(r.Context(), blob)
+	if err != nil {
+		providerError(w, err, "verification failed: provider rejected the token")
+		return store.IntegrationSecret{}, "", "", false
+	}
+	email, err := h.ig.Google.Email(r.Context(), t.Access)
+	if err != nil {
+		providerError(w, err, "verification failed: provider rejected the token")
+		return store.IntegrationSecret{}, "", "", false
+	}
+	return store.IntegrationSecret{Token: t.Access, Refresh: blob, AccessExpiresAt: &t.ExpiresAt}, email, project, true
 }
 
 // loadIntegration returns 404 for another member's private integration so its existence doesn't leak.
@@ -256,6 +288,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		Accounts          []accountJSON       `json:"accounts,omitempty"`
 		LastSwitch        *switchJSON         `json:"lastSwitch"`
 		AutoSwitch        bool                `json:"autoSwitch"`
+		QuotaProject      *string             `json:"quotaProject,omitempty"`
 	}
 	type scopeJSON struct {
 		Scope     store.EnvScope      `json:"scope"`
@@ -283,6 +316,9 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationDelete)}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
+		}
+		if v.Kind == integrations.GCloud {
+			j.QuotaProject = &v.QuotaProject
 		}
 		emails := map[uuid.UUID]string{}
 		for _, a := range accounts[v.ID] {
@@ -327,13 +363,14 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Kind   integrations.Kind
-		Source integrations.Source
-		Scope  store.EnvScope
-		TeamID *uuid.UUID
-		Mode   integrations.Mode
-		Token  string
-		DryRun bool
+		Kind         integrations.Kind
+		Source       integrations.Source
+		Scope        store.EnvScope
+		TeamID       *uuid.UUID
+		Mode         integrations.Mode
+		Token        string
+		DryRun       bool
+		QuotaProject *string
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -348,12 +385,25 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 	case !validMode(body.Mode):
 		writeError(w, http.StatusBadRequest, "invalid mode")
 		return
+	case body.Kind == integrations.GCloud && body.Scope != store.EnvScopeUser:
+		writeError(w, http.StatusBadRequest, "gcloud integrations are private only")
+		return
+	case body.Kind == integrations.GCloud && body.Mode != integrations.ModeProxy:
+		writeError(w, http.StatusBadRequest, gcloudProxyOnly)
+		return
 	}
 	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
 	if !ok || !h.authorize(w, r, m.Org.ID, integrationObject(body.Scope, owner), store.ActionIntegrationSet) {
 		return
 	}
-	token, acc, ok := h.verify(w, r, body.Kind, body.Source, body.Token)
+	var sec store.IntegrationSecret
+	var acc integrations.Account
+	var project string
+	if body.Kind == integrations.GCloud {
+		sec, acc.Name, project, ok = h.verifyADC(w, r, body.Token, body.QuotaProject)
+	} else {
+		sec.Token, acc, ok = h.verify(w, r, body.Kind, body.Source, body.Token)
+	}
 	if !ok {
 		return
 	}
@@ -363,10 +413,10 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	v := store.Integration{OrgID: m.Org.ID, Kind: body.Kind, Source: body.Source, Scope: body.Scope, OwnerID: owner, Mode: body.Mode,
-		Account: acc.Name, ScopesInfo: acc.Scopes, ProviderExpiresAt: acc.ExpiresAt, CreatedBy: p.User.ID}
+		Account: acc.Name, ScopesInfo: acc.Scopes, ProviderExpiresAt: acc.ExpiresAt, CreatedBy: p.User.ID, QuotaProject: project}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if v, err = tx.CreateIntegration(r.Context(), v, store.IntegrationSecret{Token: token}); err != nil {
+		if v, err = tx.CreateIntegration(r.Context(), v, sec); err != nil {
 			return err
 		}
 		e := integrationAudit(r, store.ActionIntegrationSet, v)
@@ -385,8 +435,9 @@ func (h *api) replaceIntegrationToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Token  string
-		Source *integrations.Source
+		Token        string
+		Source       *integrations.Source
+		QuotaProject *string
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -399,14 +450,24 @@ func (h *api) replaceIntegrationToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid source")
 		return
 	}
-	token, acc, ok := h.verify(w, r, old.Kind, src, body.Token)
+	p, _ := auth.PrincipalFrom(r.Context())
+	v := old
+	var sec store.IntegrationSecret
+	if old.Kind == integrations.GCloud {
+		if body.QuotaProject == nil {
+			body.QuotaProject = &old.QuotaProject
+		}
+		sec, v.Account, v.QuotaProject, ok = h.verifyADC(w, r, body.Token, body.QuotaProject)
+	} else {
+		var acc integrations.Account
+		sec.Token, acc, ok = h.verify(w, r, old.Kind, src, body.Token)
+		v.Account, v.ScopesInfo, v.ProviderExpiresAt = acc.Name, acc.Scopes, acc.ExpiresAt
+	}
 	if !ok {
 		return
 	}
-	p, _ := auth.PrincipalFrom(r.Context())
-	v := old
-	v.Source, v.Account, v.ScopesInfo, v.ProviderExpiresAt, v.UpdatedBy = src, acc.Name, acc.Scopes, acc.ExpiresAt, p.User.ID
-	if !h.commitReplace(w, r, old, v, store.IntegrationSecret{Token: token}) {
+	v.Source, v.UpdatedBy = src, p.User.ID
+	if !h.commitReplace(w, r, old, v, sec) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"account": v.Account})
@@ -416,6 +477,11 @@ func (h *api) commitReplace(w http.ResponseWriter, r *http.Request, old, v store
 	if !h.commit(w, r, func(tx *store.Store) error {
 		if err := tx.ReplaceIntegrationToken(r.Context(), old, v, sec); err != nil {
 			return err
+		}
+		if v.QuotaProject != old.QuotaProject {
+			if err := tx.SetIntegrationQuotaProject(r.Context(), old, v.QuotaProject, v.UpdatedBy); err != nil {
+				return err
+			}
 		}
 		e := integrationAudit(r, store.ActionIntegrationSet, v)
 		e.Details["replaced"] = true
@@ -433,18 +499,28 @@ func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Mode       integrations.Mode
-		AutoSwitch *bool
+		Mode         integrations.Mode
+		AutoSwitch   *bool
+		QuotaProject *string
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if (body.Mode != "" || body.AutoSwitch == nil) && !validMode(body.Mode) {
+	switch {
+	case (body.Mode != "" || (body.AutoSwitch == nil && body.QuotaProject == nil)) && !validMode(body.Mode):
 		writeError(w, http.StatusBadRequest, "invalid mode")
 		return
-	}
-	if body.AutoSwitch != nil && old.Kind != integrations.Claude {
+	case body.AutoSwitch != nil && old.Kind != integrations.Claude:
 		writeError(w, http.StatusBadRequest, "not a claude integration")
+		return
+	case body.Mode != "" && old.Kind == integrations.GCloud:
+		writeError(w, http.StatusBadRequest, gcloudProxyOnly)
+		return
+	case body.QuotaProject != nil && old.Kind != integrations.GCloud:
+		writeError(w, http.StatusBadRequest, "not a gcloud integration")
+		return
+	case body.QuotaProject != nil && !integrations.ValidQuotaProject(*body.QuotaProject):
+		writeError(w, http.StatusBadRequest, store.ErrInvalidQuotaProject.Error())
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -457,6 +533,17 @@ func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 			}
 			a := integrationAudit(r, store.ActionIntegrationSet, v)
 			a.Details["previousMode"] = old.Mode
+			if err := tx.Audit(r.Context(), a); err != nil {
+				return err
+			}
+		}
+		if body.QuotaProject != nil {
+			v.QuotaProject = *body.QuotaProject
+			if err := tx.SetIntegrationQuotaProject(r.Context(), old, v.QuotaProject, p.User.ID); err != nil {
+				return err
+			}
+			a := integrationAudit(r, store.ActionIntegrationSet, v)
+			a.Details["action"], a.Details["quotaProject"] = "quota-project", v.QuotaProject
 			if err := tx.Audit(r.Context(), a); err != nil {
 				return err
 			}

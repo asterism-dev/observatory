@@ -356,6 +356,7 @@ type IntegrationToken struct {
 	Kind      string     `json:"kind"`
 	Token     string     `json:"token"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Project   string     `json:"project,omitempty"`
 }
 
 func (IntegrationToken) String() string   { return "IntegrationToken{redacted}" }
