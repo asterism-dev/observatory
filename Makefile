@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down registry-gc idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -27,10 +27,6 @@ registry-up: registry-env
 
 registry-down:
 	docker compose -f deploy/dev/compose.yaml rm -sf registry
-
-registry-gc:
-	docker compose -f deploy/dev/compose.yaml stop registry
-	docker compose -f deploy/dev/compose.yaml run --rm registry-gc; docker compose -f deploy/dev/compose.yaml start registry
 
 idp-up:
 	[ -f deploy/idp/.env ] || cp deploy/idp/.env.example deploy/idp/.env
