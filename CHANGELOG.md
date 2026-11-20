@@ -1,3 +1,9 @@
+## v0.13.0 (2026-11-20)
+
+### Feat
+
+- **registry**: hub-run garbage collection at a configurable time (#33)
+
 ## v0.12.1 (2026-11-20)
 
 ### Fix
