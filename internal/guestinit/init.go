@@ -68,7 +68,7 @@ func (s bootStep) safeRun() (err error) {
 
 func runInit() int {
 	if err := Run(); err != nil {
-		logf("init: %v", err)
+		consolef("init: %v", err)
 		return 1
 	}
 	return 0

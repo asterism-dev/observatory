@@ -197,14 +197,14 @@ func shutdown(img *Image, proc *os.File, cmd int) {
 		img.Stop(imageStopTimeout)
 	}
 	if err := unmountAll(proc); err != nil {
-		logf("init: %v", err)
+		consolef("init: %v", err)
 	}
 	if err := syscall.Mount("", "/", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
-		logf("init: remount / read-only: %v", err)
+		consolef("init: remount / read-only: %v", err)
 	}
 	syscall.Sync()
 	if err := syscall.Reboot(cmd); err != nil {
-		logf("init: reboot: %v", err)
+		consolef("init: reboot: %v", err)
 	}
 }
 

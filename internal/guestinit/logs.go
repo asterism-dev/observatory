@@ -48,6 +48,15 @@ func logf(format string, args ...any) {
 	fmt.Fprintln(stderr, msg)
 }
 
+// consolef is logf for messages right before reboot(2) or a kernel panic, which the queue may never deliver.
+func consolef(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintln(stderr, msg)
+	if telemetry.Connected() {
+		telemetry.Logs("system", []*logspb.LogRecord{logRecord(time.Now(), msg, infoLevel)})
+	}
+}
+
 func logRecord(t time.Time, msg string, lvl level, attrs ...*commonpb.KeyValue) *logspb.LogRecord {
 	return &logspb.LogRecord{
 		TimeUnixNano: uint64(t.UnixNano()), ObservedTimeUnixNano: uint64(time.Now().UnixNano()),

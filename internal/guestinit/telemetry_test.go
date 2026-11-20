@@ -181,3 +181,22 @@ func TestLogfSwitchesToSystem(t *testing.T) {
 		t.Fatalf("body = %q", body)
 	}
 }
+
+func TestConsolefAlsoWritesStderrWhenConnected(t *testing.T) {
+	var errOut bytes.Buffer
+	defer func(w io.Writer, s *Sink) { stderr, telemetry = w, s }(stderr, telemetry)
+	stderr = &errOut
+	dial, node := startFakeNode(t, nil)
+	telemetry = newSink(dial)
+	telemetry.Logs("service", []*logspb.LogRecord{logRecord(time.Now(), "x", infoLevel)})
+	waitFor(t, telemetry.Connected)
+
+	consolef("init: reboot: %v", "failed")
+	if errOut.String() != "init: reboot: failed\n" {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+	waitFor(t, func() bool { return len(node.requests()) == 2 })
+	if r := node.requests()[1]; r.stream != "system" || decodeLogs(t, r.body)[0].GetBody().GetStringValue() != "init: reboot: failed" {
+		t.Fatalf("request = %+v", r)
+	}
+}
