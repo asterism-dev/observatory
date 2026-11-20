@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,10 +52,12 @@ func NewCA(hosts []string, now time.Time) (MintedCA, error) {
 	if len(hosts) > MaxCAHosts {
 		return MintedCA{}, fmt.Errorf("%w: at most %d hosts per CA", ErrInvalidHost, MaxCAHosts)
 	}
-	for _, h := range hosts {
-		if err := validHost(h); err != nil {
+	permitted := make([]string, len(hosts))
+	for n, h := range hosts {
+		if err := validPattern(h); err != nil {
 			return MintedCA{}, err
 		}
+		permitted[n] = strings.TrimPrefix(h, "*")
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -77,7 +80,7 @@ func NewCA(hosts []string, now time.Time) (MintedCA, error) {
 		MaxPathLen:                  0,
 		MaxPathLenZero:              true,
 		PermittedDNSDomainsCritical: true,
-		PermittedDNSDomains:         hosts,
+		PermittedDNSDomains:         permitted,
 		ExcludedIPRanges:            []*net.IPNet{all4, all6},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
@@ -174,7 +177,7 @@ func (i *Issuer) Leaf(host string) (*tls.Certificate, error) {
 
 func covers(ca *x509.Certificate, host string) bool {
 	for _, d := range ca.PermittedDNSDomains {
-		if d == host {
+		if d == host || strings.HasPrefix(d, ".") && strings.HasSuffix(host, d) {
 			return true
 		}
 	}
