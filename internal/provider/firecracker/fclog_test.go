@@ -189,3 +189,21 @@ func TestConsoleStreamEmitted(t *testing.T) {
 		t.Errorf("long line body = %d bytes, want 16 KiB", n)
 	}
 }
+
+func TestTailLinesBoundsLongLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 1<<20)+"\nnext\n"+strings.Repeat("y", 100<<10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var got []string
+	tailLines(ctx, path, 0, func(l string) { got = append(got, l) })
+	if len(got) != 3 || len(got[0]) != maxLine || got[1] != "next" || len(got[2]) != maxLine {
+		var lens []int
+		for _, l := range got {
+			lens = append(lens, len(l))
+		}
+		t.Errorf("line lengths = %v, want truncated, next, truncated", lens)
+	}
+}

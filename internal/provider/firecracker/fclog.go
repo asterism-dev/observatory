@@ -40,6 +40,9 @@ func parseFCLogLine(line string) (slog.Level, string) {
 	return level, msg
 }
 
+// maxLine bounds a tailed line; the rest of a longer one is dropped.
+const maxLine = 16 << 10
+
 // tailFCLog logs each line of path until ctx is done, then reads once more for the lines written as the VM exited.
 func tailFCLog(ctx context.Context, path, vmID, vmName string) {
 	err := tailLines(ctx, path, 0, func(line string) {
@@ -75,18 +78,30 @@ func tailLines(ctx context.Context, path string, offset int64, emit func(line st
 		return err
 	}
 	r := bufio.NewReader(f)
-	var partial string
+	var partial []byte
+	var discarding bool
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
 		for {
-			s, err := r.ReadString('\n')
-			partial += s
-			if err != nil {
+			chunk, err := r.ReadSlice('\n')
+			if err != nil && err != bufio.ErrBufferFull && err != io.EOF {
+				return err
+			}
+			end := err == nil
+			if !discarding {
+				partial = append(partial, strings.TrimSuffix(string(chunk), "\n")...)
+				if len(partial) >= maxLine || end {
+					emit(string(partial[:min(len(partial), maxLine)]))
+					partial = partial[:0]
+					discarding = !end
+				}
+			} else if end {
+				discarding = false
+			}
+			if err == io.EOF {
 				break
 			}
-			emit(strings.TrimSuffix(partial, "\n"))
-			partial = ""
 		}
 		if ctx.Err() != nil {
 			return nil

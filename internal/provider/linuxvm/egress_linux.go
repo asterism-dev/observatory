@@ -162,15 +162,20 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 		defer readers.Done()
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			egressOutputLog.Info("egress proxy output", "vm", id, "line", sc.Text())
-			if sink := e.telemetry.Load(); sink != nil && vmID != uuid.Nil {
-				sink.Emit(vmID, "egress", []*logspb.LogRecord{vmtelemetry.LineRecord(RedactEgress(sc.Text()))})
-			}
+			line := sc.Text()
+			egressOutputLog.Info("egress proxy output", "vm", id, "line", line)
+			emitEgressLine(e.telemetry.Load(), vmID, line)
 		}
 		// An over-long line ends the scanner; draining keeps the proxy from blocking on a full pipe.
 		io.Copy(io.Discard, stderr)
 	}()
 	return p, nil
+}
+
+func emitEgressLine(sink *vmtelemetry.Sink, vmID uuid.UUID, line string) {
+	if sink != nil && vmID != uuid.Nil {
+		sink.Emit(vmID, "egress", []*logspb.LogRecord{vmtelemetry.LineRecord(RedactEgress(line))})
+	}
 }
 
 type egressProc struct {
