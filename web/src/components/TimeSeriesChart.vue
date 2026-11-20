@@ -7,7 +7,8 @@ import { useI18n } from 'vue-i18n'
 import { formatValue, type Series, type Unit } from '@/composables/telemetry'
 import { Card } from '@/ui'
 
-const props = defineProps<{ title: string; unit: string; t: number[]; series: Series[]; max?: number; syncKey: string }>()
+// from/to: unix seconds of the selected range, which the x axis spans even where data is missing.
+const props = defineProps<{ title: string; unit: string; t: number[]; series: Series[]; from: number; to: number; max?: number; syncKey: string }>()
 const emit = defineEmits<{ zoom: [from: number, to: number]; reset: []; hover: [t: number | null] }>()
 
 const { locale } = useI18n()
@@ -59,7 +60,10 @@ function build() {
       height: HEIGHT,
       cursor: { sync: { key: props.syncKey }, drag: { x: true, y: false, setScale: false } },
       legend: { live: false },
-      scales: { y: { range: (_u, _min, max) => [0, props.max ?? (max > 0 ? max * 1.1 : 1)] } },
+      scales: {
+        x: { range: () => [props.from, props.to] },
+        y: { range: (_u, _min, max) => [0, props.max ?? (max > 0 ? max * 1.1 : 1)] },
+      },
       axes: [axis, { ...axis, size: 70, incrs: props.unit === '%' ? undefined : byteIncrs, values: (_u, splits) => splits.map((v) => fmt(v)) }],
       series: [{}, ...props.series.map((s, i) => ({ label: s.name, stroke: colors[i], width: 1.5, show: !hidden.has(s.name) }))],
       hooks: {
@@ -93,7 +97,7 @@ function build() {
 
 watch(() => props.series.map((s) => s.name).join('\n'), build)
 watch(
-  () => [props.t, props.series],
+  () => [props.t, props.series, props.from, props.to],
   () => plot?.setData(data()),
 )
 

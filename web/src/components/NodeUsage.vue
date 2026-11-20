@@ -16,6 +16,7 @@ const { t } = useI18n()
 const preset = ref<Preset>('6h')
 const zoomed = ref<{ from: Date; to: Date } | null>(null)
 const usage = ref<Usage | null>(null)
+const shown = ref<UsageRange | null>(null)
 const error = ref('')
 
 const options = presets.map((p) => ({ value: p, label: p.replace(/(\d+)/, '$1 ') }))
@@ -38,6 +39,7 @@ async function load(r: UsageRange) {
     const res = await api<Usage>(`/api/orgs/${props.orgId}/nodes/${id}/usage?${q}`)
     if (id !== props.node.id) return
     usage.value = res
+    shown.value = r
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -85,6 +87,8 @@ onBeforeUnmount(() => {
         :max="c.max"
         :t="usage?.t ?? []"
         :series="c.series"
+        :from="(shown?.from.getTime() ?? 0) / 1000"
+        :to="(shown?.to.getTime() ?? 0) / 1000"
         :sync-key="`node-${node.id}`"
         @zoom="(from, to) => (zoomed = { from: new Date(from * 1000), to: new Date(to * 1000) })"
         @reset="zoomed = null"
