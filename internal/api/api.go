@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,9 @@ type api struct {
 	builds      *builds.Scheduler
 	registryGC  *registry.GC
 	telemetry   *telemetry.Client
+	now         func() time.Time
+	// tokenChecks maps a telemetry token ID to when its creator's access was last confirmed.
+	tokenChecks sync.Map
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
@@ -54,7 +58,7 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 
 func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc}
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -99,6 +103,9 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
 	mux.HandleFunc("GET /api/orgs/{org}/limits", h.getLimits)
 	mux.HandleFunc("PUT /api/orgs/{org}/limits/{scope}", h.setScopeLimits)
+	mux.HandleFunc("GET /api/orgs/{org}/telemetry-tokens", h.listTelemetryTokens)
+	mux.HandleFunc("POST /api/orgs/{org}/telemetry-tokens", h.createTelemetryToken)
+	mux.HandleFunc("DELETE /api/orgs/{org}/telemetry-tokens/{id}", h.revokeTelemetryToken)
 	mux.HandleFunc("GET /api/orgs/{org}/env", h.listEnv)
 	mux.HandleFunc("POST /api/orgs/{org}/env", h.createEnv)
 	mux.HandleFunc("PATCH /api/orgs/{org}/env/{id}", h.updateEnv)
