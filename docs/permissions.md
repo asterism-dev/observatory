@@ -43,7 +43,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
 | `integration:list`, `integration:set`, `integration:delete`, `integration:use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
 | `node:read`, `node:create` | `org/nodes` |
-| `node:read`, `node:update`, `node:delete`, `node:use` | `org/nodes/*` |
+| `node:read`, `node:update`, `node:delete`, `node:use`, `node:metrics` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
 | `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect`, `vm:snapshot`, `vm:restore`, `vm:fork` | `org/vms/*` |
 | `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
@@ -68,7 +68,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `integration:list`, `integration:use` on `org/integrations` | yes | yes | yes |
 | `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
-| `node:*` (create, update, delete) on `org/nodes` and `org/nodes/*` | | yes | yes |
+| `node:*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
 | `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:snapshot`, `vm:restore` on `org/vms/*` | | yes | yes |
 | `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
@@ -178,7 +178,7 @@ Org admins and owners see, power, delete and re-network every VM (`vm:read`, `vm
 `vm:connect` must still be allowed, so an org deny such as `deny vm:connect@org/vms/*` cuts even the owner
 off. A custom role granting `vm:connect` has no effect on connecting in this version, and since nobody
 holds `vm:connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`node:use`); only admins and owners
-add, rename or delete nodes.
+add, rename or delete nodes. Node usage graphs and logs need `node:metrics`; admins and owners have it, members only through a custom role.
 
 A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
 disks cannot be deleted (`409` "owns VMs or disks").
