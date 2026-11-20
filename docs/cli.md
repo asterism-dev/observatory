@@ -125,6 +125,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 | `var delete <name> [--scope S] [--team T]` | delete (confirms) |
 | `integration list` | integrations you can see |
 | `integration connect github\|linear\|claude [--scope S] [--team T] [--mode proxy\|vm] [--from-file F]` | connect with a pasted token |
+| `integration connect gcloud [--quota-project P] [--from-file F]` | hand over the local `gcloud auth application-default login` (default `$CLOUDSDK_CONFIG/application_default_credentials.json`); replaces the token if gcloud is already connected; private scope, proxy mode |
 | `integration sign-in claude [--scope S] [--team T] [--mode proxy\|vm] [--replace]` | prints a URL, reads the code from stdin |
 | `integration replace <kind> [--scope S] [--team T] [--from-file F]` | replace the token |
 | `integration mode <kind> proxy\|vm [--scope S] [--team T]` | change how the token reaches VMs |
