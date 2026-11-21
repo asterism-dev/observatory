@@ -27,6 +27,10 @@ cp deploy/.env.example deploy/.env    # then edit it
 docker compose -f deploy/compose.yaml up -d
 # … or with TLS through Caddy on 80/443.
 docker compose -f deploy/compose.yaml --profile tls up -d
+
+# 4. Required: start the stack in order whenever Docker starts (see below).
+sudo cp deploy/observatory-hub.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable observatory-hub.service
 ```
 
 `up` pulls the published images `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` at `OBSERVATORY_VERSION`
@@ -39,15 +43,11 @@ together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL
 `http://<ZITADEL_DOMAIN>:8080` and becomes the hub's issuer. `bootstrap.sh` needs `curl` and `jq`, reads the admin
 token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
 
-Gateway and storage join the network namespace of the `netns` service. When Docker itself restarts (a reboot, a
-Docker upgrade) it starts containers in no particular order, and one that comes up before `netns` fails with
-`cannot join network namespace of a non running container` and is not retried. Install the unit that starts the
-stack's containers in order once Docker is up:
-
-```sh
-sudo cp deploy/observatory-hub.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable observatory-hub.service
-```
+Step 4 is not optional. Gateway and storage join the network namespace of the `netns` service. When Docker itself
+restarts (a reboot, a Docker upgrade) it starts containers in no particular order, and one that comes up before
+`netns` fails with `cannot join network namespace of a non running container` and is not retried; on test hosts this
+happened on every Docker restart. Without the unit, devices, nodes and disks stay cut off until someone runs
+`docker compose -f deploy/compose.yaml start`. `journalctl -u observatory-hub` shows each run.
 
 After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub restarts,
 `docker compose -f deploy/compose.yaml logs hub` (a short token or a malformed key stops it there).
@@ -154,6 +154,7 @@ limit does not count ([telemetry.md](telemetry.md#vms)). Keep the flag if you ru
 git fetch --tags && git checkout v0.2.0          # compose file and docs of that release
 # set OBSERVATORY_VERSION=v0.2.0 in deploy/.env (with latest: docker compose -f deploy/compose.yaml pull)
 docker compose -f deploy/compose.yaml up -d
+systemctl is-enabled observatory-hub.service     # not "enabled": install the unit as in step 4
 ```
 
 The hub checks GitHub for a newer release every 6 hours and shows platform admins a banner when one exists; nodes on
