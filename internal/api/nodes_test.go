@@ -448,3 +448,49 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("other peer: %d", got)
 	}
 }
+
+func (e *env) emergency(credential, body string) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	NodeEndpoints(mux, e.store, e.api.fleet, e.net)
+	req := httptest.NewRequest("POST", "/api/nodes/emergency", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+credential)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestEmergencyEndpointShowsUnderlayDown(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id, cred := e.credentialFor(tok, org, "n1")
+	node, _ := uuid.Parse(id)
+	if _, err := e.store.QuarantineNodes(context.Background(), []uuid.UUID{node}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.emergency(cred, `{"version":"v0.1.0","reason":"health check failed"}`)
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"update":false}` {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var n struct{ State string }
+	decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+	if n.State != "underlay_down" {
+		t.Fatalf("state %q", n.State)
+	}
+}
+
+func TestEmergencyEndpointRejects(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	_, cred := e.credentialFor(tok, org, "n1")
+	if rec := e.emergency(uuid.NewString()+".wrong", `{"version":"v0.1.0"}`); rec.Code != 401 || strings.TrimSpace(rec.Body.String()) != "Unauthorized" {
+		t.Fatalf("bad credential: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.emergency(cred, `{"version":"v0.1.0","update":true}`); rec.Code != 400 {
+		t.Fatalf("unknown field: %d", rec.Code)
+	}
+	if rec := e.emergency(cred, `{"reason":"`+strings.Repeat("x", 8<<10)+`"}`); rec.Code != 400 {
+		t.Fatalf("oversized body: %d", rec.Code)
+	}
+}

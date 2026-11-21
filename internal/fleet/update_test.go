@@ -2,9 +2,12 @@ package fleet_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -545,5 +548,121 @@ func TestUpdateSurvivesReconnectDuringVMWait(t *testing.T) {
 	e.back(ns[0], version.Version, running(v))
 	if r := e.ended(); r.State != "done" {
 		t.Fatalf("run %+v", r)
+	}
+}
+
+// emergency posts r as the node's emergency poll and returns the status and reply.
+func (e *env) emergency(cred string, r proto.EmergencyReport) (int, proto.EmergencyReply) {
+	e.t.Helper()
+	body, _ := json.Marshal(r)
+	req := httptest.NewRequest("POST", "/api/nodes/emergency", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+cred)
+	rec := httptest.NewRecorder()
+	e.f.ServeEmergency(rec, req)
+	var reply proto.EmergencyReply
+	if rec.Code == 200 {
+		if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	return rec.Code, reply
+}
+
+// underlayDown drops the nodes' connections and has each send an emergency report.
+func (e *env) underlayDown(ns ...*updNode) {
+	e.t.Helper()
+	for _, n := range ns {
+		n.conn.ws.CloseNow()
+		waitFor(e.t, func() bool { return !e.f.Online(n.ID) })
+		if code, reply := e.emergency(n.cred, proto.EmergencyReport{Version: oldVersion, Reason: "health check failed"}); code != 200 || reply.Update {
+			e.t.Fatalf("report: %d %+v", code, reply)
+		}
+	}
+}
+
+func TestEmergencyMarksUnderlayDown(t *testing.T) {
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e, ns := updEnv(t, "n1")
+	if e.f.UnderlayDown(ns[0].ID) {
+		t.Fatal("underlay down while online")
+	}
+	e.underlayDown(ns[0])
+	if !e.f.UnderlayDown(ns[0].ID) || !e.f.Updatable(ns[0].Node) {
+		t.Fatal("not underlay down / updatable after a report")
+	}
+	offset.Store(int64(2 * time.Minute))
+	if e.f.UnderlayDown(ns[0].ID) || e.f.Updatable(ns[0].Node) {
+		t.Fatal("still underlay down after 2 minutes")
+	}
+}
+
+func TestEmergencyStateDroppedOnDisconnect(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.underlayDown(ns[0])
+	e.f.Disconnect(ns[0].ID)
+	if e.f.UnderlayDown(ns[0].ID) {
+		t.Fatal("underlay down after Disconnect")
+	}
+}
+
+func TestEmergencyDeliversUpdateOnce(t *testing.T) {
+	e, ns := updEnv(t, "x", "y")
+	e.underlayDown(ns...)
+	e.start(ns[0])
+	waitFor(t, func() bool { return e.f.Updating(ns[0].ID) })
+	report := proto.EmergencyReport{Version: oldVersion}
+	var got bool
+	waitFor(t, func() bool { _, r := e.emergency(ns[0].cred, report); got = r.Update; return got })
+	if _, r := e.emergency(ns[0].cred, report); r.Update {
+		t.Fatal("update delivered twice")
+	}
+	if _, r := e.emergency(ns[1].cred, report); r.Update {
+		t.Fatal("update delivered to a node outside the run")
+	}
+}
+
+func TestEmergencyUpdateCompletes(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.underlayDown(ns[0])
+	e.start(ns[0])
+	waitFor(t, func() bool {
+		_, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion})
+		return r.Update
+	})
+	e.emergency(ns[0].cred, proto.EmergencyReport{Version: version.Version})
+	if r := e.ended(); r.State != "done" || r.Nodes[0].Status != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestEmergencyUpdateFailsOnReport(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.underlayDown(ns[0])
+	e.start(ns[0])
+	waitFor(t, func() bool {
+		_, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion})
+		return r.Update
+	})
+	e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion, UpdateError: "install.sh exited 1"})
+	if r := e.ended(); r.State != "failed" || r.Nodes[0].Reason != "install.sh exited 1" {
+		t.Fatalf("run %+v", r)
+	}
+}
+
+func TestEmergencyRejects(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	if code, _ := e.emergency("bogus", proto.EmergencyReport{Version: oldVersion}); code != 401 {
+		t.Fatalf("bad credential: %d", code)
+	}
+	req := httptest.NewRequest("POST", "/api/nodes/emergency", strings.NewReader(`{"version":"v1","node":"`+uuid.NewString()+`"}`))
+	req.Header.Set("Authorization", "Bearer "+ns[0].cred)
+	rec := httptest.NewRecorder()
+	e.f.ServeEmergency(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("unknown field: %d", rec.Code)
 	}
 }

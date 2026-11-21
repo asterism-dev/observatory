@@ -90,6 +90,42 @@ func (f *Fleet) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ServeEmergency takes a node's emergency poll over the public HTTPS URL while its underlay is down; the reply hands over an update an update run waits to deliver.
+func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
+	cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	node, err := f.store.NodeByCredential(r.Context(), cred)
+	if !ok || errors.Is(err, store.ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		slog.Error("node auth", "err", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	var rep proto.EmergencyReport
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rep); err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	f.mu.Lock()
+	if !f.underlayDown(node.ID) {
+		slog.Warn("node underlay down", "node", node.ID, "reason", rep.Reason)
+	}
+	f.emergency[node.ID] = emergencySeen{at: clock(), version: rep.Version}
+	if rep.UpdateError != "" {
+		slog.Warn("node update failed", "node", node.ID, "err", rep.UpdateError)
+		f.updateErrs[node.ID] = rep.UpdateError
+	}
+	reply := proto.EmergencyReply{Update: f.emergencyUpd[node.ID]}
+	delete(f.emergencyUpd, node.ID)
+	f.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(reply)
+}
+
 // ServeConnect accepts a node through the gateway's control proxy: one WebSocket carrying JSON messages, starting with register.
 func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	node, status := f.underlayNode(r)

@@ -59,7 +59,7 @@ func (f *Fleet) Updatable(n store.Node) bool {
 // updatable needs f.mu held; no node is while its org has a run going.
 func (f *Fleet) updatable(n store.Node) bool {
 	r := f.runs[n.OrgID]
-	return (r == nil || r.State != "running") && f.conns[n.ID] != nil && version.Older(n.Version, version.Version) && n.Hypervisor != nil
+	return (r == nil || r.State != "running") && (f.conns[n.ID] != nil || f.underlayDown(n.ID)) && version.Older(n.Version, version.Version) && n.Hypervisor != nil
 }
 
 // StartUpdate updates nodes one at a time in list order; the run outlives ctx and ends on its own, by CancelUpdate or when the fleet stops.
@@ -172,25 +172,32 @@ func (f *Fleet) runUpdate(r *updateRun, nodes []store.Node) {
 	f.mu.Unlock()
 }
 
-// updateNode asks the node to update and waits until it runs the hub's version with its VMs back; it returns why that failed, or "".
+// updateNode asks the node to update, over its connection or else its next emergency poll, and waits until it runs the hub's version with its VMs back; it returns why that failed, or "".
 func (f *Fleet) updateNode(n store.Node) string {
 	ctx := f.ctx
+	sent := time.Now()
 	f.mu.Lock()
 	c := f.conns[n.ID]
 	delete(f.updateErrs, n.ID)
 	t := f.updateTimeouts
+	down := c == nil && f.underlayDown(n.ID)
+	if down {
+		f.emergencyUpd[n.ID] = true
+	}
 	f.mu.Unlock()
 	defer func() {
 		f.mu.Lock()
 		delete(f.updateErrs, n.ID)
+		delete(f.emergencyUpd, n.ID)
 		f.mu.Unlock()
 	}()
-	if c == nil {
+	if c == nil && !down {
 		return "node offline"
 	}
-	sent := time.Now()
-	if reason := f.sendUpdate(ctx, n.ID, c, t.back); reason != "" {
-		return reason
+	if c != nil {
+		if reason := f.sendUpdate(ctx, n.ID, c, t.back); reason != "" {
+			return reason
+		}
 	}
 	tick := time.NewTicker(t.poll)
 	defer tick.Stop()
@@ -204,11 +211,16 @@ func (f *Fleet) updateNode(n store.Node) string {
 		if c != nil {
 			since = c.since
 		}
+		em := f.emergency[n.ID]
 		f.mu.Unlock()
 		if failed {
 			return report
 		}
 		if backAt.IsZero() {
+			// Without a connection there are no VM statuses to wait for; the new version answering on the emergency channel is all the hub can see.
+			if em.at.After(sent) && em.version == version.Version {
+				return ""
+			}
 			// The old binary may reconnect while the installer reconfigures networking; only the new version counts.
 			if since.After(sent) {
 				cur, err := f.store.Node(ctx, n.OrgID, n.ID)

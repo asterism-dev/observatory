@@ -66,9 +66,13 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		j.Machine = n.Machine
 	}
 	if n.Enrolled {
-		j.State = "offline"
-		if h.fleet.Online(n.ID) {
+		switch {
+		case h.fleet.Online(n.ID):
 			j.State = "online"
+		case h.fleet.UnderlayDown(n.ID):
+			j.State = "underlay_down"
+		default:
+			j.State = "offline"
 		}
 	}
 	if cs, ok := h.network.ChassisStatus(n.ID); ok {
@@ -253,6 +257,7 @@ func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
 func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet, nh *network.Hub) {
 	mux.HandleFunc("GET /api/nodes/connect", f.ServeConnect)
 	mux.HandleFunc("GET /api/nodes/health", f.ServeHealth)
+	mux.HandleFunc("POST /api/nodes/emergency", f.ServeEmergency)
 	mux.HandleFunc("POST /api/nodes/enroll", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Token string }
 		if !readJSON(w, r, &body) {
