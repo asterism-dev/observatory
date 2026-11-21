@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -279,10 +280,6 @@ func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet, nh *netwo
 		writeJSON(w, http.StatusOK, map[string]string{"nodeId": n.ID.String(), "credential": credential})
 	})
 	mux.HandleFunc("POST /api/nodes/underlay", func(w http.ResponseWriter, r *http.Request) {
-		if nh == nil {
-			writeError(w, http.StatusServiceUnavailable, "network is not configured")
-			return
-		}
 		cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		node, err := s.NodeByCredential(r.Context(), cred)
 		if !ok || errors.Is(err, store.ErrNotFound) {
@@ -293,13 +290,18 @@ func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet, nh *netwo
 			serverError(w, "node auth", err)
 			return
 		}
+		if nh == nil {
+			writeError(w, http.StatusServiceUnavailable, "network is not configured")
+			return
+		}
 		var body proto.UnderlayRequest
 		if !readJSON(w, r, &body) {
 			return
 		}
 		u, err := nh.Underlay(r.Context(), node, body.ChassisKey, body.ChassisCSR)
 		if errors.Is(err, network.ErrUnderlayRequest) {
-			writeError(w, http.StatusBadRequest, err.Error())
+			slog.Warn("node underlay request", "node", node.ID, "err", err)
+			writeError(w, http.StatusBadRequest, "invalid chassis key or certificate request")
 			return
 		}
 		if err != nil {

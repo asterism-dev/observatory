@@ -110,7 +110,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("node connected", "node", node.ID, "vms", len(m.Register.VMs))
 	defer slog.Info("node disconnected", "node", node.ID)
-	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), node, *m.Register)
+	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), *m.Register)
 	c.kick()
 	for {
 		var m proto.Message
@@ -213,7 +213,7 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 }
 
 // pushLoop is the connection's only writer, so a slow node blocks nothing but itself.
-func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node store.Node, reg proto.Register) {
+func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg proto.Register) {
 	for {
 		select {
 		case <-ctx.Done():

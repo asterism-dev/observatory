@@ -263,7 +263,6 @@ type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
 	Status   *VMStatus `json:"status,omitempty"`
-	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
 	Desired    []DesiredVM        `json:"desired,omitempty"`
 	DisksInUse []string           `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses

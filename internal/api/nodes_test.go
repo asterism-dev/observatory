@@ -394,3 +394,25 @@ func TestNodeUnderlayEndpointRejectsInvalidInput(t *testing.T) {
 		t.Fatalf("bad csr: %d", rec.Code)
 	}
 }
+
+func TestNodeUnderlayEndpointNoNetwork(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	_, cred := e.credentialFor(tok, org, "n1")
+	mux := http.NewServeMux()
+	NodeEndpoints(mux, e.store, e.newFleet(), nil)
+	call := func(c string) int {
+		req := httptest.NewRequest("POST", "/api/nodes/underlay", strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+c)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if got := call("bad"); got != 401 {
+		t.Fatalf("unauthenticated: %d", got)
+	}
+	if got := call(cred); got != 503 {
+		t.Fatalf("authenticated: %d", got)
+	}
+}

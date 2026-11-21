@@ -111,7 +111,7 @@ func (h *Hub) Underlay(ctx context.Context, n store.Node, chassisKey, csrPEM str
 	}
 	cert, err := h.ca.SignChassis(n.ID, csrPEM)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnderlayRequest, err)
+		return nil, err
 	}
 	ip, err := h.store.EnrollChassis(ctx, n.ID, chassisKey)
 	if err != nil {
