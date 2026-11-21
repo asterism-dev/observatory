@@ -14,6 +14,7 @@ const minLen = 32
 // Parse reads comma-separated name=token pairs into a name → token map; empty input yields an empty map.
 func Parse(env string) (map[string]string, error) {
 	tokens := map[string]string{}
+	seen := map[string]bool{}
 	if strings.TrimSpace(env) == "" {
 		return tokens, nil
 	}
@@ -28,6 +29,11 @@ func Parse(env string) (map[string]string, error) {
 		if _, dup := tokens[name]; dup {
 			return nil, fmt.Errorf("duplicate service %q", name)
 		}
+		// A shared token would make the caller name, and thus the audit trail, ambiguous.
+		if seen[token] {
+			return nil, fmt.Errorf("token for %q is already used by another service", name)
+		}
+		seen[token] = true
 		tokens[name] = token
 	}
 	return tokens, nil

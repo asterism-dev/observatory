@@ -24,6 +24,7 @@ func TestServiceTokensParse(t *testing.T) {
 	for name, env := range map[string]string{
 		"short token":    "edge=short",
 		"duplicate name": "edge=" + tokA + ",edge=" + tokB,
+		"shared token":   "edge=" + tokA + ",compute=" + tokA,
 		"no equals":      "edge" + tokA,
 		"empty name":     "=" + tokA,
 		"empty entry":    "edge=" + tokA + ",",

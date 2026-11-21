@@ -16,6 +16,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/golang-jwt/jwt/v5"
+	"google.golang.org/protobuf/proto"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
@@ -25,10 +26,13 @@ import (
 )
 
 const (
-	signingKeySecret = "iam-signing-key"
-	jwtAudience      = "observatory"
-	jwtTTL           = 5 * time.Minute
+	signingKeySecret  = "iam-signing-key"
+	jwtAudience       = "observatory"
+	jwtTTL            = 5 * time.Minute
+	policySendTimeout = 30 * time.Second
 )
+
+type streamControllerKey struct{}
 
 // Issuer mints user JWTs for the edge until the iam service takes over.
 type Issuer struct {
@@ -103,6 +107,11 @@ func (i *Issuer) TokenHandler() http.Handler {
 			return
 		}
 		now := time.Now().Truncate(time.Second)
+		exp := now.Add(jwtTTL)
+		// A token must not outlive its session; truncation keeps exp at or before the session's expiry.
+		if end := sess.ExpiresAt.Truncate(time.Second); end.Before(exp) {
+			exp = end
+		}
 		claims := userClaims{
 			RegisteredClaims: jwt.RegisteredClaims{
 				Issuer:    i.url,
@@ -110,7 +119,7 @@ func (i *Issuer) TokenHandler() http.Handler {
 				Subject:   user.ID.String(),
 				IssuedAt:  jwt.NewNumericDate(now),
 				NotBefore: jwt.NewNumericDate(now),
-				ExpiresAt: jwt.NewNumericDate(now.Add(jwtTTL)),
+				ExpiresAt: jwt.NewNumericDate(exp),
 			},
 			SID: sess.ID.String(),
 			PA:  user.PlatformAdmin,
@@ -125,7 +134,7 @@ func (i *Issuer) TokenHandler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(map[string]any{"token": signed, "expires_at": now.Add(jwtTTL)})
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": signed, "expires_at": exp})
 	})
 }
 
@@ -170,6 +179,12 @@ func (p *PolicyServer) Publish(pol authz.Policy) {
 	msg := policyMessage(pol)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.last != nil {
+		msg.Revision = p.last.Revision
+		if proto.Equal(msg, p.last) {
+			return
+		}
+	}
 	p.rev++
 	msg.Revision = p.rev
 	p.last = msg
@@ -219,6 +234,10 @@ func (p *PolicyServer) WatchPolicy(ctx context.Context, _ *connect.Request[iamv1
 		if msg == nil || msg.Revision == sent {
 			continue
 		}
+		if rc, ok := ctx.Value(streamControllerKey{}).(*http.ResponseController); ok {
+			// A watcher that stops reading must not pin this goroutine forever.
+			_ = rc.SetWriteDeadline(time.Now().Add(policySendTimeout))
+		}
 		if err := stream.Send(msg); err != nil {
 			return err
 		}
@@ -262,7 +281,7 @@ func internalIAM(iss *Issuer, ps *PolicyServer) http.Handler {
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Time{})
 		_ = rc.SetWriteDeadline(time.Time{})
-		stream.ServeHTTP(w, r)
+		stream.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), streamControllerKey{}, rc)))
 	}))
 	return mux
 }

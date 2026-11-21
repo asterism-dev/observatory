@@ -177,6 +177,34 @@ func TestTokenEndpointIssuesJWT(t *testing.T) {
 	}
 }
 
+func TestTokenExpiryBoundBySession(t *testing.T) {
+	e := newIAMEnv(t)
+	res, err := e.s.Login(context.Background(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, sess, err := e.s.CreateSession(context.Background(), res.User.ID, store.SessionCLI, time.Minute, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("POST", "/internal/iam/token", "Bearer "+svcToken, map[string]string{"session_token": tok})
+	var out struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("%d %s: %v", rec.Code, rec.Body, err)
+	}
+	var c jwt.RegisteredClaims
+	keys := e.jwks(t)
+	if _, err := jwt.ParseWithClaims(out.Token, &c, func(tk *jwt.Token) (any, error) { return keys[tk.Header["kid"].(string)], nil }); err != nil {
+		t.Fatal(err)
+	}
+	if c.ExpiresAt.After(sess.ExpiresAt) || sess.ExpiresAt.Sub(c.ExpiresAt.Time) >= time.Second || !out.ExpiresAt.Equal(c.ExpiresAt.Time) {
+		t.Fatalf("exp %v, expires_at %v, session expires %v", c.ExpiresAt, out.ExpiresAt, sess.ExpiresAt)
+	}
+}
+
 func TestTokenEndpointRejectsRevokedSession(t *testing.T) {
 	e := newIAMEnv(t)
 	user, tok, sess := e.login(t, "alice")
@@ -295,7 +323,7 @@ func TestPolicyPublishDoesNotBlock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for range 1000 {
-			ps.Publish(authz.Policy{})
+			ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
 		}
 		close(done)
 	}()
@@ -306,5 +334,19 @@ func TestPolicyPublishDoesNotBlock(t *testing.T) {
 	}
 	if got := ps.latest(); got == nil || got.Revision == 0 {
 		t.Fatalf("latest: %v", got)
+	}
+}
+
+func TestPolicyPublishSkipsUnchanged(t *testing.T) {
+	ps := NewPolicyServer()
+	ps.Publish(authz.Policy{})
+	rev := ps.latest().Revision
+	ps.Publish(authz.Policy{})
+	if got := ps.latest().Revision; got != rev {
+		t.Fatalf("unchanged snapshot bumped revision %d → %d", rev, got)
+	}
+	ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
+	if got := ps.latest().Revision; got <= rev {
+		t.Fatalf("changed snapshot kept revision %d", got)
 	}
 }
