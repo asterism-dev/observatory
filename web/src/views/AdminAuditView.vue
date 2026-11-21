@@ -3,5 +3,5 @@ import AuditTable from '@/components/AuditTable.vue'
 </script>
 
 <template>
-  <AuditTable source="/api/admin/audit" />
+  <AuditTable />
 </template>

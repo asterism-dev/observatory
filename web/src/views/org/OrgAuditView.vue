@@ -7,6 +7,6 @@ const { org } = useOrg()
 
 <template>
   <template v-if="org">
-    <AuditTable :key="org.id" :source="`/api/orgs/${org.id}/audit`" />
+    <AuditTable :key="org.id" :org="org.id" />
   </template>
 </template>
