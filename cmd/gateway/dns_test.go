@@ -101,12 +101,15 @@ func TestDNSViews(t *testing.T) {
 
 func TestDNSUnknownSourceRefused(t *testing.T) {
 	s := viewsServer()
-	// 10.192.0.1 is the gateway itself: Docker's DNS asking it back when the host resolves through a device
 	for _, src := range []string{"10.210.0.11", "10.198.0.11", "10.192.0.99", "10.192.0.1", "127.0.0.1"} {
-		for _, name := range []string{"dev.internal.", "example.com."} {
-			if m := ask(t, s, src, name); m.RCode != dnsmessage.RCodeRefused || len(m.Answers) != 0 {
-				t.Errorf("%s from %s: %+v", name, src, m)
-			}
+		if m := ask(t, s, src, "dev.internal."); m.RCode != dnsmessage.RCodeRefused || len(m.Answers) != 0 {
+			t.Errorf("%s: %+v", src, m)
+		}
+	}
+	// The gateway's own addresses: Docker's DNS asking it back when the host resolves through a device.
+	for _, src := range []string{"10.192.0.1", "10.198.0.1", "10.199.0.2", "127.0.0.1", "::1"} {
+		if m := ask(t, s, src, "example.com."); m.RCode != dnsmessage.RCodeRefused || len(m.Answers) != 0 {
+			t.Errorf("forward for %s: %+v", src, m)
 		}
 	}
 }
@@ -156,7 +159,15 @@ func TestDNSServesAndForwards(t *testing.T) {
 		t.Fatalf("unknown source: %+v", m)
 	}
 	if m := query(t, addr, "example.com.", dnsmessage.TypeA); m.RCode != dnsmessage.RCodeRefused {
-		t.Fatalf("forward for unknown source: %+v", m)
+		t.Fatalf("forward for the gateway itself: %+v", m)
+	}
+	// A device or VM the gateway has no state for yet still resolves public names.
+	b, err := s.handle("udp", pack(t, "example.com.", dnsmessage.TypeA), up.LocalAddr().String(), netip.MustParseAddr("10.192.0.99"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := unpack(t, b); answer(m) != "9.9.9.9" {
+		t.Fatalf("forward for an unknown device: %+v", m)
 	}
 }
 
