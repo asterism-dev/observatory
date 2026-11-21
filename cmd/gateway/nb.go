@@ -233,10 +233,13 @@ func isChassisName(name string) bool {
 
 // cutPortACLs drop all traffic of the quarantined gateway node's VM ports on sw; acl-del clears them once it is lifted.
 func cutPortACLs(sw, chassis string, ports []proto.GatewayPort) [][]string {
-	var cut []string
+	var cut, ips []string
 	for _, p := range ports {
 		if chassis != "" && p.Chassis == chassis {
 			cut = append(cut, fmt.Sprintf("%q", p.Name))
+			if a, err := netip.ParseAddr(p.IP); err == nil && a.Is4() {
+				ips = append(ips, a.String())
+			}
 		}
 	}
 	acls := [][]string{{"acl-del", sw}}
@@ -245,9 +248,17 @@ func cutPortACLs(sw, chassis string, ports []proto.GatewayPort) [][]string {
 	}
 	set := "{" + strings.Join(cut, ", ") + "}"
 	// 1003 beats the port group's allow ACLs at 1002.
-	return append(acls,
+	acls = append(acls,
 		[]string{"acl-add", sw, "from-lport", "1003", "inport == " + set, "drop"},
 		[]string{"acl-add", sw, "to-lport", "1003", "outport == " + set, "drop"})
+	// The rules above run on the quarantined chassis itself; these run on the honest peer's chassis.
+	honest := "inport == " + set
+	if len(ips) > 0 {
+		ipSet := "{" + strings.Join(ips, ", ") + "}"
+		acls = append(acls, []string{"acl-add", sw, "from-lport", "1003", "ip4.dst == " + ipSet, "drop"})
+		honest = "ip4.src == " + ipSet + " || " + honest
+	}
+	return append(acls, []string{"acl-add", sw, "to-lport", "1003", honest, "drop"})
 }
 
 // transitACLs let a device reach only its own org's router address; lr-gw would answer on all of them.

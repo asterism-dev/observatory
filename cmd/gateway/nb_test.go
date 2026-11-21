@@ -401,16 +401,22 @@ func TestQuarantinedGatewayNodeVMPortsDropped(t *testing.T) {
 	want := []string{
 		"acl-add " + mgmtA + ` from-lport 1003 inport == {"vma-mgmt", "vma2-mgmt"} drop`,
 		"acl-add " + mgmtA + ` to-lport 1003 outport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + mgmtA + ` from-lport 1003 ip4.dst == {10.64.0.10, 10.64.0.11} drop`,
+		"acl-add " + mgmtA + ` to-lport 1003 ip4.src == {10.64.0.10, 10.64.0.11} || inport == {"vma-mgmt", "vma2-mgmt"} drop`,
 		"acl-add " + net + ` from-lport 1003 inport == {"vma-net"} drop`,
 		"acl-add " + net + ` to-lport 1003 outport == {"vma-net"} drop`,
+		"acl-add " + net + ` from-lport 1003 ip4.dst == {10.210.0.10} drop`,
+		"acl-add " + net + ` to-lport 1003 ip4.src == {10.210.0.10} || inport == {"vma-net"} drop`,
 		"acl-add " + mgmtB + ` from-lport 1003 inport == {"vmb2-mgmt"} drop`,
 		"acl-add " + mgmtB + ` to-lport 1003 outport == {"vmb2-mgmt"} drop`,
+		"acl-add " + mgmtB + ` from-lport 1003 ip4.dst == {10.64.16.11} drop`,
+		"acl-add " + mgmtB + ` to-lport 1003 ip4.src == {10.64.16.11} || inport == {"vmb2-mgmt"} drop`,
 	}
 	if got := dropACLs(f.tx(t)); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("drop ACLs:\n%s", strings.Join(got, "\n"))
 	}
 	a := f.txWith(t, "--may-exist ls-add "+mgmtA)
-	for _, c := range []string{"acl-del " + mgmtA, "acl-del " + net, want[0], want[2]} {
+	for _, c := range []string{"acl-del " + mgmtA, "acl-del " + net, want[0], want[2], want[4], want[7]} {
 		if !has(a, c) {
 			t.Errorf("org A transaction missing %q", c)
 		}
@@ -515,5 +521,27 @@ func TestReconcileNBKeepsForeignGatewayChassisRows(t *testing.T) {
 	}
 	if !slices.Equal(del, []string{nodeA}) {
 		t.Errorf("deleted %v, want only the canonical %s", del, nodeA)
+	}
+}
+
+func TestCutPortACLsSkipsInvalidIP(t *testing.T) {
+	acls := cutPortACLs("sw", nodeA, []proto.GatewayPort{{Name: "p1", IP: "10.64.0.10", Chassis: nodeA}, {Name: "p2", IP: "nope}", Chassis: nodeA}, {Name: "p3", IP: "fd00::1", Chassis: nodeA}})
+	var got []string
+	for _, a := range acls {
+		got = append(got, strings.Join(a, " "))
+	}
+	want := []string{
+		"acl-del sw",
+		`acl-add sw from-lport 1003 inport == {"p1", "p2", "p3"} drop`,
+		`acl-add sw to-lport 1003 outport == {"p1", "p2", "p3"} drop`,
+		`acl-add sw from-lport 1003 ip4.dst == {10.64.0.10} drop`,
+		`acl-add sw to-lport 1003 ip4.src == {10.64.0.10} || inport == {"p1", "p2", "p3"} drop`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ACLs:\n%s", strings.Join(got, "\n"))
+	}
+	acls = cutPortACLs("sw", nodeA, []proto.GatewayPort{{Name: "p2", IP: "nope", Chassis: nodeA}})
+	if last := strings.Join(acls[len(acls)-1], " "); last != `acl-add sw to-lport 1003 inport == {"p2"} drop` {
+		t.Fatalf("without IPs: %s", last)
 	}
 }
