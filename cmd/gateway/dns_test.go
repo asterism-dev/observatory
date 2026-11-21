@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -175,22 +176,77 @@ func TestDNSServesAndForwards(t *testing.T) {
 	}
 }
 
-func TestParseUpstreams(t *testing.T) {
+func writeConf(t *testing.T, content string) string {
+	t.Helper()
+	p := t.TempDir() + "/resolv.conf"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadUpstreamsOverride(t *testing.T) {
+	resolved := writeConf(t, "nameserver 192.168.1.1\n")
 	for in, want := range map[string]string{
-		"":                                 "1.1.1.1:53 9.9.9.9:53",
 		"10.0.0.53":                        "10.0.0.53:53",
 		" 10.0.0.53 , 10.0.0.54:5353 ":     "10.0.0.53:53 10.0.0.54:5353",
 		"2001:db8::53,[2001:db8::54]:5353": "[2001:db8::53]:53 [2001:db8::54]:5353",
 	} {
-		got, err := parseUpstreams(in)
+		got, err := loadUpstreams(in, resolved)
 		if err != nil || strings.Join(got, " ") != want {
 			t.Errorf("%q: %v %v, want %s", in, got, err, want)
 		}
 	}
 	for _, in := range []string{"dns.example", "10.0.0.53,", "10.0.0.1:x"} {
-		if _, err := parseUpstreams(in); err == nil {
+		if _, err := loadUpstreams(in, resolved); err == nil {
 			t.Errorf("%q accepted", in)
 		}
+	}
+}
+
+func TestLoadUpstreamsFromHost(t *testing.T) {
+	// systemd-resolved's full list on the hub host while a device with DNS = 10.192.0.1 is up.
+	resolved := writeConf(t, `# This is /run/systemd/resolve/resolv.conf managed by man:systemd-resolved(8).
+nameserver 192.168.178.1
+nameserver 10.192.0.1
+nameserver 10.198.0.1
+nameserver 10.192.0.7
+nameserver 127.0.0.53
+nameserver ::1
+nameserver fe80::1%2
+nameserver 2001:db8::1
+search fritz.box
+`)
+	stub := writeConf(t, "nameserver 127.0.0.53\noptions edns0 trust-ad\nsearch .\n")
+	missing := t.TempDir() + "/absent"
+	for _, c := range []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{"resolved with a device link", []string{resolved, stub}, "192.168.178.1:53 [2001:db8::1]:53"},
+		{"no resolved: falls back", []string{missing, writeConf(t, "nameserver 10.0.0.2\n")}, "10.0.0.2:53"},
+		{"stub only", []string{missing, stub}, ""},
+		{"nothing readable", []string{missing, missing}, ""},
+	} {
+		got, err := loadUpstreams("", c.files...)
+		if err != nil || strings.Join(got, " ") != c.want {
+			t.Errorf("%s: %v %v, want %q", c.name, got, err, c.want)
+		}
+	}
+}
+
+func TestDNSWithoutUpstreams(t *testing.T) {
+	s := viewsServer()
+	b, err := s.handle("udp", pack(t, "example.com.", dnsmessage.TypeA), nil, netip.MustParseAddr("10.192.0.10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := unpack(t, b); m.RCode != dnsmessage.RCodeServerFailure {
+		t.Errorf("public name without upstreams: %+v", m)
+	}
+	if m := ask(t, s, "10.192.0.10", "dev.internal."); answer(m) != "10.64.0.10" {
+		t.Errorf("internal name without upstreams: %+v", m)
 	}
 }
 

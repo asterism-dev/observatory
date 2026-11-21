@@ -120,16 +120,24 @@ On macOS:
 
 ## Upstream DNS
 
-The gateway forwards names outside `*.internal` to the resolvers in `OBSERVATORY_GATEWAY_DNS` (`deploy/.env`):
-comma-separated IPs, each with an optional port, asked in order until one answers. The default is `1.1.1.1,9.9.9.9`.
+The gateway forwards names outside `*.internal` to upstream resolvers, asked in order until one answers. By default
+these are the Docker host's own upstream resolvers, so devices and VMs resolve the same names as the host, internal
+ones included, and nothing goes to a third party the host does not already use:
 
-It does not use Docker's DNS or the hub host's resolvers. Docker's DNS hands public names to the host's resolver, and
-a device on the hub host (with `DNS = 10.192.0.1`, as generated) routes the host's lookups through the tunnel back to
-the gateway: a loop that times out every lookup on that host.
+- The compose file mounts the host's `/run/systemd/resolve` (systemd-resolved's full server list) and
+  `/etc/resolv.conf` read-only; the gateway reads the first that exists, once at start. On a host without
+  systemd-resolved, Docker creates an empty `/run/systemd/resolve` for the mount.
+- It skips loopback (the `127.0.0.53` stub), link-local addresses, and anything in `10.192.0.0/16` or `10.198.0.0/16`.
+  A device on the hub host (with `DNS = 10.192.0.1`, as generated) lists the gateway as its link's server; asking it,
+  or Docker's DNS (which ends at the host's stub), would route the lookup back through the tunnel to the gateway in a
+  loop.
+- Without a usable server the gateway logs an error at start and answers SERVFAIL for public names; `*.internal`
+  keeps working. It never falls back to public resolvers.
 
-Set your own resolvers when devices must resolve names only your network's DNS knows, or when outbound DNS to public
-resolvers is blocked. Do not set the hub host's stub (`127.0.0.53`) or Docker's DNS (`127.0.0.11`): both bring the
-loop back. The gateway refuses to start on a value that is not an IP address.
+`OBSERVATORY_GATEWAY_DNS` (`deploy/.env`) overrides the list: comma-separated IPs, each with an optional port. The
+gateway refuses to start on a value that is not an IP address. Do not set the host's stub (`127.0.0.53`) or Docker's
+DNS (`127.0.0.11`): both bring the loop back. After the host's resolvers change, restart the gateway
+(`docker compose restart gateway`).
 
 ## Networks
 

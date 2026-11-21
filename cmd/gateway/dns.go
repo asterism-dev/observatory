@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +97,9 @@ func (d *dnsServer) handle(network string, req []byte, upstreams []string, src n
 		if v == nil && gatewayLocal(src) {
 			return reply(m, dnsmessage.RCodeRefused, nil, false)
 		}
+		if len(upstreams) == 0 {
+			return reply(m, dnsmessage.RCodeServerFailure, nil, false)
+		}
 		return forward(network, req, upstreams)
 	}
 	if v == nil {
@@ -132,14 +136,42 @@ func reply(req dnsmessage.Message, rcode dnsmessage.RCode, answers []dnsmessage.
 	}).Pack()
 }
 
-// defaultUpstreams are public resolvers: Docker's DNS ends at the host's resolver, which on the hub host may route through a device back to this gateway.
-var defaultUpstreams = []string{"1.1.1.1:53", "9.9.9.9:53"}
-
-// parseUpstreams reads OBSERVATORY_GATEWAY_DNS: comma-separated IPs, each with an optional port.
-func parseUpstreams(s string) ([]string, error) {
-	if strings.TrimSpace(s) == "" {
-		return defaultUpstreams, nil
+// loadUpstreams parses the OBSERVATORY_GATEWAY_DNS override, else takes the nameservers of the first readable host resolv.conf.
+func loadUpstreams(override string, hostFiles ...string) ([]string, error) {
+	if strings.TrimSpace(override) != "" {
+		return parseUpstreams(override)
 	}
+	for _, f := range hostFiles {
+		if b, err := os.ReadFile(f); err == nil {
+			return hostUpstreams(b), nil
+		}
+	}
+	return nil, nil
+}
+
+// hostUpstreams drops the stub, link-local and the gateway's own pools: a device on the hub host lists 10.192.0.1 as its link's DNS, which would loop.
+func hostUpstreams(conf []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(conf), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "nameserver" {
+			continue
+		}
+		a, err := netip.ParseAddr(f[1])
+		if err != nil {
+			continue
+		}
+		a = a.Unmap()
+		if a.IsLoopback() || a.IsUnspecified() || a.IsLinkLocalUnicast() || gatewayLocal(a) ||
+			netaddr.DevicePool.Contains(a) || netaddr.UnderlayPool.Contains(a) {
+			continue
+		}
+		out = append(out, netip.AddrPortFrom(a.WithZone(""), 53).String())
+	}
+	return out
+}
+
+func parseUpstreams(s string) ([]string, error) {
 	var out []string
 	for _, f := range strings.Split(s, ",") {
 		f = strings.TrimSpace(f)
