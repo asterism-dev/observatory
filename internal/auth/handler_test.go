@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -73,8 +74,12 @@ func (f fakeAuth) VerifyCLIToken(ctx context.Context, rawIDToken, accessToken st
 type env struct {
 	t     *testing.T
 	store *store.Store
-	mux   *http.ServeMux
+	h     http.Handler
+	// header is added to every request, e.g. to arrive through the edge.
+	header http.Header
 }
+
+const edgeToken = "0123456789abcdef0123456789abcdef"
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
@@ -85,6 +90,7 @@ func newEnv(t *testing.T) *env {
 		Issuer:      "https://idp.test",
 		CLIClientID: "cli-client",
 		PublicURL:   &url.URL{Scheme: "https", Host: "hub.test"},
+		EdgeToken:   edgeToken,
 	}
 	mux := http.NewServeMux()
 	h.Routes(mux)
@@ -95,12 +101,15 @@ func newEnv(t *testing.T) *env {
 		}
 		_, _ = w.Write([]byte(p.User.Email))
 	})))
-	return &env{t: t, store: s, mux: mux}
+	return &env{t: t, store: s, h: h.TrustEdge(mux)}
 }
 
 func (e *env) do(r *http.Request) *httptest.ResponseRecorder {
+	for k, v := range e.header {
+		r.Header[k] = v
+	}
 	rec := httptest.NewRecorder()
-	e.mux.ServeHTTP(rec, r)
+	e.h.ServeHTTP(rec, r)
 	return rec
 }
 
@@ -319,5 +328,43 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 	if !e.actions(store.ResultAllowed)[store.ActionAuthLogout] {
 		t.Fatal("no auth:logout audit")
+	}
+}
+
+func TestRequestMetaUsesEdgeHeader(t *testing.T) {
+	h := &Handler{EdgeToken: edgeToken}
+	for token, want := range map[string]string{edgeToken: "203.0.113.7", "wrong": "192.0.2.1", "": "192.0.2.1"} {
+		var got string
+		h.TrustEdge(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got, _ = RequestMeta(r) })).
+			ServeHTTP(httptest.NewRecorder(), func() *http.Request {
+				r := httptest.NewRequest("GET", "/", nil)
+				r.Header.Set(clientip.HeaderClientIP, "203.0.113.7")
+				r.Header.Set(clientip.HeaderEdge, token)
+				return r
+			}())
+		if got != want {
+			t.Errorf("edge token %q: ip %q, want %q", token, got, want)
+		}
+	}
+}
+
+func TestAuditIPBehindEdge(t *testing.T) {
+	for name, tc := range map[string]struct{ token, want string }{
+		"through the edge": {edgeToken, "203.0.113.7"},
+		"spoofed header":   {"forged", "192.0.2.1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			e.header = http.Header{}
+			e.header.Set(clientip.HeaderClientIP, "203.0.113.7")
+			e.header.Set(clientip.HeaderEdge, tc.token)
+			if rec := e.login("/"); rec.Code != http.StatusFound {
+				t.Fatalf("login: %d", rec.Code)
+			}
+			entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{Action: store.ActionAuthLogin})
+			if err != nil || len(entries) != 1 || entries[0].IP != tc.want {
+				t.Fatalf("audit ip: %+v, %v (want %s)", entries, err, tc.want)
+			}
+		})
 	}
 }

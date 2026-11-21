@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -26,11 +26,19 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
-// RequestMeta returns the peer IP and sanitized user agent; X-Forwarded-For is deliberately not trusted.
+type clientIPKey struct{}
+
+func (h *Handler) TrustEdge(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, clientip.From(r, h.EdgeToken))))
+	})
+}
+
+// RequestMeta returns the client IP resolved by TrustEdge and the sanitized user agent; X-Forwarded-For is deliberately not trusted.
 func RequestMeta(r *http.Request) (ip, userAgent string) {
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
+	ip, ok := r.Context().Value(clientIPKey{}).(string)
+	if !ok {
+		ip = clientip.From(r, "")
 	}
 	return ip, store.SanitizeText(r.UserAgent())
 }

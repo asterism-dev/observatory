@@ -1,4 +1,4 @@
-package main
+package hubserver
 
 import (
 	"errors"
@@ -15,11 +15,11 @@ import (
 )
 
 type config struct {
-	Listen, DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken string
-	SecretsKey                                                                                                                       seal.Key
-	Dev, DevSkipVerify                                                                                                               bool
-	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                                                    string
-	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                               string
+	DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken, EdgeToken string
+	SecretsKey                                                                                                                          seal.Key
+	Dev, DevSkipVerify                                                                                                                  bool
+	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                                                       string
+	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                                  string
 	// RegistryConfig is the registry's config file the hub runs garbage-collect with; RegistryGCTime is "HH:MM" or empty for manual runs.
 	RegistryConfig, RegistryGCTime string
 	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
@@ -36,10 +36,7 @@ type config struct {
 const minTokenLen = 32
 
 func loadConfig(getenv func(string) string) (config, error) {
-	cfg := config{Listen: getenv("OBSERVATORY_LISTEN")}
-	if cfg.Listen == "" {
-		cfg.Listen = ":8090"
-	}
+	var cfg config
 	if cfg.DocsURL = getenv("OBSERVATORY_DOCS_URL"); cfg.DocsURL == "" {
 		cfg.DocsURL = "https://asterism-dev.github.io/observatory/"
 	}
@@ -63,6 +60,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	required(&cfg.CLIClientID, "OBSERVATORY_OIDC_CLI_CLIENT_ID")
 	required(&cfg.GatewayToken, "OBSERVATORY_GATEWAY_TOKEN")
 	required(&cfg.StorageToken, "OBSERVATORY_STORAGE_TOKEN")
+	required(&cfg.EdgeToken, "OBSERVATORY_EDGE_TOKEN")
 	secretsKey := getenv("OBSERVATORY_SECRETS_KEY")
 	if secretsKey == "" {
 		missing = append(missing, "OBSERVATORY_SECRETS_KEY")
@@ -79,6 +77,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if len(cfg.StorageToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_STORAGE_TOKEN must be at least %d characters", minTokenLen)
+	}
+	if len(cfg.EdgeToken) < minTokenLen {
+		return config{}, fmt.Errorf("OBSERVATORY_EDGE_TOKEN must be at least %d characters", minTokenLen)
 	}
 	if cfg.GatewayHost = getenv("OBSERVATORY_GATEWAY_HOST"); cfg.GatewayHost == "" {
 		u, err := url.Parse(cfg.PublicURL)
