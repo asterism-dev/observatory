@@ -33,7 +33,8 @@ linters:
             - github.com/asterism-dev/observatory/web
             - github.com/coder/websocket
         hubserver:
-          files: ["**/internal/hubserver/**"]
+          # Tests may import the edge: the identity end-to-end test runs the real edge in front of the hub.
+          files: ["**/internal/hubserver/**", "!$test"]
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/edge
               desc: the hub must not depend on the edge; shared code belongs in internal/platform
