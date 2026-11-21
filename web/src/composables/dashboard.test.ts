@@ -80,7 +80,7 @@ test('tiles count states', () => {
         { name: 'c', state: 'stopped' },
         { name: 'd', state: 'hibernated' },
       ],
-      nodes: [{ state: 'online' }, { state: 'offline' }, { state: 'pending' }],
+      nodes: [{ state: 'online' }, { state: 'offline' }, { state: 'pending' }, { state: 'underlay_down' }],
       disks: [{ sizeGB: 10 }, { sizeGB: 20, attachment: {} }],
       devices: [
         { owner: { id: 'u2' }, lastHandshake: ago(CONNECTED_MS - 1000) },
@@ -90,7 +90,7 @@ test('tiles count states', () => {
     }),
   )
   assert.deepEqual(t.vms, { running: 2, stopped: 1, other: 1 })
-  assert.deepEqual(t.nodes, { online: 1, offline: 2 })
+  assert.deepEqual(t.nodes, { online: 1, offline: 3 })
   assert.deepEqual(t.disks, { count: 2, totalGB: 30, attached: 1 })
   assert.deepEqual(t.devices, { connected: 1, total: 3 })
 })

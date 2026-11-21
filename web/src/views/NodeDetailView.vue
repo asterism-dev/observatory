@@ -147,6 +147,7 @@ watch(
       <div class="page-body">
         <p v-if="error" role="alert">{{ error }}</p>
         <p v-if="node.quarantined" role="alert">{{ t('nodes.quarantinedHelp') }}</p>
+        <p v-if="node.state === 'underlay_down'" role="alert">{{ t('nodes.underlayDownHelp') }}</p>
         <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
         <template v-if="tab === 'overview'">
