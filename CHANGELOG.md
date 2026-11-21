@@ -1,3 +1,9 @@
+## v0.21.0 (2026-11-21)
+
+### Feat
+
+- **telemetry**: user dashboards (#42)
+
 ## v0.20.0 (2026-11-21)
 
 ### Feat
