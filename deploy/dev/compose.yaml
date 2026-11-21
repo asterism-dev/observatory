@@ -118,9 +118,13 @@ services:
     environment:
       HUB_URL: ${HUB_URL:-http://host.docker.internal:8091}
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:-}
+      OBSERVATORY_GATEWAY_DNS: ${OBSERVATORY_GATEWAY_DNS:-}
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch
+      # the host's upstream resolvers (docs/network.md, "Upstream DNS"); a directory, as resolved replaces the file
+      - /run/systemd/resolve:/host/resolve:ro
+      - /etc/resolv.conf:/host/resolv.conf:ro
   # In the netns service's namespace, with the gateway, so exports listen on the underlay address only, nothing published on the host.
   storage:
     build:
