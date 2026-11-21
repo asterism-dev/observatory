@@ -125,7 +125,7 @@ func (h *api) vmLogs(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) tailVMLogs(w http.ResponseWriter, r *http.Request) {
 	if q, ok := h.vmLogQuery(w, r); ok {
-		h.tailLogs(w, r, q, "vm", q.VM)
+		h.tailLogs(w, r, q, "vm", q.VM, nil)
 	}
 }
 

@@ -69,11 +69,11 @@ func (h *api) writeLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQ
 	if q.From, q.To, ok = timeRange(w, r, time.Hour); !ok {
 		return
 	}
-	h.writeLogLines(w, r, q)
+	h.writeLogLines(w, r, q, nil)
 }
 
 // writeLogLines answers q, its range already set, with the request's limit.
-func (h *api) writeLogLines(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery) {
+func (h *api) writeLogLines(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery, fix func(*telemetry.LogLine)) {
 	q.Limit = defaultLogLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
 		var err error
@@ -86,6 +86,11 @@ func (h *api) writeLogLines(w http.ResponseWriter, r *http.Request, q telemetry.
 	if err != nil {
 		telemetryError(w, err)
 		return
+	}
+	if fix != nil {
+		for i := range lines {
+			fix(&lines[i])
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
 }
@@ -104,10 +109,10 @@ func (h *api) tailNodeLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q.Org, q.Node = n.OrgID, n.ID
-	h.tailLogs(w, r, q, "node", n.ID)
+	h.tailLogs(w, r, q, "node", n.ID, nil)
 }
 
-func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery, kind string, id uuid.UUID) {
+func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery, kind string, id uuid.UUID, fix func(*telemetry.LogLine)) {
 	rc := http.NewResponseController(w)
 	// A tail is open for as long as the page is, longer than the server's write timeout.
 	_ = rc.SetWriteDeadline(time.Time{})
@@ -116,6 +121,9 @@ func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQu
 	w.WriteHeader(http.StatusOK)
 	_ = rc.Flush()
 	err := h.telemetry.TailLogs(r.Context(), q, func(l telemetry.LogLine) error {
+		if fix != nil {
+			fix(&l)
+		}
 		b, err := json.Marshal(l)
 		if err != nil {
 			return err

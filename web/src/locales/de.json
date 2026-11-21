@@ -1022,7 +1022,9 @@
     "run": "Ausführen",
     "result": "Ergebnis ({n})",
     "noRows": "Keine Zeilen.",
-    "retention": "Logs werden so lange aufbewahrt, wie der Speicher sie hält, standardmäßig 14 Tage.",
-    "openIn": "In Logs öffnen"
+    "retention": "Logs werden {for} aufbewahrt.",
+    "openIn": "In Logs öffnen",
+    "days": "{n} Tag | {n} Tage",
+    "hours": "{n} Stunde | {n} Stunden"
   }
 }

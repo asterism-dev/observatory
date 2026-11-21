@@ -169,8 +169,15 @@ func TestLogsGroupsDeletedAndReusedName(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	var got []logGroupTest
-	decode(t, rec, &got)
+	var list struct {
+		RetentionSeconds int64
+		Groups           []logGroupTest
+	}
+	decode(t, rec, &list)
+	got := list.Groups
+	if list.RetentionSeconds != 14*24*3600 {
+		t.Errorf("retention %d", list.RetentionSeconds)
+	}
 	if len(got) != 2 {
 		t.Fatalf("%+v", got)
 	}
@@ -181,7 +188,7 @@ func TestLogsGroupsDeletedAndReusedName(t *testing.T) {
 	if gone.ID.String() != old || !gone.Deleted || gone.Name != "n1" {
 		t.Errorf("deleted: %+v", gone)
 	}
-	if rec := le.do("GET", le.path("/groups?kind=vm"), le.adminTok); rec.Body.String() != "[]\n" {
+	if rec := le.do("GET", le.path("/groups?kind=vm"), le.adminTok); !strings.Contains(rec.Body.String(), `"groups":[]`) {
 		t.Errorf("vm filter: %s", rec.Body.String())
 	}
 }
@@ -393,5 +400,30 @@ func TestLogsImageStreamsBuildInfo(t *testing.T) {
 	decode(t, rec, &got)
 	if len(got) != 2 || got[0].Name != b.ID.String() || got[0].Build == nil || got[0].Build.Status != b.State || got[1].Build != nil {
 		t.Fatalf("%s", rec.Body.String())
+	}
+}
+
+func TestLogsEntriesStreamForNodeAndImage(t *testing.T) {
+	le := newLogsExplorerEnv(t)
+	img, build := uuid.NewString(), uuid.NewString()
+	le.answer = func(_ string, form url.Values) string {
+		if strings.Contains(form.Get("query"), "observatory.image") || strings.Contains(form.Get("extra_filters"), "observatory.image") {
+			return `{"_time":"2026-11-21T10:00:00Z","_msg":"step","observatory.build":"` + build + `","observatory.stream":"build"}`
+		}
+		return `{"_time":"2026-11-21T10:00:00Z","_msg":"up","source":"firecracker"}`
+	}
+	for _, c := range []struct{ path, want string }{
+		{"/groups/node/" + le.node + "/entries", "firecracker"},
+		{"/groups/image/" + img + "/entries", build},
+	} {
+		rec := le.do("GET", le.path(c.path), le.adminTok)
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %s", c.path, rec.Code, rec.Body.String())
+		}
+		var got struct{ Lines []struct{ Stream string } }
+		decode(t, rec, &got)
+		if len(got.Lines) != 1 || got.Lines[0].Stream != c.want {
+			t.Errorf("%s: %s", c.path, rec.Body.String())
+		}
 	}
 }

@@ -199,7 +199,7 @@ func (h *api) listLogGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, logGroupJSON{Kind: g.Kind, ID: g.ID, Name: name, Deleted: !live, Streams: g.Streams, LastAt: g.LastAt})
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, map[string]any{"retentionSeconds": int64(h.logsRetention.Seconds()), "groups": out})
 }
 
 // liveLogGroupNames maps the org's VMs (builders included), nodes and images in Postgres to their current names.
@@ -343,7 +343,18 @@ func (h *api) listLogEntries(w http.ResponseWriter, r *http.Request) {
 	defer done()
 	ctx, cancel := context.WithTimeout(r.Context(), logsTimeout)
 	defer cancel()
-	h.writeLogLines(w, r.WithContext(ctx), q)
+	h.writeLogLines(w, r.WithContext(ctx), q, streamFixer(q))
+}
+
+// streamFixer fills the stream the explorer shows: node lines carry it as source, image lines as the build id.
+func streamFixer(q telemetry.LogQuery) func(*telemetry.LogLine) {
+	switch {
+	case q.Node != uuid.Nil:
+		return func(l *telemetry.LogLine) { l.Stream = l.Source }
+	case q.Image != uuid.Nil:
+		return func(l *telemetry.LogLine) { l.Stream, _ = l.Fields["observatory.build"].(string) }
+	}
+	return nil
 }
 
 func (h *api) tailLogEntries(w http.ResponseWriter, r *http.Request) {
@@ -357,7 +368,7 @@ func (h *api) tailLogEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	h.tailLogs(w, r, q, "explorer", q.Org)
+	h.tailLogs(w, r, q, "explorer", q.Org, streamFixer(q))
 }
 
 func (h *api) queryLogs(w http.ResponseWriter, r *http.Request) {

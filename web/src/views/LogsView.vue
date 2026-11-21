@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api'
 import LogQueryResult from '@/components/LogQueryResult.vue'
-import { filterGroups, groupKey, groupKinds, groupName, groupPath, queryBody, type GroupKind, type LogGroup, type LogQueryResult as QueryResult } from '@/composables/logs'
+import { filterGroups, groupKey, groupKinds, groupName, groupPath, queryBody, retentionSpan, type GroupKind, type LogGroup, type LogGroupList, type LogQueryResult as QueryResult } from '@/composables/logs'
 import { presets, rangeFor, type Preset } from '@/composables/telemetry'
 import { useOrg } from '@/composables/useOrg'
 import { Card, EmptyState, FilterBar, Page, ResourceList, ResourceRow, Section, Tag } from '@/ui'
@@ -23,6 +23,7 @@ const tab = computed({
   set: (v) => router.replace({ query: { ...route.query, tab: v === 'groups' ? undefined : v } }),
 })
 const groups = ref<LogGroup[]>([])
+const retention = ref(0)
 const loaded = ref(false)
 const error = ref('')
 const kind = ref<GroupKind | 'all'>('all')
@@ -30,6 +31,10 @@ const search = ref('')
 
 const kindTabs = computed(() => ['all', ...groupKinds].map((v) => ({ value: v, label: t(`logs.kind.${v}`) })))
 const rows = computed(() => filterGroups(groups.value, kind.value, search.value))
+const keptFor = computed(() => {
+  const { unit, n } = retentionSpan(retention.value)
+  return t('logs.retention', { for: t(`logs.${unit}`, { n }, n) })
+})
 const when = (iso: string) => d(new Date(iso), { dateStyle: 'short', timeStyle: 'medium' })
 
 const picked = ref(new Set<string>())
@@ -75,8 +80,11 @@ watch(
     error.value = ''
     if (!id || !can('logs:read')) return
     try {
-      const list = await api<LogGroup[]>(`/api/orgs/${id}/logs/groups`)
-      if (id === org.value?.id) groups.value = list
+      const list = await api<LogGroupList>(`/api/orgs/${id}/logs/groups`)
+      if (id === org.value?.id) {
+        groups.value = list.groups
+        retention.value = list.retentionSeconds
+      }
     } catch (e) {
       if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
     }
@@ -132,7 +140,7 @@ watch(
               <Select v-model="preset" :options="presetOptions" :aria-label="t('logs.range')" />
               <Button variant="accent" :icon="Play" :disabled="running" @click="run">{{ t('logs.run') }}</Button>
             </div>
-            <span class="muted">{{ t('logs.retention') }}</span>
+            <span class="muted">{{ keptFor }}</span>
             <p v-if="queryError" role="alert">{{ queryError }}</p>
           </Card>
         </Section>
@@ -140,7 +148,7 @@ watch(
           <LogQueryResult :result="result" />
         </Section>
       </template>
-      <p v-if="tab === 'groups'" class="muted">{{ t('logs.retention') }}</p>
+      <p v-if="tab === 'groups'" class="muted">{{ keptFor }}</p>
     </template>
   </Page>
 </template>

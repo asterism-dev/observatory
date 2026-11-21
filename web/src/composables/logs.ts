@@ -44,5 +44,12 @@ export function queryBody(query: string, groups: Pick<LogGroup, 'kind' | 'id'>[]
   }
 }
 
-// Mirrors the hub: a result without _msg in any row is aggregated output, not log entries.
-export const isStats = (rows: Record<string, string>[]) => rows.every((r) => !('_msg' in r))
+export interface LogGroupList {
+  retentionSeconds: number
+  groups: LogGroup[]
+}
+
+export function retentionSpan(seconds: number): { unit: 'days' | 'hours'; n: number } {
+  const hours = Math.max(1, Math.round(seconds / 3600))
+  return hours % 24 === 0 ? { unit: 'days', n: hours / 24 } : { unit: 'hours', n: hours }
+}

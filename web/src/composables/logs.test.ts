@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { filterGroups, groupName, isStats, queryBody, type LogGroup } from './logs.ts'
+import { filterGroups, groupName, retentionSpan, queryBody, type LogGroup } from './logs.ts'
 
 const g = (kind: LogGroup['kind'], name: string, deleted = false): LogGroup => ({ kind, id: `${kind}-${name}`, name, deleted, streams: 1, lastAt: '2026-11-21T10:00:00Z' })
 
@@ -23,7 +23,8 @@ test('queryBody sends ids only and defaults to match-all', () => {
   assert.deepEqual(b, { query: '*', groups: [{ kind: 'vm', id: 'vm-web' }], from: '2026-11-21T09:00:00.000Z', to: '2026-11-21T10:00:00.000Z', limit: 1000 })
 })
 
-test('isStats detects aggregated rows', () => {
-  assert.equal(isStats([{ _time: 't', _msg: 'x' }]), false)
-  assert.equal(isStats([{ 'observatory.vm_name': 'a', 'count(*)': '3' }]), true)
+test('retentionSpan picks days or hours', () => {
+  assert.deepEqual(retentionSpan(14 * 86400), { unit: 'days', n: 14 })
+  assert.deepEqual(retentionSpan(36 * 3600), { unit: 'hours', n: 36 })
+  assert.deepEqual(retentionSpan(60), { unit: 'hours', n: 1 })
 })

@@ -8,7 +8,7 @@ import { useRoute } from 'vue-router'
 
 import { api } from '@/api'
 import TelemetryLogs from '@/components/TelemetryLogs.vue'
-import { entriesUrl, groupName, type GroupKind, type LogGroup, type LogStream } from '@/composables/logs'
+import { entriesUrl, groupName, retentionSpan, type GroupKind, type LogGroup, type LogGroupList, type LogStream } from '@/composables/logs'
 import { presets, rangeFor, type Preset, type UsageRange } from '@/composables/telemetry'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
@@ -23,6 +23,7 @@ const kind = computed(() => String(route.params.kind) as GroupKind)
 const id = computed(() => String(route.params.id))
 const group = ref<LogGroup | null>(null)
 const streams = ref<LogStream[]>([])
+const retention = ref(0)
 const error = ref('')
 const preset = ref<Preset>('1h')
 const range = ref<UsageRange>({ ...rangeFor('1h', new Date()), now: true })
@@ -30,6 +31,10 @@ const range = ref<UsageRange>({ ...rangeFor('1h', new Date()), now: true })
 const presetOptions = presets.map((p) => ({ value: p, label: p }))
 const title = computed(() => (group.value ? groupName(group.value) : ''))
 const filter = computed(() => ({ key: 'stream' as const, options: streams.value.map((s) => s.name) }))
+const keptFor = computed(() => {
+  const { unit, n } = retentionSpan(retention.value)
+  return t('logs.retention', { for: t(`logs.${unit}`, { n }, n) })
+})
 const when = (iso: string) => d(new Date(iso), { dateStyle: 'short', timeStyle: 'medium' })
 const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: t('logs.stream') },
@@ -44,21 +49,23 @@ watchEffect(() => {
 
 watch(
   [() => org.value?.id, kind, id],
-  async ([orgId]) => {
+  async ([orgId, k, i]) => {
     group.value = null
     streams.value = []
     error.value = ''
     if (!orgId || !can('logs:read')) return
     try {
-      const [groups, ss] = await Promise.all([
-        api<LogGroup[]>(`/api/orgs/${orgId}/logs/groups?kind=${kind.value}`),
-        api<LogStream[]>(`/api/orgs/${orgId}/logs/groups/${kind.value}/${id.value}/streams`),
+      const [list, ss] = await Promise.all([
+        api<LogGroupList>(`/api/orgs/${orgId}/logs/groups?kind=${k}`),
+        api<LogStream[]>(`/api/orgs/${orgId}/logs/groups/${k}/${i}/streams`),
       ])
-      group.value = groups.find((g) => g.id === id.value) ?? null
+      if (orgId !== org.value?.id || k !== kind.value || i !== id.value) return
+      group.value = list.groups.find((g) => g.id === i) ?? null
+      retention.value = list.retentionSeconds
       streams.value = ss
       if (!group.value) error.value = t('logs.groupGone')
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (orgId === org.value?.id && k === kind.value && i === id.value) error.value = e instanceof Error ? e.message : String(e)
     }
   },
   { immediate: true },
@@ -91,7 +98,7 @@ watch(
           <Select v-model="preset" :options="presetOptions" :aria-label="t('logs.range')" />
         </div>
         <TelemetryLogs :url="entriesUrl(org.id, group)" :range="range" :hover-at="null" :filter="filter" />
-        <p class="muted">{{ t('logs.retention') }}</p>
+        <p class="muted">{{ keptFor }}</p>
       </template>
     </template>
   </Page>

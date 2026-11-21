@@ -1022,7 +1022,9 @@
     "run": "Run",
     "result": "Result ({n})",
     "noRows": "No rows.",
-    "retention": "Logs are kept for the store's retention, 14 days by default.",
-    "openIn": "Open in Logs"
+    "retention": "Logs are kept for {for}.",
+    "openIn": "Open in Logs",
+    "days": "{n} day | {n} days",
+    "hours": "{n} hour | {n} hours"
   }
 }

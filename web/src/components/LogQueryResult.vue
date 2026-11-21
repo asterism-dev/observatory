@@ -10,12 +10,13 @@ const props = defineProps<{ result: LogQueryResult }>()
 const { t } = useI18n()
 const open = ref(new Set<number>())
 
+const statRows = computed(() => props.result.rows.map((r, i) => ({ ...r, __row: i })))
 const columns = computed<TableColumn[]>(() => props.result.columns.map((c) => ({ key: c, label: c })))
 const toggle = (i: number) => (open.value.delete(i) ? null : open.value.add(i))
 </script>
 
 <template>
-  <DataTable v-if="result.stats" :columns="columns" :rows="result.rows" row-key="__none">
+  <DataTable v-if="result.stats" :columns="columns" :rows="statRows" row-key="__row">
     <template #empty>{{ t('logs.noRows') }}</template>
   </DataTable>
   <Card v-else>
