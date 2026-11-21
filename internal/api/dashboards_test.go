@@ -80,7 +80,7 @@ func (e *env) putDashboard(tok string, org uuid.UUID, d dashboardTest, name stri
 
 func (e *env) setTeamMember(ownerTok string, org, team uuid.UUID, u store.User) {
 	e.t.Helper()
-	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		e.t.Fatalf("add team member: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -197,7 +197,7 @@ func TestTeamDashboardCreatorEdit(t *testing.T) {
 		t.Fatalf("update audit: %+v", es)
 	}
 
-	if rec := e.do("DELETE", teamMemberPath(org, team, bob), ownerTok); rec.Code != 204 {
+	if rec := e.do("DELETE", teamMemberPath(org, team, bob), ownerTok); rec.Code != 200 {
 		t.Fatalf("remove bob: %d", rec.Code)
 	}
 	if _, code := e.putDashboard(bobTok, org, d, "Mine again"); code != 403 {
@@ -238,7 +238,7 @@ func TestOrgDashboardMemberCannotCreate(t *testing.T) {
 		t.Fatalf("member edit org: %d", code)
 	}
 	// The creator keeps edit rights on an org dashboard after losing the admin role.
-	if rec := e.send("PATCH", memberPath(org, bob), ownerTok, `{"role":"member"}`); rec.Code != 204 {
+	if rec := e.send("PATCH", memberPath(org, bob), ownerTok, `{"role":"member"}`); rec.Code != 200 {
 		t.Fatalf("demote: %d %s", rec.Code, rec.Body.String())
 	}
 	if got, code := e.putDashboard(bobTok, org, d, "All 2"); code != 200 || !got.CanEdit {

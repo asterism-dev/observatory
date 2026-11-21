@@ -59,7 +59,7 @@ func (e *env) listEnv(tok string, org uuid.UUID) envListJSON {
 
 func (e *env) makeTeamAdmin(ownerTok string, org, team uuid.UUID, u store.User) {
 	e.t.Helper()
-	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":true}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":true}`); rec.Code != 200 {
 		e.t.Fatalf("make team admin: %d %s", rec.Code, rec.Body.String())
 	}
 }

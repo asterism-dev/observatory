@@ -117,7 +117,7 @@ func TestTeamMemberSnapshotNotRestore(t *testing.T) {
 	e.addMember(org, carol, store.RoleMember)
 	core := e.createTeam(ownerTok, org, "core")
 	e.makeTeamAdmin(ownerTok, org, core, carol)
-	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(core), e.enrolledNode(ownerTok, org, "n1")))

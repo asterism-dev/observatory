@@ -93,7 +93,7 @@ func TestSetDeleteAfterPermission(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
 	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	e.makeTeamAdmin(ownerTok, org, team, carol)
@@ -118,7 +118,7 @@ func TestVMHistory(t *testing.T) {
 		e.addMember(org, u, store.RoleMember)
 	}
 	team := e.createTeam(aliceTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), aliceTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, bob), aliceTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	e.makeTeamAdmin(aliceTok, org, team, carol)
@@ -154,7 +154,7 @@ func TestVMHistory(t *testing.T) {
 		t.Fatalf("org admin sees: %+v", n)
 	}
 
-	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+carol.ID.String(), aliceTok); rec.Code != 204 {
+	if rec := e.do("DELETE", memberPath(org, carol), aliceTok); rec.Code != 200 {
 		t.Fatalf("remove carol: %d %s", rec.Code, rec.Body.String())
 	}
 	for _, v := range e.history(aliceTok, org.String()).VMs {

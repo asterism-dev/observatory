@@ -640,7 +640,7 @@ func TestRemoveMemberLeavesPrivateImagesToPurge(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	id := e.createImage(bobTok, org, `{"name":"tools","scope":"user"}`)
 	e.addVersion(id, 1, "latest")
-	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), aliceTok); rec.Code != 204 {
+	if rec := e.do("DELETE", memberPath(org, bob), aliceTok); rec.Code != 200 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
 	if _, err := e.store.Image(context.Background(), org, id); err != nil {
@@ -659,7 +659,7 @@ func TestDeleteTeamLeavesTeamImagesToPurge(t *testing.T) {
 	team := e.createTeam(aliceTok, org, "core")
 	id := e.createImage(aliceTok, org, `{"name":"tools","scope":"team","teamId":"`+team.String()+`"}`)
 	e.addVersion(id, 1, "latest")
-	if rec := e.do("DELETE", teamPath(org, team), aliceTok); rec.Code != 204 {
+	if rec := e.do("DELETE", teamPath(org, team), aliceTok); rec.Code != 200 {
 		t.Fatalf("delete team: %d %s", rec.Code, rec.Body.String())
 	}
 	if _, err := e.store.Image(context.Background(), org, id); err != nil {

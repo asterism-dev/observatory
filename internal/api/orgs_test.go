@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -26,16 +25,19 @@ func (e *env) reload() {
 	}
 }
 
-// createOrg creates an org via the API and returns its ID.
+// createOrg creates an org owned by token's user, as iam's CreateOrg would.
 func (e *env) createOrg(token, name string) uuid.UUID {
 	e.t.Helper()
-	rec := e.send("POST", "/api/orgs", token, `{"name":"`+name+`"}`)
-	if rec.Code != 201 {
-		e.t.Fatalf("create org: %d %s", rec.Code, rec.Body.String())
+	sess, err := e.store.SessionByToken(context.Background(), token)
+	if err != nil {
+		e.t.Fatal(err)
 	}
-	var got struct{ ID uuid.UUID }
-	decode(e.t, rec, &got)
-	return got.ID
+	o, err := e.store.CreateOrg(context.Background(), name, sess.UserID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.reload()
+	return o.ID
 }
 
 func (e *env) addMember(org uuid.UUID, u store.User, role store.Role) {
@@ -53,161 +55,53 @@ func (e *env) personalOrg(u store.User) uuid.UUID {
 	return ms[0].Org.ID
 }
 
-func TestCreateOrgMakesCallerOwner(t *testing.T) {
-	e := newEnv(t)
-	u, tok := e.user("alice")
-	rec := e.send("POST", "/api/orgs", tok, `{"name":"  Acme  "}`)
-	if rec.Code != 201 {
-		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
-	}
-	var got struct {
-		ID, Name, Role string
-		Personal       bool
-	}
-	decode(t, rec, &got)
-	if got.Name != "Acme" || got.Role != "owner" || got.Personal || got.ID == "" {
-		t.Fatalf("org: %s", rec.Body.String())
-	}
-	es := e.audit(store.ActionOrgCreate)
-	if len(es) != 1 || es[0].ActorID != u.ID.String() || es[0].OrgID == nil || es[0].OrgID.String() != got.ID || es[0].Resource != "org/"+got.ID {
-		t.Fatalf("audit: %+v", es)
-	}
-	// The new membership is visible to the enforcer without a manual reload.
-	if !e.canReadAudit(u.ID, uuid.MustParse(got.ID)) {
-		t.Fatal("owner cannot read the audit trail")
-	}
+// iamPath is a REST path of the iam API, which newEnv mounts next to the hub's routes.
+func iamPath(org uuid.UUID, rest string) string { return "/api/iam/v1/orgs/" + org.String() + rest }
 
-	for _, body := range []string{`{"name":"   "}`, `{"name":"` + strings.Repeat("x", 65) + `"}`, `{"name":"a\u0000b"}`, `{"name":"a\nb"}`, `{}`, `nope`} {
-		if rec := e.send("POST", "/api/orgs", tok, body); rec.Code != 400 {
-			t.Fatalf("%s: %d", body, rec.Code)
-		}
-	}
-	if rec := e.send("POST", "/api/orgs", tok, `{"name":"`+strings.Repeat("ä", 64)+`"}`); rec.Code != 201 {
-		t.Fatalf("64 runes: %d", rec.Code)
-	}
+func memberPath(org uuid.UUID, u store.User) string { return iamPath(org, "/members/"+u.ID.String()) }
+
+func teamPath(org, team uuid.UUID) string { return iamPath(org, "/teams/"+team.String()) }
+
+func teamMemberPath(org, team uuid.UUID, u store.User) string {
+	return teamPath(org, team) + "/members/" + u.ID.String()
 }
 
-func TestOrgPermissionsByRole(t *testing.T) {
-	e := newEnv(t)
-	_, ownerTok := e.user("alice")
-	admin, adminTok := e.user("bob")
-	member, memberTok := e.user("carol")
-	org := e.createOrg(ownerTok, "Acme")
-	e.addMember(org, admin, store.RoleAdmin)
-	e.addMember(org, member, store.RoleMember)
-
-	memberPerms := []string{"telemetry.dashboards.get", "compute.disks.create", "secrets.variables.list", "secrets.variables.use", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.list", "secrets.integrations.use", "quota.limits.get", "iam.members.list", "network.networks.create", "network.networks.get", "network.networks.use", "compute.nodes.get", "compute.nodes.use", "iam.roles.list", "iam.teams.leave", "iam.teams.list", "compute.instances.create"}
-	adminPerms := []string{"audit.events.list", "audit.settings.get", "audit.settings.update", "telemetry.dashboards.create", "telemetry.dashboards.update", "telemetry.dashboards.get", "network.devices.delete", "network.devices.list", "compute.disks.create", "compute.disks.delete", "compute.disks.get", "compute.disks.update", "secrets.variables.delete", "secrets.variables.list", "secrets.variables.set", "secrets.variables.use", "build.builds.create", "artifacts.images.setDefault", "artifacts.images.update", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.delete", "secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.use", "quota.limits.get", "quota.limits.update", "telemetry.logEntries.list", "iam.invites.create", "iam.members.list", "iam.members.delete",
-		"network.networks.create", "network.networks.delete", "network.networks.get", "network.networks.use", "compute.nodes.create", "compute.nodes.delete", "compute.nodes.getMetrics", "compute.nodes.get", "compute.nodes.update", "compute.nodes.use", "iam.orgs.update",
-		"iam.roleBindings.manage", "iam.roles.list", "iam.roles.manage", "iam.teams.create", "iam.teams.delete", "iam.teams.leave", "iam.teams.manageMembers", "iam.teams.list", "iam.teams.update", "telemetry.tokens.create",
-		"compute.instances.create", "compute.instances.delete", "compute.instances.setDisks", "compute.instances.getMetrics", "compute.instances.setNetworks", "compute.instances.setPower", "compute.instances.get", "compute.instances.restore", "compute.instances.snapshot"}
-	slices.Sort(memberPerms)
-	slices.Sort(adminPerms)
-	ownerPerms := append(slices.Clone(adminPerms), "iam.members.setRole")
-	slices.Sort(ownerPerms)
-
-	for _, c := range []struct {
-		tok, role string
-		want      []string
-	}{{ownerTok, "owner", ownerPerms}, {adminTok, "admin", adminPerms}, {memberTok, "member", memberPerms}} {
-		rec := e.do("GET", "/api/orgs/"+org.String(), c.tok)
-		if rec.Code != 200 {
-			t.Fatalf("%s: %d %s", c.role, rec.Code, rec.Body.String())
-		}
-		var got struct {
-			ID, Name, Role string
-			Personal       bool
-			Permissions    []string
-		}
-		decode(t, rec, &got)
-		if got.ID != org.String() || got.Name != "Acme" || got.Role != c.role || got.Personal || !slices.Equal(got.Permissions, c.want) {
-			t.Fatalf("%s: %s", c.role, rec.Body.String())
-		}
+// iamCreate posts body to the iam API and returns the id of the created entity, the response's only field.
+func (e *env) iamCreate(tok, path, body string) uuid.UUID {
+	e.t.Helper()
+	rec := e.send("POST", path, tok, body)
+	if rec.Code != 200 {
+		e.t.Fatalf("POST %s: %d %s", path, rec.Code, rec.Body.String())
 	}
-
-	// A team admin may manage only their own team, which doesn't cover org/teams/*.
-	var team uuid.UUID
-	if err := e.pool.QueryRow(context.Background(), `INSERT INTO teams (org_id, name) VALUES ($1, 't') RETURNING id`, org).Scan(&team); err != nil {
-		t.Fatal(err)
+	var got map[string]struct{ ID uuid.UUID }
+	decode(e.t, rec, &got)
+	for _, v := range got {
+		return v.ID
 	}
-	e.exec(`INSERT INTO team_members (team_id, user_id, admin) VALUES ($1, $2, true)`, team, member.ID)
-	e.reload()
-	var got struct{ Permissions []string }
-	decode(t, e.do("GET", "/api/orgs/"+org.String(), memberTok), &got)
-	if !slices.Equal(got.Permissions, memberPerms) {
-		t.Fatalf("team admin: %v", got.Permissions)
-	}
-
-	// Denying everything leaves an empty list, not null.
-	var role uuid.UUID
-	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'deny-all') RETURNING id`, org).Scan(&role); err != nil {
-		t.Fatal(err)
-	}
-	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'deny', 'org/*', '*')`, role)
-	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+member.ID.String(), role)
-	e.reload()
-	if rec := e.do("GET", "/api/orgs/"+org.String(), memberTok); !strings.Contains(rec.Body.String(), `"permissions":[]`) {
-		t.Fatalf("deny all: %s", rec.Body.String())
-	}
+	e.t.Fatalf("POST %s: %s", path, rec.Body.String())
+	return uuid.Nil
 }
 
-func TestOrgNotMember404(t *testing.T) {
-	e := newEnv(t)
-	platformAdmin, adminTok := e.user("alice")
-	if !platformAdmin.PlatformAdmin {
-		t.Fatal("first user should be platform admin")
-	}
-	_, bobTok := e.user("bob")
-	org := e.createOrg(bobTok, "Bob Inc")
-	if rec := e.do("GET", "/api/orgs/"+org.String(), adminTok); rec.Code != 404 || !strings.Contains(rec.Body.String(), `"not found"`) {
-		t.Fatalf("%d %s", rec.Code, rec.Body.String())
-	}
-	if rec := e.send("PATCH", "/api/orgs/"+org.String(), adminTok, `{"name":"x"}`); rec.Code != 404 {
-		t.Fatalf("patch: %d", rec.Code)
-	}
-	for _, id := range []string{"nope", strings.ToUpper(org.String()), "{" + org.String() + "}", uuid.NewString()} {
-		if rec := e.do("GET", "/api/orgs/"+id, bobTok); rec.Code != 404 {
-			t.Fatalf("%s: %d", id, rec.Code)
-		}
-	}
+func (e *env) createTeam(tok string, org uuid.UUID, name string) uuid.UUID {
+	return e.iamCreate(tok, iamPath(org, "/teams"), `{"name":"`+name+`"}`)
 }
 
-func TestRenameOrg(t *testing.T) {
-	e := newEnv(t)
-	owner, ownerTok := e.user("alice")
-	admin, adminTok := e.user("bob")
-	member, memberTok := e.user("carol")
-	org := e.createOrg(ownerTok, "Acme")
-	e.addMember(org, admin, store.RoleAdmin)
-	e.addMember(org, member, store.RoleMember)
+func (e *env) createRole(tok string, org uuid.UUID, body string) uuid.UUID {
+	return e.iamCreate(tok, iamPath(org, "/roles"), body)
+}
 
-	if rec := e.send("PATCH", "/api/orgs/"+org.String(), adminTok, `{"name":" Acme Inc "}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"Acme Inc"`) {
-		t.Fatalf("admin rename: %d %s", rec.Code, rec.Body.String())
-	}
-	es := e.audit("iam.orgs.update")
-	if len(es) != 1 || es[0].ActorID != admin.ID.String() || *es[0].OrgID != org || es[0].Result != store.ResultAllowed || es[0].Details["name"] != "Acme Inc" {
-		t.Fatalf("audit: %+v", es)
-	}
+func (e *env) bind(tok string, org uuid.UUID, subject string, role uuid.UUID) uuid.UUID {
+	return e.iamCreate(tok, iamPath(org, "/roleBindings"), `{"subject":"`+subject+`","roleId":"`+role.String()+`"}`)
+}
 
-	if rec := e.send("PATCH", "/api/orgs/"+org.String(), memberTok, `{"name":"Hacked"}`); rec.Code != 403 || !strings.Contains(rec.Body.String(), `"forbidden"`) {
-		t.Fatalf("member rename: %d %s", rec.Code, rec.Body.String())
+func mapValues(m map[string]any) []string {
+	var out []string
+	for _, v := range m {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
 	}
-	es = e.audit("iam.orgs.update")
-	if len(es) != 2 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() || *es[0].OrgID != org || es[0].Resource != "org/settings" {
-		t.Fatalf("denied audit: %+v", es)
-	}
-	var got struct{ Name string }
-	decode(t, e.do("GET", "/api/orgs/"+org.String(), ownerTok), &got)
-	if got.Name != "Acme Inc" {
-		t.Fatalf("name after denied rename: %q", got.Name)
-	}
-
-	if rec := e.send("PATCH", "/api/orgs/"+org.String(), adminTok, `{"name":""}`); rec.Code != 400 {
-		t.Fatalf("empty name: %d", rec.Code)
-	}
-	if rec := e.send("PATCH", "/api/orgs/"+e.personalOrg(owner).String(), ownerTok, `{"name":"x"}`); rec.Code != 409 {
-		t.Fatalf("personal rename: %d %s", rec.Code, rec.Body.String())
-	}
+	return out
 }
 
 func TestPermissionChangeIsImmediate(t *testing.T) {
@@ -266,14 +160,11 @@ func TestOrgFromPathUsesPolicy(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.ID)
-	if rec := e.do("GET", "/api/orgs/"+org.String(), bobTok); rec.Code != 404 {
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 404 {
 		t.Fatalf("before reload: %d %s", rec.Code, rec.Body.String())
 	}
 	e.reload()
-	rec := e.do("GET", "/api/orgs/"+org.String(), bobTok)
-	var got struct{ Name, Role string }
-	decode(t, rec, &got)
-	if rec.Code != 200 || got.Name != "Acme" || got.Role != "member" {
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 200 {
 		t.Fatalf("after reload: %d %s", rec.Code, rec.Body.String())
 	}
 }

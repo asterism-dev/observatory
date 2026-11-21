@@ -18,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/iam"
 	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
@@ -77,7 +78,18 @@ func newEnv(t *testing.T) *env {
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
 	h, handler := newAPI(s, iaminternal.Server{Store: s}, ResourceServer{Store: s}, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
 	e := &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, iss: iss, verifier: fv, oauth: fo, google: fg}
-	e.h = e.asEdge(handler)
+	iamHandler, err := iam.Handler(iam.Deps{Store: s, Policy: z, Verifier: idv, Resources: ResourceServer{Store: s}, Notify: f.NotifyOrg, Pool: pool, PublicURL: a.PublicURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No mux: it would clean the paths the Grafana proxies must see raw.
+	e.h = e.asEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, iam.Prefix+"/") {
+			iamHandler.ServeHTTP(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	return e
 }
 
@@ -168,112 +180,6 @@ func (e *env) canReadAudit(user, org uuid.UUID) bool {
 	return e.z.Enforcer().Allowed(authz.UserSubject(user), org, authz.ObjAudit, "audit.events.list")
 }
 
-func TestMe(t *testing.T) {
-	e := newEnv(t)
-	u, tok := e.user("alice")
-	rec := e.do("GET", "/api/me", tok)
-	if rec.Code != 200 {
-		t.Fatalf("status %d", rec.Code)
-	}
-	var got struct {
-		User struct {
-			ID, Email, Name string
-			PlatformAdmin   bool
-		}
-		Orgs []struct {
-			ID, Name, Role string
-			Personal       bool
-		}
-		DocsURL                string
-		Version, LatestVersion string
-	}
-	decode(t, rec, &got)
-	if got.DocsURL != "https://docs.test/" {
-		t.Fatalf("docsURL: %q", got.DocsURL)
-	}
-	if got.Version != version.Version || got.LatestVersion != "v9.9.9" {
-		t.Fatalf("version %q, latestVersion %q", got.Version, got.LatestVersion)
-	}
-	if got.User.ID != u.ID.String() || got.User.Email != "alice@x.io" || !got.User.PlatformAdmin {
-		t.Fatalf("user: %+v", got.User)
-	}
-	if len(got.Orgs) != 1 || !got.Orgs[0].Personal || got.Orgs[0].Role != "owner" {
-		t.Fatalf("orgs: %+v", got.Orgs)
-	}
-	if !strings.Contains(rec.Body.String(), `"platformAdmin"`) {
-		t.Fatalf("not camelCase: %s", rec.Body.String())
-	}
-	if rec := e.do("GET", "/api/me", "nope"); rec.Code != 401 {
-		t.Fatalf("bad token: %d", rec.Code)
-	}
-}
-
-func TestSessionsListAndRevoke(t *testing.T) {
-	e := newEnv(t)
-	u, tok1 := e.user("alice")
-	tok2 := e.session(u)
-	_, bobTok := e.user("bob")
-
-	rec := e.do("GET", "/api/me/sessions", tok1)
-	var list []struct {
-		ID      string
-		Kind    string
-		Current bool
-	}
-	decode(t, rec, &list)
-	if len(list) != 2 {
-		t.Fatalf("sessions: %s", rec.Body.String())
-	}
-	current := 0
-	var other string
-	for _, s := range list {
-		if s.Current {
-			current++
-		} else {
-			other = s.ID
-		}
-	}
-	if current != 1 || other == "" {
-		t.Fatalf("current flags: %s", rec.Body.String())
-	}
-	for _, k := range []string{"userAgent", "ip", "createdAt", "lastUsedAt", "expiresAt"} {
-		if !strings.Contains(rec.Body.String(), `"`+k+`"`) {
-			t.Fatalf("missing %s: %s", k, rec.Body.String())
-		}
-	}
-
-	if rec := e.do("DELETE", "/api/me/sessions/"+other, tok1); rec.Code != 204 {
-		t.Fatalf("revoke other: %d", rec.Code)
-	}
-	if es := e.audit("iam.sessions.revoke"); len(es) != 1 || es[0].Resource != "session/"+other || es[0].ActorID != u.ID.String() {
-		t.Fatalf("audit: %+v", es)
-	}
-	if rec := e.do("GET", "/api/me", tok2); rec.Code != 401 {
-		t.Fatalf("revoked token: %d", rec.Code)
-	}
-
-	var bobSessions []struct{ ID string }
-	decode(t, e.do("GET", "/api/me/sessions", bobTok), &bobSessions)
-	if rec := e.do("DELETE", "/api/me/sessions/"+bobSessions[0].ID, tok1); rec.Code != 404 {
-		t.Fatalf("other user's session: %d", rec.Code)
-	}
-	if rec := e.do("DELETE", "/api/me/sessions/not-a-uuid", tok1); rec.Code != 404 {
-		t.Fatalf("bad id: %d", rec.Code)
-	}
-
-	cur := []struct {
-		ID      string
-		Current bool
-	}{}
-	decode(t, e.do("GET", "/api/me/sessions", tok1), &cur)
-	if rec := e.do("DELETE", "/api/me/sessions/"+cur[0].ID, tok1); rec.Code != 204 {
-		t.Fatalf("revoke current: %d", rec.Code)
-	}
-	if rec := e.do("GET", "/api/me", tok1); rec.Code != 401 {
-		t.Fatalf("after revoking current: %d", rec.Code)
-	}
-}
-
 func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	e := newEnv(t)
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
@@ -286,9 +192,9 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 		t.Fatalf("/api/auth/config: %d %s", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/me", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/info", nil))
 	if rec.Code != 401 {
-		t.Fatalf("/api/me unauthenticated: %d", rec.Code)
+		t.Fatalf("/api/info unauthenticated: %d", rec.Code)
 	}
 }
 

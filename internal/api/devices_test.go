@@ -161,7 +161,7 @@ func TestRemoveMemberDeletesDevicesAPI(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.createDevice(bobTok, org, "phone")
-	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 204 {
+	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 200 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
 	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID); err != nil {
@@ -195,7 +195,7 @@ func TestFreshLoginCanCreateDevice(t *testing.T) {
 	var tok struct{ Token string }
 	decode(t, rec, &tok)
 	var me struct{ User struct{ ID uuid.UUID } }
-	decode(t, e.do("GET", "/api/me", tok.Token), &me)
+	decode(t, e.do("GET", "/api/iam/v1/me", tok.Token), &me)
 	e.createDevice(tok.Token, e.personalOrg(store.User{ID: me.User.ID}), "laptop")
 }
 

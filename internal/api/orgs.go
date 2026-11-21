@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -20,16 +19,18 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-type orgJSON struct {
-	ID       uuid.UUID  `json:"id"`
-	Name     string     `json:"name"`
-	Personal bool       `json:"personal"`
-	Role     store.Role `json:"role"`
+func pathID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
+	raw := r.PathValue(name)
+	id, err := uuid.Parse(raw)
+	if err != nil || id.String() != raw {
+		writeError(w, http.StatusNotFound, "not found")
+		return uuid.Nil, false
+	}
+	return id, true
 }
 
-func toOrgJSON(o store.Org, role store.Role) orgJSON {
-	return orgJSON{o.ID, o.Name, o.Personal, role}
-}
+// privileged roles can only be granted or taken away by holders of iam.members.setRole (owners).
+func privileged(role store.Role) bool { return role == store.RoleOwner || role == store.RoleAdmin }
 
 // orgMember is the caller's membership in an org as the policy has it.
 type orgMember struct {
@@ -91,7 +92,6 @@ var storeErrorStatus = []struct {
 	{errSnapshotBusy, http.StatusConflict},
 	{errForkPending, http.StatusConflict},
 	{store.ErrInvalidParent, http.StatusBadRequest},
-	{errLiftsOwnDeny, http.StatusForbidden},
 	{authz.ErrDenyNotAllowed, http.StatusForbidden},
 	{authz.ErrEscalation, http.StatusForbidden},
 	{authz.ErrInvalidPattern, http.StatusBadRequest},
@@ -205,76 +205,4 @@ func readName(w http.ResponseWriter, r *http.Request) (string, bool) {
 		writeError(w, http.StatusBadRequest, "invalid name")
 	}
 	return name, ok
-}
-
-func (h *api) createOrg(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
-	name, ok := readName(w, r)
-	if !ok {
-		return
-	}
-	var org store.Org
-	if !h.commit(w, r, func(tx *store.Store) error {
-		var err error
-		if org, err = tx.CreateOrg(r.Context(), name, p.User.ID); err != nil {
-			return err
-		}
-		return tx.Audit(r.Context(), auditEntry(r, &org.ID, store.ActionOrgCreate, "org/"+org.ID.String(), store.ResultAllowed))
-	}) {
-		return
-	}
-	writeJSON(w, http.StatusCreated, toOrgJSON(org, store.RoleOwner))
-}
-
-func (h *api) getOrg(w http.ResponseWriter, r *http.Request) {
-	m, ok := h.orgFromPath(w, r)
-	if !ok {
-		return
-	}
-	p, _ := auth.PrincipalFrom(r.Context())
-	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
-	perms := []string{}
-	for _, c := range authz.Catalog {
-		// Objects like org/teams/* are checked literally: allowed only if the caller's rules cover every team.
-		if e.Allowed(sub, m.OrgID, c.Object, c.Action) {
-			perms = append(perms, c.Action)
-		}
-	}
-	slices.Sort(perms)
-	org, err := h.store.Org(r.Context(), m.OrgID)
-	if err != nil {
-		serverError(w, "org", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, struct {
-		orgJSON
-		Permissions []string `json:"permissions"`
-	}{toOrgJSON(org, m.Role), slices.Compact(perms)})
-}
-
-func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
-	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjSettings, "iam.orgs.update") {
-		return
-	}
-	name, ok := readName(w, r)
-	if !ok {
-		return
-	}
-	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.RenameOrg(r.Context(), m.OrgID, name); err != nil {
-			return err
-		}
-		e := auditEntry(r, &m.OrgID, store.ActionOrgUpdate, "org/"+m.OrgID.String(), store.ResultAllowed)
-		e.Details = map[string]any{"name": name}
-		return tx.Audit(r.Context(), e)
-	}) {
-		return
-	}
-	org, err := h.store.Org(r.Context(), m.OrgID)
-	if err != nil {
-		serverError(w, "org", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toOrgJSON(org, m.Role))
 }

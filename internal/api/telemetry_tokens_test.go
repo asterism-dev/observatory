@@ -178,10 +178,10 @@ func TestTokenDiesWithCreatorAccess(t *testing.T) {
 		}
 	}
 
-	if rec := e.send("PATCH", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), ownerTok, `{"role":"member"}`); rec.Code != 204 {
+	if rec := e.send("PATCH", memberPath(org, bob), ownerTok, `{"role":"member"}`); rec.Code != 200 {
 		t.Fatalf("demote: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+dave.ID.String(), ownerTok); rec.Code != 204 {
+	if rec := e.do("DELETE", memberPath(org, dave), ownerTok); rec.Code != 200 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
 	role := e.createRole(ownerTok, org, `{"name":"no-node","rules":[{"effect":"deny","object":"org/nodes/`+uuid.NewString()+`","action":"compute.nodes.getMetrics"}]}`)
@@ -242,10 +242,10 @@ func TestTokenRevokedWhenCreatorRemoved(t *testing.T) {
 	kept := e.createTelemetryToken(ownerTok, org, "alice")
 
 	// Neither token is used before its creator goes, so only the membership change can revoke it.
-	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), ownerTok); rec.Code != 204 {
+	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 200 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+carol.ID.String(), carolTok); rec.Code != 204 {
+	if rec := e.do("POST", "/api/iam/v1/orgs/"+org.String()+":leave", carolTok); rec.Code != 200 {
 		t.Fatalf("leave: %d %s", rec.Code, rec.Body.String())
 	}
 	var list []telemetryTokenTest

@@ -353,7 +353,7 @@ func TestRegistryCredentialRefusedAtSessionRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do("DELETE", "/api/me/sessions/"+sess.ID.String(), aliceTok); rec.Code != 204 {
+	if rec := e.do("DELETE", "/api/iam/v1/me/sessions/"+sess.ID.String(), aliceTok); rec.Code != 200 {
 		t.Fatalf("revoke: %d", rec.Code)
 	}
 	if code, _ := grant(t, h, "observatory", cred, repoScope(a, "pull")); code != 401 {

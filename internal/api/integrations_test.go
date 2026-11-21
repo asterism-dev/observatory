@@ -263,7 +263,7 @@ func TestIntegrationsPermissions(t *testing.T) {
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, carol, store.RoleMember)
 	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatalf("team member: %d %s", rec.Code, rec.Body.String())
 	}
 

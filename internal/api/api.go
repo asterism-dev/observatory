@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -81,48 +80,13 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, resources
 		logsLimit: newRateLimiter(10, 40), logsQueries: newTokenSlots(3), logsTails: newTokenSlots(5), logsHub: make(chan struct{}, 4), logsRetention: logsRetention}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", h.info)
-	mux.HandleFunc("GET /api/me", h.me)
-	mux.HandleFunc("GET /api/me/sessions", h.sessions)
-	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
-	mux.HandleFunc("GET /api/me/ssh-keys", h.listSSHKeys)
-	mux.HandleFunc("POST /api/me/ssh-keys", h.addSSHKey)
-	mux.HandleFunc("DELETE /api/me/ssh-keys/{id}", h.deleteSSHKey)
 	mux.HandleFunc("POST /api/registry/credentials", h.createRegistryCredential)
-	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
-	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
 	mux.HandleFunc("GET /api/admin/orgs/{org}/limits", h.adminGetOrgLimits)
 	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
-	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
-	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)
 	mux.HandleFunc("GET /api/admin/network", h.adminGetNetwork)
 	mux.HandleFunc("PUT /api/admin/network", h.adminSetNetwork)
 	mux.HandleFunc("GET /api/admin/registry-gc", h.adminRegistryGC)
 	mux.HandleFunc("POST /api/admin/registry-gc", h.adminRunRegistryGC)
-	mux.HandleFunc("POST /api/orgs", h.createOrg)
-	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
-	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
-	mux.HandleFunc("GET /api/orgs/{org}/members", h.listMembers)
-	mux.HandleFunc("PATCH /api/orgs/{org}/members/{user}", h.setMemberRole)
-	mux.HandleFunc("DELETE /api/orgs/{org}/members/{user}", h.removeMember)
-	mux.HandleFunc("GET /api/orgs/{org}/invites", h.listInvites)
-	mux.HandleFunc("POST /api/orgs/{org}/invites", h.createInvite)
-	mux.HandleFunc("DELETE /api/orgs/{org}/invites/{id}", h.revokeInvite)
-	mux.HandleFunc("POST /api/invites/accept", h.acceptInvite)
-	mux.HandleFunc("GET /api/orgs/{org}/teams", h.listTeams)
-	mux.HandleFunc("POST /api/orgs/{org}/teams", h.createTeam)
-	mux.HandleFunc("GET /api/orgs/{org}/teams/{team}", h.getTeam)
-	mux.HandleFunc("PATCH /api/orgs/{org}/teams/{team}", h.renameTeam)
-	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}", h.deleteTeam)
-	mux.HandleFunc("PUT /api/orgs/{org}/teams/{team}/members/{user}", h.setTeamMember)
-	mux.HandleFunc("DELETE /api/orgs/{org}/teams/{team}/members/{user}", h.removeTeamMember)
-	mux.HandleFunc("GET /api/orgs/{org}/catalog", h.catalog)
-	mux.HandleFunc("GET /api/orgs/{org}/roles", h.listRoles)
-	mux.HandleFunc("POST /api/orgs/{org}/roles", h.createRole)
-	mux.HandleFunc("PUT /api/orgs/{org}/roles/{role}", h.updateRole)
-	mux.HandleFunc("DELETE /api/orgs/{org}/roles/{role}", h.deleteRole)
-	mux.HandleFunc("GET /api/orgs/{org}/bindings", h.listBindings)
-	mux.HandleFunc("POST /api/orgs/{org}/bindings", h.bind)
-	mux.HandleFunc("DELETE /api/orgs/{org}/bindings/{id}", h.unbind)
 	mux.HandleFunc("GET /api/orgs/{org}/limits", h.getLimits)
 	mux.HandleFunc("PUT /api/orgs/{org}/limits/{scope}", h.setScopeLimits)
 	mux.HandleFunc("GET /api/orgs/{org}/telemetry-tokens", h.listTelemetryTokens)
@@ -247,94 +211,8 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, resources
 	})
 }
 
-func (h *api) me(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
-	// The JWT carries no e-mail; the hub still owns the users table until iam moves out.
-	u, err := h.store.User(r.Context(), p.User.ID)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	if err != nil {
-		serverError(w, "user", err)
-		return
-	}
-	ms, err := h.store.Memberships(r.Context(), p.User.ID)
-	if err != nil {
-		serverError(w, "memberships", err)
-		return
-	}
-	orgs := make([]orgJSON, 0, len(ms))
-	for _, m := range ms {
-		orgs = append(orgs, toOrgJSON(m.Org, m.Role))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user":          map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "platformAdmin": p.User.PlatformAdmin},
-		"orgs":          orgs,
-		"docsURL":       h.docsURL,
-		"version":       version.Version,
-		"latestVersion": h.newer(),
-	})
-}
-
 func (h *api) info(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"docsURL": h.docsURL, "version": version.Version, "latestVersion": h.newer()})
-}
-
-func (h *api) sessions(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
-	ss, err := h.store.Sessions(r.Context(), p.User.ID)
-	if err != nil {
-		serverError(w, "sessions", err)
-		return
-	}
-	type sessionJSON struct {
-		ID         uuid.UUID         `json:"id"`
-		Kind       store.SessionKind `json:"kind"`
-		UserAgent  string            `json:"userAgent"`
-		IP         string            `json:"ip"`
-		CreatedAt  time.Time         `json:"createdAt"`
-		LastUsedAt time.Time         `json:"lastUsedAt"`
-		ExpiresAt  time.Time         `json:"expiresAt"`
-		Current    bool              `json:"current"`
-	}
-	out := make([]sessionJSON, 0, len(ss))
-	for _, s := range ss {
-		out = append(out, sessionJSON{s.ID, s.Kind, s.UserAgent, s.IP, s.CreatedAt, s.LastUsedAt, s.ExpiresAt, s.ID == p.Session.ID})
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-func (h *api) revokeSession(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
-	id, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	ip, ua := auth.RequestMeta(r)
-	err = h.store.InTx(r.Context(), func(tx *store.Store) error {
-		if err := tx.RevokeSession(r.Context(), p.User.ID, id); err != nil {
-			return err
-		}
-		// ponytail: iam writes a hub table so the registry refuses without the bus; 5b moves this into iam's revoke path.
-		if err := tx.DeleteSessionCredentials(r.Context(), id); err != nil {
-			return err
-		}
-		return tx.Audit(r.Context(), store.AuditEntry{
-			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionSessionRevoke,
-			Resource: "session/" + id.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,
-		})
-	})
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		serverError(w, "revoke session", err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

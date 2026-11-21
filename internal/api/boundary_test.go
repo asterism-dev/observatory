@@ -18,8 +18,8 @@ var iamReads = map[string]bool{"Membership": true, "Members": true, "Memberships
 	"TeamMembers": true, "User": true, "Users": true, "UsersByID": true, "SSHKeysOf": true, "SessionByToken": true,
 	"Sessions": true, "Invites": true, "Org": true, "Orgs": true}
 
-// iamFiles may read IAM tables; for api.go only the listed functions may.
-var iamFiles = map[string][]string{"members.go": nil, "teams.go": nil, "roles.go": nil, "orgs.go": nil, "admin.go": nil, "sshkeys.go": nil, "api.go": {"me", "sessions"}}
+// iamFiles lists per file the functions that may read IAM tables; nil allows the whole file.
+var iamFiles = map[string][]string{"admin.go": {"adminGetOrgLimits", "adminSetOrgLimits"}}
 
 func TestNoIAMReadsOutsideIAMFiles(t *testing.T) {
 	fset := token.NewFileSet()

@@ -140,7 +140,7 @@ func TestVMTeamPermissions(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
 	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	e.makeTeamAdmin(ownerTok, org, team, carol)
@@ -294,14 +294,14 @@ func TestPausePermission(t *testing.T) {
 	e.addMember(org, carol, store.RoleMember)
 	core, other := e.createTeam(ownerTok, org, "core"), e.createTeam(ownerTok, org, "other")
 	e.makeTeamAdmin(ownerTok, org, core, carol)
-	if rec := e.send("PUT", teamMemberPath(org, other, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, other, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(core), e.enrolledNode(ownerTok, org, "n1")))
 	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 403 {
 		t.Fatalf("other team pause: %d", rec.Code)
 	}
-	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 200 {

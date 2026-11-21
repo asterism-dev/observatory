@@ -215,7 +215,7 @@ func TestDiskListFiltered(t *testing.T) {
 	}
 	e.addMember(org, admin, store.RoleAdmin)
 	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 204 {
+	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
 		t.Fatal(rec.Code)
 	}
 	e.makeTeamAdmin(ownerTok, org, team, carol)
