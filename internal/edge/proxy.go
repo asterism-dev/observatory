@@ -16,20 +16,22 @@ func proxy(target *url.URL, token string, withIdentity bool) http.Handler {
 			r.Out.Host = r.In.Host
 			r.Out.Header.Del(HeaderClientIP)
 			r.Out.Header.Del(HeaderEdge)
-			host, _, err := net.SplitHostPort(r.In.RemoteAddr)
-			if err != nil {
-				host = r.In.RemoteAddr
-			}
-			r.Out.Header.Set(HeaderClientIP, host)
-			r.Out.Header.Set(HeaderEdge, token)
 			if withIdentity {
+				// Services learn who the user is from the JWT alone; the edge token and client IP are for the hub only.
 				r.Out.Header.Del("Cookie")
 				r.Out.Header.Del("Authorization")
 				// Set here rather than on the inbound request so a client's Connection header cannot strip it.
 				if jwt, ok := r.In.Context().Value(jwtKey{}).(string); ok {
 					r.Out.Header.Set("Authorization", "Bearer "+jwt)
 				}
+				return
 			}
+			host, _, err := net.SplitHostPort(r.In.RemoteAddr)
+			if err != nil {
+				host = r.In.RemoteAddr
+			}
+			r.Out.Header.Set(HeaderClientIP, host)
+			r.Out.Header.Set(HeaderEdge, token)
 		},
 		FlushInterval: -1,
 	}

@@ -54,7 +54,7 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 		if err != nil {
 			return nil, fmt.Errorf("service %s url: %w", name, err)
 		}
-		services[name] = id.middleware(proxy(u, cfg.Token, true))
+		services[name] = id.middleware(proxy(u, "", true))
 	}
 	app := spa(assets)
 

@@ -238,3 +238,20 @@ func TestJWTCacheEvictsAndExpires(t *testing.T) {
 		t.Fatal("expired entry returned")
 	}
 }
+
+func TestEdgeKeepsTrustedHeadersFromServices(t *testing.T) {
+	hub, _, _ := issuingHub(t, http.StatusOK)
+	svc, ch := recorder(t, "iam")
+	edge := newEdge(t, hub.URL, map[string]string{"iam": svc.URL})
+	req, _ := http.NewRequest("GET", edge.URL+"/api/iam/v1/x", nil)
+	req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+	req.Header.Set(HeaderClientIP, "6.6.6.6")
+	req.Header.Set(HeaderEdge, "spoofed")
+	if code, _ := get(t, req); code != 200 {
+		t.Fatalf("status %d", code)
+	}
+	// Services must never learn the edge token, and a client-sent copy must not pass either.
+	if s := <-ch; len(s.header.Values(HeaderEdge)) != 0 || len(s.header.Values(HeaderClientIP)) != 0 {
+		t.Fatalf("service saw edge %q, client ip %q", s.header.Values(HeaderEdge), s.header.Values(HeaderClientIP))
+	}
+}
