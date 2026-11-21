@@ -977,6 +977,7 @@
       "full": "Full"
     },
     "noData": "No data in this range.",
+    "telemetryOff": "Telemetry is off on this hub, so there is no data to show.",
     "moreSeries": "+{n} more series; sum() gives a total",
     "noPanels": "No panels yet",
     "noPanelsText": "Add a panel with a MetricsQL query. This example works without custom metrics: CPU cores used per VM.",

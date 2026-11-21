@@ -977,6 +977,7 @@
       "full": "Voll"
     },
     "noData": "Keine Daten in diesem Zeitraum.",
+    "telemetryOff": "Telemetrie ist auf diesem Hub aus, daher gibt es keine Daten.",
     "moreSeries": "+{n} weitere Reihen; sum() bildet die Summe",
     "noPanels": "Noch keine Panels",
     "noPanelsText": "Füge ein Panel mit einer MetricsQL-Abfrage hinzu. Dieses Beispiel funktioniert ohne eigene Metriken: genutzte CPU-Kerne pro VM.",

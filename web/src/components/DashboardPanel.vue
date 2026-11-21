@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api } from '@/api'
+import { api, ApiError } from '@/api'
 import TimeSeriesChart from '@/components/TimeSeriesChart.vue'
 import { chartUnits, legendLabels, stepFor, toSeries, type InstantResult, type Panel, type RangeResult } from '@/composables/dashboards'
 import { formatValue, type Series } from '@/composables/telemetry'
@@ -47,7 +47,7 @@ async function load() {
     error.value = ''
   } catch (e) {
     if (n !== seq) return
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof ApiError && e.status === 404 && e.message === 'telemetry is off' ? t('dashboards.telemetryOff') : e instanceof Error ? e.message : String(e)
   }
   loaded.value = true
 }
