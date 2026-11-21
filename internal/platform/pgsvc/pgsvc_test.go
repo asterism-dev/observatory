@@ -2,6 +2,7 @@ package pgsvc_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -80,5 +81,29 @@ func TestReopenIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 		p.Close()
+	}
+}
+
+func TestConcurrentOpensMigrateOnce(t *testing.T) {
+	ctx := context.Background()
+	url := dbtest.Empty(t)
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p, err := pgsvc.Open(ctx, url, "svc_a", migrations("things"))
+			if err == nil {
+				p.Close()
+			}
+			errs[i] = err
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

@@ -3,14 +3,18 @@ package pgsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"regexp"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 var schemaName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,30}$`)
@@ -45,11 +49,21 @@ func migrate(ctx context.Context, cfg *pgx.ConnConfig, schema string, migrations
 	defer func() { _ = conn.Close() }()
 
 	// The schema name is validated above; identifiers cannot be bind parameters.
-	if _, err := conn.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+	_, err := conn.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize())
+	var pgErr *pgconn.PgError
+	// Concurrent IF NOT EXISTS can still lose the catalog race with a unique violation.
+	if err != nil && !(errors.As(err, &pgErr) && pgErr.Code == "23505") {
 		return fmt.Errorf("create schema: %w", err)
 	}
+	// Per-schema advisory lock so several instances of one service migrate one after another.
+	h := fnv.New64a()
+	h.Write([]byte("observatory.pgsvc." + schema))
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockID(int64(h.Sum64())), lock.WithLockTimeout(1, 120))
+	if err != nil {
+		return fmt.Errorf("create migration locker: %w", err)
+	}
 	provider, err := goose.NewProvider(goose.DialectPostgres, conn, migrations,
-		goose.WithTableName(schema+".goose_db_version"))
+		goose.WithTableName(schema+".goose_db_version"), goose.WithSessionLocker(locker))
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}
