@@ -227,6 +227,11 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			// Old nodes still send these; VM usage now comes from the telemetry store.
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
+		case m.Type == "candidates":
+			f.mu.Lock()
+			f.candidates[node.ID] = validCandidates(m.Candidates)
+			f.mu.Unlock()
+			f.NotifyOrg(node.OrgID)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		case m.Type == "image" && m.Image != nil:

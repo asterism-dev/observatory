@@ -35,6 +35,7 @@ const (
 	underlayMTU = 1420
 
 	defaultDiskRefresh = 60 * time.Second
+	candidateCheck     = time.Minute
 )
 
 var (
@@ -230,6 +231,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	slog.Info("connected to hub", "hub", u)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
+	go a.candidatesLoop(connCtx)
 	defer func() {
 		stopRefresh()
 		a.mu.Lock()

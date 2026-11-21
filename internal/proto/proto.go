@@ -271,7 +271,7 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates" (node→hub), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -288,6 +288,7 @@ type Message struct {
 	VM         string             `json:"vm,omitempty"`         // type "processes"
 	Processes  []GuestProcess     `json:"processes,omitempty"`  // type "processes" reply
 	Error      string             `json:"error,omitempty"`      // type "processes" reply
+	Candidates []string           `json:"candidates,omitempty"` // type "candidates": the node's underlay endpoints as ip:port
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

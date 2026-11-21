@@ -2500,3 +2500,25 @@ func TestPingFailureClosesConnection(t *testing.T) {
 		t.Fatal("ping dropped a connection that answers")
 	}
 }
+
+func TestFleetStoresCandidates(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	node := e.connect(cred)
+	node.send(proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822", "10.198.0.20:51822", "100.101.1.2:51822"}})
+	chassis, err := e.s.Chassis(ctx)
+	if err != nil || len(chassis) != 1 {
+		t.Fatalf("chassis = %v %v", chassis, err)
+	}
+	st := proto.GatewayStatus{Endpoints: map[string]string{chassis[0].PublicKey: "203.0.113.5:40001"}}
+	if err := e.h.SetStatus(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.168.1.5:51822", "203.0.113.5:40001", "100.101.1.2:51822"}
+	waitFor(t, func() bool { return slices.Equal(e.f.Candidates(n.ID), want) })
+	e.f.Disconnect(n.ID)
+	if got := e.f.Candidates(n.ID); !slices.Equal(got, []string{"203.0.113.5:40001"}) {
+		t.Fatalf("after disconnect: %v", got)
+	}
+}

@@ -132,3 +132,10 @@ func MAC(ip netip.Addr) string {
 func StorageURL(port int, diskID string) string {
 	return fmt.Sprintf("nbd://%s:%d/%s", GatewayUnderlay, port, diskID)
 }
+
+// DirectEndpointAddr reports whether a is a plausible peer-reachable address: no loopback, link-local, multicast, unspecified, underlay or vmm0 ranges.
+func DirectEndpointAddr(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsValid() && !a.IsLoopback() && !a.IsLinkLocalUnicast() && !a.IsLinkLocalMulticast() && !a.IsMulticast() && !a.IsUnspecified() &&
+		!UnderlayPool.Contains(a) && !NATNet.Contains(a)
+}
