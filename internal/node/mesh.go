@@ -25,6 +25,8 @@ const (
 	directRetry   = 2 * time.Minute
 	directStale   = 3 * time.Minute
 	mtuRetry      = 10 * time.Minute
+	punchWindow   = 10 * time.Second
+	punchSkew     = 30 * time.Second
 	underlayIface = "wg-underlay"
 )
 
@@ -34,6 +36,7 @@ const (
 	pathRelay pathMode = iota
 	pathTrying
 	pathDirect
+	pathPunching
 )
 
 type meshPeer struct {
@@ -43,8 +46,11 @@ type meshPeer struct {
 	since      time.Time // start of the current try
 	retryAt    time.Time
 	handshake  time.Time
-	endpoint   string // what wg reports in use, which roaming may change
-	cleared    bool   // a previous run or an older version of this peer may have left allowed-ips until set
+	endpoint   string    // what wg reports in use, which roaming may change
+	cleared    bool      // a previous run or an older version of this peer may have left allowed-ips until set
+	punchAt    time.Time // start of a scheduled punch; zero when none
+	punchEP    string
+	punchEnd   time.Time // end of the running punch window; keepalive 25 is restored then
 }
 
 // mesh moves each peer node's /32 onto its own wg-underlay entry once a handshake proves the direct path; until then the gateway's /16 relays it.
@@ -152,6 +158,95 @@ func (m *mesh) run(ctx context.Context) {
 		}
 		m.tick()
 	}
+}
+
+// punch schedules a hub-coordinated burst of keepalives towards the peer's observed endpoint; only a fresh handshake makes it direct.
+func (m *mesh) punch(pp proto.Punch, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p := m.peers[pp.NodeID]
+	if p == nil {
+		slog.Warn("ignoring punch for unknown peer", "node", pp.NodeID)
+		return
+	}
+	ap, err := netip.ParseAddrPort(pp.Endpoint)
+	if err != nil || ap.Port() == 0 || !netaddr.DirectEndpointAddr(ap.Addr()) {
+		slog.Warn("ignoring punch with invalid endpoint", "node", pp.NodeID, "endpoint", pp.Endpoint)
+		return
+	}
+	if pp.At.Sub(now) > punchSkew || !now.Before(pp.At.Add(punchWindow)) {
+		slog.Warn("ignoring punch outside its time", "node", pp.NodeID, "at", pp.At)
+		return
+	}
+	if p.mode == pathDirect || !p.punchEnd.IsZero() {
+		return
+	}
+	p.punchAt, p.punchEP = pp.At, ap.String()
+	if !now.Before(pp.At) {
+		m.startPunch(p)
+	}
+}
+
+func (m *mesh) startPunch(p *meshPeer) {
+	at := p.punchAt
+	p.punchAt = time.Time{}
+	if p.mode == pathDirect {
+		return
+	}
+	// Kernel WireGuard sends at once only when the keepalive goes from 0 to non-zero, so 25 → 1 needs a 0 first.
+	args := []string{"set", underlayIface, "peer", p.PublicKey}
+	if !p.cleared {
+		args = append(args, "allowed-ips", "")
+	}
+	if _, err := m.cmd("wg", append(args, "persistent-keepalive", "0")...); err != nil {
+		slog.Warn("starting underlay punch", "node", p.NodeID, "err", err)
+		return
+	}
+	p.cleared = true
+	if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "endpoint", p.punchEP, "persistent-keepalive", "1"); err != nil {
+		slog.Warn("starting underlay punch", "node", p.NodeID, "err", err)
+		return
+	}
+	// The window runs from the hub's start time, so a late start keeps both sides' windows aligned.
+	p.mode, p.punchEnd = pathPunching, at.Add(punchWindow)
+}
+
+// stepPunch reports whether a punch window holds the peer, so the regular step leaves its endpoint and keepalive alone.
+func (m *mesh) stepPunch(p *meshPeer, hs time.Time, present bool, now time.Time) bool {
+	running := !p.punchEnd.IsZero()
+	if !p.punchAt.IsZero() && !now.Before(p.punchAt) {
+		m.startPunch(p)
+	}
+	if p.punchEnd.IsZero() {
+		return false
+	}
+	if !present && running {
+		// A wg-quick restart dropped the peer and its punch; the regular step re-adds it.
+		p.punchEnd = time.Time{}
+		if p.mode == pathPunching {
+			p.mode = pathRelay
+		}
+		return false
+	}
+	if now.Before(p.punchEnd) {
+		if p.mode != pathPunching {
+			return false
+		}
+		p.handshake = hs
+		if !hs.IsZero() && now.Sub(hs) <= directStale {
+			m.direct(p)
+		}
+		return true
+	}
+	if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "persistent-keepalive", "25"); err != nil {
+		slog.Warn("ending underlay punch", "node", p.NodeID, "err", err)
+		return true
+	}
+	p.punchEnd = time.Time{}
+	if p.mode == pathPunching {
+		p.mode, p.retryAt = pathRelay, now.Add(directRetry)
+	}
+	return false
 }
 
 func (m *mesh) tick() {
@@ -286,6 +381,9 @@ func (m *mesh) reconcileLocked() {
 }
 
 func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
+	if m.stepPunch(p, hs, present, now) {
+		return
+	}
 	if len(p.Candidates) == 0 {
 		m.stepUnreachable(p, hs, present, now)
 		return

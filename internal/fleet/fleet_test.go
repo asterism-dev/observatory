@@ -151,6 +151,7 @@ type fakeNode struct {
 	enc   *json.Encoder
 	msgs  chan proto.Message
 	peers chan proto.Peers // peers pushes, kept apart so tests about other messages don't see them
+	punch chan proto.Punch
 }
 
 // underlayHeaders are what the gateway's control proxy sends for a request from peer.
@@ -176,7 +177,7 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 		return nil, resp, err
 	}
 	ctrl := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
-	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16), peers: make(chan proto.Peers, 16)}
+	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16), peers: make(chan proto.Peers, 16), punch: make(chan proto.Punch, 16)}
 	go func() {
 		defer close(n.msgs)
 		dec := json.NewDecoder(ctrl)
@@ -187,6 +188,10 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 			}
 			if m.Type == proto.TypePeers && m.Peers != nil {
 				n.peers <- *m.Peers
+				continue
+			}
+			if m.Type == proto.TypePunch && m.Punch != nil {
+				n.punch <- *m.Punch
 				continue
 			}
 			n.msgs <- m

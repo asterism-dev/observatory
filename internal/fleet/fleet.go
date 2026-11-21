@@ -48,6 +48,7 @@ type Fleet struct {
 	emergency    map[uuid.UUID]emergencySeen      // node → its latest emergency report
 	candidates   map[uuid.UUID][]string           // node → its validated underlay endpoint candidates
 	paths        map[uuid.UUID][]proto.PathStatus // node → its latest validated path report
+	punches      map[punchPair]punchState         // relayed node pairs the hub coordinates hole punching for
 	emergencyUpd map[uuid.UUID]bool               // nodes an update run waits to hand an update to on their next emergency poll
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
@@ -71,7 +72,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 		return nil, err
 	}
 	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
-		emergency: map[uuid.UUID]emergencySeen{}, emergencyUpd: map[uuid.UUID]bool{}, candidates: map[uuid.UUID][]string{}, paths: map[uuid.UUID][]proto.PathStatus{},
+		emergency: map[uuid.UUID]emergencySeen{}, emergencyUpd: map[uuid.UUID]bool{}, candidates: map[uuid.UUID][]string{}, paths: map[uuid.UUID][]proto.PathStatus{}, punches: map[punchPair]punchState{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ping.every, f.ping.timeout = 30*time.Second, 10*time.Second
 	f.ctx, f.stop = context.WithCancel(ctx)
@@ -291,6 +292,7 @@ func (f *Fleet) Disconnect(node uuid.UUID) {
 	delete(f.emergencyUpd, node)
 	delete(f.candidates, node)
 	delete(f.paths, node)
+	f.forgetPunches(node)
 	if c != nil {
 		f.dropDiskErrors(c, nil)
 	}

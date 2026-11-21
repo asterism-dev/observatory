@@ -45,11 +45,20 @@ type conn struct {
 	requests chan proto.Message
 	pending  map[string]chan proto.Message
 	peers    *proto.Peers // last peer set sent; only pushLoop touches it
+	punches  chan proto.Punch
 }
 
 func (c *conn) kick() {
 	select {
 	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// punch never blocks the caller; a dropped punch counts as failed once the pair is next eligible.
+func (c *conn) punch(p proto.Punch) {
+	select {
+	case c.punches <- p:
 	default:
 	}
 }
@@ -174,7 +183,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := &conn{node: node.ID, org: node.OrgID, ws: ws, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
-		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}}
+		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}, punches: make(chan proto.Punch, 8)}
 	for _, st := range m.Register.VMs {
 		c.seen[st.ID] = true
 	}
@@ -339,6 +348,12 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg pr
 			continue
 		case m := <-c.requests:
 			if err := enc.Encode(m); err != nil {
+				c.ws.CloseNow()
+				return
+			}
+			continue
+		case p := <-c.punches:
+			if err := enc.Encode(proto.Message{Type: proto.TypePunch, Punch: &p}); err != nil {
 				c.ws.CloseNow()
 				return
 			}
