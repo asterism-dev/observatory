@@ -26,6 +26,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	iamapi "github.com/asterism-dev/observatory/internal/iam"
 	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
@@ -202,6 +203,11 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	apiHandler := api.New(s, iam, resources, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
+	iamHandler, err := iamapi.Handler(iamapi.Deps{Store: s, Policy: z, Verifier: verifier, Resources: resources, Notify: f.NotifyOrg, Pool: pool, PublicURL: publicURL})
+	if err != nil {
+		return err
+	}
+	mux.Handle(iamapi.Prefix+"/", iamHandler)
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
 	handler := a.TrustEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/grafana/") {

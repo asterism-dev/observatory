@@ -208,6 +208,23 @@ var Catalog = []Permission{
 	{"compute.disks.use", ObjDisks + "/*"},
 }
 
+// Unruled are actions no org rule decides (membership alone, the caller's own user:<id> objects, platform admin), so they stay out of Catalog and the role editor.
+var Unruled = []Permission{
+	{"iam.orgs.get", "org"},
+	{"iam.users.get", "user:*"},
+	{"iam.orgs.create", "user:*"},
+	{"iam.invites.accept", "user:*"},
+	{"iam.members.leave", "user:*"},
+	{"iam.sessions.list", "user:*/sessions"},
+	{"iam.sessions.revoke", "user:*/sessions/*"},
+	{"iam.sshKeys.list", "user:*/ssh-keys"},
+	{"iam.sshKeys.create", "user:*/ssh-keys"},
+	{"iam.sshKeys.delete", "user:*/ssh-keys/*"},
+	{"iam.platform.read", "platform/orgs"},
+	{"iam.platform.read", "platform/users"},
+	{"iam.platformAdmins.update", "platform/users"},
+}
+
 // BuiltinRules returns the allow rules of a built-in role, or nil for an unknown key.
 func BuiltinRules(key string) []Rule {
 	member := []Rule{

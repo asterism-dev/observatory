@@ -291,3 +291,17 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 		t.Fatalf("/api/me unauthenticated: %d", rec.Code)
 	}
 }
+
+func TestInfoEndpoint(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	rec := e.do("GET", "/api/info", tok)
+	var got struct{ DocsURL, Version, LatestVersion string }
+	decode(t, rec, &got)
+	if rec.Code != 200 || got.DocsURL != "https://docs.test/" || got.Version != version.Version || got.LatestVersion != "v9.9.9" {
+		t.Fatalf("info: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("GET", "/api/info", "nope"); rec.Code != 401 {
+		t.Fatalf("bad token: %d", rec.Code)
+	}
+}

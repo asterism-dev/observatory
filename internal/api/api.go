@@ -80,6 +80,7 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, resources
 		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second,
 		logsLimit: newRateLimiter(10, 40), logsQueries: newTokenSlots(3), logsTails: newTokenSlots(5), logsHub: make(chan struct{}, 4), logsRetention: logsRetention}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/info", h.info)
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
 	mux.HandleFunc("DELETE /api/me/sessions/{id}", h.revokeSession)
@@ -273,6 +274,10 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		"version":       version.Version,
 		"latestVersion": h.newer(),
 	})
+}
+
+func (h *api) info(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"docsURL": h.docsURL, "version": version.Version, "latestVersion": h.newer()})
 }
 
 func (h *api) sessions(w http.ResponseWriter, r *http.Request) {

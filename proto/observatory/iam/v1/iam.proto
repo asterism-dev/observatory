@@ -1,0 +1,765 @@
+syntax = "proto3";
+
+package observatory.iam.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "observatory/v1/annotations.proto";
+
+// IAMService is the public iam API: users, sessions, SSH keys, orgs, members, invites, teams, roles and platform admin.
+service IAMService {
+  rpc GetMe(GetMeRequest) returns (GetMeResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.users.get"
+      object: "user:{self}"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/me"};
+  }
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.sessions.list"
+      object: "user:{self}/sessions"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/me/sessions"};
+  }
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.sessions.revoke"
+      object: "user:{self}/sessions/{session}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/me/sessions/{session}"};
+  }
+  rpc ListSSHKeys(IAMServiceListSSHKeysRequest) returns (IAMServiceListSSHKeysResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.sshKeys.list"
+      object: "user:{self}/ssh-keys"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/me/sshKeys"};
+  }
+  rpc CreateSSHKey(CreateSSHKeyRequest) returns (CreateSSHKeyResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.sshKeys.create"
+      object: "user:{self}/ssh-keys"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/me/sshKeys"
+      body: "*"
+    };
+  }
+  rpc DeleteSSHKey(DeleteSSHKeyRequest) returns (DeleteSSHKeyResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.sshKeys.delete"
+      object: "user:{self}/ssh-keys/{key}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/me/sshKeys/{key}"};
+  }
+  rpc CreateOrg(CreateOrgRequest) returns (CreateOrgResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.orgs.create"
+      object: "user:{self}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs"
+      body: "*"
+    };
+  }
+  rpc AcceptInvite(AcceptInviteRequest) returns (AcceptInviteResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.invites.accept"
+      object: "user:{self}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/invites:accept"
+      body: "*"
+    };
+  }
+  // LeaveOrg is platform-scope (org_id, not org): leaving needs membership only, which the handler checks.
+  rpc LeaveOrg(LeaveOrgRequest) returns (LeaveOrgResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.members.leave"
+      object: "user:{self}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org_id}:leave"
+      body: "*"
+    };
+  }
+  rpc GetOrg(GetOrgRequest) returns (GetOrgResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.orgs.get"
+      object: "org"
+      kind: KIND_READ
+      any_member: true
+    };
+    option (google.api.http) = {get: "/orgs/{org}"};
+  }
+  rpc UpdateOrg(UpdateOrgRequest) returns (UpdateOrgResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.orgs.update"
+      object: "org/settings"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      patch: "/orgs/{org}"
+      body: "*"
+    };
+  }
+  rpc ListMembers(ListMembersRequest) returns (ListMembersResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.members.list"
+      object: "org/members"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/members"};
+  }
+  rpc UpdateMember(UpdateMemberRequest) returns (UpdateMemberResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.members.setRole"
+      object: "org/members"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      patch: "/orgs/{org}/members/{user}"
+      body: "*"
+    };
+  }
+  // DeleteMember removes another member; removing yourself is LeaveOrg.
+  rpc DeleteMember(DeleteMemberRequest) returns (DeleteMemberResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.members.delete"
+      object: "org/members"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/members/{user}"};
+  }
+  rpc ListInvites(ListInvitesRequest) returns (ListInvitesResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.invites.create"
+      object: "org/members"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/invites"};
+  }
+  rpc CreateInvite(CreateInviteRequest) returns (CreateInviteResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.invites.create"
+      object: "org/members"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org}/invites"
+      body: "*"
+    };
+  }
+  rpc DeleteInvite(DeleteInviteRequest) returns (DeleteInviteResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.invites.create"
+      object: "org/members"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/invites/{invite}"};
+  }
+  rpc ListTeams(IAMServiceListTeamsRequest) returns (IAMServiceListTeamsResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.list"
+      object: "org/teams"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/teams"};
+  }
+  rpc GetTeam(GetTeamRequest) returns (GetTeamResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.list"
+      object: "org/teams"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/teams/{team}"};
+  }
+  rpc CreateTeam(CreateTeamRequest) returns (CreateTeamResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.create"
+      object: "org/teams"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org}/teams"
+      body: "*"
+    };
+  }
+  rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.update"
+      object: "org/teams/{team}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      patch: "/orgs/{org}/teams/{team}"
+      body: "*"
+    };
+  }
+  rpc DeleteTeam(DeleteTeamRequest) returns (DeleteTeamResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.delete"
+      object: "org/teams/{team}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/teams/{team}"};
+  }
+  rpc SetTeamMember(SetTeamMemberRequest) returns (SetTeamMemberResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.manageMembers"
+      object: "org/teams/{team}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      put: "/orgs/{org}/teams/{team}/members/{user}"
+      body: "*"
+    };
+  }
+  // RemoveTeamMember removes another member; removing yourself is LeaveTeam.
+  rpc RemoveTeamMember(RemoveTeamMemberRequest) returns (RemoveTeamMemberResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.manageMembers"
+      object: "org/teams/{team}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/teams/{team}/members/{user}"};
+  }
+  rpc LeaveTeam(LeaveTeamRequest) returns (LeaveTeamResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.teams.leave"
+      object: "org/teams/{team}"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org}/teams/{team}:leave"
+      body: "*"
+    };
+  }
+  rpc ListCatalog(ListCatalogRequest) returns (ListCatalogResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roles.list"
+      object: "org/roles"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/catalog"};
+  }
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roles.list"
+      object: "org/roles"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/roles"};
+  }
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roles.manage"
+      object: "org/roles"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org}/roles"
+      body: "*"
+    };
+  }
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roles.manage"
+      object: "org/roles"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      patch: "/orgs/{org}/roles/{role}"
+      body: "*"
+    };
+  }
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roles.manage"
+      object: "org/roles"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/roles/{role}"};
+  }
+  rpc ListRoleBindings(ListRoleBindingsRequest) returns (ListRoleBindingsResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roleBindings.manage"
+      object: "org/roles"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/roleBindings"};
+  }
+  rpc CreateRoleBinding(CreateRoleBindingRequest) returns (CreateRoleBindingResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roleBindings.manage"
+      object: "org/roles"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/orgs/{org}/roleBindings"
+      body: "*"
+    };
+  }
+  rpc DeleteRoleBinding(DeleteRoleBindingRequest) returns (DeleteRoleBindingResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.roleBindings.manage"
+      object: "org/roles"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {delete: "/orgs/{org}/roleBindings/{binding}"};
+  }
+  rpc ListAllOrgs(ListAllOrgsRequest) returns (ListAllOrgsResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.platform.read"
+      object: "platform/orgs"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/admin/orgs"};
+  }
+  rpc GetAnyOrg(GetAnyOrgRequest) returns (GetAnyOrgResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.platform.read"
+      object: "platform/orgs"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/admin/orgs/{org_id}"};
+  }
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.platform.read"
+      object: "platform/users"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/admin/users"};
+  }
+  rpc SetPlatformAdmin(SetPlatformAdminRequest) returns (SetPlatformAdminResponse) {
+    option (observatory.v1.permission) = {
+      name: "iam.platformAdmins.update"
+      object: "platform/users"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      post: "/admin/users/{user_id}:setPlatformAdmin"
+      body: "*"
+    };
+  }
+}
+
+// The names below avoid internal.proto's User, SSHKey and Team, which are the service-to-service shapes.
+
+message UserInfo {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  bool platform_admin = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// OrgInfo is an org as the caller sees it, with the caller's role.
+message OrgInfo {
+  string id = 1;
+  string name = 2;
+  bool personal = 3;
+  string role = 4;
+}
+
+message Session {
+  string id = 1;
+  string kind = 2;
+  string user_agent = 3;
+  string ip = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp last_used_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  bool current = 8;
+}
+
+// SSHKeyInfo omits the public key itself; the fingerprint identifies it.
+message SSHKeyInfo {
+  string id = 1;
+  string name = 2;
+  string fingerprint = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message Member {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  string role = 4;
+  google.protobuf.Timestamp joined_at = 5;
+}
+
+message Invite {
+  string id = 1;
+  string role = 2;
+  string created_by = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message TeamInfo {
+  string id = 1;
+  string name = 2;
+  int32 member_count = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message TeamMembership {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  bool admin = 4;
+}
+
+message RoleRule {
+  string effect = 1;
+  string object = 2;
+  string action = 3;
+}
+
+// Role is a built-in role (key set, builtin true) or a custom role (id set).
+message Role {
+  string id = 1;
+  string key = 2;
+  string name = 3;
+  string description = 4;
+  repeated RoleRule rules = 5;
+  repeated string parents = 6;
+  bool builtin = 7;
+}
+
+message RoleBinding {
+  string id = 1;
+  string subject = 2;
+  string role_id = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message CatalogEntry {
+  string action = 1;
+  string object = 2;
+}
+
+message OrgSummary {
+  string id = 1;
+  string name = 2;
+  bool personal = 3;
+  int32 member_count = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  UserInfo user = 1;
+  repeated OrgInfo orgs = 2;
+}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string session = 1;
+}
+
+message RevokeSessionResponse {}
+
+message IAMServiceListSSHKeysRequest {}
+
+message IAMServiceListSSHKeysResponse {
+  repeated SSHKeyInfo keys = 1;
+}
+
+message CreateSSHKeyRequest {
+  string name = 1;
+  string public_key = 2;
+}
+
+message CreateSSHKeyResponse {
+  SSHKeyInfo key = 1;
+}
+
+message DeleteSSHKeyRequest {
+  string key = 1;
+}
+
+message DeleteSSHKeyResponse {}
+
+message CreateOrgRequest {
+  string name = 1;
+}
+
+message CreateOrgResponse {
+  OrgInfo org = 1;
+}
+
+message AcceptInviteRequest {
+  string token = 1;
+}
+
+message AcceptInviteResponse {
+  string org_id = 1;
+  string role = 2;
+}
+
+message LeaveOrgRequest {
+  string org_id = 1;
+}
+
+message LeaveOrgResponse {}
+
+message GetOrgRequest {
+  string org = 1;
+}
+
+message GetOrgResponse {
+  OrgInfo org = 1;
+  // The caller's catalog actions in the org, sorted.
+  repeated string permissions = 2;
+}
+
+message UpdateOrgRequest {
+  string org = 1;
+  string name = 2;
+}
+
+message UpdateOrgResponse {
+  OrgInfo org = 1;
+}
+
+message ListMembersRequest {
+  string org = 1;
+}
+
+message ListMembersResponse {
+  repeated Member members = 1;
+}
+
+message UpdateMemberRequest {
+  string org = 1;
+  string user = 2;
+  string role = 3;
+}
+
+message UpdateMemberResponse {}
+
+message DeleteMemberRequest {
+  string org = 1;
+  string user = 2;
+}
+
+message DeleteMemberResponse {}
+
+message ListInvitesRequest {
+  string org = 1;
+}
+
+message ListInvitesResponse {
+  repeated Invite invites = 1;
+}
+
+message CreateInviteRequest {
+  string org = 1;
+  string role = 2;
+}
+
+message CreateInviteResponse {
+  Invite invite = 1;
+  // The token is shown only here; it is never stored in clear or listed.
+  string token = 2;
+  string url = 3;
+}
+
+message DeleteInviteRequest {
+  string org = 1;
+  string invite = 2;
+}
+
+message DeleteInviteResponse {}
+
+message IAMServiceListTeamsRequest {
+  string org = 1;
+}
+
+message IAMServiceListTeamsResponse {
+  repeated TeamInfo teams = 1;
+}
+
+message GetTeamRequest {
+  string org = 1;
+  string team = 2;
+}
+
+message GetTeamResponse {
+  TeamInfo team = 1;
+  repeated TeamMembership members = 2;
+  bool can_manage_members = 3;
+  bool can_update = 4;
+  bool can_delete = 5;
+  bool can_leave = 6;
+}
+
+message CreateTeamRequest {
+  string org = 1;
+  string name = 2;
+}
+
+message CreateTeamResponse {
+  TeamInfo team = 1;
+}
+
+message UpdateTeamRequest {
+  string org = 1;
+  string team = 2;
+  string name = 3;
+}
+
+message UpdateTeamResponse {
+  TeamInfo team = 1;
+}
+
+message DeleteTeamRequest {
+  string org = 1;
+  string team = 2;
+}
+
+message DeleteTeamResponse {}
+
+message SetTeamMemberRequest {
+  string org = 1;
+  string team = 2;
+  string user = 3;
+  bool admin = 4;
+}
+
+message SetTeamMemberResponse {}
+
+message RemoveTeamMemberRequest {
+  string org = 1;
+  string team = 2;
+  string user = 3;
+}
+
+message RemoveTeamMemberResponse {}
+
+message LeaveTeamRequest {
+  string org = 1;
+  string team = 2;
+}
+
+message LeaveTeamResponse {}
+
+message ListCatalogRequest {
+  string org = 1;
+}
+
+message ListCatalogResponse {
+  repeated CatalogEntry entries = 1;
+}
+
+message ListRolesRequest {
+  string org = 1;
+}
+
+message ListRolesResponse {
+  repeated Role roles = 1;
+}
+
+message CreateRoleRequest {
+  string org = 1;
+  string name = 2;
+  string description = 3;
+  repeated RoleRule rules = 4;
+  repeated string parents = 5;
+}
+
+message CreateRoleResponse {
+  Role role = 1;
+}
+
+message UpdateRoleRequest {
+  string org = 1;
+  string role = 2;
+  string name = 3;
+  string description = 4;
+  repeated RoleRule rules = 5;
+  repeated string parents = 6;
+}
+
+message UpdateRoleResponse {
+  Role role = 1;
+}
+
+message DeleteRoleRequest {
+  string org = 1;
+  string role = 2;
+}
+
+message DeleteRoleResponse {}
+
+message ListRoleBindingsRequest {
+  string org = 1;
+}
+
+message ListRoleBindingsResponse {
+  repeated RoleBinding bindings = 1;
+}
+
+message CreateRoleBindingRequest {
+  string org = 1;
+  string subject = 2;
+  string role_id = 3;
+}
+
+message CreateRoleBindingResponse {
+  RoleBinding binding = 1;
+}
+
+message DeleteRoleBindingRequest {
+  string org = 1;
+  string binding = 2;
+}
+
+message DeleteRoleBindingResponse {}
+
+message ListAllOrgsRequest {}
+
+message ListAllOrgsResponse {
+  repeated OrgSummary orgs = 1;
+}
+
+message GetAnyOrgRequest {
+  string org_id = 1;
+}
+
+message GetAnyOrgResponse {
+  OrgInfo org = 1;
+  repeated Member members = 2;
+}
+
+message ListUsersRequest {}
+
+message ListUsersResponse {
+  repeated UserInfo users = 1;
+}
+
+message SetPlatformAdminRequest {
+  string user_id = 1;
+  bool admin = 2;
+}
+
+message SetPlatformAdminResponse {}
