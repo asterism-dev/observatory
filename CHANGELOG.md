@@ -1,3 +1,9 @@
+## v0.18.0 (2026-11-21)
+
+### Feat
+
+- **telemetry**: VM metrics, logs and processes (#39)
+
 ## v0.17.0 (2026-11-20)
 
 ### Feat
