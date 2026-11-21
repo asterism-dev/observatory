@@ -46,7 +46,8 @@
     "images": "Images",
     "builders": "Builder-VMs",
     "adminRegistry": "Registry",
-    "telemetry": "Telemetrie"
+    "telemetry": "Telemetrie",
+    "dashboards": "Dashboards"
   },
   "theme": {
     "system": "System",
@@ -927,5 +928,61 @@
     "done": "Fertig",
     "revokeTitle": "Token widerrufen?",
     "revokeBody": "Grafana-Datenquellen mit {name} funktionieren sofort nicht mehr."
+  },
+  "dashboards": {
+    "subtitle": "Diagramme deiner eigenen Metriken und der eingebauten VM- und Node-Auslastung, privat, mit einem Team oder der Organisation geteilt.",
+    "create": "Neues Dashboard",
+    "createTitle": "Neues Dashboard",
+    "name": "Name",
+    "visibility": "Sichtbarkeit",
+    "empty": "Noch keine Dashboards",
+    "emptyText": "Ein Dashboard zeigt Diagramme der Metriken, die deine VMs und Apps senden. Jeder sieht nur Daten der VMs, die er lesen darf.",
+    "search": "Dashboards suchen …",
+    "noMatch": "Keine passenden Dashboards.",
+    "panelCount": "keine Panels | 1 Panel | {n} Panels",
+    "edit": "Bearbeiten",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "deleteTitle": "Dashboard löschen",
+    "deleteText": "Das Dashboard „{name}“ für alle löschen, die es sehen? Das lässt sich nicht rückgängig machen.",
+    "addPanel": "Panel hinzufügen",
+    "editPanel": "Panel bearbeiten",
+    "removePanel": "Panel entfernen",
+    "moveUp": "Nach oben",
+    "moveDown": "Nach unten",
+    "panelTitle": "Titel",
+    "type": "Typ",
+    "unit": "Einheit",
+    "width": "Breite",
+    "query": "Abfrage (MetricsQL)",
+    "queryPlaceholder": "sum by (status) (rate(orders_total[5m]))",
+    "queryHint": "Tippe einen Teil eines Metriknamens für Vorschläge. Strg+Enter führt die Abfrage aus.",
+    "metricNames": "Metriknamen",
+    "run": "Ausführen",
+    "apply": "Übernehmen",
+    "types": {
+      "timeseries": "Zeitreihe",
+      "stat": "Einzelwert"
+    },
+    "units": {
+      "none": "Keine",
+      "percent": "Prozent (0–100)",
+      "bytes": "Bytes",
+      "bytes_per_second": "Bytes/s",
+      "seconds": "Sekunden",
+      "requests_per_second": "Anfragen/s"
+    },
+    "widths": {
+      "half": "Halb",
+      "full": "Voll"
+    },
+    "noData": "Keine Daten in diesem Zeitraum.",
+    "moreSeries": "+{n} weitere Reihen; sum() bildet die Summe",
+    "noPanels": "Noch keine Panels",
+    "noPanelsText": "Füge ein Panel mit einer MetricsQL-Abfrage hinzu. Dieses Beispiel funktioniert ohne eigene Metriken: genutzte CPU-Kerne pro VM.",
+    "addExample": "Beispiel-Panel hinzufügen",
+    "exampleTitle": "CPU-Kerne pro VM",
+    "conflict": "Dieses Dashboard wurde anderswo geändert. Lade neu, um die aktuelle Fassung zu sehen; deine ungespeicherten Änderungen gehen verloren.",
+    "reload": "Neu laden"
   }
 }

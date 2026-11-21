@@ -3,6 +3,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ApiError } from '@/api'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
+import DashboardDetailView from '@/views/DashboardDetailView.vue'
+import DashboardsView from '@/views/DashboardsView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import DisksView from '@/views/DisksView.vue'
 import DevicesView from '@/views/DevicesView.vue'
@@ -61,6 +63,8 @@ export const router = createRouter({
     { path: '/orgs/:orgId/images/:imageId', component: ImageDetailView },
     { path: '/orgs/:orgId/integrations', component: IntegrationsView, meta: { title: 'nav.integrations' } },
     { path: '/orgs/:orgId/integrations/:id', component: IntegrationDetailView },
+    { path: '/orgs/:orgId/dashboards', component: DashboardsView, meta: { title: 'nav.dashboards' } },
+    { path: '/orgs/:orgId/dashboards/:dashboardId', component: DashboardDetailView },
     {
       path: '/orgs/:orgId',
       component: OrgSettingsLayout,

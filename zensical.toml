@@ -29,6 +29,7 @@ nav = [
     { "Integrations" = "integrations.md" },
     { "Egress proxy" = "egress.md" },
     { "Telemetry" = "telemetry.md" },
+    { "Dashboards" = "dashboards.md" },
     { "Grafana" = "grafana.md" },
   ] },
   { "Operating" = [
