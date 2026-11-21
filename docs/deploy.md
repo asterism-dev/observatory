@@ -219,7 +219,7 @@ this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); 
 Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKEN` in `deploy/.env` is required
 (`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
-Upgrading to the release with the hub as iam client: run edge and hub of the same release; the hub accepts only the
+Always run edge and hub of the same release; the hub accepts only the
 edge's identity tokens, so behind an older edge it answers 401 to every session request. Its migration that drops the
 foreign keys from hub tables into iam tables has no full rollback.
 
