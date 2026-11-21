@@ -57,30 +57,37 @@ if [ -z "$chassis" ]; then
     external_ids:ovn-bridge-datapath-type=system
   ovn-controller --pidfile --detach --log-file unix:/var/run/openvswitch/db.sock
   db=/var/run/openvswitch/db.sock
+  nobr="ovn-controller did not create br-int"
 else
   db=/host-ovs/db.sock
+  nobr="the node's OVS at /host-ovs has no br-int; is the node installed and running?"
 fi
 vsctl() { ovs-vsctl --db="unix:$db" "$@"; }
 
 i=0
 until [ -S "$db" ] && vsctl --timeout=5 br-exists br-int; do
   i=$((i + 1))
-  [ $i -le 30 ] || { echo "ovn-controller did not create br-int" >&2; exit 1; }
+  [ $i -le 30 ] || { echo "$nobr" >&2; exit 1; }
   sleep 1
 done
 if [ -z "$chassis" ]; then
   vsctl --may-exist add-port br-int gw0 -- set interface gw0 type=internal \
     mac='"02:00:00:c7:00:02"' external_ids:iface-id=gw0
 else
-  # a veth, not an internal port: vswitchd loses internal ports moved into another netns
+  id=$(vsctl --timeout=5 get open . external_ids:system-id 2>/dev/null | tr -d '"')
+  [ "$id" = "$chassis" ] || { echo "the host OVS is chassis '$id', not OBSERVATORY_GATEWAY_CHASSIS $chassis" >&2; exit 1; }
+  # ports of earlier containers; their links may outlive them in a netns that storage still holds
+  for old in $(vsctl --timeout=5 --bare --columns=name find interface external_ids:iface-id=gw0); do
+    vsctl --timeout=5 --if-exists del-port "$old"
+  done
   ip link del gw0 2>/dev/null || true
-  ip link add gw0 address 02:00:00:c7:00:02 type veth peer name gw0-br
+  # a unique host end, so a surviving earlier one cannot block the move; a veth, as vswitchd loses moved internal ports
+  br=gw0b$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+  ip link add gw0 address 02:00:00:c7:00:02 type veth peer name "$br"
   # moving and raising in one request needs no setns, so NET_ADMIN is enough
-  ip link set gw0-br netns /hostns/net up
-  # separate transactions: in one, vswitchd keeps the port of a crashed container, bound to the dead veth
-  vsctl --if-exists del-port br-int gw0-br
-  vsctl add-port br-int gw0-br -- set interface gw0-br external_ids:iface-id=gw0
-  trap 'vsctl --if-exists del-port br-int gw0-br' EXIT
+  ip link set "$br" netns /hostns/net up
+  vsctl --timeout=5 add-port br-int "$br" -- set interface "$br" external_ids:iface-id=gw0
+  trap 'vsctl --timeout=5 --if-exists del-port "$br"; ip link del gw0 2>/dev/null || true' EXIT
 fi
 ip addr replace 10.199.0.2/30 dev gw0
 ip link set gw0 up
@@ -116,7 +123,7 @@ rule FORWARD -i wg-underlay -o wg-underlay -j ACCEPT
 
 hub=${HUB_URL:-http://host.docker.internal:8090}
 [ -n "$chassis" ] || exec gateway -hub "$hub"
-# not exec: the EXIT trap must remove gw0-br from the host's br-int when the gateway stops
+# not exec: the EXIT trap must remove the veth from the host's br-int when the gateway stops
 gateway -hub "$hub" &
 pid=$!
 trap 'kill -TERM "$pid" 2>/dev/null || true' TERM INT
