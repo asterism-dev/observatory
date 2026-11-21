@@ -182,6 +182,166 @@ func (*PeekResponse) Descriptor() ([]byte, []int) {
 	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{3}
 }
 
+type GetEchoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Org           string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
+	Echo          string                 `protobuf:"bytes,2,opt,name=echo,proto3" json:"echo,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEchoRequest) Reset() {
+	*x = GetEchoRequest{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEchoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEchoRequest) ProtoMessage() {}
+
+func (x *GetEchoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEchoRequest.ProtoReflect.Descriptor instead.
+func (*GetEchoRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetEchoRequest) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+func (x *GetEchoRequest) GetEcho() string {
+	if x != nil {
+		return x.Echo
+	}
+	return ""
+}
+
+type GetEchoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEchoResponse) Reset() {
+	*x = GetEchoResponse{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEchoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEchoResponse) ProtoMessage() {}
+
+func (x *GetEchoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEchoResponse.ProtoReflect.Descriptor instead.
+func (*GetEchoResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{5}
+}
+
+type PingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingRequest) Reset() {
+	*x = PingRequest{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingRequest) ProtoMessage() {}
+
+func (x *PingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
+func (*PingRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{6}
+}
+
+type PingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingResponse) Reset() {
+	*x = PingResponse{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingResponse) ProtoMessage() {}
+
+func (x *PingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
+func (*PingResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{7}
+}
+
 var File_observatory_test_v1_echo_proto protoreflect.FileDescriptor
 
 const file_observatory_test_v1_echo_proto_rawDesc = "" +
@@ -192,14 +352,23 @@ const file_observatory_test_v1_echo_proto_rawDesc = "" +
 	"\fEchoResponse\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\"\r\n" +
 	"\vPeekRequest\"\x0e\n" +
-	"\fPeekResponse2\xf2\x01\n" +
+	"\fPeekResponse\"6\n" +
+	"\x0eGetEchoRequest\x12\x10\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\x12\x12\n" +
+	"\x04echo\x18\x02 \x01(\tR\x04echo\"\x11\n" +
+	"\x0fGetEchoResponse\"\r\n" +
+	"\vPingRequest\"\x0e\n" +
+	"\fPingResponse2\xc2\x03\n" +
 	"\vEchoService\x12s\n" +
 	"\x04Echo\x12 .observatory.test.v1.EchoRequest\x1a!.observatory.test.v1.EchoResponse\"&\x8a\xb5\x18\"\n" +
 	"\x12test.echoes.create\x12\n" +
 	"org/echoes\x18\x01\x12n\n" +
 	"\x04Peek\x12 .observatory.test.v1.PeekRequest\x1a!.observatory.test.v1.PeekResponse\"!\x8a\xb5\x18\x1d\n" +
 	"\x0ftest.echoes.get\x12\n" +
-	"org/echoesB\xd9\x01\n" +
+	"org/echoes\x12\x80\x01\n" +
+	"\aGetEcho\x12#.observatory.test.v1.GetEchoRequest\x1a$.observatory.test.v1.GetEchoResponse\"*\x8a\xb5\x18&\n" +
+	"\x0ftest.echoes.get\x12\x11org/echoes/{echo}\x18\x02\x12K\n" +
+	"\x04Ping\x12 .observatory.test.v1.PingRequest\x1a!.observatory.test.v1.PingResponseB\xd9\x01\n" +
 	"\x17com.observatory.test.v1B\tEchoProtoP\x01ZEgithub.com/asterism-dev/observatory/gen/go/observatory/test/v1;testv1\xa2\x02\x03OTX\xaa\x02\x13Observatory.Test.V1\xca\x02\x13Observatory\\Test\\V1\xe2\x02\x1fObservatory\\Test\\V1\\GPBMetadata\xea\x02\x15Observatory::Test::V1b\x06proto3"
 
 var (
@@ -214,20 +383,28 @@ func file_observatory_test_v1_echo_proto_rawDescGZIP() []byte {
 	return file_observatory_test_v1_echo_proto_rawDescData
 }
 
-var file_observatory_test_v1_echo_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_observatory_test_v1_echo_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_observatory_test_v1_echo_proto_goTypes = []any{
-	(*EchoRequest)(nil),  // 0: observatory.test.v1.EchoRequest
-	(*EchoResponse)(nil), // 1: observatory.test.v1.EchoResponse
-	(*PeekRequest)(nil),  // 2: observatory.test.v1.PeekRequest
-	(*PeekResponse)(nil), // 3: observatory.test.v1.PeekResponse
+	(*EchoRequest)(nil),     // 0: observatory.test.v1.EchoRequest
+	(*EchoResponse)(nil),    // 1: observatory.test.v1.EchoResponse
+	(*PeekRequest)(nil),     // 2: observatory.test.v1.PeekRequest
+	(*PeekResponse)(nil),    // 3: observatory.test.v1.PeekResponse
+	(*GetEchoRequest)(nil),  // 4: observatory.test.v1.GetEchoRequest
+	(*GetEchoResponse)(nil), // 5: observatory.test.v1.GetEchoResponse
+	(*PingRequest)(nil),     // 6: observatory.test.v1.PingRequest
+	(*PingResponse)(nil),    // 7: observatory.test.v1.PingResponse
 }
 var file_observatory_test_v1_echo_proto_depIdxs = []int32{
 	0, // 0: observatory.test.v1.EchoService.Echo:input_type -> observatory.test.v1.EchoRequest
 	2, // 1: observatory.test.v1.EchoService.Peek:input_type -> observatory.test.v1.PeekRequest
-	1, // 2: observatory.test.v1.EchoService.Echo:output_type -> observatory.test.v1.EchoResponse
-	3, // 3: observatory.test.v1.EchoService.Peek:output_type -> observatory.test.v1.PeekResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	4, // 2: observatory.test.v1.EchoService.GetEcho:input_type -> observatory.test.v1.GetEchoRequest
+	6, // 3: observatory.test.v1.EchoService.Ping:input_type -> observatory.test.v1.PingRequest
+	1, // 4: observatory.test.v1.EchoService.Echo:output_type -> observatory.test.v1.EchoResponse
+	3, // 5: observatory.test.v1.EchoService.Peek:output_type -> observatory.test.v1.PeekResponse
+	5, // 6: observatory.test.v1.EchoService.GetEcho:output_type -> observatory.test.v1.GetEchoResponse
+	7, // 7: observatory.test.v1.EchoService.Ping:output_type -> observatory.test.v1.PingResponse
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -244,7 +421,7 @@ func file_observatory_test_v1_echo_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_test_v1_echo_proto_rawDesc), len(file_observatory_test_v1_echo_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

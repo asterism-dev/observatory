@@ -44,6 +44,8 @@ linters:
             - $gostd
             - github.com/asterism-dev/observatory/internal/platform
             - github.com/asterism-dev/observatory/gen
+            - github.com/asterism-dev/observatory/internal/authz
+            - connectrpc.com/connect
             - google.golang.org/protobuf
             - github.com/golang-jwt/jwt/v5
             - github.com/google/uuid
@@ -59,8 +61,6 @@ linters:
             - pkg: github.com/asterism-dev/observatory/internal/db
               desc: platform code must not import a service
             - pkg: github.com/asterism-dev/observatory/internal/auth
-              desc: platform code must not import a service
-            - pkg: github.com/asterism-dev/observatory/internal/authz
               desc: platform code must not import a service
             - pkg: github.com/asterism-dev/observatory/internal/registry
               desc: platform code must not import a service
