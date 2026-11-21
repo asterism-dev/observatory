@@ -56,7 +56,8 @@ make gateway-up      # builds the gateway and storage images and starts them wit
 make gateway-down
 ```
 
-The storage server runs as compose service `storage` in the gateway's network namespace, so its NBD exports
+The storage server runs as compose service `storage` in the gateway's network namespace, which the service `netns`
+owns so that both keep it across restarts and crashes of either. Its NBD exports
 (TCP 10810–11809) listen on `10.198.0.1` and are reachable from the underlay only; nothing is published on the host.
 Disk files live in the `disks` volume. Put it on XFS (`mkfs.xfs -m reflink=1`) or btrfs for instant copies; other
 filesystems fall back to a sparse copy. Operation and security of disks: [disks.md](disks.md).
