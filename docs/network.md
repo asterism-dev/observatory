@@ -20,8 +20,9 @@ not overlap any range above or any other network of any org.
 
 ## Gateway
 
-The gateway runs OVN northd, the northbound and southbound databases, its own ovn-controller (chassis `hub-gw`), two
-WireGuard interfaces and a DNS server. It polls `GET /api/gateway/state` every 2 s and applies the state when it changes,
+The gateway runs OVN northd, the northbound and southbound databases, its own ovn-controller (chassis `hub-gw`; on a
+hub host that is also a node, the node's, see [Hub and node on one host](#hub-and-node-on-one-host)), two WireGuard
+interfaces and a DNS server. It polls `GET /api/gateway/state` every 2 s and applies the state when it changes,
 and at least every 60 s. Every 10 s it reports device handshakes, chassis and cleared bindings to
 `POST /api/gateway/status`.
 
@@ -65,7 +66,35 @@ The container reads `OBSERVATORY_GATEWAY_TOKEN` and `HUB_URL` (default `http://h
 hub on another port, set `HUB_URL` in the shell or in `hub.env`. The gateway needs the `openvswitch` and `wireguard`
 kernel modules on the Docker host; the compose `modules` service loads them.
 
-Do not run the gateway on a host that is also a node: both would share the kernel's OVS datapath.
+### Hub and node on one host
+
+The gateway runs in one of two modes:
+
+- **Self-contained** (default): the gateway container runs its own OVS and ovn-controller as chassis `hub-gw`.
+- **Shared**: the hub host is also a node. The gateway runs no OVS of its own: its port `gw0` is a veth whose other
+  end, `gw0-br`, sits on the node's `br-int`, and the node's chassis holds the gateway ports (`gw0`,
+  `cr-lrp-transit`). Northd, the databases, WireGuard, DNS, the control proxy and storage stay in the gateway container.
+
+To switch to shared mode, install a node on the hub host as usual ([nodes.md](nodes.md#install)), then set
+`OBSERVATORY_GATEWAY_NODE` in `deploy/.env` to its id (`ovs-vsctl get open . external_ids:system-id` on the host) and
+restart hub and gateway with `docker compose -f deploy/compose.yaml up -d` (`restart` keeps the old environment). Do
+this before the node runs VMs. The hub then sends the node `127.0.0.1:51820` as its gateway endpoint, and the gateway
+removes the old `hub-gw` chassis once. The hub host has two underlay addresses: `10.198.0.1` for the gateway and the
+node's own. In shared mode the gateway mounts the host's `/var/run/openvswitch` and network namespace
+(`/proc/1/ns/net`), waits up to 30 s for the node's `br-int` at start and removes `gw0-br` from it when it stops.
+
+What shared mode changes:
+
+- This host's chassis carries every org's device traffic. A VM that escapes on the hub-host node reaches the Geneve
+  traffic between all devices and their VMs.
+- A node update (it restarts `ovn-controller`) or an OVS upgrade on the host briefly interrupts all devices, not only
+  this node's VMs.
+- Quarantining the hub-host node cuts off only its VMs: their ports get drop ACLs, and it leaves its org's peer sets
+  like any quarantined node, but its chassis and the gateway ports keep working. Traffic into its VMs is blocked on the
+  other nodes. Traffic out of its VMs is blocked only best-effort, on its own chassis: a compromised node can forge
+  Geneve through the gateway's exemption (below). Device traffic to its VMs passes its own chassis.
+- The gateway forwards Geneve (UDP 6081) to and from this node's underlay address across orgs. Geneve between the
+  gateway port and VMs on other nodes takes one extra local WireGuard hop (node to gateway container and back).
 
 ## Devices
 
@@ -196,13 +225,14 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
   port is a gateway port), is quarantined. Ports missing from NB (VM just deleted or created, network detached) are only
   cleared. Quarantine means the gateway drops all its `wg-underlay` traffic (in, out and forwarded, including Geneve
   and the southbound session from the gateway) except TCP to `10.198.0.1:8091`, so the hub can still stop and delete its
-  VMs. The hub logs `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub
+  VMs. The hub-host node in shared mode loses only its VMs ([Hub and node on one host](#hub-and-node-on-one-host)).
+  The hub logs `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub
   and lifted only when
   the node is re-enrolled (regenerate its credential, then re-install).
 - The gateway deletes southbound chassis rows of unknown and quarantined nodes, so a re-enrolled node registers afresh.
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
-- The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway. Direct
-  paths are only configured between nodes of one org.
+- The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway, plus
+  Geneve to and from the hub-host node in shared mode. Direct paths are only configured between nodes of one org.
 
 ## Known limits
 
