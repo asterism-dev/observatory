@@ -356,6 +356,50 @@ func TestMeshCandidateChangeKeepsDirect(t *testing.T) {
 	}
 }
 
+func TestMeshKeepsListedPeerWithoutCandidates(t *testing.T) {
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.handshake(peerA.PublicKey)
+	e.advance(5 * time.Second)
+	e.wg.calls = nil
+	unknown := peerA
+	unknown.Candidates = nil
+	e.m.update(proto.Peers{Peers: []proto.Peer{unknown}})
+	for range 24 {
+		e.handshake(peerA.PublicKey)
+		e.advance(5 * time.Second)
+	}
+	if s := e.path(t, "a"); s.Mode != "direct" || e.wg.peers[peerA.PublicKey] == nil || e.wg.peers[peerA.PublicKey].ips != "10.198.0.5/32" {
+		t.Fatalf("path = %+v, peer = %+v, want direct with its /32 while the handshake is fresh", s, e.wg.peers[peerA.PublicKey])
+	}
+	e.advance(3*time.Minute + 5*time.Second)
+	if s := e.path(t, "a"); s.Mode != "relay" {
+		t.Fatalf("mode = %q with a stale handshake, want relay", s.Mode)
+	}
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" {
+		t.Fatalf("peer = %+v, want kept without allowed-ips", p)
+	}
+	e.advance(5 * time.Minute)
+	if e.wg.took(removeCall(peerA.PublicKey)) || slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.Contains(c, " endpoint ") }) {
+		t.Fatalf("listed peer without candidates removed or tried: %v", e.wg.calls)
+	}
+	e.m.update(proto.Peers{})
+	if !e.wg.took(removeCall(peerA.PublicKey)) {
+		t.Fatalf("dropped peer not removed: %v", e.wg.calls)
+	}
+}
+
+func TestMeshClearsLeftoverRouteWithoutCandidates(t *testing.T) {
+	e := newMeshEnv(t)
+	e.wg.peers[peerA.PublicKey] = &wgPeer{hs: e.now.Add(-4 * time.Minute).Unix(), ips: "10.198.0.5/32", endpoint: "192.168.1.5:51822"}
+	unknown := peerA
+	unknown.Candidates = nil
+	e.m.update(proto.Peers{Peers: []proto.Peer{unknown}})
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" {
+		t.Fatalf("peer = %+v, want kept without its stale /32", p)
+	}
+}
+
 func TestMeshSweepSparesGatewayRoute(t *testing.T) {
 	e := newMeshEnv(t)
 	e.m.gateway = testKey(8) // the hub's key as the agent last saw it, not yet what wg-quick loaded

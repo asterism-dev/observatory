@@ -272,9 +272,7 @@ func (m *mesh) reconcileLocked() {
 			p.endpoint = ap.String()
 		}
 		m.step(p, hs, present, now)
-		if len(p.Candidates) > 0 {
-			want[p.PublicKey] = true
-		}
+		want[p.PublicKey] = true
 	}
 	for key := range handshakes {
 		// The gateway is also recognised by its route, should its key ever change before wg-quick reloads it.
@@ -289,8 +287,7 @@ func (m *mesh) reconcileLocked() {
 
 func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
 	if len(p.Candidates) == 0 {
-		// The sweep removes the peer, which hands its /32 back to the gateway.
-		p.mode, p.handshake = pathRelay, time.Time{}
+		m.stepUnreachable(p, hs, present, now)
 		return
 	}
 	// A wg-quick restart (chassis cert renewal) drops runtime peers; a relay peer is re-added at its retry.
@@ -325,6 +322,33 @@ func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
 		if now.Sub(hs) > directStale {
 			m.relay(p, now)
 		}
+	}
+}
+
+// stepUnreachable keeps a candidate-less peer's proven path until stale, since dropping it on one side black-holes both.
+func (m *mesh) stepUnreachable(p *meshPeer, hs time.Time, present bool, now time.Time) {
+	if !present {
+		// The kernel peer is gone; whatever re-adds it later starts without allowed-ips.
+		p.mode, p.handshake, p.cleared = pathRelay, time.Time{}, false
+		return
+	}
+	p.handshake = hs
+	proven := !hs.IsZero() && now.Sub(hs) <= directStale
+	switch {
+	case proven && p.mode != pathDirect:
+		m.direct(p)
+	case proven:
+	case p.mode == pathDirect:
+		m.relay(p, now)
+	case !p.cleared:
+		// No try will clear a previous run's leftover /32.
+		if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "allowed-ips", ""); err != nil {
+			slog.Warn("returning underlay path to relay", "node", p.NodeID, "err", err)
+			return
+		}
+		p.mode, p.cleared = pathRelay, true
+	default:
+		p.mode = pathRelay
 	}
 }
 
