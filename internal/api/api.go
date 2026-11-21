@@ -260,7 +260,7 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 	}
 	orgs := make([]orgJSON, 0, len(ms))
 	for _, m := range ms {
-		orgs = append(orgs, toOrgJSON(m))
+		orgs = append(orgs, toOrgJSON(m.Org, m.Role))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":          map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "platformAdmin": p.User.PlatformAdmin},

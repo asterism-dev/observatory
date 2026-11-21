@@ -49,17 +49,17 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	vars, err := h.store.EnvVars(ctx, m.Org.ID)
+	vars, err := h.store.EnvVars(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "env vars", err)
 		return
 	}
-	teams, err := h.store.Teams(ctx, m.Org.ID)
+	teams, err := h.store.Teams(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
 	}
-	members, err := h.store.Members(ctx, m.Org.ID)
+	members, err := h.store.Members(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
@@ -104,13 +104,13 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		obj := envObject(v.Scope, v.OwnerID)
-		if !e.Allowed(sub, m.Org.ID, obj, "secrets.variables.list") {
+		if !e.Allowed(sub, m.OrgID, obj, "secrets.variables.list") {
 			continue
 		}
 		j := varJSON{ID: v.ID, Name: v.Name, Kind: v.Kind, Scope: v.Scope, Hosts: append([]string{}, v.Hosts...), UpdatedAt: v.UpdatedAt,
 			UpdatedBy: userRef{v.UpdatedBy, userNames[v.UpdatedBy]},
-			CanEdit:   e.Allowed(sub, m.Org.ID, obj, "secrets.variables.set"),
-			CanDelete: e.Allowed(sub, m.Org.ID, obj, "secrets.variables.delete")}
+			CanEdit:   e.Allowed(sub, m.OrgID, obj, "secrets.variables.set"),
+			CanDelete: e.Allowed(sub, m.OrgID, obj, "secrets.variables.delete")}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
 		}
@@ -126,15 +126,15 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		out = append(out, j)
 	}
 	scopes := []scopeJSON{}
-	if e.Allowed(sub, m.Org.ID, authz.ObjEnv, "secrets.variables.set") {
+	if e.Allowed(sub, m.OrgID, authz.ObjEnv, "secrets.variables.set") {
 		scopes = append(scopes, scopeJSON{Scope: store.EnvScopeOrg})
 	}
 	for _, t := range teams {
-		if e.Allowed(sub, m.Org.ID, authz.TeamEnvObject(t.ID), "secrets.variables.set") {
+		if e.Allowed(sub, m.OrgID, authz.TeamEnvObject(t.ID), "secrets.variables.set") {
 			scopes = append(scopes, scopeJSON{store.EnvScopeTeam, &t.ID, t.Name})
 		}
 	}
-	if e.Allowed(sub, m.Org.ID, authz.UserEnvObject(p.User.ID), "secrets.variables.set") {
+	if e.Allowed(sub, m.OrgID, authz.UserEnvObject(p.User.ID), "secrets.variables.set") {
 		scopes = append(scopes, scopeJSON{Scope: store.EnvScopeUser})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"vars": out, "writableScopes": scopes})
@@ -176,7 +176,7 @@ func (h *api) envFromPath(w http.ResponseWriter, r *http.Request) (store.EnvVar,
 	if !ok {
 		return store.EnvVar{}, false
 	}
-	v, err := h.store.EnvVar(r.Context(), m.Org.ID, id)
+	v, err := h.store.EnvVar(r.Context(), m.OrgID, id)
 	p, _ := auth.PrincipalFrom(r.Context())
 	if errors.Is(err, store.ErrNotFound) || (err == nil && v.Scope == store.EnvScopeUser && *v.OwnerID != p.User.ID) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -219,12 +219,12 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
-	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, envObject(body.Scope, owner), "secrets.variables.set") {
+	owner, ok := h.envTarget(w, r, m.OrgID, body.Scope, body.TeamID)
+	if !ok || !h.authorize(w, r, m.OrgID, envObject(body.Scope, owner), "secrets.variables.set") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	v := store.EnvVar{OrgID: m.Org.ID, Kind: body.Kind, Scope: body.Scope, OwnerID: owner, Name: body.Name, Hosts: hosts, CreatedBy: p.User.ID}
+	v := store.EnvVar{OrgID: m.OrgID, Kind: body.Kind, Scope: body.Scope, OwnerID: owner, Name: body.Name, Hosts: hosts, CreatedBy: p.User.ID}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
 		if v, err = tx.CreateEnvVar(r.Context(), v, body.Value); err != nil {
@@ -236,7 +236,7 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": v.ID})
 }
 

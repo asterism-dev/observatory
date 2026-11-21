@@ -236,3 +236,20 @@ func TestWireGuardKeysUniqueAcrossNodesAndDevices(t *testing.T) {
 		t.Fatalf("re-enroll with own key: %v", err)
 	}
 }
+
+func TestMgmtSliceInHubOrgs(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	slice, err := e.s.OrgSlice(ctx, e.org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored netip.Prefix
+	if err := e.pool.QueryRow(ctx, "SELECT mgmt_slice FROM hub_orgs WHERE org_id = $1", e.org.ID).Scan(&stored); err != nil || stored != slice {
+		t.Fatalf("hub_orgs: %s %v, want %s", stored, err, slice)
+	}
+	var cols int
+	if err := e.pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.columns WHERE table_name = 'orgs' AND column_name = 'mgmt_slice'").Scan(&cols); err != nil || cols != 0 {
+		t.Fatalf("orgs.mgmt_slice still there: %d %v", cols, err)
+	}
+}

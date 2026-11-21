@@ -124,6 +124,8 @@ func (e *env) user(sub string) (store.User, string) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	// The login handler reloads the policy after creating a user and personal org.
+	e.reload()
 	return res.User, e.session(res.User)
 }
 

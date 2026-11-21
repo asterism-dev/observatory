@@ -46,14 +46,7 @@ func dashboardPanels(d Dashboard) json.RawMessage {
 
 func (s *Store) CreateDashboard(ctx context.Context, d Dashboard) (Dashboard, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
-		var lock uuid.UUID
-		if err := tx.q.QueryRow(ctx, "SELECT id FROM orgs WHERE id = $1 FOR UPDATE", d.OrgID).Scan(&lock); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
-		if err := tx.lockEnvOwner(ctx, dashboardOwner(d)); err != nil {
+		if err := tx.LockHubOrg(ctx, d.OrgID); err != nil {
 			return err
 		}
 		var n int
@@ -88,9 +81,6 @@ func (s *Store) Dashboards(ctx context.Context, org uuid.UUID) ([]Dashboard, err
 // UpdateDashboard saves name, scope, owner and panels; ErrConflict when the dashboard changed since expectUpdatedAt.
 func (s *Store) UpdateDashboard(ctx context.Context, d Dashboard, expectUpdatedAt time.Time) (Dashboard, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockEnvOwner(ctx, dashboardOwner(d)); err != nil {
-			return err
-		}
 		teamID, userID := envOwnerColumns(dashboardOwner(d))
 		// clock_timestamp, not now(): a transaction started earlier must not move updated_at backwards.
 		updated, err := scanDashboard(tx.q.QueryRow(ctx, `

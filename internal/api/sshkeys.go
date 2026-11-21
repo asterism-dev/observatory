@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -32,13 +31,8 @@ func sshKeyAudit(r *http.Request, action string, k store.SSHKey) store.AuditEntr
 
 // notifyUserOrgs re-pushes every org of user, since its keys reach the VMs it owns or shares through teams.
 func (h *api) notifyUserOrgs(r *http.Request, user uuid.UUID) {
-	ms, err := h.store.Memberships(r.Context(), user)
-	if err != nil {
-		slog.Error("memberships for notify", "user", user, "err", err)
-		return
-	}
-	for _, m := range ms {
-		h.fleet.NotifyOrg(m.Org.ID)
+	for _, org := range h.z.Enforcer().OrgsOf(user) {
+		h.fleet.NotifyOrg(org)
 	}
 }
 

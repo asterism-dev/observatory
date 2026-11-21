@@ -40,12 +40,12 @@ func (h *api) listDevices(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ds, err := h.store.Devices(r.Context(), m.Org.ID)
+	ds, err := h.store.Devices(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "devices", err)
 		return
 	}
-	members, err := h.store.Members(r.Context(), m.Org.ID)
+	members, err := h.store.Members(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
@@ -59,8 +59,8 @@ func (h *api) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := []deviceJSON{}
 	for _, d := range ds {
 		obj := authz.UserDevicesObject(d.UserID)
-		if e.Allowed(sub, m.Org.ID, obj, "network.devices.list") {
-			out = append(out, h.deviceJSON(d, names[d.UserID], e.Allowed(sub, m.Org.ID, obj, "network.devices.delete")))
+		if e.Allowed(sub, m.OrgID, obj, "network.devices.list") {
+			out = append(out, h.deviceJSON(d, names[d.UserID], e.Allowed(sub, m.OrgID, obj, "network.devices.delete")))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -81,7 +81,7 @@ func (h *api) createDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	if !h.authorize(w, r, m.Org.ID, authz.UserDevicesObject(p.User.ID), "network.devices.create") {
+	if !h.authorize(w, r, m.OrgID, authz.UserDevicesObject(p.User.ID), "network.devices.create") {
 		return
 	}
 	priv, pub, err := wgkey.Generate()
@@ -89,7 +89,7 @@ func (h *api) createDevice(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "device key", err)
 		return
 	}
-	d := store.Device{OrgID: m.Org.ID, UserID: p.User.ID, Name: name, PublicKey: pub}
+	d := store.Device{OrgID: m.OrgID, UserID: p.User.ID, Name: name, PublicKey: pub}
 	var slice string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
@@ -137,7 +137,7 @@ func (h *api) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d, err := h.store.Device(r.Context(), m.Org.ID, id)
+	d, err := h.store.Device(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

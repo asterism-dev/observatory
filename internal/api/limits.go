@@ -3,6 +3,7 @@ package api
 import (
 	"math"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -67,10 +68,10 @@ func limitDetails(l store.Limits) map[string]any {
 
 func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, "quota.limits.get") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjLimits, "quota.limits.get") {
 		return
 	}
-	ls, err := h.store.Limits(r.Context(), m.Org.ID)
+	ls, err := h.store.Limits(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "limits", err)
 		return
@@ -81,12 +82,12 @@ func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {
 // setScopeLimits handles team and member scopes; the org scope belongs to platform admins only.
 func (h *api) setScopeLimits(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, "quota.limits.update") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjLimits, "quota.limits.update") {
 		return
 	}
 	scope := r.PathValue("scope")
 	if scope == store.ScopeOrg {
-		h.auditDenied(r, m.Org.ID, authz.ObjLimits+"/"+scope, store.ActionLimitSet)
+		h.auditDenied(r, m.OrgID, authz.ObjLimits+"/"+scope, store.ActionLimitSet)
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -94,12 +95,29 @@ func (h *api) setScopeLimits(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.commitLimits(w, r, m.Org.ID, scope, l)
+	h.commitLimits(w, r, m.OrgID, scope, l)
+}
+
+// scopeKnown reports whether a checked team:<id> or user:<id> scope names a team or member of org in the policy.
+func (h *api) scopeKnown(org uuid.UUID) func(string) bool {
+	e := h.z.Enforcer()
+	return func(scope string) bool {
+		kind, raw, _ := strings.Cut(scope, ":")
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return false
+		}
+		if kind == "team" {
+			return e.HasTeam(org, id)
+		}
+		_, ok := e.Role(org, id)
+		return ok
+	}
 }
 
 func (h *api) commitLimits(w http.ResponseWriter, r *http.Request, org uuid.UUID, scope string, l store.Limits) {
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.SetLimits(r.Context(), org, scope, l); err != nil {
+		if err := tx.SetLimits(r.Context(), org, scope, l, h.scopeKnown(org)); err != nil {
 			return err
 		}
 		e := auditEntry(r, &org, store.ActionLimitSet, authz.ObjLimits+"/"+scope, store.ResultAllowed)

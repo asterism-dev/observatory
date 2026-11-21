@@ -1156,3 +1156,50 @@ func TestLogsReadPermission(t *testing.T) {
 		t.Fatalf("telemetry.logEntries.list not grantable: %v", err)
 	}
 }
+
+func TestEnforcerRole(t *testing.T) {
+	orgA, orgB := uuid.New(), uuid.New()
+	alice, bob := uuid.New(), uuid.New()
+	e := mustNew(t, Policy{Memberships: []MemberRole{
+		{OrgID: orgA, UserID: alice, Role: "owner"},
+		{OrgID: orgB, UserID: alice, Role: "member"},
+		{OrgID: orgA, UserID: bob, Role: "admin"},
+	}})
+	for _, c := range []struct {
+		org, user uuid.UUID
+		role      string
+		ok        bool
+	}{{orgA, alice, "owner", true}, {orgB, alice, "member", true}, {orgA, bob, "admin", true}, {orgB, bob, "", false}, {uuid.New(), alice, "", false}} {
+		if role, ok := e.Role(c.org, c.user); role != c.role || ok != c.ok {
+			t.Fatalf("Role(%s, %s) = %q %v, want %q %v", c.org, c.user, role, ok, c.role, c.ok)
+		}
+	}
+	got := e.OrgsOf(alice)
+	slices.SortFunc(got, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	want := []uuid.UUID{orgA, orgB}
+	slices.SortFunc(want, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	if !slices.Equal(got, want) || len(e.OrgsOf(uuid.New())) != 0 {
+		t.Fatalf("OrgsOf: %v", got)
+	}
+}
+
+func TestEnforcerTeamMembers(t *testing.T) {
+	org, other := uuid.New(), uuid.New()
+	team, empty := uuid.New(), uuid.New()
+	alice, bob := uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{{OrgID: org, UserID: alice, Role: "member"}, {OrgID: org, UserID: bob, Role: "member"}},
+		TeamMembers: []TeamMember{{OrgID: org, TeamID: team, UserID: alice}, {OrgID: org, TeamID: team, UserID: bob, Admin: true}},
+		Teams:       []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: empty}},
+	})
+	got := e.TeamMembers(org, team)
+	if len(got) != 2 || !slices.Contains(got, alice) || !slices.Contains(got, bob) {
+		t.Fatalf("members: %v", got)
+	}
+	if len(e.TeamMembers(org, empty)) != 0 || len(e.TeamMembers(other, team)) != 0 {
+		t.Fatal("members of an empty or foreign team")
+	}
+	if !e.HasTeam(org, team) || !e.HasTeam(org, empty) || e.HasTeam(other, team) || e.HasTeam(org, uuid.New()) {
+		t.Fatal("HasTeam")
+	}
+}

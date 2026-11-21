@@ -196,6 +196,15 @@ func (s *Store) LockOrg(ctx context.Context, orgID uuid.UUID) error {
 	return err
 }
 
+// LockHubOrg serializes the hub's resource writes in an org (quotas, addresses, attachments); the row is created on first use.
+func (s *Store) LockHubOrg(ctx context.Context, orgID uuid.UUID) error {
+	if _, err := s.q.Exec(ctx, "INSERT INTO hub_orgs (org_id) VALUES ($1) ON CONFLICT DO NOTHING", orgID); err != nil {
+		return err
+	}
+	_, err := s.q.Exec(ctx, "SELECT 1 FROM hub_orgs WHERE org_id = $1 FOR UPDATE", orgID)
+	return err
+}
+
 func (s *Store) CreateRole(ctx context.Context, orgID uuid.UUID, r authz.CustomRole) (authz.CustomRole, error) {
 	r.OrgID = orgID
 	err := s.InTx(ctx, func(tx *Store) error {

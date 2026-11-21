@@ -71,12 +71,12 @@ func (h *api) dashboardRequest(w http.ResponseWriter, r *http.Request) (org uuid
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return org, scope, false
 	}
-	scope, err := h.dashboardScope(r, m.Org.ID)
+	scope, err := h.dashboardScope(r, m.OrgID)
 	if err != nil {
 		serverError(w, "dashboard scope", err)
 		return org, scope, false
 	}
-	return m.Org.ID, scope, true
+	return m.OrgID, scope, true
 }
 
 // dashboardQueryError turns a rejected query into a 400 with the store's text, stripped of URLs that could point at it.

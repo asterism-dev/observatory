@@ -154,7 +154,7 @@ func (h *api) nodeFromPath(w http.ResponseWriter, r *http.Request, act string) (
 	if !ok {
 		return store.Node{}, false
 	}
-	n, err := h.store.Node(r.Context(), m.Org.ID, id)
+	n, err := h.store.Node(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.Node{}, false
@@ -168,10 +168,10 @@ func (h *api) nodeFromPath(w http.ResponseWriter, r *http.Request, act string) (
 
 func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "compute.nodes.get") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjNodes, "compute.nodes.get") {
 		return
 	}
-	nodes, err := h.store.Nodes(r.Context(), m.Org.ID)
+	nodes, err := h.store.Nodes(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "nodes", err)
 		return
@@ -180,7 +180,7 @@ func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	out := []nodeJSON{}
 	for _, n := range nodes {
-		if !e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.get") {
+		if !e.Allowed(sub, m.OrgID, authz.NodeObject(n.ID), "compute.nodes.get") {
 			continue
 		}
 		// ponytail: one VM query per node; aggregate in the store if orgs run many nodes.
@@ -196,7 +196,7 @@ func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) createNode(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "compute.nodes.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjNodes, "compute.nodes.create") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -208,7 +208,7 @@ func (h *api) createNode(w http.ResponseWriter, r *http.Request) {
 	var token string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if n, token, err = tx.CreateNode(r.Context(), store.Node{OrgID: m.Org.ID, Name: name, CreatedBy: p.User.ID}); err != nil {
+		if n, token, err = tx.CreateNode(r.Context(), store.Node{OrgID: m.OrgID, Name: name, CreatedBy: p.User.ID}); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), nodeAudit(r, store.ActionNodeCreate, n))

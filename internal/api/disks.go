@@ -131,7 +131,14 @@ func (h *api) diskOwner(w http.ResponseWriter, r *http.Request, org uuid.UUID, o
 		writeError(w, http.StatusBadRequest, "invalid owner")
 		return false
 	}
-	return h.authorize(w, r, org, obj, "compute.disks.create")
+	if !h.authorize(w, r, org, obj, "compute.disks.create") {
+		return false
+	}
+	if d.TeamID != nil && !h.z.Enforcer().HasTeam(org, *d.TeamID) {
+		writeError(w, http.StatusNotFound, "not found")
+		return false
+	}
+	return true
 }
 
 // diskFromPath loads {id} within the caller's org and authorizes act on it.
@@ -144,7 +151,7 @@ func (h *api) diskFromPath(w http.ResponseWriter, r *http.Request, act string) (
 	if !ok {
 		return store.Disk{}, false
 	}
-	d, err := h.store.Disk(r.Context(), m.Org.ID, id)
+	d, err := h.store.Disk(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.Disk{}, false
@@ -161,12 +168,12 @@ func (h *api) listDisks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ds, err := h.store.Disks(r.Context(), m.Org.ID)
+	ds, err := h.store.Disks(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "disks", err)
 		return
 	}
-	names, err := h.ownerNames(r, m.Org.ID)
+	names, err := h.ownerNames(r, m.OrgID)
 	if err != nil {
 		serverError(w, "disk owners", err)
 		return
@@ -175,7 +182,7 @@ func (h *api) listDisks(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	out := []diskJSON{}
 	for _, d := range ds {
-		if e.Allowed(sub, m.Org.ID, authz.DiskObject(d.ID), "compute.disks.get") {
+		if e.Allowed(sub, m.OrgID, authz.DiskObject(d.ID), "compute.disks.get") {
 			out = append(out, h.diskJSON(r, d, names))
 		}
 	}
@@ -204,8 +211,8 @@ func (h *api) createDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	d := store.Disk{OrgID: m.Org.ID, Name: body.Name, SizeGB: body.SizeGB, CreatedBy: p.User.ID}
-	if !h.diskOwner(w, r, m.Org.ID, body.Owner, &d) {
+	d := store.Disk{OrgID: m.OrgID, Name: body.Name, SizeGB: body.SizeGB, CreatedBy: p.User.ID}
+	if !h.diskOwner(w, r, m.OrgID, body.Owner, &d) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {

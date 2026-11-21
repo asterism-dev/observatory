@@ -25,10 +25,10 @@ func toTeamJSON(t store.Team) teamJSON { return teamJSON{t.ID, t.Name, t.MemberC
 
 func (h *api) listTeams(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.list") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjTeams, "iam.teams.list") {
 		return
 	}
-	ts, err := h.store.Teams(r.Context(), m.Org.ID)
+	ts, err := h.store.Teams(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
@@ -52,7 +52,7 @@ func readTeamName(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjTeams, "iam.teams.create") {
 		return
 	}
 	name, ok := readTeamName(w, r)
@@ -62,10 +62,10 @@ func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 	var team store.Team
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if team, err = tx.CreateTeam(r.Context(), m.Org.ID, name); err != nil {
+		if team, err = tx.CreateTeam(r.Context(), m.OrgID, name); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionTeamCreate, authz.TeamObject(team.ID), store.ResultAllowed)
+		e := auditEntry(r, &m.OrgID, store.ActionTeamCreate, authz.TeamObject(team.ID), store.ResultAllowed)
 		e.Details = map[string]any{"name": name}
 		return tx.Audit(r.Context(), e)
 	}) {
@@ -76,14 +76,14 @@ func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.list") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjTeams, "iam.teams.list") {
 		return
 	}
 	id, ok := pathID(w, r, "team")
 	if !ok {
 		return
 	}
-	team, err := h.store.Team(r.Context(), m.Org.ID, id)
+	team, err := h.store.Team(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -91,7 +91,7 @@ func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "team", err)
 		return
 	}
-	members, err := h.store.TeamMembers(r.Context(), m.Org.ID, id)
+	members, err := h.store.TeamMembers(r.Context(), m.OrgID, id)
 	if err != nil {
 		serverError(w, "team members", err)
 		return
@@ -110,10 +110,10 @@ func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.TeamObject(id)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": team.ID, "name": team.Name, "members": ms,
-		"canManageMembers": e.Allowed(sub, m.Org.ID, obj, "iam.teams.manageMembers"),
-		"canUpdate":        e.Allowed(sub, m.Org.ID, obj, "iam.teams.update"),
-		"canDelete":        e.Allowed(sub, m.Org.ID, obj, "iam.teams.delete"),
-		"canLeave":         e.Allowed(sub, m.Org.ID, obj, "iam.teams.leave"),
+		"canManageMembers": e.Allowed(sub, m.OrgID, obj, "iam.teams.manageMembers"),
+		"canUpdate":        e.Allowed(sub, m.OrgID, obj, "iam.teams.update"),
+		"canDelete":        e.Allowed(sub, m.OrgID, obj, "iam.teams.delete"),
+		"canLeave":         e.Allowed(sub, m.OrgID, obj, "iam.teams.leave"),
 	})
 }
 
@@ -127,10 +127,10 @@ func (h *api) renameTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.RenameTeam(r.Context(), m.Org.ID, id, name); err != nil {
+		if err := tx.RenameTeam(r.Context(), m.OrgID, id, name); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionTeamUpdate, authz.TeamObject(id), store.ResultAllowed)
+		e := auditEntry(r, &m.OrgID, store.ActionTeamUpdate, authz.TeamObject(id), store.ResultAllowed)
 		e.Details = map[string]any{"name": name}
 		return tx.Audit(r.Context(), e)
 	}) {
@@ -149,30 +149,30 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	var denied error
 	var images map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
-		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
 		if !privileged(cur.Role) {
-			if denied = teamCarriesDeny(r, tx, e, m.Org.ID, id); denied != nil {
+			if denied = teamCarriesDeny(r, tx, e, m.OrgID, id); denied != nil {
 				return denied
 			}
 		}
-		if images, err = ownedImageVersions(r.Context(), tx, m.Org.ID, store.EnvScopeTeam, id); err != nil {
+		if images, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeTeam, id); err != nil {
 			return err
 		}
-		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.Org.ID, id) }); denied != nil {
+		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.OrgID, id) }); denied != nil {
 			return denied
 		}
-		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionTeamDelete, authz.TeamObject(id), store.ResultAllowed))
+		return tx.Audit(r.Context(), auditEntry(r, &m.OrgID, store.ActionTeamDelete, authz.TeamObject(id), store.ResultAllowed))
 	}) {
-		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamDelete, authz.TeamObject(id), denied)
+		h.auditGuardDenial(r, m.OrgID, store.ActionTeamDelete, authz.TeamObject(id), denied)
 		return
 	}
 	for image, digests := range images {
 		h.deleteManifests(r.Context(), image, digests)
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -196,7 +196,7 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	admin := *body.Admin
-	if admin && !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), "iam.teams.update") {
+	if admin && !h.authorize(w, r, m.OrgID, authz.TeamObject(id), "iam.teams.update") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -206,11 +206,11 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		guardErr error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
-		if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
+		if denied, err = demotesTeamAdmin(r, tx, e, m.OrgID, id, user); err != nil {
 			return err
 		} else if denied {
 			return errForbidden
@@ -218,20 +218,20 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		if guardErr = checkTeamRoles(r, tx, e, cur, authz.UserSubject(p.User.ID), id); guardErr != nil {
 			return guardErr
 		}
-		if err := tx.SetTeamMember(r.Context(), m.Org.ID, id, user, admin); err != nil {
+		if err := tx.SetTeamMember(r.Context(), m.OrgID, id, user, admin); err != nil {
 			return err
 		}
-		ae := auditEntry(r, &m.Org.ID, store.ActionTeamMemberSet, obj, store.ResultAllowed)
+		ae := auditEntry(r, &m.OrgID, store.ActionTeamMemberSet, obj, store.ResultAllowed)
 		ae.Details = map[string]any{"admin": admin}
 		return tx.Audit(r.Context(), ae)
 	}) {
 		if denied {
-			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
+			h.auditDenied(r, m.OrgID, authz.TeamObject(id), store.ActionTeamUpdate)
 		}
-		h.auditGuardDenial(r, m.Org.ID, store.ActionTeamMemberSet, obj, guardErr)
+		h.auditGuardDenial(r, m.OrgID, store.ActionTeamMemberSet, obj, guardErr)
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -257,53 +257,53 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 		guardErr            error
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
-		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
 		if leaving {
-			if leaveDenied = !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.TeamObject(id), "iam.teams.leave"); leaveDenied {
+			if leaveDenied = !e.Allowed(authz.UserSubject(p.User.ID), m.OrgID, authz.TeamObject(id), "iam.teams.leave"); leaveDenied {
 				return errForbidden
 			}
 		} else {
-			if denied, err = demotesTeamAdmin(r, tx, e, m.Org.ID, id, user); err != nil {
+			if denied, err = demotesTeamAdmin(r, tx, e, m.OrgID, id, user); err != nil {
 				return err
 			} else if denied {
 				return errForbidden
 			}
 			// Removing someone from a team lifts its deny rules from them, which only org owners and admins may do.
 			if !privileged(cur.Role) {
-				if guardErr = teamCarriesDeny(r, tx, e, m.Org.ID, id); guardErr != nil {
+				if guardErr = teamCarriesDeny(r, tx, e, m.OrgID, id); guardErr != nil {
 					return guardErr
 				}
 			}
 		}
-		if guardErr = guardOwnDenies(r.Context(), tx, cur, authz.UserSubject(p.User.ID), func() error { return tx.RemoveTeamMember(r.Context(), m.Org.ID, id, user) }); guardErr != nil {
+		if guardErr = guardOwnDenies(r.Context(), tx, cur, authz.UserSubject(p.User.ID), func() error { return tx.RemoveTeamMember(r.Context(), m.OrgID, id, user) }); guardErr != nil {
 			return guardErr
 		}
-		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, auditAct, obj, store.ResultAllowed))
+		return tx.Audit(r.Context(), auditEntry(r, &m.OrgID, auditAct, obj, store.ResultAllowed))
 	}) {
 		if denied {
-			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate)
+			h.auditDenied(r, m.OrgID, authz.TeamObject(id), store.ActionTeamUpdate)
 		}
 		if leaveDenied {
-			h.auditDenied(r, m.Org.ID, authz.TeamObject(id), store.ActionTeamLeave)
+			h.auditDenied(r, m.OrgID, authz.TeamObject(id), store.ActionTeamLeave)
 		}
-		h.auditGuardDenial(r, m.Org.ID, auditAct, obj, guardErr)
+		h.auditGuardDenial(r, m.OrgID, auditAct, obj, guardErr)
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // teamAction resolves {org} and {team} and authorizes act on that team; a malformed team ID is 404 before any check.
-func (h *api) teamAction(w http.ResponseWriter, r *http.Request, act string) (store.Membership, uuid.UUID, bool) {
+func (h *api) teamAction(w http.ResponseWriter, r *http.Request, act string) (orgMember, uuid.UUID, bool) {
 	m, ok := h.orgFromPath(w, r)
 	if !ok {
 		return m, uuid.Nil, false
 	}
 	id, ok := pathID(w, r, "team")
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), act) {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.TeamObject(id), act) {
 		return m, uuid.Nil, false
 	}
 	return m, id, true
@@ -338,8 +338,8 @@ func teamRoles(r *http.Request, tx *store.Store, org, team uuid.UUID) ([]uuid.UU
 }
 
 // checkTeamRoles applies the bind guard to every role bound to team, since adding a member grants them those roles.
-func checkTeamRoles(r *http.Request, tx *store.Store, e *authz.Enforcer, m store.Membership, actor string, team uuid.UUID) error {
-	ids, err := teamRoles(r, tx, m.Org.ID, team)
+func checkTeamRoles(r *http.Request, tx *store.Store, e *authz.Enforcer, m orgMember, actor string, team uuid.UUID) error {
+	ids, err := teamRoles(r, tx, m.OrgID, team)
 	if err != nil || len(ids) == 0 {
 		return err
 	}
@@ -347,14 +347,14 @@ func checkTeamRoles(r *http.Request, tx *store.Store, e *authz.Enforcer, m store
 	for _, id := range ids {
 		keys = append(keys, id.String())
 	}
-	if err := e.CanGrantRole(actor, m.Org.ID, privileged(m.Role), nil, keys); err != nil {
+	if err := e.CanGrantRole(actor, m.OrgID, privileged(m.Role), nil, keys); err != nil {
 		return err
 	}
 	if privileged(m.Role) {
 		return nil
 	}
 	for _, id := range ids {
-		if err := carriesDeny(e, m.Org.ID, id); err != nil {
+		if err := carriesDeny(e, m.OrgID, id); err != nil {
 			return err
 		}
 	}

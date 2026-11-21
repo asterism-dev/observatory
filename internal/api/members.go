@@ -44,10 +44,10 @@ func privileged(role store.Role) bool { return role == store.RoleOwner || role =
 
 func (h *api) listMembers(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.list") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.members.list") {
 		return
 	}
-	ms, err := h.store.Members(r.Context(), m.Org.ID)
+	ms, err := h.store.Members(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
@@ -68,7 +68,7 @@ func (h *api) listMembers(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) setMemberRole(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.members.setRole") {
 		return
 	}
 	target, ok := pathID(w, r, "user")
@@ -80,16 +80,16 @@ func (h *api) setMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.SetMemberRole(r.Context(), m.Org.ID, target, role); err != nil {
+		if err := tx.SetMemberRole(r.Context(), m.OrgID, target, role); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionMemberSetRole, "org/members/"+target.String(), store.ResultAllowed)
+		e := auditEntry(r, &m.OrgID, store.ActionMemberSetRole, "org/members/"+target.String(), store.ResultAllowed)
 		e.Details = map[string]any{"role": role}
 		return tx.Audit(r.Context(), e)
 	}) {
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -108,29 +108,29 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 	action := store.ActionMemberLeave
 	if !leaving {
 		action = store.ActionMemberRemove
-		if !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.delete") {
+		if !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.members.delete") {
 			return
 		}
 	}
 	var removeErr, denied error
 	var private map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
-		cur, e, err := lockedPolicy(r, tx, m.Org.ID)
+		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
 		// The target's role is only stable under the lock, so the extra check for admins/owners happens here.
-		current, err := tx.LockMember(r.Context(), m.Org.ID, target)
+		current, err := tx.LockMember(r.Context(), m.OrgID, target)
 		if err != nil {
 			return err
 		}
-		if !leaving && privileged(current) && !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
+		if !leaving && privileged(current) && !e.Allowed(authz.UserSubject(p.User.ID), m.OrgID, authz.ObjMembers, "iam.members.setRole") {
 			removeErr = errForbidden
 			return removeErr
 		}
 		// Removal drops the target's bindings and teams, lifting their denies, which only owners and admins may do.
 		if !leaving && !privileged(cur.Role) {
-			ds, err := e.DenyRulesFor(authz.UserSubject(target), m.Org.ID)
+			ds, err := e.DenyRulesFor(authz.UserSubject(target), m.OrgID)
 			if err != nil {
 				return err
 			}
@@ -139,14 +139,14 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
-		if private, err = ownedImageVersions(r.Context(), tx, m.Org.ID, store.EnvScopeUser, target); err != nil {
+		if private, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeUser, target); err != nil {
 			return err
 		}
-		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {
+		if err := tx.RemoveMember(r.Context(), m.OrgID, target); err != nil {
 			return err
 		}
 		// Revoked here, not on next use, so an idle token cannot revive when its creator is re-added.
-		toks, err := tx.RevokeTelemetryTokensBy(r.Context(), m.Org.ID, target)
+		toks, err := tx.RevokeTelemetryTokensBy(r.Context(), m.OrgID, target)
 		if err != nil {
 			return err
 		}
@@ -155,27 +155,27 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, action, "org/members/"+target.String(), store.ResultAllowed))
+		return tx.Audit(r.Context(), auditEntry(r, &m.OrgID, action, "org/members/"+target.String(), store.ResultAllowed))
 	}) {
 		if removeErr != nil {
-			h.auditDenied(r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole)
+			h.auditDenied(r, m.OrgID, authz.ObjMembers, store.ActionMemberSetRole)
 		}
-		h.auditGuardDenial(r, m.Org.ID, action, "org/members/"+target.String(), denied)
+		h.auditGuardDenial(r, m.OrgID, action, "org/members/"+target.String(), denied)
 		return
 	}
 	for id, digests := range private {
 		h.deleteManifests(r.Context(), id, digests)
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *api) listInvites(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
-	invs, err := h.store.Invites(r.Context(), m.Org.ID)
+	invs, err := h.store.Invites(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "invites", err)
 		return
@@ -196,14 +196,14 @@ func (h *api) listInvites(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) createInvite(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
 	role, ok := readRole(w, r)
 	if !ok {
 		return
 	}
-	if privileged(role) && !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
+	if privileged(role) && !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.members.setRole") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -213,10 +213,10 @@ func (h *api) createInvite(w http.ResponseWriter, r *http.Request) {
 	)
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if token, inv, err = tx.CreateInvite(r.Context(), m.Org.ID, role, p.User.ID, inviteTTL); err != nil {
+		if token, inv, err = tx.CreateInvite(r.Context(), m.OrgID, role, p.User.ID, inviteTTL); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionMemberInvite, "org/invites/"+inv.ID.String(), store.ResultAllowed)
+		e := auditEntry(r, &m.OrgID, store.ActionMemberInvite, "org/invites/"+inv.ID.String(), store.ResultAllowed)
 		e.Details = map[string]any{"role": role}
 		return tx.Audit(r.Context(), e)
 	}) {
@@ -229,7 +229,7 @@ func (h *api) createInvite(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) revokeInvite(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
 	id, ok := pathID(w, r, "id")
@@ -237,10 +237,10 @@ func (h *api) revokeInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.RevokeInvite(r.Context(), m.Org.ID, id); err != nil {
+		if err := tx.RevokeInvite(r.Context(), m.OrgID, id); err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, store.ActionInviteRevoke, "org/invites/"+id.String(), store.ResultAllowed))
+		return tx.Audit(r.Context(), auditEntry(r, &m.OrgID, store.ActionInviteRevoke, "org/invites/"+id.String(), store.ResultAllowed))
 	}) {
 		return
 	}

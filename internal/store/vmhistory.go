@@ -22,14 +22,6 @@ type VMHistory struct {
 	CreatedAt, DeletedAt                         time.Time
 }
 
-func (s *Store) UserTeamIDs(ctx context.Context, org, user uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := s.q.Query(ctx, "SELECT t.id FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE t.org_id = $1 AND tm.user_id = $2", org, user)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-}
-
 // VMHistory lists the org's deleted VMs, the latest deletion first.
 func (s *Store) VMHistory(ctx context.Context, org uuid.UUID) ([]VMHistory, error) {
 	rows, err := s.q.Query(ctx, `

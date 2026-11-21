@@ -100,16 +100,3 @@ func TestSetDeleteAt(t *testing.T) {
 		t.Fatalf("clear: %+v %v", got, err)
 	}
 }
-
-func TestUserTeamIDs(t *testing.T) {
-	ctx := context.Background()
-	e := newVMEnv(t)
-	other, _ := e.s.CreateTeam(ctx, e.org.ID, "other")
-	if err := e.s.SetTeamMember(ctx, e.org.ID, e.team.ID, e.user, false); err != nil {
-		t.Fatal(err)
-	}
-	ids, err := e.s.UserTeamIDs(ctx, e.org.ID, e.user)
-	if err != nil || len(ids) != 1 || ids[0] != e.team.ID || ids[0] == other.ID {
-		t.Fatalf("teams: %v %v", ids, err)
-	}
-}

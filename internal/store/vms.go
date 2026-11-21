@@ -105,7 +105,7 @@ func (u Limits) plus(a Limits) Limits {
 		SnapshotCount: add(u.SnapshotCount, a.SnapshotCount)}
 }
 
-// checkLimits checks that the owner belongs to the org and that adding add stays within the org and owner limits.
+// checkLimits checks that adding add stays within the org and owner limits; callers check the owner against the policy.
 func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID *uuid.UUID, add Limits) error {
 	ownerScope, ownerCol, owner := "", "team_id", teamID
 	switch {
@@ -115,9 +115,6 @@ func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID
 		ownerScope = authz.TeamSubject(*teamID)
 	default:
 		return ErrNotFound
-	}
-	if err := s.checkScopeInOrg(ctx, orgID, ownerScope); err != nil {
-		return err
 	}
 	limits, err := s.Limits(ctx, orgID)
 	if err != nil {
@@ -147,7 +144,7 @@ func ptr(n int) *int { return &n }
 func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 	var out VM
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, v.OrgID); err != nil {
+		if err := tx.LockHubOrg(ctx, v.OrgID); err != nil {
 			return err
 		}
 		var enrolled bool

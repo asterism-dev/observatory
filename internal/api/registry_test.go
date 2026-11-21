@@ -174,7 +174,7 @@ func TestTokenOverStorageLimitDropsPush(t *testing.T) {
 	h := e.registryHandler("http://registry.invalid", fakeBuilds{"build-a": {ID: uuid.New(), ImageID: a}})
 	cred := e.registryCredential(e.cliSession(alice))
 	one := 1
-	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}); err != nil {
+	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
 		t.Fatal(err)
 	}
 	d := e.addVersion(a, 1)

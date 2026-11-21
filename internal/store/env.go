@@ -158,19 +158,6 @@ func envAAD(org, id uuid.UUID, kind EnvKind) []byte {
 	return append(append(org[:len(org):len(org)], id[:]...), kind...)
 }
 
-// lockEnvOwner keeps a private variable's owner from being removed from the org before the write commits.
-func (s *Store) lockEnvOwner(ctx context.Context, v EnvVar) error {
-	if v.Scope != EnvScopeUser {
-		return nil
-	}
-	var one int
-	err := s.q.QueryRow(ctx, "SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2 FOR SHARE", v.OrgID, v.OwnerID).Scan(&one)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	return err
-}
-
 func (s *Store) EnvVars(ctx context.Context, org uuid.UUID) ([]EnvVar, error) {
 	rows, err := s.q.Query(ctx, "SELECT "+envCols+" FROM env_vars WHERE org_id = $1 ORDER BY name, id", org)
 	if err != nil {
@@ -201,9 +188,6 @@ func (s *Store) EnvValue(ctx context.Context, v EnvVar) (string, error) {
 
 func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVar, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockEnvOwner(ctx, v); err != nil {
-			return err
-		}
 		key, err := tx.orgKey(ctx, v.OrgID)
 		if err != nil {
 			return err
@@ -301,9 +285,6 @@ func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) 
 // MoveEnvVar sets scope and owner from v if the row still matches old; the value is not re-encrypted since the AAD has no scope.
 func (s *Store) MoveEnvVar(ctx context.Context, old, v EnvVar) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.lockEnvOwner(ctx, v); err != nil {
-			return err
-		}
 		teamID, userID := envOwnerColumns(v)
 		tag, err := tx.q.Exec(ctx, `
 			UPDATE env_vars SET scope = $7, team_id = $8, user_id = $9, updated_by = $10, updated_at = now()

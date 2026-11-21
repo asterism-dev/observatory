@@ -43,27 +43,24 @@ func (s *Store) collectAddrs(ctx context.Context, sql string, args ...any) ([]ne
 	return pgx.CollectRows(rows, pgx.RowTo[netip.Addr])
 }
 
-// OrgSlice returns the org's management slice, allocating it on first use; slices are never reused while the org exists.
+// OrgSlice returns the org's management slice, allocating it on first use; hub_orgs rows are never deleted, so slices are never reused.
 func (s *Store) OrgSlice(ctx context.Context, org uuid.UUID) (netip.Prefix, error) {
 	var slice *netip.Prefix
-	err := s.q.QueryRow(ctx, "SELECT mgmt_slice FROM orgs WHERE id = $1", org).Scan(&slice)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return netip.Prefix{}, ErrNotFound
-	}
-	if err != nil || slice != nil {
+	err := s.q.QueryRow(ctx, "SELECT mgmt_slice FROM hub_orgs WHERE org_id = $1", org).Scan(&slice)
+	if (err != nil && !errors.Is(err, pgx.ErrNoRows)) || slice != nil {
 		return deref(slice), err
 	}
 	err = s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
-		if err := tx.q.QueryRow(ctx, "SELECT mgmt_slice FROM orgs WHERE id = $1", org).Scan(&slice); err != nil || slice != nil {
+		if err := tx.q.QueryRow(ctx, "SELECT mgmt_slice FROM hub_orgs WHERE org_id = $1", org).Scan(&slice); err != nil || slice != nil {
 			return err
 		}
 		if err := tx.lockAddresses(ctx); err != nil {
 			return err
 		}
-		rows, err := tx.q.Query(ctx, "SELECT mgmt_slice FROM orgs WHERE mgmt_slice IS NOT NULL")
+		rows, err := tx.q.Query(ctx, "SELECT mgmt_slice FROM hub_orgs WHERE mgmt_slice IS NOT NULL")
 		if err != nil {
 			return err
 		}
@@ -76,7 +73,7 @@ func (s *Store) OrgSlice(ctx context.Context, org uuid.UUID) (netip.Prefix, erro
 			return exhausted(err)
 		}
 		slice = &fresh
-		_, err = tx.q.Exec(ctx, "UPDATE orgs SET mgmt_slice = $2 WHERE id = $1", org, fresh)
+		_, err = tx.q.Exec(ctx, "UPDATE hub_orgs SET mgmt_slice = $2 WHERE org_id = $1", org, fresh)
 		return err
 	})
 	return deref(slice), err
@@ -120,7 +117,7 @@ func (s *Store) BackfillMgmtIPs(ctx context.Context) (int, error) {
 	n := 0
 	for _, p := range list {
 		err := s.InTx(ctx, func(tx *Store) error {
-			if err := tx.LockOrg(ctx, p.org); err != nil {
+			if err := tx.LockHubOrg(ctx, p.org); err != nil {
 				return err
 			}
 			ip, err := tx.nextMgmtIP(ctx, p.org)
@@ -282,7 +279,7 @@ func (s *Store) NetworkSnapshot(ctx context.Context) (NetSnapshot, error) {
 }
 
 func readNetSnapshot(ctx context.Context, q querier) (snap NetSnapshot, err error) {
-	rows, err := q.Query(ctx, "SELECT id, mgmt_slice FROM orgs WHERE mgmt_slice IS NOT NULL ORDER BY id")
+	rows, err := q.Query(ctx, "SELECT org_id, mgmt_slice FROM hub_orgs WHERE mgmt_slice IS NOT NULL ORDER BY org_id")
 	if err != nil {
 		return snap, err
 	}

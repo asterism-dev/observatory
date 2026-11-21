@@ -33,10 +33,10 @@ func networkAudit(r *http.Request, action string, n store.Network) store.AuditEn
 
 func (h *api) listNetworks(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNetworks, "network.networks.get") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjNetworks, "network.networks.get") {
 		return
 	}
-	ns, err := h.store.Networks(r.Context(), m.Org.ID)
+	ns, err := h.store.Networks(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "networks", err)
 		return
@@ -47,7 +47,7 @@ func (h *api) listNetworks(w http.ResponseWriter, r *http.Request) {
 	for _, n := range ns {
 		obj := authz.NetworkObject(n.ID)
 		out = append(out, networkJSON{n.ID, n.Name, n.Subnet.String(), n.VMCount,
-			e.Allowed(sub, m.Org.ID, obj, "network.networks.use"), e.Allowed(sub, m.Org.ID, obj, "network.networks.delete")})
+			e.Allowed(sub, m.OrgID, obj, "network.networks.use"), e.Allowed(sub, m.OrgID, obj, "network.networks.delete")})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -65,11 +65,11 @@ func (h *api) createNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid name")
 		return
 	}
-	if !h.authorize(w, r, m.Org.ID, authz.ObjNetworks, "network.networks.create") {
+	if !h.authorize(w, r, m.OrgID, authz.ObjNetworks, "network.networks.create") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	n := store.Network{OrgID: m.Org.ID, Name: body.Name, CreatedBy: p.User.ID}
+	n := store.Network{OrgID: m.OrgID, Name: body.Name, CreatedBy: p.User.ID}
 	if body.Subnet != "" {
 		sn, err := netaddr.ValidateSubnet(body.Subnet)
 		if err != nil {
@@ -91,7 +91,7 @@ func (h *api) createNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.NetworkObject(n.ID)
 	writeJSON(w, http.StatusCreated, networkJSON{n.ID, n.Name, n.Subnet.String(), 0,
-		e.Allowed(sub, m.Org.ID, obj, "network.networks.use"), e.Allowed(sub, m.Org.ID, obj, "network.networks.delete")})
+		e.Allowed(sub, m.OrgID, obj, "network.networks.use"), e.Allowed(sub, m.OrgID, obj, "network.networks.delete")})
 }
 
 func (h *api) deleteNetwork(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func (h *api) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	n, err := h.store.Network(r.Context(), m.Org.ID, id)
+	n, err := h.store.Network(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

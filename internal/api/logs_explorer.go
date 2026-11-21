@@ -97,7 +97,7 @@ func (h *api) logsRequest(w http.ResponseWriter, r *http.Request) (org, user uui
 		return org, user, false
 	}
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLogs, "telemetry.logEntries.list") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjLogs, "telemetry.logEntries.list") {
 		return org, user, false
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -105,7 +105,7 @@ func (h *api) logsRequest(w http.ResponseWriter, r *http.Request) (org, user uui
 		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 		return org, user, false
 	}
-	return m.Org.ID, p.User.ID, true
+	return m.OrgID, p.User.ID, true
 }
 
 // logsSlot takes one of user's query slots and one of the hub's, waiting up to logsHubWait for the latter; the caller calls done.

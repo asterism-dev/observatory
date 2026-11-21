@@ -27,26 +27,27 @@ type orgJSON struct {
 	Role     store.Role `json:"role"`
 }
 
-func toOrgJSON(m store.Membership) orgJSON {
-	return orgJSON{m.Org.ID, m.Org.Name, m.Org.Personal, m.Role}
+func toOrgJSON(o store.Org, role store.Role) orgJSON {
+	return orgJSON{o.ID, o.Name, o.Personal, role}
 }
 
-// orgFromPath returns the caller's membership in {org}; anything else is 404 so org existence doesn't leak.
-func (h *api) orgFromPath(w http.ResponseWriter, r *http.Request) (store.Membership, bool) {
+// orgMember is the caller's membership in an org as the policy has it.
+type orgMember struct {
+	OrgID uuid.UUID
+	Role  store.Role
+}
+
+// orgFromPath returns the caller's membership in {org} from the policy; anything else is 404 so org existence doesn't leak.
+func (h *api) orgFromPath(w http.ResponseWriter, r *http.Request) (orgMember, bool) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	raw := r.PathValue("org")
 	if id, err := uuid.Parse(raw); err == nil && id.String() == raw {
-		m, err := h.store.Membership(r.Context(), id, p.User.ID)
-		if err == nil {
-			return m, true
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			serverError(w, "membership", err)
-			return store.Membership{}, false
+		if role, ok := h.z.Enforcer().Role(id, p.User.ID); ok {
+			return orgMember{id, store.Role(role)}, true
 		}
 	}
 	writeError(w, http.StatusNotFound, "not found")
-	return store.Membership{}, false
+	return orgMember{}, false
 }
 
 // authorize audits and 403s a denial; it doesn't check membership, so resolve org via orgFromPath first.
@@ -222,7 +223,7 @@ func (h *api) createOrg(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	writeJSON(w, http.StatusCreated, toOrgJSON(store.Membership{Org: org, Role: store.RoleOwner}))
+	writeJSON(w, http.StatusCreated, toOrgJSON(org, store.RoleOwner))
 }
 
 func (h *api) getOrg(w http.ResponseWriter, r *http.Request) {
@@ -235,20 +236,25 @@ func (h *api) getOrg(w http.ResponseWriter, r *http.Request) {
 	perms := []string{}
 	for _, c := range authz.Catalog {
 		// Objects like org/teams/* are checked literally: allowed only if the caller's rules cover every team.
-		if e.Allowed(sub, m.Org.ID, c.Object, c.Action) {
+		if e.Allowed(sub, m.OrgID, c.Object, c.Action) {
 			perms = append(perms, c.Action)
 		}
 	}
 	slices.Sort(perms)
+	org, err := h.store.Org(r.Context(), m.OrgID)
+	if err != nil {
+		serverError(w, "org", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, struct {
 		orgJSON
 		Permissions []string `json:"permissions"`
-	}{toOrgJSON(m), slices.Compact(perms)})
+	}{toOrgJSON(org, m.Role), slices.Compact(perms)})
 }
 
 func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "iam.orgs.update") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjSettings, "iam.orgs.update") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -256,15 +262,19 @@ func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.RenameOrg(r.Context(), m.Org.ID, name); err != nil {
+		if err := tx.RenameOrg(r.Context(), m.OrgID, name); err != nil {
 			return err
 		}
-		e := auditEntry(r, &m.Org.ID, store.ActionOrgUpdate, "org/"+m.Org.ID.String(), store.ResultAllowed)
+		e := auditEntry(r, &m.OrgID, store.ActionOrgUpdate, "org/"+m.OrgID.String(), store.ResultAllowed)
 		e.Details = map[string]any{"name": name}
 		return tx.Audit(r.Context(), e)
 	}) {
 		return
 	}
-	m.Org.Name = name
-	writeJSON(w, http.StatusOK, toOrgJSON(m))
+	org, err := h.store.Org(r.Context(), m.OrgID)
+	if err != nil {
+		serverError(w, "org", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toOrgJSON(org, m.Role))
 }

@@ -178,21 +178,6 @@ func TestEnvVarKindBound(t *testing.T) {
 	}
 }
 
-func TestEnvVarUserScopeNonMember(t *testing.T) {
-	ctx := context.Background()
-	s, u, org, _ := newEnvStore(t)
-	outsider := login(t, s, "outsider").User.ID
-	if _, err := s.CreateEnvVar(ctx, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeUser, &outsider, "P"), "p"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("create: %v", err)
-	}
-	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "P"), "p")
-	target := v
-	target.Scope, target.OwnerID = store.EnvScopeUser, &outsider
-	if err := s.MoveEnvVar(ctx, v, target); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("move: %v", err)
-	}
-}
-
 func TestEnvVarUpdateKeepsValue(t *testing.T) {
 	ctx := context.Background()
 	s, u, org, team := newEnvStore(t)

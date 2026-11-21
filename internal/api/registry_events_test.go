@@ -215,7 +215,7 @@ func TestPushEventOverLimit(t *testing.T) {
 	repo := "i/" + img.String()
 	ctx := context.Background()
 	one := 1
-	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}); err != nil {
+	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
 		t.Fatal(err)
 	}
 	old := e.addVersion(img, 1, "latest")
@@ -305,7 +305,7 @@ func TestPushEventIndexCountsEveryChild(t *testing.T) {
 	repo := "i/" + img.String()
 	ctx := context.Background()
 	one := 1
-	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}); err != nil {
+	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
 		t.Fatal(err)
 	}
 	amd, arm := registry.Layer{Digest: "sha256:amd", Size: 10}, registry.Layer{Digest: "sha256:arm", Size: 1 << 29}

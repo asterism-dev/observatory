@@ -119,3 +119,41 @@ func TestMigration00018RoundTrip(t *testing.T) {
 		t.Fatalf("up: %v", err)
 	}
 }
+
+func TestMigration00035MovesMgmtSliceToHubOrgs(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
+	defer conn.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 34); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	var org, bare string
+	if err := pool.QueryRow(ctx, "INSERT INTO orgs (name, mgmt_slice) VALUES ('o', '100.64.8.0/24') RETURNING id").Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "INSERT INTO orgs (name) VALUES ('bare') RETURNING id").Scan(&bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 35); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	var slice string
+	if err := pool.QueryRow(ctx, "SELECT mgmt_slice::text FROM hub_orgs WHERE org_id = $1", org).Scan(&slice); err != nil || slice != "100.64.8.0/24" {
+		t.Fatalf("hub_orgs: %q %v", slice, err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM hub_orgs").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("rows: %d %v", n, err)
+	}
+	if _, err := provider.DownTo(ctx, 34); err != nil {
+		t.Fatalf("down again: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT mgmt_slice::text FROM orgs WHERE id = $1", org).Scan(&slice); err != nil || slice != "100.64.8.0/24" {
+		t.Fatalf("restored: %q %v", slice, err)
+	}
+}

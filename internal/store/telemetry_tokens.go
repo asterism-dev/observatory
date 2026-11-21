@@ -42,11 +42,7 @@ func (s *Store) CreateTelemetryToken(ctx context.Context, org, createdBy uuid.UU
 	secret := telemetryTokenPrefix + base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
 	var tok TelemetryToken
 	err := s.InTx(ctx, func(tx *Store) error {
-		var lock uuid.UUID
-		if err := tx.q.QueryRow(ctx, "SELECT id FROM orgs WHERE id = $1 FOR UPDATE", org).Scan(&lock); err != nil {
-			if err == pgx.ErrNoRows {
-				return ErrNotFound
-			}
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var n int

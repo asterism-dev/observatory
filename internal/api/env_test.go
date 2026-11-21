@@ -545,3 +545,24 @@ func TestVMEgressInfo(t *testing.T) {
 		t.Fatalf("no compute.instances.get: %d", rec.Code)
 	}
 }
+
+func TestEnvOwnerMustBeMember(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.ID)
+	body := `{"name":"GH_TOKEN","value":"v","kind":"secret","scope":"user"}`
+	if rec := e.send("POST", envPath(org), bobTok, body); rec.Code != 404 {
+		t.Fatalf("not yet in the policy: %d %s", rec.Code, rec.Body.String())
+	}
+	e.reload()
+	if rec := e.send("POST", envPath(org), bobTok, body); rec.Code != 201 {
+		t.Fatalf("member: %d %s", rec.Code, rec.Body.String())
+	}
+	e.exec(`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org, bob.ID)
+	e.reload()
+	if rec := e.send("POST", envPath(org), bobTok, `{"name":"OTHER","value":"v","kind":"secret","scope":"user"}`); rec.Code != 404 {
+		t.Fatalf("removed: %d %s", rec.Code, rec.Body.String())
+	}
+}

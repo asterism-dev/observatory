@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,23 +68,14 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.store.VMHistory(r.Context(), m.Org.ID)
+	rows, err := h.store.VMHistory(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "vm history", err)
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	teamIDs, err := h.store.UserTeamIDs(r.Context(), m.Org.ID, p.User.ID)
-	if err != nil {
-		serverError(w, "user teams", err)
-		return
-	}
-	inTeam := map[uuid.UUID]bool{}
-	for _, id := range teamIDs {
-		inTeam[id] = true
-	}
 	users, teams := map[uuid.UUID]string{}, map[uuid.UUID]string{}
-	members, err := h.store.Members(r.Context(), m.Org.ID)
+	members, err := h.store.Members(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
@@ -91,7 +83,7 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 	for _, mb := range members {
 		users[mb.User.ID] = mb.User.Name
 	}
-	teamList, err := h.store.Teams(r.Context(), m.Org.ID)
+	teamList, err := h.store.Teams(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
@@ -108,8 +100,8 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []vmHistoryJSON{}
 	for _, row := range rows {
-		visible := row.UserID != nil && *row.UserID == p.User.ID || row.TeamID != nil && inTeam[*row.TeamID] ||
-			e.Allowed(sub, m.Org.ID, authz.VMObject(row.ID), "compute.instances.get")
+		visible := row.UserID != nil && *row.UserID == p.User.ID || row.TeamID != nil && slices.Contains(e.TeamMembers(m.OrgID, *row.TeamID), p.User.ID) ||
+			e.Allowed(sub, m.OrgID, authz.VMObject(row.ID), "compute.instances.get")
 		if !visible {
 			continue
 		}

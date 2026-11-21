@@ -117,19 +117,17 @@ func dashboardAudit(r *http.Request, action string, d store.Dashboard) store.Aud
 	return e
 }
 
-// dashboardAccess answers read and edit for one caller; teams are the caller's team IDs.
+// dashboardAccess answers read and edit for one caller.
 type dashboardAccess struct {
-	e     *authz.Enforcer
-	sub   string
-	user  uuid.UUID
-	org   uuid.UUID
-	teams []uuid.UUID
+	e    *authz.Enforcer
+	sub  string
+	user uuid.UUID
+	org  uuid.UUID
 }
 
-func (h *api) dashboardAccess(r *http.Request, org uuid.UUID) (dashboardAccess, error) {
+func (h *api) dashboardAccess(r *http.Request, org uuid.UUID) dashboardAccess {
 	p, _ := auth.PrincipalFrom(r.Context())
-	teams, err := h.store.UserTeamIDs(r.Context(), org, p.User.ID)
-	return dashboardAccess{h.z.Enforcer(), authz.UserSubject(p.User.ID), p.User.ID, org, teams}, err
+	return dashboardAccess{h.z.Enforcer(), authz.UserSubject(p.User.ID), p.User.ID, org}
 }
 
 // hidden: another member's private dashboard is never shown, whatever rules a custom role grants.
@@ -149,7 +147,7 @@ func (a dashboardAccess) canEdit(d store.Dashboard) bool {
 	if a.e.Allowed(a.sub, a.org, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.update") {
 		return true
 	}
-	return d.CreatedBy == a.user && a.canRead(d) && (d.Scope != store.EnvScopeTeam || slices.Contains(a.teams, *d.OwnerID))
+	return d.CreatedBy == a.user && a.canRead(d) && (d.Scope != store.EnvScopeTeam || slices.Contains(a.e.TeamMembers(a.org, *d.OwnerID), a.user))
 }
 
 func (a dashboardAccess) json(d store.Dashboard) dashboardJSON {
@@ -161,16 +159,12 @@ func (h *api) listDashboards(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ds, err := h.store.Dashboards(r.Context(), m.Org.ID)
+	ds, err := h.store.Dashboards(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "dashboards", err)
 		return
 	}
-	a, err := h.dashboardAccess(r, m.Org.ID)
-	if err != nil {
-		serverError(w, "user teams", err)
-		return
-	}
+	a := h.dashboardAccess(r, m.OrgID)
 	out := []dashboardJSON{}
 	for _, d := range ds {
 		if a.canRead(d) {
@@ -190,12 +184,8 @@ func (h *api) dashboardFromPath(w http.ResponseWriter, r *http.Request) (store.D
 	if !ok {
 		return store.Dashboard{}, dashboardAccess{}, false
 	}
-	a, err := h.dashboardAccess(r, m.Org.ID)
-	if err != nil {
-		serverError(w, "user teams", err)
-		return store.Dashboard{}, dashboardAccess{}, false
-	}
-	d, err := h.store.Dashboard(r.Context(), m.Org.ID, id)
+	a := h.dashboardAccess(r, m.OrgID)
+	d, err := h.store.Dashboard(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && a.hidden(d)) {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.Dashboard{}, dashboardAccess{}, false
@@ -203,7 +193,7 @@ func (h *api) dashboardFromPath(w http.ResponseWriter, r *http.Request) (store.D
 		serverError(w, "dashboard", err)
 		return store.Dashboard{}, dashboardAccess{}, false
 	}
-	return d, a, h.authorize(w, r, m.Org.ID, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.get")
+	return d, a, h.authorize(w, r, m.OrgID, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.get")
 }
 
 func (h *api) dashboardEditable(w http.ResponseWriter, r *http.Request, a dashboardAccess, d store.Dashboard) bool {
@@ -235,16 +225,12 @@ func (h *api) createDashboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, dashboardObject(body.Scope, owner), "telemetry.dashboards.create") {
+	owner, ok := h.envTarget(w, r, m.OrgID, body.Scope, body.TeamID)
+	if !ok || !h.authorize(w, r, m.OrgID, dashboardObject(body.Scope, owner), "telemetry.dashboards.create") {
 		return
 	}
-	a, err := h.dashboardAccess(r, m.Org.ID)
-	if err != nil {
-		serverError(w, "user teams", err)
-		return
-	}
-	d := store.Dashboard{OrgID: m.Org.ID, Scope: body.Scope, OwnerID: owner, Name: body.Name, Panels: panels, CreatedBy: a.user}
+	a := h.dashboardAccess(r, m.OrgID)
+	d := store.Dashboard{OrgID: m.OrgID, Scope: body.Scope, OwnerID: owner, Name: body.Name, Panels: panels, CreatedBy: a.user}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
 		if d, err = tx.CreateDashboard(r.Context(), d); err != nil {

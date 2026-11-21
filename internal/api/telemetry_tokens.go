@@ -44,10 +44,10 @@ func telemetryTokenAudit(r *http.Request, action string, t store.TelemetryToken)
 
 func (h *api) listTelemetryTokens(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
-	ts, err := h.store.TelemetryTokens(r.Context(), m.Org.ID)
+	ts, err := h.store.TelemetryTokens(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "telemetry tokens", err)
 		return
@@ -64,7 +64,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
+	if !h.authorize(w, r, m.OrgID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -72,8 +72,8 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	if err := h.z.Enforcer().CanHold(authz.UserSubject(p.User.ID), m.Org.ID, telemetryTokenRules); err != nil {
-		h.auditDenied(r, m.Org.ID, authz.ObjSettings, store.ActionGrafanaTokenCreate)
+	if err := h.z.Enforcer().CanHold(authz.UserSubject(p.User.ID), m.OrgID, telemetryTokenRules); err != nil {
+		h.auditDenied(r, m.OrgID, authz.ObjSettings, store.ActionGrafanaTokenCreate)
 		writeError(w, http.StatusForbidden, "creating a token requires org-wide compute.instances.getMetrics and compute.nodes.getMetrics without deny rules")
 		return
 	}
@@ -81,7 +81,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	var secret string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if tok, secret, err = tx.CreateTelemetryToken(r.Context(), m.Org.ID, p.User.ID, name); err != nil {
+		if tok, secret, err = tx.CreateTelemetryToken(r.Context(), m.OrgID, p.User.ID, name); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenCreate, tok))
@@ -96,7 +96,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) revokeTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
+	if !ok || !h.authorize(w, r, m.OrgID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
 	id, ok := pathID(w, r, "id")
@@ -104,11 +104,11 @@ func (h *api) revokeTelemetryToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
-		name, err := tx.RevokeTelemetryToken(r.Context(), m.Org.ID, id)
+		name, err := tx.RevokeTelemetryToken(r.Context(), m.OrgID, id)
 		if err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenRevoke, store.TelemetryToken{ID: id, OrgID: m.Org.ID, Name: name}))
+		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenRevoke, store.TelemetryToken{ID: id, OrgID: m.OrgID, Name: name}))
 	}) {
 		return
 	}
@@ -152,12 +152,11 @@ func (h *api) grafanaAuth(r *http.Request) (uuid.UUID, store.TelemetryToken, int
 }
 
 func (h *api) creatorHoldsToken(ctx context.Context, tok store.TelemetryToken) (bool, error) {
-	if _, err := h.store.Membership(ctx, tok.OrgID, tok.CreatedBy); errors.Is(err, store.ErrNotFound) {
+	e := h.z.Enforcer()
+	if _, ok := e.Role(tok.OrgID, tok.CreatedBy); !ok {
 		return false, nil
-	} else if err != nil {
-		return false, err
 	}
-	if err := h.z.Enforcer().CanHold(authz.UserSubject(tok.CreatedBy), tok.OrgID, telemetryTokenRules); errors.Is(err, authz.ErrEscalation) {
+	if err := e.CanHold(authz.UserSubject(tok.CreatedBy), tok.OrgID, telemetryTokenRules); errors.Is(err, authz.ErrEscalation) {
 		return false, nil
 	} else if err != nil {
 		return false, err

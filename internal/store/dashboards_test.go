@@ -89,9 +89,6 @@ func TestDashboards(t *testing.T) {
 	if _, err := s.Dashboard(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("private dashboard survives member removal: %v", err)
 	}
-	if _, err := s.CreateDashboard(ctx, store.Dashboard{OrgID: org.ID, Scope: store.EnvScopeUser, OwnerID: &b, Name: "x", CreatedBy: b}); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("private dashboard for non-member: %v", err)
-	}
 }
 
 func TestDashboardLimit(t *testing.T) {

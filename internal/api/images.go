@@ -108,7 +108,7 @@ func (h *api) imageFromPath(w http.ResponseWriter, r *http.Request, act string) 
 	if !ok {
 		return store.Image{}, false
 	}
-	img, err := h.store.Image(r.Context(), m.Org.ID, id)
+	img, err := h.store.Image(r.Context(), m.OrgID, id)
 	p, _ := auth.PrincipalFrom(r.Context())
 	if errors.Is(err, store.ErrNotFound) || (err == nil && img.Scope == store.EnvScopeUser && *img.OwnerID != p.User.ID) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -124,7 +124,7 @@ func (h *api) imageFromPath(w http.ResponseWriter, r *http.Request, act string) 
 		}
 		return img, true
 	}
-	return img, h.authorize(w, r, m.Org.ID, imageObject(img.Scope, img.OwnerID), act)
+	return img, h.authorize(w, r, m.OrgID, imageObject(img.Scope, img.OwnerID), act)
 }
 
 func (h *api) teamNames(ctx context.Context, org uuid.UUID) (map[uuid.UUID]string, error) {
@@ -242,12 +242,12 @@ func (h *api) listImages(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "platform image", err)
 		return
 	}
-	list, err := h.store.ListImages(ctx, m.Org.ID)
+	list, err := h.store.ListImages(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "images", err)
 		return
 	}
-	teams, err := h.teamNames(ctx, m.Org.ID)
+	teams, err := h.teamNames(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
@@ -258,7 +258,7 @@ func (h *api) listImages(w http.ResponseWriter, r *http.Request) {
 	for _, img := range append([]store.Image{platform}, list...) {
 		// Another member's private images are never listed, whatever rules a custom role grants.
 		if !img.Platform && ((img.Scope == store.EnvScopeUser && *img.OwnerID != p.User.ID) ||
-			!h.z.Allowed(sub, m.Org.ID, imageObject(img.Scope, img.OwnerID), "artifacts.images.list")) {
+			!h.z.Allowed(sub, m.OrgID, imageObject(img.Scope, img.OwnerID), "artifacts.images.list")) {
 			continue
 		}
 		j, err := h.imageJSON(ctx, img, teams)
@@ -292,12 +292,12 @@ func (h *api) createImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid description")
 		return
 	}
-	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, imageObject(body.Scope, owner), "artifacts.images.update") {
+	owner, ok := h.envTarget(w, r, m.OrgID, body.Scope, body.TeamID)
+	if !ok || !h.authorize(w, r, m.OrgID, imageObject(body.Scope, owner), "artifacts.images.update") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	img := store.Image{OrgID: m.Org.ID, Scope: body.Scope, OwnerID: owner, Name: body.Name, Description: body.Description, CreatedBy: p.User.ID}
+	img := store.Image{OrgID: m.OrgID, Scope: body.Scope, OwnerID: owner, Name: body.Name, Description: body.Description, CreatedBy: p.User.ID}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
 		if img, err = tx.CreateImage(r.Context(), img); err != nil {
@@ -1065,14 +1065,14 @@ func (h *api) defaultLevelFromPath(w http.ResponseWriter, r *http.Request, act s
 		return defaultLevel{}, false
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	l := defaultLevel{org: m.Org.ID}
+	l := defaultLevel{org: m.OrgID}
 	switch {
 	case r.PathValue("team") != "":
 		id, ok := pathID(w, r, "team")
 		if !ok {
 			return l, false
 		}
-		if _, err := h.store.Team(r.Context(), m.Org.ID, id); errors.Is(err, store.ErrNotFound) {
+		if _, err := h.store.Team(r.Context(), m.OrgID, id); errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return l, false
 		} else if err != nil {
@@ -1088,7 +1088,7 @@ func (h *api) defaultLevelFromPath(w http.ResponseWriter, r *http.Request, act s
 		writeError(w, http.StatusNotFound, "not found")
 		return l, false
 	}
-	return l, h.authorize(w, r, m.Org.ID, imageObject(l.scope, l.owner), act)
+	return l, h.authorize(w, r, m.OrgID, imageObject(l.scope, l.owner), act)
 }
 
 func (h *api) resolver() images.Resolver { return images.Resolver{Store: h.store, Authz: h.z} }

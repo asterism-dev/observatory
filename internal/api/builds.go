@@ -309,16 +309,16 @@ func (h *api) listBuilderVMs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !privileged(m.Role) {
-		h.auditDenied(r, m.Org.ID, authz.ObjVMs, "build.builders.list")
+		h.auditDenied(r, m.OrgID, authz.ObjVMs, "build.builders.list")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	vms, err := h.store.BuilderVMs(r.Context(), m.Org.ID)
+	vms, err := h.store.BuilderVMs(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "builder vms", err)
 		return
 	}
-	names, err := h.vmNames(r, m.Org.ID)
+	names, err := h.vmNames(r, m.OrgID)
 	if err != nil {
 		serverError(w, "vm names", err)
 		return

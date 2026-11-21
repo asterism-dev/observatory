@@ -107,6 +107,11 @@ func (h *api) adminSetOrgLimits(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The hub org lock no longer fails for an unknown org.
+	if _, err := h.store.Org(r.Context(), id); err != nil {
+		h.adminReadError(w, "org", err)
+		return
+	}
 	h.commitLimits(w, r, id, store.ScopeOrg, l)
 }
 

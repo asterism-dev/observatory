@@ -79,6 +79,10 @@ type Enforcer struct {
 	ce     *casbin.Enforcer
 	vms    map[uuid.UUID]VMRef
 	teams  map[teamMember]bool
+	roles  map[userOrg]string
+	orgsOf map[uuid.UUID][]uuid.UUID
+	// members maps every known team, empty ones included, to its user IDs.
+	members map[TeamRef][]uuid.UUID
 }
 
 type teamMember struct{ org, team, user uuid.UUID }
@@ -209,14 +213,41 @@ func New(p Policy) (*Enforcer, error) {
 			return nil, err
 		}
 	}
-	e := &Enforcer{policy: p, ce: ce, vms: make(map[uuid.UUID]VMRef, len(p.VMs)), teams: make(map[teamMember]bool, len(p.TeamMembers))}
+	e := &Enforcer{policy: p, ce: ce, vms: make(map[uuid.UUID]VMRef, len(p.VMs)), teams: make(map[teamMember]bool, len(p.TeamMembers)),
+		roles: make(map[userOrg]string, len(p.Memberships)), orgsOf: map[uuid.UUID][]uuid.UUID{}, members: make(map[TeamRef][]uuid.UUID, len(p.Teams))}
 	for _, vm := range p.VMs {
 		e.vms[vm.ID] = vm
 	}
+	for _, mr := range p.Memberships {
+		e.roles[userOrg{mr.UserID, mr.OrgID}] = mr.Role
+		e.orgsOf[mr.UserID] = append(e.orgsOf[mr.UserID], mr.OrgID)
+	}
+	for _, t := range p.Teams {
+		e.members[TeamRef{OrgID: t.OrgID, ID: t.ID}] = nil
+	}
 	for _, tm := range p.TeamMembers {
 		e.teams[teamMember{tm.OrgID, tm.TeamID, tm.UserID}] = true
+		ref := TeamRef{OrgID: tm.OrgID, ID: tm.TeamID}
+		e.members[ref] = append(e.members[ref], tm.UserID)
 	}
 	return e, nil
+}
+
+// Role returns user's built-in role in org; false means not a member.
+func (e *Enforcer) Role(org, user uuid.UUID) (string, bool) {
+	r, ok := e.roles[userOrg{user, org}]
+	return r, ok
+}
+
+func (e *Enforcer) OrgsOf(user uuid.UUID) []uuid.UUID { return slices.Clone(e.orgsOf[user]) }
+
+func (e *Enforcer) TeamMembers(org, team uuid.UUID) []uuid.UUID {
+	return slices.Clone(e.members[TeamRef{OrgID: org, ID: team}])
+}
+
+func (e *Enforcer) HasTeam(org, team uuid.UUID) bool {
+	_, ok := e.members[TeamRef{OrgID: org, ID: team}]
+	return ok
 }
 
 func (e *Enforcer) Allowed(sub string, org uuid.UUID, obj, act string) bool {

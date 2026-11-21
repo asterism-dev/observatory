@@ -346,10 +346,6 @@ func TestIntegrationCascade(t *testing.T) {
 	for _, k := range keep {
 		mustIntegration(t, s, org.ID, k.ID)
 	}
-	outsider := login(t, s, "integ-outsider").User.ID
-	if _, err := s.CreateIntegration(ctx, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &outsider), store.IntegrationSecret{Token: dummyGH}); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("non-member private: %v", err)
-	}
 }
 
 func TestIntegrationStaleWrite(t *testing.T) {

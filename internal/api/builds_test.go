@@ -376,7 +376,7 @@ func TestBuildFailsNamingTheLimit(t *testing.T) {
 	_, aliceTok := e.user("alice")
 	org := e.createOrg(aliceTok, "Acme")
 	thirty := 30
-	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{DiskGB: &thirty}); err != nil {
+	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{DiskGB: &thirty}, nil); err != nil {
 		t.Fatal(err)
 	}
 	e.node(org)

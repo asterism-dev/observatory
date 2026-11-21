@@ -113,7 +113,7 @@ func TestCreateSnapshotLimits(t *testing.T) {
 
 	e2 := newDiskEnv(t)
 	a, b := mustStoppedVM(t, e2, "a", nil), mustStoppedVM(t, e2, "b", nil)
-	if err := e2.s.SetLimits(ctx, e2.org.ID, "user:"+e2.user.String(), store.Limits{SnapshotCount: ip(2)}); err != nil {
+	if err := e2.s.SetLimits(ctx, e2.org.ID, "user:"+e2.user.String(), store.Limits{SnapshotCount: ip(2)}, policyKnown(t, e2.s, e2.org.ID)); err != nil {
 		t.Fatal(err)
 	}
 	first := mustSnapshot(t, e2, a.ID, "one", false)
@@ -513,7 +513,7 @@ func TestForkVM(t *testing.T) {
 		t.Fatalf("shape: %v", err)
 	}
 
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{VMCount: ip(2)}); err != nil {
+	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{VMCount: ip(2)}, policyKnown(t, e.s, e.org.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.s.ForkVM(ctx, e.org.ID, snap, "g", false, e.user); !errors.Is(err, store.ErrLimitExceeded) {
@@ -530,16 +530,16 @@ func TestForkVM(t *testing.T) {
 func TestLimitsSnapshotCountRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{SnapshotCount: ip(5)}); err != nil {
+	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{SnapshotCount: ip(5)}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{SnapshotCount: ip(6)}); !errors.Is(err, store.ErrLimitExceedsOrg) {
+	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{SnapshotCount: ip(6)}, policyKnown(t, e.s, e.org.ID)); !errors.Is(err, store.ErrLimitExceedsOrg) {
 		t.Fatalf("user above org: %v", err)
 	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{SnapshotCount: ip(3)}); err != nil {
+	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{SnapshotCount: ip(3)}, policyKnown(t, e.s, e.org.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{SnapshotCount: ip(2)}); !errors.Is(err, store.ErrLimitExceedsOrg) {
+	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{SnapshotCount: ip(2)}, nil); !errors.Is(err, store.ErrLimitExceedsOrg) {
 		t.Fatalf("org below user: %v", err)
 	}
 	ls, err := e.s.Limits(ctx, e.org.ID)

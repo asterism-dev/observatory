@@ -162,7 +162,7 @@ func (h *api) integrationFromPath(w http.ResponseWriter, r *http.Request) (store
 	if !ok {
 		return store.Integration{}, false
 	}
-	return h.loadIntegration(w, r, m.Org.ID, id)
+	return h.loadIntegration(w, r, m.OrgID, id)
 }
 
 // findAccount returns v's account id, or writes 404 when v has no such account.
@@ -223,17 +223,17 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	list, err := h.store.Integrations(ctx, m.Org.ID)
+	list, err := h.store.Integrations(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "integrations", err)
 		return
 	}
-	teams, err := h.store.Teams(ctx, m.Org.ID)
+	teams, err := h.store.Teams(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
 	}
-	accounts, err := h.store.OrgIntegrationAccounts(ctx, m.Org.ID)
+	accounts, err := h.store.OrgIntegrationAccounts(ctx, m.OrgID)
 	if err != nil {
 		serverError(w, "integration accounts", err)
 		return
@@ -307,13 +307,13 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		if v.Scope == store.EnvScopeUser && *v.OwnerID != p.User.ID {
 			continue
 		}
-		if !e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.list") {
+		if !e.Allowed(sub, m.OrgID, obj, "secrets.integrations.list") {
 			continue
 		}
 		j := integrationJSON{ID: v.ID, Kind: v.Kind, Source: v.Source, Scope: v.Scope, Mode: v.Mode, Account: v.Account, Scopes: v.ScopesInfo,
 			ProviderExpiresAt: v.ProviderExpiresAt, Status: v.Status, LastError: v.LastError, WasInVM: v.WasInVM, UpdatedAt: v.UpdatedAt, AutoSwitch: v.AutoSwitch,
-			CanEdit:   e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.set"),
-			CanDelete: e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.delete")}
+			CanEdit:   e.Allowed(sub, m.OrgID, obj, "secrets.integrations.set"),
+			CanDelete: e.Allowed(sub, m.OrgID, obj, "secrets.integrations.delete")}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
 		}
@@ -343,7 +343,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := []scopeJSON{}
 	add := func(s scopeJSON, obj string) {
-		if e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.set") {
+		if e.Allowed(sub, m.OrgID, obj, "secrets.integrations.set") {
 			s.Connected = append([]integrations.Kind{}, connected[obj]...)
 			slices.Sort(s.Connected)
 			scopes = append(scopes, s)
@@ -392,8 +392,8 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, gcloudProxyOnly)
 		return
 	}
-	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, integrationObject(body.Scope, owner), "secrets.integrations.set") {
+	owner, ok := h.envTarget(w, r, m.OrgID, body.Scope, body.TeamID)
+	if !ok || !h.authorize(w, r, m.OrgID, integrationObject(body.Scope, owner), "secrets.integrations.set") {
 		return
 	}
 	var sec store.IntegrationSecret
@@ -412,7 +412,7 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	v := store.Integration{OrgID: m.Org.ID, Kind: body.Kind, Source: body.Source, Scope: body.Scope, OwnerID: owner, Mode: body.Mode,
+	v := store.Integration{OrgID: m.OrgID, Kind: body.Kind, Source: body.Source, Scope: body.Scope, OwnerID: owner, Mode: body.Mode,
 		Account: acc.Name, ScopesInfo: acc.Scopes, ProviderExpiresAt: acc.ExpiresAt, CreatedBy: p.User.ID, QuotaProject: project}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
@@ -425,7 +425,7 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": v.ID, "account": v.Account})
 }
 
@@ -610,19 +610,19 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	var addTo store.Integration
 	switch {
 	case body.ReplaceID != nil:
-		old, ok := h.loadIntegration(w, r, m.Org.ID, *body.ReplaceID)
+		old, ok := h.loadIntegration(w, r, m.OrgID, *body.ReplaceID)
 		if !ok {
 			return
 		}
 		replaceKind, si.Scope, si.OwnerID, si.ReplaceID = old.Kind, old.Scope, old.OwnerID, &old.ID
 	case body.ReplaceAccountID != nil:
-		v, a, ok := h.accountByID(w, r, m.Org.ID, *body.ReplaceAccountID)
+		v, a, ok := h.accountByID(w, r, m.OrgID, *body.ReplaceAccountID)
 		if !ok {
 			return
 		}
 		si.Scope, si.OwnerID, si.ReplaceAccountID = v.Scope, v.OwnerID, &a.ID
 	case body.AddToID != nil:
-		v, ok := h.loadIntegration(w, r, m.Org.ID, *body.AddToID)
+		v, ok := h.loadIntegration(w, r, m.OrgID, *body.AddToID)
 		if !ok {
 			return
 		}
@@ -632,13 +632,13 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid mode")
 			return
 		}
-		owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
+		owner, ok := h.envTarget(w, r, m.OrgID, body.Scope, body.TeamID)
 		if !ok {
 			return
 		}
 		si.Scope, si.OwnerID = body.Scope, owner
 	}
-	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
+	if !h.authorize(w, r, m.OrgID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	if si.ReplaceID != nil && replaceKind != integrations.Claude {
@@ -649,7 +649,7 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if si.ReplaceID == nil && si.AddToID == nil && si.ReplaceAccountID == nil {
-		list, err := h.store.Integrations(r.Context(), m.Org.ID)
+		list, err := h.store.Integrations(r.Context(), m.OrgID)
 		if err != nil {
 			serverError(w, "integrations", err)
 			return
@@ -663,7 +663,7 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	state, challenge, err := h.signIns.Start(p.User.ID, m.Org.ID, si)
+	state, challenge, err := h.signIns.Start(p.User.ID, m.OrgID, si)
 	if errors.Is(err, integrations.ErrTooManySignIns) {
 		writeError(w, http.StatusTooManyRequests, "too many pending sign-ins")
 		return
@@ -694,24 +694,24 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	verifier, si, ok := h.signIns.Take(body.State, p.User.ID, m.Org.ID)
+	verifier, si, ok := h.signIns.Take(body.State, p.User.ID, m.OrgID)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "sign-in expired, start again")
 		return
 	}
 	// The caller's rights may have changed since the sign-in started.
-	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
+	if !h.authorize(w, r, m.OrgID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	var old store.Integration
 	var replaceAccount store.IntegrationAccount
 	switch {
 	case si.ReplaceID != nil:
-		old, ok = h.loadIntegration(w, r, m.Org.ID, *si.ReplaceID)
+		old, ok = h.loadIntegration(w, r, m.OrgID, *si.ReplaceID)
 	case si.AddToID != nil:
-		old, ok = h.loadIntegration(w, r, m.Org.ID, *si.AddToID)
+		old, ok = h.loadIntegration(w, r, m.OrgID, *si.AddToID)
 	case si.ReplaceAccountID != nil:
-		old, replaceAccount, ok = h.accountByID(w, r, m.Org.ID, *si.ReplaceAccountID)
+		old, replaceAccount, ok = h.accountByID(w, r, m.OrgID, *si.ReplaceAccountID)
 	}
 	if !ok {
 		return
@@ -748,7 +748,7 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"id": v.ID, "account": v.Account})
 		return
 	}
-	v := store.Integration{OrgID: m.Org.ID, Kind: integrations.Claude, Source: integrations.SourceOAuth, Scope: si.Scope, OwnerID: si.OwnerID,
+	v := store.Integration{OrgID: m.OrgID, Kind: integrations.Claude, Source: integrations.SourceOAuth, Scope: si.Scope, OwnerID: si.OwnerID,
 		Mode: si.Mode, Account: t.Email, CreatedBy: p.User.ID}
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
@@ -761,7 +761,7 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	h.fleet.NotifyOrg(m.Org.ID)
+	h.fleet.NotifyOrg(m.OrgID)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": v.ID, "account": v.Account})
 }
 

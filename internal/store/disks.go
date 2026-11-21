@@ -71,7 +71,7 @@ func (s *Store) Disk(ctx context.Context, org, id uuid.UUID) (Disk, error) {
 func (s *Store) CreateDisk(ctx context.Context, d Disk) (Disk, error) {
 	var out Disk
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, d.OrgID); err != nil {
+		if err := tx.LockHubOrg(ctx, d.OrgID); err != nil {
 			return err
 		}
 		if d.CopyFrom != nil {
@@ -105,7 +105,7 @@ func (s *Store) CreateDisk(ctx context.Context, d Disk) (Disk, error) {
 func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, restartAllowed bool) (Disk, error) {
 	var out Disk
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		d, err := tx.Disk(ctx, org, id)
@@ -143,7 +143,7 @@ func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, res
 // DeleteDisk soft-deletes; the row is purged once the storage server reports the file gone.
 func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var busy bool
@@ -273,7 +273,7 @@ func (s *Store) ApplyStorageFiles(ctx context.Context, files []proto.StorageFile
 		}
 		// Org locks first, in order, like GrowDisk and SetVMDisks, so the disk and VM updates below can't deadlock with them.
 		for _, org := range candidates {
-			if err := tx.LockOrg(ctx, org); err != nil {
+			if err := tx.LockHubOrg(ctx, org); err != nil {
 				return err
 			}
 		}

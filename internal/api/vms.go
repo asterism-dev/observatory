@@ -219,7 +219,7 @@ func (h *api) vmFromPath(w http.ResponseWriter, r *http.Request, act string) (st
 	if !ok {
 		return store.VM{}, false
 	}
-	v, err := h.store.VM(r.Context(), m.Org.ID, id)
+	v, err := h.store.VM(r.Context(), m.OrgID, id)
 	if errors.Is(err, store.ErrNotFound) || err == nil && v.Kind == store.VMKindBuilder {
 		writeError(w, http.StatusNotFound, "not found")
 		return store.VM{}, false
@@ -236,12 +236,12 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vms, err := h.store.VMs(r.Context(), m.Org.ID)
+	vms, err := h.store.VMs(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "vms", err)
 		return
 	}
-	names, err := h.vmNames(r, m.Org.ID)
+	names, err := h.vmNames(r, m.OrgID)
 	if err != nil {
 		serverError(w, "vm names", err)
 		return
@@ -250,21 +250,21 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	visible := []store.VM{}
 	for _, v := range vms {
-		if e.Allowed(sub, m.Org.ID, authz.VMObject(v.ID), "compute.instances.get") {
+		if e.Allowed(sub, m.OrgID, authz.VMObject(v.ID), "compute.instances.get") {
 			visible = append(visible, v)
 		}
 	}
-	names.usage = h.vmLatest(r, m.Org.ID, visible, vmListLatestTimeout)
+	names.usage = h.vmLatest(r, m.OrgID, visible, vmListLatestTimeout)
 	out := []vmJSON{}
 	for _, v := range visible {
 		out = append(out, h.vmJSON(r, v, names))
 	}
 	owners := []ownerJSON{}
-	if e.Allowed(sub, m.Org.ID, authz.ObjVMs, "compute.instances.create") {
+	if e.Allowed(sub, m.OrgID, authz.ObjVMs, "compute.instances.create") {
 		owners = append(owners, ownerJSON{"user", p.User.ID, p.User.Name})
 	}
 	for _, t := range names.teamList {
-		if e.Allowed(sub, m.Org.ID, authz.TeamVMsObject(t.ID), "compute.instances.create") {
+		if e.Allowed(sub, m.OrgID, authz.TeamVMsObject(t.ID), "compute.instances.create") {
 			owners = append(owners, ownerJSON{"team", t.ID, t.Name})
 		}
 	}
@@ -275,7 +275,7 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes := []nodeRef{}
 	for _, n := range names.nodeList {
-		if n.Enrolled && e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.use") {
+		if n.Enrolled && e.Allowed(sub, m.OrgID, authz.NodeObject(n.ID), "compute.nodes.use") {
 			nodes = append(nodes, nodeRef{n.ID, n.Name, h.fleet.Online(n.ID)})
 		}
 	}
@@ -302,7 +302,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	v := store.VM{OrgID: m.Org.ID, NodeID: body.NodeID, Name: body.Name, CPUs: body.CPUs, MemoryMB: body.MemoryMB, DiskGB: body.DiskGB, CreatedBy: p.User.ID}
+	v := store.VM{OrgID: m.OrgID, NodeID: body.NodeID, Name: body.Name, CPUs: body.CPUs, MemoryMB: body.MemoryMB, DiskGB: body.DiskGB, CreatedBy: p.User.ID}
 	var obj string
 	switch {
 	case !vmNamePattern.MatchString(body.Name):
@@ -327,7 +327,12 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		}
 		v.DeleteAt = &at
 	}
-	if !h.authorize(w, r, m.Org.ID, obj, "compute.instances.create") || !h.authorize(w, r, m.Org.ID, authz.NodeObject(v.NodeID), "compute.nodes.use") {
+	if !h.authorize(w, r, m.OrgID, obj, "compute.instances.create") || !h.authorize(w, r, m.OrgID, authz.NodeObject(v.NodeID), "compute.nodes.use") {
+		return
+	}
+	// ponytail: owner checked against the policy without a lock, so a create can race a member removal or team delete; close it with a cross-service lock if orphans show up.
+	if v.TeamID != nil && !h.z.Enforcer().HasTeam(m.OrgID, *v.TeamID) {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if !h.resolveVMImage(w, r, &v, body.Image) {
@@ -593,7 +598,7 @@ func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
 	var denied uuid.UUID
 	if !h.commit(w, r, func(tx *store.Store) error {
 		// The org lock serializes with SetVMDisks, so the attached set read here is the one it replaces.
-		if err := tx.LockOrg(r.Context(), v.OrgID); err != nil {
+		if err := tx.LockHubOrg(r.Context(), v.OrgID); err != nil {
 			return err
 		}
 		current, err := tx.VMDisks(r.Context(), v.ID)

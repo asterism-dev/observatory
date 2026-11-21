@@ -259,3 +259,21 @@ func TestCommitRejectsInvalidPolicy(t *testing.T) {
 		t.Fatal("enforcer swapped")
 	}
 }
+
+func TestOrgFromPathUsesPolicy(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.ID)
+	if rec := e.do("GET", "/api/orgs/"+org.String(), bobTok); rec.Code != 404 {
+		t.Fatalf("before reload: %d %s", rec.Code, rec.Body.String())
+	}
+	e.reload()
+	rec := e.do("GET", "/api/orgs/"+org.String(), bobTok)
+	var got struct{ Name, Role string }
+	decode(t, rec, &got)
+	if rec.Code != 200 || got.Name != "Acme" || got.Role != "member" {
+		t.Fatalf("after reload: %d %s", rec.Code, rec.Body.String())
+	}
+}

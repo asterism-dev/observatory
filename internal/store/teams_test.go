@@ -80,7 +80,7 @@ func TestTeamStore(t *testing.T) {
 		t.Fatalf("delete unknown: %v", err)
 	}
 	one := 1
-	if err := s.SetLimits(ctx, orgA.ID, "team:"+other.ID.String(), store.Limits{VCPU: &one}); err != nil {
+	if err := s.SetLimits(ctx, orgA.ID, "team:"+other.ID.String(), store.Limits{VCPU: &one}, policyKnown(t, s, orgA.ID)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteTeam(ctx, orgA.ID, other.ID); err != nil {

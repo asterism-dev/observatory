@@ -82,10 +82,10 @@ func (s *Store) Limits(ctx context.Context, orgID uuid.UUID) (map[string]Limits,
 	return out, rows.Err()
 }
 
-// SetLimits takes the org lock so team/user ≤ org holds under concurrent org, team and member changes.
-func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l Limits) error {
+// SetLimits takes the hub org lock so team/user ≤ org holds under concurrent limit changes; known reports whether a team or user scope names a team or member of the org.
+func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l Limits, known func(scope string) bool) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, orgID); err != nil {
+		if err := tx.LockHubOrg(ctx, orgID); err != nil {
 			return err
 		}
 		if scope == ScopeOrg {
@@ -101,7 +101,7 @@ func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l 
 				return ErrLimitExceedsOrg
 			}
 		} else {
-			if err := tx.checkScopeInOrg(ctx, orgID, scope); err != nil {
+			if err := checkScopeInOrg(scope, known); err != nil {
 				return err
 			}
 			var org Limits
@@ -124,27 +124,15 @@ func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l 
 	})
 }
 
-// checkScopeInOrg wants a canonical team:<uuid> or user:<uuid> naming a team or member of the org.
-func (s *Store) checkScopeInOrg(ctx context.Context, orgID uuid.UUID, scope string) error {
+// checkScopeInOrg wants a canonical team:<uuid> or user:<uuid> that known accepts; a nil known accepts nothing.
+func checkScopeInOrg(scope string, known func(scope string) bool) error {
 	kind, raw, _ := strings.Cut(scope, ":")
 	id, err := uuid.Parse(raw)
-	if err != nil || id.String() != raw {
+	if err != nil || id.String() != raw || known == nil {
 		return ErrNotFound
 	}
-	var q string
-	switch {
-	case kind == "team" && scope == authz.TeamSubject(id):
-		q = "SELECT 1 FROM teams WHERE org_id = $1 AND id = $2"
-	case kind == "user" && scope == authz.UserSubject(id):
-		q = "SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2 FOR SHARE"
-	default:
-		return ErrNotFound
+	if (kind == "team" && scope == authz.TeamSubject(id) || kind == "user" && scope == authz.UserSubject(id)) && known(scope) {
+		return nil
 	}
-	var one int
-	if err := s.q.QueryRow(ctx, q, orgID, id).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
-		return err
-	}
-	return nil
+	return ErrNotFound
 }

@@ -78,7 +78,7 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "duplicate node")
 			return
 		}
-		n, err := h.store.Node(r.Context(), m.Org.ID, id)
+		n, err := h.store.Node(r.Context(), m.OrgID, id)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -95,7 +95,7 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		list = append(list, n.Name)
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	run, err := h.fleet.StartUpdate(r.Context(), m.Org.ID, p.User.ID, nodes)
+	run, err := h.fleet.StartUpdate(r.Context(), m.OrgID, p.User.ID, nodes)
 	if errors.Is(err, fleet.ErrUpdateRunning) {
 		writeError(w, http.StatusConflict, "an update is already running")
 		return
@@ -108,7 +108,7 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "start node update", err)
 		return
 	}
-	h.auditUpdate(r, m.Org.ID, map[string]any{"update": "started", "nodes": list})
+	h.auditUpdate(r, m.OrgID, map[string]any{"update": "started", "nodes": list})
 	j, err := h.updateRunJSON(r, run, names)
 	if err != nil {
 		serverError(w, "node update", err)
@@ -130,7 +130,7 @@ func (h *api) currentNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, found := h.fleet.CurrentUpdate(m.Org.ID)
+	run, found := h.fleet.CurrentUpdate(m.OrgID)
 	if !found {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -148,20 +148,20 @@ func (h *api) cancelNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, found := h.fleet.CurrentUpdate(m.Org.ID)
+	run, found := h.fleet.CurrentUpdate(m.OrgID)
 	if !found || run.State != "running" {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	for _, n := range run.Nodes {
-		if !h.authorize(w, r, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.update") {
+		if !h.authorize(w, r, m.OrgID, authz.NodeObject(n.ID), "compute.nodes.update") {
 			return
 		}
 	}
-	if !h.fleet.CancelUpdate(m.Org.ID) {
+	if !h.fleet.CancelUpdate(m.OrgID) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	h.auditUpdate(r, m.Org.ID, map[string]any{"update": "cancelled"})
+	h.auditUpdate(r, m.OrgID, map[string]any{"update": "cancelled"})
 	w.WriteHeader(http.StatusNoContent)
 }

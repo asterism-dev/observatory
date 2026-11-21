@@ -37,7 +37,7 @@ func TestCreateDevice(t *testing.T) {
 		t.Fatalf("ips %s %s", d1.IP, d2.IP)
 	}
 	var slice *netip.Prefix
-	if err := pool.QueryRow(ctx, "SELECT mgmt_slice FROM orgs WHERE id = $1", orgA.ID).Scan(&slice); err != nil || slice == nil {
+	if err := pool.QueryRow(ctx, "SELECT mgmt_slice FROM hub_orgs WHERE org_id = $1", orgA.ID).Scan(&slice); err != nil || slice == nil {
 		t.Fatalf("org A slice %v %v", slice, err)
 	}
 	if _, err := s.CreateDevice(ctx, store.Device{OrgID: orgA.ID, UserID: a.User.ID, Name: "laptop", PublicKey: "k3"}); !errors.Is(err, store.ErrConflict) {

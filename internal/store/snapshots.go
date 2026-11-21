@@ -118,7 +118,7 @@ func (s *Store) snapshotAttachments(ctx context.Context, vm uuid.UUID) ([]Snapsh
 func (s *Store) CreateSnapshot(ctx context.Context, org, vm uuid.UUID, name string, memory bool, createdBy uuid.UUID) (Snapshot, error) {
 	var out Snapshot
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var restoreState string
@@ -173,7 +173,7 @@ func (s *Store) CreateSnapshot(ctx context.Context, org, vm uuid.UUID, name stri
 // DeleteSnapshot refuses while a restore or fork still needs the snapshot's files on the node or storage server.
 func (s *Store) DeleteSnapshot(ctx context.Context, org, vm, id uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var busy bool
@@ -213,7 +213,7 @@ func (s *Store) ApplySnapshotStatus(ctx context.Context, node uuid.UUID, st prot
 		} else if err != nil {
 			return err
 		}
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var restoreSeq int64
@@ -314,7 +314,7 @@ func (s *Store) ApplyStorageRestored(ctx context.Context, tokens []string) ([]uu
 			return err
 		}
 		for _, org := range candidates {
-			if err := tx.LockOrg(ctx, org); err != nil {
+			if err := tx.LockHubOrg(ctx, org); err != nil {
 				return err
 			}
 		}
@@ -370,7 +370,7 @@ func (s *Store) MemoryRestorable(ctx context.Context, v VM, sn Snapshot) (bool, 
 func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, memory, restartAllowed bool) (VM, error) {
 	var out VM
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		var restoreState string
@@ -421,7 +421,7 @@ func (s *Store) RequestRestore(ctx context.Context, org, vm, snap uuid.UUID, mem
 func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name string, memory bool, createdBy uuid.UUID) (VM, error) {
 	var out VM
 	err := s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		src, err := scanVM(tx.q.QueryRow(ctx, "SELECT "+vmColumns+" FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", snap.VMID, org))

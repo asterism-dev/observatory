@@ -330,16 +330,16 @@ func TestLimitsImageStorage(t *testing.T) {
 	ctx := context.Background()
 	s, org, user, team := newImageEnv(t)
 	teamScope := "team:" + team.ID.String()
-	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(10)}); err != nil {
+	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(10)}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(11)}); !errors.Is(err, store.ErrLimitExceedsOrg) {
+	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(11)}, policyKnown(t, s, org.ID)); !errors.Is(err, store.ErrLimitExceedsOrg) {
 		t.Fatalf("team above org: %v", err)
 	}
-	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(4)}); err != nil {
+	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(4)}, policyKnown(t, s, org.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(3)}); !errors.Is(err, store.ErrLimitExceedsOrg) {
+	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(3)}, nil); !errors.Is(err, store.ErrLimitExceedsOrg) {
 		t.Fatalf("org below team: %v", err)
 	}
 	ls, err := s.Limits(ctx, org.ID)

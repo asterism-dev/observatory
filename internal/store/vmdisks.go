@@ -61,7 +61,7 @@ func diskExportAAD(disk uuid.UUID) []byte { return []byte("disk-export:" + disk.
 func (s *Store) SetVMDisks(ctx context.Context, org, vm uuid.UUID, disks []VMDisk, restartAllowed bool) (out VM, changed bool, err error) {
 	err = s.InTx(ctx, func(tx *Store) error {
 		// Org first, like DeleteDisk and GrowDisk, so a disk can't be deleted or grown while it is being attached.
-		if err := tx.LockOrg(ctx, org); err != nil {
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
 		v, err := scanVM(tx.q.QueryRow(ctx, "SELECT "+vmColumns+" FROM vms WHERE id = $1 AND org_id = $2 FOR UPDATE", vm, org))
