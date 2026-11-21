@@ -7,8 +7,8 @@ Zitadel stack in `deploy/idp/`.
 
 ## Requirements
 
-- A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch` and `wireguard`
-  modules (the stack loads them).
+- A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch`, `wireguard` and
+  `xt_connlimit` modules (the stack loads them).
 - Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices);
   with the bundled login service also TCP 8080.
 
