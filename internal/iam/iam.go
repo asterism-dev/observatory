@@ -3,10 +3,8 @@ package iam
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"connectrpc.com/connect"
 	"connectrpc.com/vanguard"
@@ -18,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/auditlog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
+	"github.com/asterism-dev/observatory/internal/platform/rest"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -52,16 +51,7 @@ func Handler(d Deps) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return http.StripPrefix(Prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// ponytail: the transcoder lets ?org= override the path's org, so REST queries are refused; allow named fields once an RPC needs one.
-		if r.URL.RawQuery != "" && !strings.HasPrefix(r.URL.Path, path) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"code":3,"message":"query parameters are not supported"}`)
-			return
-		}
-		tc.ServeHTTP(w, r)
-	})), nil
+	return http.StripPrefix(Prefix, rest.NoQuery(path, tc)), nil
 }
 
 // caller is the principal the authz interceptor verified; every handler runs behind it.
