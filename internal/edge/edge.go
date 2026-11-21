@@ -49,6 +49,7 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 		client:       &http.Client{Timeout: 10 * time.Second},
 		cache:        newJWTCache(jwtCacheSize),
 	}
+	hubAPI := id.hubMiddleware(hub)
 	services := make(map[string]http.Handler, len(cfg.Services))
 	for name, raw := range cfg.Services {
 		u, err := parseUpstream(raw)
@@ -73,6 +74,8 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 					return
 				}
 			}
+			hubAPI.ServeHTTP(w, r)
+			return
 		}
 		for _, p := range hubPrefixes {
 			if strings.HasPrefix(r.URL.Path, p) {

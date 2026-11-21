@@ -138,22 +138,118 @@ func TestEdgeCachesJWT(t *testing.T) {
 	}
 }
 
-func TestEdgeHubRoutesKeepCredentials(t *testing.T) {
+func TestEdgeNonAPIHubRoutesKeepCredentials(t *testing.T) {
 	hub, ch, calls := issuingHub(t, http.StatusOK)
-	edge := newEdge(t, hub.URL, map[string]string{"iam": "http://127.0.0.1:1"})
-	req, _ := http.NewRequest("POST", edge.URL+"/api/me", nil)
-	req.Header.Set("Authorization", "Bearer "+validSession)
-	req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
-	if code, body := get(t, req); code != 200 || body != "hub" {
-		t.Fatalf("%d %q", code, body)
-	}
-	s := <-ch
-	if s.header.Get("Authorization") != "Bearer "+validSession || s.header.Get("Cookie") != "obs_session="+validSession {
-		t.Fatalf("hub saw Authorization %q, Cookie %q", s.header.Get("Authorization"), s.header.Get("Cookie"))
+	edge := newEdge(t, hub.URL, nil)
+	for _, p := range []string{"/auth/logout", "/v2/token", "/otlp/v1/logs"} {
+		req, _ := http.NewRequest("POST", edge.URL+p, nil)
+		req.Header.Set("Authorization", "Bearer "+validSession)
+		req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+		if code, body := get(t, req); code != 200 || body != "hub" {
+			t.Fatalf("%s: %d %q", p, code, body)
+		}
+		s := <-ch
+		if s.header.Get("Authorization") != "Bearer "+validSession || s.header.Get("Cookie") != "obs_session="+validSession {
+			t.Fatalf("%s: hub saw Authorization %q, Cookie %q", p, s.header.Get("Authorization"), s.header.Get("Cookie"))
+		}
 	}
 	if n := calls.Load(); n != 0 {
-		t.Fatalf("issuer called %d times for a hub route", n)
+		t.Fatalf("issuer called %d times outside /api/", n)
 	}
+}
+
+func TestEdgeSwapsSessionOnHubRoutes(t *testing.T) {
+	hub, ch, _ := issuingHub(t, http.StatusOK)
+	edge := newEdge(t, hub.URL, map[string]string{"iam": "http://127.0.0.1:1"})
+	req, _ := http.NewRequest("GET", edge.URL+"/api/me", nil)
+	req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+	req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+	if code, body := get(t, req); code != 200 || body != "hub" {
+		t.Fatalf("cookie: %d %q", code, body)
+	}
+	s := <-ch
+	if got := s.header.Values("Authorization"); len(got) != 1 || got[0] != "Bearer jwt-"+validSession {
+		t.Fatalf("cookie: hub saw Authorization %q", got)
+	}
+	if got := s.header.Values("Cookie"); len(got) != 1 || got[0] != "theme=dark" {
+		t.Fatalf("cookie: hub saw Cookie %q", got)
+	}
+	for name, set := range map[string]func(http.Header){
+		"bearer": func(h http.Header) { h.Set("Authorization", "Bearer "+validSession) },
+		"hop-by-hop": func(h http.Header) {
+			h.Set("Authorization", "Bearer "+validSession)
+			h.Set("Connection", "Authorization")
+		},
+	} {
+		req, _ = http.NewRequest("POST", edge.URL+"/api/orgs", nil)
+		set(req.Header)
+		if code, _ := get(t, req); code != 200 {
+			t.Fatalf("%s: status %d", name, code)
+		}
+		if got := (<-ch).header.Values("Authorization"); len(got) != 1 || got[0] != "Bearer jwt-"+validSession {
+			t.Fatalf("%s: hub saw Authorization %q", name, got)
+		}
+	}
+}
+
+func TestEdgeKeepsForeignBearerOnHubRoutes(t *testing.T) {
+	hub, ch, calls := issuingHub(t, http.StatusOK)
+	edge := newEdge(t, hub.URL, nil)
+	for _, authz := range []string{"Bearer node-token", "Basic dXNlcjpwYXNz"} {
+		req, _ := http.NewRequest("POST", edge.URL+"/api/nodes/health", nil)
+		req.Header.Set("Authorization", authz)
+		if code, body := get(t, req); code != 200 || body != "hub" {
+			t.Fatalf("%s: %d %q", authz, code, body)
+		}
+		if got := (<-ch).header.Values("Authorization"); len(got) != 1 || got[0] != authz {
+			t.Fatalf("hub saw Authorization %q, want %q", got, authz)
+		}
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("issuer called %d times for a non-session bearer", n)
+	}
+}
+
+func TestEdgeStaleCookieOnPublicHubRoute(t *testing.T) {
+	hub, ch, _ := issuingHub(t, http.StatusOK)
+	edge := newEdge(t, hub.URL, nil)
+	req, _ := http.NewRequest("GET", edge.URL+"/api/auth/config", nil)
+	req.AddCookie(&http.Cookie{Name: "obs_session", Value: "obs_stale"})
+	if code, body := get(t, req); code != 200 || body != "hub" {
+		t.Fatalf("cookie: %d %q", code, body)
+	}
+	if s := <-ch; len(s.header.Values("Authorization")) != 0 || len(s.header.Values("Cookie")) != 0 {
+		t.Fatalf("cookie: hub saw Authorization %q, Cookie %q", s.header.Values("Authorization"), s.header.Values("Cookie"))
+	}
+	req, _ = http.NewRequest("POST", edge.URL+"/api/auth/cli-token", nil)
+	req.Header.Set("Authorization", "Bearer obs_stale")
+	if code, _ := get(t, req); code != 200 {
+		t.Fatalf("bearer: status %d", code)
+	}
+	if s := <-ch; len(s.header.Values("Authorization")) != 0 {
+		t.Fatalf("bearer: hub saw Authorization %q", s.header.Values("Authorization"))
+	}
+}
+
+func TestEdgeCSRFOnHubRoutes(t *testing.T) {
+	hub, ch, calls := issuingHub(t, http.StatusOK)
+	edge := newEdge(t, hub.URL, nil)
+	req, _ := http.NewRequest("POST", edge.URL+"/api/orgs", nil)
+	req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+	if code, _ := get(t, req); code != http.StatusForbidden {
+		t.Fatalf("cookie POST without X-Observatory: status %d, want 403", code)
+	}
+	noRequest(t, ch, "hub")
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("issuer called %d times for a refused request", n)
+	}
+	req, _ = http.NewRequest("POST", edge.URL+"/api/orgs", nil)
+	req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+	req.Header.Set("X-Observatory", "1")
+	if code, _ := get(t, req); code != 200 {
+		t.Fatalf("cookie POST with X-Observatory: status %d", code)
+	}
+	<-ch
 }
 
 func TestEdgeServiceCookieCSRF(t *testing.T) {

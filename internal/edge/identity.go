@@ -29,6 +29,14 @@ var errUnauthorized = errors.New("session rejected by issuer")
 
 type jwtKey struct{}
 
+// hubIdentity is what the hub proxy forwards for an /api/ request: the swapped JWT, or none once the issuer refused the session.
+type hubIdentity struct {
+	jwt     string
+	swapped bool
+}
+
+type hubIdentityKey struct{}
+
 // identity swaps the client's session token for a short-lived JWT from the hub's issuer.
 type identity struct {
 	tokenURL, serviceToken string
@@ -60,6 +68,33 @@ func (id *identity) middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), jwtKey{}, jwt)))
 	})
+}
+
+// hubMiddleware swaps a session for a JWT on hub /api/ routes; other bearers (node, gateway, storage, ...) pass unchanged.
+func (id *identity) hubMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, fromCookie := credentials(r)
+		if !isSession(session) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{})))
+			return
+		}
+		if fromCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Observatory") != "1" {
+			writeError(w, http.StatusForbidden, "missing X-Observatory header")
+			return
+		}
+		jwt, err := id.jwt(r.Context(), session)
+		// A stale session is dropped, not refused, so public routes like /api/auth/config still work; protected ones answer 401.
+		if err != nil && !errors.Is(err, errUnauthorized) {
+			slog.Error("edge: identity token", "err", err)
+			writeError(w, http.StatusBadGateway, "identity unavailable")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{jwt: jwt, swapped: true})))
+	})
+}
+
+func isSession(token string) bool {
+	return strings.HasPrefix(token, "obs_")
 }
 
 func (id *identity) jwt(ctx context.Context, session string) (string, error) {
