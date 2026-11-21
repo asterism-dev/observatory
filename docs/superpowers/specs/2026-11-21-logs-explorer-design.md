@@ -52,7 +52,7 @@ place to browse and search all of its logs, including those of deleted objects, 
 | Kind | Group key | Name field | Streams |
 |---|---|---|---|
 | VM | `observatory.vm` | `observatory.vm_name` | `observatory.stream`: service, console, app, system, egress |
-| Node | `observatory.node` | `observatory.node_name` | `service.name`: observatory-node, firecracker |
+| Node | `observatory.node` | `observatory.node_name` | `source`: observatory-node, firecracker |
 | Image | `observatory.image` | `observatory.image_name` | one per `observatory.build` |
 
 Display names are `vms/<name>`, `nodes/<name>`, `builds/<image name>`; the id is the identity (a name reused after
