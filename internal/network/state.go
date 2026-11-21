@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -143,15 +144,15 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.GatewayStatus) error {
 	if err := h.store.SetDeviceHandshakes(ctx, st.Handshakes); err != nil {
 		return err
 	}
-	var ids []uuid.UUID
+	var ids, added []uuid.UUID
 	for _, s := range st.Quarantined {
 		if id, err := uuid.Parse(s); err == nil {
 			ids = append(ids, id)
 		}
 	}
 	if len(ids) > 0 {
-		added, err := h.store.QuarantineNodes(ctx, ids)
-		if err != nil {
+		var err error
+		if added, err = h.store.QuarantineNodes(ctx, ids); err != nil {
 			return err
 		}
 		if len(added) > 0 {
@@ -174,10 +175,26 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.GatewayStatus) error {
 	if len(st.Rebound) > 0 {
 		slog.Warn("gateway cleared chassis bindings that did not match requested-chassis", "ports", st.Rebound)
 	}
+	changed := map[uuid.UUID]bool{}
 	h.status.mu.Lock()
+	for _, c := range chassis {
+		if slices.Contains(added, c.NodeID) || next[c.NodeID].Endpoint != h.status.chassis[c.NodeID].Endpoint {
+			changed[c.OrgID] = true
+		}
+	}
 	h.status.chassis = next
 	h.status.mu.Unlock()
+	h.changed(slices.Collect(maps.Keys(changed))...)
 	return nil
+}
+
+func (h *Hub) changed(orgs ...uuid.UUID) {
+	if h.onChange == nil {
+		return
+	}
+	for _, org := range orgs {
+		h.onChange(org)
+	}
 }
 
 // ChassisStatus is the node's chassis as of the gateway's last status report; false if not enrolled then.

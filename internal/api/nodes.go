@@ -250,6 +250,7 @@ func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.fleet.Disconnect(n.ID)
+	h.fleet.NotifyOrg(n.OrgID) // drops the node from the org's peer sets
 	w.WriteHeader(http.StatusNoContent)
 }
 

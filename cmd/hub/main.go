@@ -96,6 +96,7 @@ func run() error {
 		return err
 	}
 	defer f.Close()
+	nh.OnChange(f.NotifyOrg)
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
 	var tc *telemetry.Client

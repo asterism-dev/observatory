@@ -81,6 +81,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.Close)
+	h.OnChange(f.NotifyOrg)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
 	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
@@ -143,10 +144,11 @@ func (e *env) envVar(name, value string) store.EnvVar {
 }
 
 type fakeNode struct {
-	t    *testing.T
-	ws   *websocket.Conn
-	enc  *json.Encoder
-	msgs chan proto.Message
+	t     *testing.T
+	ws    *websocket.Conn
+	enc   *json.Encoder
+	msgs  chan proto.Message
+	peers chan proto.Peers // peers pushes, kept apart so tests about other messages don't see them
 }
 
 // underlayHeaders are what the gateway's control proxy sends for a request from peer.
@@ -172,7 +174,7 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 		return nil, resp, err
 	}
 	ctrl := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
-	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16)}
+	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16), peers: make(chan proto.Peers, 16)}
 	go func() {
 		defer close(n.msgs)
 		dec := json.NewDecoder(ctrl)
@@ -180,6 +182,10 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 			var m proto.Message
 			if dec.Decode(&m) != nil {
 				return
+			}
+			if m.Type == proto.TypePeers && m.Peers != nil {
+				n.peers <- *m.Peers
+				continue
 			}
 			n.msgs <- m
 		}
@@ -2567,4 +2573,130 @@ func TestFleetUnchangedCandidatesDoNotPush(t *testing.T) {
 		t.Fatalf("push after unchanged candidates: %q", m.Type)
 	case <-time.After(500 * time.Millisecond):
 	}
+}
+
+func (n *fakeNode) nextPeers() proto.Peers {
+	n.t.Helper()
+	select {
+	case p := <-n.peers:
+		return p
+	case <-time.After(5 * time.Second):
+		n.t.Fatal("no peers message")
+	}
+	return proto.Peers{}
+}
+
+func (n *fakeNode) noPeers() {
+	n.t.Helper()
+	select {
+	case p := <-n.peers:
+		n.t.Fatalf("unexpected peers push: %+v", p)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func peerIDs(p proto.Peers) []string {
+	out := []string{}
+	for _, x := range p.Peers {
+		out = append(out, x.NodeID)
+	}
+	return out
+}
+
+func TestPeersSameOrgOnly(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, cred2 := e.node(e.org.ID, "n2")
+	_, cred3 := e.node(orgB.ID, "n3")
+	a := e.connect(cred1)
+	p := a.nextPeers()
+	if len(p.Peers) != 1 || p.Peers[0].NodeID != n2.ID.String() || p.Peers[0].Address != n2.UnderlayIP.String() || p.Peers[0].PublicKey == "" {
+		t.Fatalf("n1 peers = %+v", p)
+	}
+	b := e.connect(cred2)
+	if got := b.nextPeers(); len(got.Peers) != 1 || got.Peers[0].NodeID == n2.ID.String() {
+		t.Fatalf("n2 peers = %+v", got)
+	}
+	if got := e.connect(cred3).nextPeers(); len(got.Peers) != 0 {
+		t.Fatalf("n3 sees another org: %+v", got)
+	}
+}
+
+func TestPeersExcludeQuarantined(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	n3, _ := e.node(e.org.ID, "n3")
+	a := e.connect(cred1)
+	if got := peerIDs(a.nextPeers()); len(got) != 2 {
+		t.Fatalf("before = %v", got)
+	}
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{n2.ID.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := peerIDs(a.nextPeers()); !slices.Equal(got, []string{n3.ID.String()}) {
+		t.Fatalf("after quarantine = %v", got)
+	}
+}
+
+func TestPeersExcludeDeleted(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	if got := peerIDs(a.nextPeers()); len(got) != 1 {
+		t.Fatalf("before = %v", got)
+	}
+	if err := e.s.DeleteNode(ctx, e.org.ID, n2.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	if got := peerIDs(a.nextPeers()); len(got) != 0 {
+		t.Fatalf("after delete = %v", got)
+	}
+}
+
+func TestPeersPushedOnCandidateChange(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, cred2 := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.nextPeers()
+	b := e.connect(cred2)
+	b.nextPeers()
+	b.send(proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822"}})
+	if got := a.nextPeers(); len(got.Peers) != 1 || !slices.Equal(got.Peers[0].Candidates, []string{"192.168.1.5:51822"}) {
+		t.Fatalf("after candidates = %+v", got)
+	}
+	chassis, err := e.s.Chassis(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := chassis[slices.IndexFunc(chassis, func(c store.Chassis) bool { return c.NodeID == n2.ID })].PublicKey
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "203.0.113.5:40001"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.nextPeers(); len(got.Peers) != 1 || !slices.Equal(got.Peers[0].Candidates, []string{"192.168.1.5:51822", "203.0.113.5:40001"}) {
+		t.Fatalf("after observed endpoint = %+v", got)
+	}
+}
+
+func TestPeersNotResentWhenUnchanged(t *testing.T) {
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.desired()
+	a.nextPeers()
+	e.f.NotifyOrg(e.org.ID)
+	a.desired()
+	a.noPeers()
 }

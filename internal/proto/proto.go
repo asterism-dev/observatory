@@ -271,7 +271,7 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates" (node→hub), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates" (node→hub), "peers" (hub→node), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -289,6 +289,21 @@ type Message struct {
 	Processes  []GuestProcess     `json:"processes,omitempty"`  // type "processes" reply
 	Error      string             `json:"error,omitempty"`      // type "processes" reply
 	Candidates []string           `json:"candidates,omitempty"` // type "candidates": the node's underlay endpoints as ip:port
+	Peers      *Peers             `json:"peers,omitempty"`
+}
+
+const TypePeers = "peers"
+
+// Peers is the full set of same-org nodes a node may reach directly, sorted by NodeID.
+type Peers struct {
+	Peers []Peer `json:"peers"`
+}
+
+type Peer struct {
+	NodeID     string   `json:"nodeId"`
+	PublicKey  string   `json:"publicKey"`
+	Address    string   `json:"address"` // underlay IP without prefix
+	Candidates []string `json:"candidates,omitempty"`
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

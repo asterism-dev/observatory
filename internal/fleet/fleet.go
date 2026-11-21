@@ -214,6 +214,22 @@ func (f *Fleet) NotifyOrg(org uuid.UUID) {
 	}
 }
 
+// peers is the org's other enrolled, unquarantined nodes with their endpoint candidates, sorted by NodeID.
+func (f *Fleet) peers(ctx context.Context, org, self uuid.UUID) (proto.Peers, error) {
+	chassis, err := f.store.OrgChassis(ctx, org)
+	if err != nil {
+		return proto.Peers{}, err
+	}
+	out := proto.Peers{Peers: []proto.Peer{}}
+	for _, c := range chassis {
+		if c.Quarantined || c.NodeID == self {
+			continue
+		}
+		out.Peers = append(out.Peers, proto.Peer{NodeID: c.NodeID.String(), PublicKey: c.PublicKey, Address: c.IP.String(), Candidates: f.Candidates(c.NodeID)})
+	}
+	return out, nil
+}
+
 // retryIntegrations pushes the org again after integrationRetry; retries already pending absorb later calls.
 func (f *Fleet) retryIntegrations(org uuid.UUID) {
 	f.mu.Lock()
