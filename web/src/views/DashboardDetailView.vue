@@ -62,18 +62,20 @@ function pick(p: Preset | '') {
 }
 
 async function load() {
-  if (!org.value) return
+  if (!org.value) return false
   const orgId = org.value.id
   const want = id.value
   try {
     const [d, ts] = await Promise.all([api<Dashboard>(`/api/orgs/${orgId}/dashboards/${want}`), api<Team[]>(`/api/orgs/${orgId}/teams`).catch(() => [])])
-    if (want !== id.value) return
+    if (want !== id.value) return false
     dash.value = d
     teams.value = ts
     error.value = ''
     if (route.query.edit && d.canEdit && !editing.value) startEdit()
+    return true
   } catch (e) {
     if (want === id.value) error.value = e instanceof Error ? e.message : String(e)
+    return false
   }
 }
 
@@ -134,10 +136,15 @@ async function save() {
   }
 }
 
+// Edits stay open until the latest version is in, so a failed reload loses nothing.
 async function reload() {
+  saveError.value = ''
+  if (!(await load())) {
+    saveError.value = error.value
+    return
+  }
   conflict.value = false
   stopEdit()
-  await load()
 }
 
 // Debounced: synced charts may each report a zoom, and quick re-zooms shouldn't re-query every panel each time.
