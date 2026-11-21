@@ -1,22 +1,19 @@
 <script setup lang="ts">
 import { type TableColumn } from '@asterism-dev/lumen'
+import { timestampDate } from '@bufbuild/protobuf/wkt'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
+import { useMe } from '@/composables/useMe'
 import { DataTable, Tag } from '@/ui'
 
-interface OrgSummary {
-  id: string
-  name: string
-  personal: boolean
-  memberCount: number
-  createdAt: string
-}
+type OrgSummary = Awaited<ReturnType<typeof iamClient.listAllOrgs>>['orgs'][number]
 
 const { t, d } = useI18n()
 const router = useRouter()
+const { expire } = useMe()
 const orgs = ref<OrgSummary[]>([])
 const error = ref('')
 
@@ -28,9 +25,10 @@ const columns = computed<TableColumn[]>(() => [
 
 onMounted(async () => {
   try {
-    orgs.value = await api<OrgSummary[]>('/api/admin/orgs')
+    orgs.value = (await iamClient.listAllOrgs({})).orgs
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
   }
 })
 </script>
@@ -44,7 +42,7 @@ onMounted(async () => {
         <Tag v-if="row.personal">{{ t('admin.personal') }}</Tag>
       </span>
     </template>
-    <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short' }) }}</template>
+    <template #cell-createdAt="{ row }">{{ row.createdAt ? d(timestampDate(row.createdAt), { dateStyle: 'short' }) : '–' }}</template>
   </DataTable>
 </template>
 

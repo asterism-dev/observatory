@@ -3,13 +3,14 @@ import { Button, Dialog, TextInput } from '@asterism-dev/lumen'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api } from '@/api'
-import type { Org } from '@/composables/useMe'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
+import { useMe, type Org } from '@/composables/useMe'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; created: [Org] }>()
 
 const { t } = useI18n()
+const { expire } = useMe()
 const name = ref('')
 const busy = ref(false)
 const error = ref('')
@@ -25,10 +26,12 @@ async function create() {
   busy.value = true
   error.value = ''
   try {
-    emit('created', await api<Org>('/api/orgs', { method: 'POST', body: JSON.stringify({ name: name.value.trim() }) }))
+    const res = await iamClient.createOrg({ name: name.value.trim() })
+    emit('created', res.org!)
     emit('update:open', false)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }

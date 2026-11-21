@@ -6,20 +6,17 @@ import { useRoute } from 'vue-router'
 
 import { api } from '@/api'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
 import { useCrumbs } from '@/composables/useCrumbs'
+import { useMe } from '@/composables/useMe'
 import { Card, DataTable, Section, Tag, ValueField } from '@/ui'
 
-interface AdminOrg {
-  id: string
-  name: string
-  personal: boolean
-  members: { id: string; email: string; name: string; role: string }[]
-  limits: { org: Limits }
-}
+type AdminOrg = Awaited<ReturnType<typeof iamClient.getAnyOrg>>
 
 const { t } = useI18n()
 const route = useRoute()
-const org = ref<AdminOrg | null>(null)
+const { expire } = useMe()
+const org = ref<{ id: string; name: string; personal: boolean; members: AdminOrg['members'] } | null>(null)
 const { setCrumbs } = useCrumbs()
 watchEffect(() => {
   if (org.value) setCrumbs(route.path, [{ label: org.value.name, to: route.path }])
@@ -38,13 +35,14 @@ const columns = computed<TableColumn[]>(() => [
 async function load() {
   const id = route.params.orgId as string
   try {
-    const res = await api<AdminOrg>(`/api/admin/orgs/${id}`)
+    const [res, orgLimits] = await Promise.all([iamClient.getAnyOrg({ orgId: id }), api<{ org: Limits }>(`/api/admin/orgs/${id}/limits`)])
     if (id !== route.params.orgId) return
-    org.value = res
-    limits.value = res.limits.org
+    org.value = { id: res.org!.id, name: res.org!.name, personal: res.org!.personal, members: res.members }
+    limits.value = orgLimits.org
     error.value = ''
   } catch (e) {
-    if (id === route.params.orgId) error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    if (id === route.params.orgId) error.value = errorMessage(e)
   }
 }
 

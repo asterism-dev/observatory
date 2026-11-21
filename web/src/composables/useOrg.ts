@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import type { Org } from '@/composables/useMe'
 
 export interface OrgDetail extends Org {
@@ -13,7 +13,8 @@ let currentId = ''
 async function load(id: string) {
   currentId = id
   if (org.value?.id !== id) org.value = null
-  const loaded = await api<OrgDetail>(`/api/orgs/${id}`)
+  const res = await iamClient.getOrg({ org: id })
+  const loaded = { ...res.org!, permissions: res.permissions }
   // A newer navigation superseded this request.
   if (id === currentId) org.value = loaded
 }

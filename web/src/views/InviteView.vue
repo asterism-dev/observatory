@@ -3,28 +3,26 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
 import { useMe } from '@/composables/useMe'
 import { Card } from '@/ui'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { load, selectOrg } = useMe()
+const { load, selectOrg, expire } = useMe()
 
 const error = ref('')
 
 onMounted(async () => {
   try {
-    const { orgId } = await api<{ orgId: string; role: string }>('/api/invites/accept', {
-      method: 'POST',
-      body: JSON.stringify({ token: route.params.token }),
-    })
+    const { orgId } = await iamClient.acceptInvite({ token: route.params.token as string })
     await load()
     selectOrg(orgId)
     await router.replace(`/orgs/${orgId}/dashboard`)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
   }
 })
 </script>

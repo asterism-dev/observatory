@@ -3,16 +3,16 @@ import { Button, TextInput } from '@asterism-dev/lumen'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api } from '@/api'
 import AuditDataEventsSection from '@/components/AuditDataEventsSection.vue'
 import DefaultImageSection from '@/components/DefaultImageSection.vue'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section, ValueField } from '@/ui'
 
 const { t } = useI18n()
 const { org, can, reload } = useOrg()
-const { load: loadMe } = useMe()
+const { load: loadMe, expire } = useMe()
 
 const name = ref('')
 const editing = ref(false)
@@ -26,11 +26,12 @@ async function save() {
   busy.value = true
   error.value = ''
   try {
-    await api(`/api/orgs/${org.value.id}`, { method: 'PATCH', body: JSON.stringify({ name: name.value.trim() }) })
+    await iamClient.updateOrg({ org: org.value.id, name: name.value.trim() })
     await Promise.all([reload(), loadMe()])
     editing.value = false
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }

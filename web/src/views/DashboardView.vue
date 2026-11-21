@@ -4,10 +4,13 @@ import { CheckCircle2, Circle, LayoutDashboard } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { Code, ConnectError } from '@connectrpc/connect'
+
 import { api, ApiError } from '@/api'
 import AddNodeDialog from '@/components/AddNodeDialog.vue'
 import VMList from '@/components/VMList.vue'
 import { guideSteps, sshTarget, tiles, type DashboardInput } from '@/composables/dashboard'
+import { iamClient } from '@/composables/iamClient'
 import type { VmInfo } from '@/composables/nodes'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
@@ -52,14 +55,15 @@ async function load() {
     api<{ vms: VmInfo[] }>(`/api/orgs/${id}/vms`).then((r) => r.vms),
     api<{ disks: NonNullable<DashboardInput['disks']> }>(`/api/orgs/${id}/disks`).then((r) => r.disks),
     api<DashboardInput['devices']>(`/api/orgs/${id}/devices`),
-    api<unknown[]>('/api/me/ssh-keys'),
+    iamClient.listSSHKeys({}).then((r) => r.keys),
   ])
   if (id !== org.value?.id) return
   const errs: typeof errors.value = {}
   // 403 hides the tile; other failures show it with an error line.
   function value<T>(key: ListKey | 'sshKeys', r: PromiseSettledResult<T>): T | null {
     if (r.status === 'fulfilled') return r.value
-    if (!(r.reason instanceof ApiError && r.reason.status === 403)) errs[key] = t('dashboard.loadFailed')
+    const denied = (r.reason instanceof ApiError && r.reason.status === 403) || (r.reason instanceof ConnectError && r.reason.code === Code.PermissionDenied)
+    if (!denied) errs[key] = t('dashboard.loadFailed')
     return null
   }
   const vmRows = value('vms', vms)

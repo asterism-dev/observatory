@@ -1,21 +1,10 @@
 import { computed, ref } from 'vue'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
+import { toMe, type Info, type Me, type Org } from '@/composables/me'
 
-export interface Org {
-  id: string
-  name: string
-  personal: boolean
-  role: string
-}
-
-export interface Me {
-  user: { id: string; email: string; name: string; platformAdmin: boolean }
-  orgs: Org[]
-  docsURL: string
-  version: string
-  latestVersion: string
-}
+export type { Me, Org }
 
 const STORAGE_KEY = 'obs-org'
 
@@ -36,7 +25,8 @@ const activeOrg = computed<Org | null>(() => {
 })
 
 async function load() {
-  me.value = await api<Me>('/api/me')
+  const [res, info] = await Promise.all([iamClient.getMe({}), api<Info>('/api/info')])
+  me.value = toMe(res, info)
 }
 
 function expire() {

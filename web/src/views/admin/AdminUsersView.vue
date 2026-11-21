@@ -1,24 +1,19 @@
 <script setup lang="ts">
 import { Switch, type TableColumn } from '@asterism-dev/lumen'
+import { timestampDate } from '@bufbuild/protobuf/wkt'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
 import { useMe } from '@/composables/useMe'
 import { DataTable } from '@/ui'
 
-interface AdminUser {
-  id: string
-  email: string
-  name: string
-  platformAdmin: boolean
-  createdAt: string
-}
+type AdminUser = Awaited<ReturnType<typeof iamClient.listUsers>>['users'][number]
 
 const { t, d } = useI18n()
 const router = useRouter()
-const { me, load: loadMe } = useMe()
+const { me, load: loadMe, expire } = useMe()
 const users = ref<AdminUser[]>([])
 const busy = ref(false)
 const error = ref('')
@@ -31,21 +26,22 @@ const columns = computed<TableColumn[]>(() => [
 ])
 
 async function load() {
-  users.value = await api<AdminUser[]>('/api/admin/users')
+  users.value = (await iamClient.listUsers({})).users
 }
 
 async function setAdmin(u: AdminUser, admin: boolean) {
   busy.value = true
   error.value = ''
   try {
-    await api(`/api/admin/users/${u.id}/platform-admin`, { method: 'PUT', body: JSON.stringify({ admin }) })
+    await iamClient.setPlatformAdmin({ userId: u.id, admin })
     if (u.id === me.value?.user.id) {
       await loadMe()
       if (!admin) return router.replace('/profile')
     }
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
     // Re-sync so the switch reflects the server state after a rejected change.
     await load().catch(() => {})
   } finally {
@@ -53,13 +49,13 @@ async function setAdmin(u: AdminUser, admin: boolean) {
   }
 }
 
-onMounted(() => load().catch((e) => (error.value = e instanceof Error ? e.message : String(e))))
+onMounted(() => load().catch((e) => (isUnauthenticated(e) ? expire() : (error.value = errorMessage(e)))))
 </script>
 
 <template>
   <p v-if="error" role="alert">{{ error }}</p>
   <DataTable :columns="columns" :rows="users" row-key="id">
-    <template #cell-createdAt="{ row }">{{ d(new Date(row.createdAt), { dateStyle: 'short' }) }}</template>
+    <template #cell-createdAt="{ row }">{{ row.createdAt ? d(timestampDate(row.createdAt), { dateStyle: 'short' }) : '–' }}</template>
     <template #cell-platformAdmin="{ row }">
       <Switch :model-value="row.platformAdmin" :disabled="busy" :aria-label="t('admin.platformAdmin')" @update:model-value="(v) => setAdmin(row, v)" />
     </template>

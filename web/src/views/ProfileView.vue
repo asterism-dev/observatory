@@ -4,28 +4,16 @@ import { Plus, User } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api, ApiError } from '@/api'
+import { timestampDate, type Timestamp } from '@bufbuild/protobuf/wkt'
+
+import { api } from '@/api'
 import DefaultImageSection from '@/components/DefaultImageSection.vue'
+import { errorMessage, iamClient, isNotFound, isUnauthenticated } from '@/composables/iamClient'
 import { useMe } from '@/composables/useMe'
 import { Card, DataTable, KeyValue, KeyValueList, Page, ResourceList, ResourceRow, Section, Tag } from '@/ui'
 
-interface Session {
-  id: string
-  kind: string
-  userAgent: string
-  ip: string
-  createdAt: string
-  lastUsedAt: string
-  expiresAt: string
-  current: boolean
-}
-
-interface SshKey {
-  id: string
-  name: string
-  fingerprint: string
-  createdAt: string
-}
+type Session = Awaited<ReturnType<typeof iamClient.listSessions>>['sessions'][number]
+type SshKey = Awaited<ReturnType<typeof iamClient.listSSHKeys>>['keys'][number]
 
 const { t, d } = useI18n()
 const { me, activeOrg, expire } = useMe()
@@ -52,16 +40,16 @@ const keyName = ref('')
 const keyValue = ref('')
 const keyError = ref('')
 
-const fmt = (v: string) => d(new Date(v), { dateStyle: 'short', timeStyle: 'short' })
+const fmt = (v?: Timestamp) => (v ? d(timestampDate(v), { dateStyle: 'short', timeStyle: 'short' }) : '–')
 
 function fail(e: unknown) {
-  if (e instanceof ApiError && e.status === 401) return expire()
-  error.value = e instanceof Error ? e.message : String(e)
+  if (isUnauthenticated(e)) return expire()
+  error.value = errorMessage(e)
 }
 
 async function loadSessions() {
   try {
-    sessions.value = await api<Session[]>('/api/me/sessions')
+    sessions.value = (await iamClient.listSessions({})).sessions
   } catch (e) {
     fail(e)
   }
@@ -69,7 +57,7 @@ async function loadSessions() {
 
 async function loadKeys() {
   try {
-    keys.value = await api<SshKey[]>('/api/me/ssh-keys')
+    keys.value = (await iamClient.listSSHKeys({})).keys
   } catch (e) {
     fail(e)
   }
@@ -86,15 +74,12 @@ async function addKey() {
   busy.value = true
   keyError.value = ''
   try {
-    await api('/api/me/ssh-keys', {
-      method: 'POST',
-      body: JSON.stringify({ name: keyName.value.trim(), publicKey: keyValue.value.trim() }),
-    })
+    await iamClient.createSSHKey({ name: keyName.value.trim(), publicKey: keyValue.value.trim() })
     adding.value = false
     await loadKeys()
   } catch (e) {
-    if (e instanceof ApiError && e.status === 401) return expire()
-    keyError.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    keyError.value = errorMessage(e)
   } finally {
     busy.value = false
   }
@@ -104,9 +89,9 @@ async function removeKey() {
   if (!keyPending.value) return
   busy.value = true
   try {
-    await api(`/api/me/ssh-keys/${keyPending.value.id}`, { method: 'DELETE' })
+    await iamClient.deleteSSHKey({ key: keyPending.value.id })
   } catch (e) {
-    if (!(e instanceof ApiError && e.status === 404)) fail(e)
+    if (!isNotFound(e)) fail(e)
   } finally {
     keyPending.value = null
     busy.value = false
@@ -119,14 +104,14 @@ async function revoke() {
   const wasCurrent = pending.value.current
   busy.value = true
   try {
-    await api(`/api/me/sessions/${pending.value.id}`, { method: 'DELETE' })
+    await iamClient.revokeSession({ session: pending.value.id })
     pending.value = null
     if (wasCurrent) return expire()
     await loadSessions()
   } catch (e) {
     pending.value = null
     // 404: already gone, just refresh.
-    if (e instanceof ApiError && e.status === 404) await loadSessions()
+    if (isNotFound(e)) await loadSessions()
     else fail(e)
   } finally {
     busy.value = false
