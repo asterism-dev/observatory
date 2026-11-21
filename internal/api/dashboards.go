@@ -64,7 +64,7 @@ func writeFieldError(w http.ResponseWriter, field, msg string) {
 func validDashboard(w http.ResponseWriter, b *dashboardBody) (json.RawMessage, bool) {
 	b.Name = strings.TrimSpace(b.Name)
 	if n := utf8.RuneCountInString(b.Name); n < 1 || n > 100 || store.SanitizeText(b.Name) != b.Name {
-		writeFieldError(w, "name", "must be 1–100 characters")
+		writeFieldError(w, "name", "must be 1–100 characters without control characters")
 		return nil, false
 	}
 	if len(b.Panels) > maxPanels {
@@ -75,7 +75,7 @@ func validDashboard(w http.ResponseWriter, b *dashboardBody) (json.RawMessage, b
 		field := fmt.Sprintf("panels[%d].", i)
 		switch {
 		case utf8.RuneCountInString(p.Title) > 100 || store.SanitizeText(p.Title) != p.Title:
-			writeFieldError(w, field+"title", "must be at most 100 characters")
+			writeFieldError(w, field+"title", "must be at most 100 characters without control characters")
 		case !slices.Contains(panelTypes, p.Type):
 			writeFieldError(w, field+"type", "must be one of "+strings.Join(panelTypes, ", "))
 		case strings.TrimSpace(p.Query) == "" || len(p.Query) > maxPanelQuery:

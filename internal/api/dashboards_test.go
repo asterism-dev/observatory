@@ -413,3 +413,25 @@ func TestDashboardMoveToPrivateCreatorOnly(t *testing.T) {
 		t.Fatalf("org creator moves to private: %d", code)
 	}
 }
+
+func TestDashboardUpdateValidation(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	d := e.createDashboard(ownerTok, org, `{"name":"A","scope":"org","panels":[]}`)
+	for body, field := range map[string]string{
+		`{"name":"A","scope":"org","panels":[{"title":"T","type":"pie","query":"up","unit":"none","width":"full"}],"updatedAt":"` + d.UpdatedAt + `"}`: "panels[0].type",
+		`{"name":"A","scope":"org","panels":[]}`: "updatedAt",
+		`{"name":"a\u0007","scope":"org","panels":[],"updatedAt":"` + d.UpdatedAt + `"}`: "name",
+	} {
+		rec := e.send("PUT", dashboardPath(org, d.ID), ownerTok, body)
+		var got struct{ Error, Field string }
+		decode(t, rec, &got)
+		if rec.Code != 400 || got.Field != field || field == "name" && !strings.Contains(got.Error, "without control characters") {
+			t.Errorf("%s: %d %s", field, rec.Code, rec.Body.String())
+		}
+	}
+	if got, _ := e.getDashboard(ownerTok, org, d.ID); got.UpdatedAt != d.UpdatedAt {
+		t.Fatalf("invalid PUT changed the dashboard: %+v", got)
+	}
+}
