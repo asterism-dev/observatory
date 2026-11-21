@@ -150,7 +150,6 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var denied error
-	var images map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
@@ -161,9 +160,6 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
-		if images, err = OwnedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeTeam, id); err != nil {
-			return err
-		}
 		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.OrgID, id) }); denied != nil {
 			return denied
 		}
@@ -171,9 +167,6 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	}) {
 		h.auditGuardDenial(r, m.OrgID, store.ActionTeamDelete, authz.TeamObject(id), denied)
 		return
-	}
-	for image, digests := range images {
-		h.deleteManifests(r.Context(), image, digests)
 	}
 	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)

@@ -238,7 +238,7 @@ func (h *api) createRegistryCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "registry credentials are issued to CLI sessions only")
 		return
 	}
-	secret, expires, err := h.store.CreateRegistryCredential(r.Context(), p.Session.ID, registryCredentialTTL)
+	secret, expires, err := h.store.CreateRegistryCredential(r.Context(), p.User.ID, p.Session.ID, p.Session.ExpiresAt, registryCredentialTTL)
 	if err != nil {
 		serverError(w, "registry credential", err)
 		return

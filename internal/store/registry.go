@@ -9,29 +9,30 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// CreateRegistryCredential issues a registry secret bound to the session, so revoking the session revokes it too.
-func (s *Store) CreateRegistryCredential(ctx context.Context, session uuid.UUID, ttl time.Duration) (string, time.Time, error) {
+// CreateRegistryCredential issues a registry secret that ends with the session; DeleteSessionCredentials revokes it earlier.
+func (s *Store) CreateRegistryCredential(ctx context.Context, user, session uuid.UUID, sessionExpires time.Time, ttl time.Duration) (string, time.Time, error) {
 	secret, err := randomSecret()
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	secret = "obr_" + secret
-	if _, err := s.q.Exec(ctx, "DELETE FROM registry_credentials WHERE expires_at < now()"); err != nil {
+	if _, err := s.q.Exec(ctx, "DELETE FROM registry_credentials WHERE expires_at < now() OR session_expires_at < now()"); err != nil {
 		return "", time.Time{}, err
 	}
 	var expires time.Time
 	err = s.q.QueryRow(ctx, `
-		INSERT INTO registry_credentials (session_id, secret_hash, expires_at) VALUES ($1, $2, now() + make_interval(secs => $3))
-		RETURNING expires_at`, session, hashToken(secret), ttl.Seconds()).Scan(&expires)
+		INSERT INTO registry_credentials (user_id, session_id, session_expires_at, secret_hash, expires_at)
+		VALUES ($1, $2, $3, $4, now() + make_interval(secs => $5))
+		RETURNING expires_at`, user, session, sessionExpires, hashToken(secret), ttl.Seconds()).Scan(&expires)
 	return secret, expires, err
 }
 
-// RegistryCredentialUser returns the user of a valid credential whose session is still valid.
+// RegistryCredentialUser returns the user of a credential that hasn't expired and whose session hasn't either.
 func (s *Store) RegistryCredentialUser(ctx context.Context, secret string) (uuid.UUID, error) {
 	var user uuid.UUID
 	err := s.q.QueryRow(ctx, `
-		SELECT s.user_id FROM registry_credentials c JOIN sessions s ON s.id = c.session_id
-		WHERE c.secret_hash = $1 AND c.expires_at > now() AND s.revoked_at IS NULL AND s.expires_at > now()`, hashToken(secret)).Scan(&user)
+		SELECT user_id FROM registry_credentials
+		WHERE secret_hash = $1 AND expires_at > now() AND session_expires_at > now()`, hashToken(secret)).Scan(&user)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrNotFound
 	}

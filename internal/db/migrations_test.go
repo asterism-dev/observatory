@@ -157,3 +157,81 @@ func TestMigration00035MovesMgmtSliceToHubOrgs(t *testing.T) {
 		t.Fatalf("restored: %q %v", slice, err)
 	}
 }
+
+func TestNoForeignKeysIntoIAMTables(t *testing.T) {
+	pool := dbtest.New(t)
+	// role_rules and role_parents belong to IAM's role graph; their cascades from roles stay.
+	rows, err := pool.Query(context.Background(), `
+		SELECT conrelid::regclass::text || '.' || conname || ' -> ' || confrelid::regclass::text
+		FROM pg_constraint
+		WHERE contype = 'f'
+			AND confrelid = ANY ('{users,orgs,memberships,sessions,teams,team_members,roles,role_bindings,invites,ssh_keys}'::regclass[])
+			AND NOT conrelid = ANY ('{users,orgs,memberships,sessions,teams,team_members,roles,role_bindings,invites,ssh_keys,role_rules,role_parents}'::regclass[])
+		ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fk string
+		if err := rows.Scan(&fk); err != nil {
+			t.Fatal(err)
+		}
+		t.Errorf("foreign key into an iam table: %s", fk)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVMWithUnknownUserIDInserts(t *testing.T) {
+	pool := dbtest.New(t)
+	if _, err := pool.Exec(context.Background(), `
+		WITH n AS (INSERT INTO nodes (org_id, name) VALUES (gen_random_uuid(), 'n') RETURNING id, org_id)
+		INSERT INTO vms (org_id, node_id, user_id, created_by, name, cpus, memory_mb, disk_gb)
+		SELECT n.org_id, n.id, gen_random_uuid(), gen_random_uuid(), 'v', 1, 1024, 10 FROM n`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigration00036BackfillsRegistryCredentials(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
+	defer conn.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 35); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	var user string
+	if err := pool.QueryRow(ctx, `
+		WITH u AS (INSERT INTO users (subject, email, name) VALUES ('s', 'u@example.com', 'u') RETURNING id),
+		s AS (
+			INSERT INTO sessions (user_id, token_hash, kind, expires_at, revoked_at)
+			SELECT u.id, v.hash, 'cli', v.expires, v.revoked FROM u,
+				(VALUES ('\x01'::bytea, now() + interval '1 day', NULL::timestamptz), ('\x02', now() + interval '1 day', now()), ('\x03', now() - interval '1 hour', NULL))
+				AS v(hash, expires, revoked)
+			RETURNING id, token_hash)
+		INSERT INTO registry_credentials (session_id, secret_hash, expires_at) SELECT id, token_hash, now() + interval '1 hour' FROM s
+		RETURNING (SELECT id FROM u)`).Scan(&user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 36); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	var hash []byte
+	var got string
+	var tail bool
+	if err := pool.QueryRow(ctx, "SELECT secret_hash, user_id, session_expires_at > now() + interval '23 hours' FROM registry_credentials").Scan(&hash, &got, &tail); err != nil {
+		t.Fatalf("expected exactly the live session's credential: %v", err)
+	}
+	if string(hash) != "\x01" || got != user || !tail {
+		t.Fatalf("credential %x user %s (want %s) session expiry carried %v", hash, got, user, tail)
+	}
+	if _, err := provider.DownTo(ctx, 35); err != nil {
+		t.Fatalf("down again: %v", err)
+	}
+}

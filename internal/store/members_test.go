@@ -162,7 +162,7 @@ func TestRemoveMemberCleansTeamsAndBindings(t *testing.T) {
 	if err := s.RemoveMember(ctx, orgs[0], m.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PurgeMember(ctx, orgs[0], m.User.ID); err != nil {
+	if _, err := s.PurgeMember(ctx, orgs[0], m.User.ID); err != nil {
 		t.Fatal(err)
 	}
 	count := func(sql string, args ...any) int {
@@ -194,5 +194,41 @@ func execSQL(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPurgeMemberWaitsForConcurrentRejoin(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool)
+	a, m := login(t, s, "a"), login(t, s, "m")
+	org := mustCreateOrg(t, s, "A", a.User.ID)
+	rejoin, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rejoin.Rollback(ctx) }()
+	if _, err := rejoin.Exec(ctx, "INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", org.ID, m.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		purged bool
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		purged, err := s.PurgeMember(ctx, org.ID, m.User.ID)
+		done <- result{purged, err}
+	}()
+	select {
+	case r := <-done:
+		t.Fatalf("purge didn't wait for the uncommitted re-join: %+v", r)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := rejoin.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-done; r.err != nil || r.purged {
+		t.Fatalf("purge after the re-join: %+v", r)
 	}
 }

@@ -86,7 +86,7 @@ func TestDashboards(t *testing.T) {
 	if err := s.RemoveMember(ctx, org.ID, b); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PurgeMember(ctx, org.ID, b); err != nil {
+	if _, err := s.PurgeMember(ctx, org.ID, b); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Dashboard(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

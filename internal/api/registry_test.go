@@ -300,6 +300,11 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 	if err := e.pool.QueryRow(t.Context(), `SELECT count(*) FROM registry_credentials WHERE secret_hash = sha256($1::bytea)`, []byte(got.Secret)).Scan(&stored); err != nil || stored != 1 {
 		t.Fatalf("stored hashed: %d %v", stored, err)
 	}
+	var bound bool
+	if err := e.pool.QueryRow(t.Context(), `SELECT bool_and(c.user_id = s.user_id AND abs(extract(epoch FROM c.session_expires_at - s.expires_at)) < 1)
+		FROM registry_credentials c JOIN sessions s ON s.id = c.session_id`).Scan(&bound); err != nil || !bound {
+		t.Fatalf("credential bound to the session's user and expiry: %v %v", bound, err)
+	}
 	if code, _ := grant(t, h, "observatory", got.Secret, repoScope(a, "pull")); code != 200 {
 		t.Fatalf("fresh credential: %d", code)
 	}
@@ -307,10 +312,10 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 	if code, _ := grant(t, h, "observatory", got.Secret, repoScope(a, "pull")); code != 401 {
 		t.Fatalf("expired credential: %d", code)
 	}
-	revoked := e.registryCredential(cli)
-	e.exec(`UPDATE sessions SET revoked_at = now()`)
-	if code, _ := grant(t, h, "observatory", revoked, repoScope(a, "pull")); code != 401 {
-		t.Fatalf("credential of a revoked session: %d", code)
+	ended := e.registryCredential(cli)
+	e.exec(`UPDATE registry_credentials SET session_expires_at = now() - interval '1 second'`)
+	if code, _ := grant(t, h, "observatory", ended, repoScope(a, "pull")); code != 401 {
+		t.Fatalf("credential of an expired session: %d", code)
 	}
 }
 

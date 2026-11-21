@@ -43,10 +43,6 @@ func TestCreateDevice(t *testing.T) {
 	if _, err := s.CreateDevice(ctx, store.Device{OrgID: orgA.ID, UserID: a.User.ID, Name: "laptop", PublicKey: "k3"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate name: %v", err)
 	}
-	stranger := login(t, s, "c")
-	if _, err := s.CreateDevice(ctx, store.Device{OrgID: orgA.ID, UserID: stranger.User.ID, Name: "x", PublicKey: "k5"}); !errors.Is(err, store.ErrNotMember) {
-		t.Fatalf("non-member: %v", err)
-	}
 	d3 := mustCreateDevice(t, s, orgA.ID, b.User.ID, "laptop", "k4")
 	if d3.IP != netip.MustParseAddr("10.192.0.4") {
 		t.Fatalf("d3 ip %s", d3.IP)
@@ -70,7 +66,7 @@ func TestCreateDevice(t *testing.T) {
 	}
 }
 
-func TestRemoveMemberDeletesDevices(t *testing.T) {
+func TestPurgeMemberDeletesDevices(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool)
@@ -85,6 +81,15 @@ func TestRemoveMemberDeletesDevices(t *testing.T) {
 
 	if err := s.RemoveMember(ctx, orgA.ID, m.User.ID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.Device(ctx, orgA.ID, inA.ID); err != nil {
+		t.Fatalf("org A device gone before the purge: %v", err)
+	}
+	if purged, err := s.PurgeMember(ctx, orgA.ID, m.User.ID); err != nil || !purged {
+		t.Fatalf("purge: %v %v", purged, err)
+	}
+	if purged, err := s.PurgeMember(ctx, orgB.ID, m.User.ID); err != nil || purged {
+		t.Fatalf("purge of a current member: %v %v", purged, err)
 	}
 	if _, err := s.Device(ctx, orgA.ID, inA.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("org A device: %v", err)

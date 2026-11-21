@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -11,15 +12,27 @@ import (
 
 var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
 
-// PurgeMember deletes the hub rows of a user who left org; running it again is harmless.
-func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
+// PurgeMember deletes the hub rows of a user who left org, unless they are a member again; running it again is harmless.
+func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID) (purged bool, err error) {
+	err = s.InTx(ctx, func(tx *Store) error {
+		// The org row lock conflicts with the key-share lock a membership insert takes, so a re-join can't interleave.
+		if err := tx.LockOrg(ctx, org); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		var member bool
+		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2)", org, user).Scan(&member); err != nil || member {
+			return err
+		}
 		if err := tx.purgeScoped(ctx, org, EnvScopeUser, "user_id", user, authz.UserSubject(user)); err != nil {
 			return err
 		}
-		_, err := tx.q.Exec(ctx, "DELETE FROM devices WHERE org_id = $1 AND user_id = $2", org, user)
-		return err
+		if _, err := tx.q.Exec(ctx, "DELETE FROM devices WHERE org_id = $1 AND user_id = $2", org, user); err != nil {
+			return err
+		}
+		purged = true
+		return nil
 	})
+	return purged && err == nil, err
 }
 
 // PurgeTeam deletes the hub rows of a deleted team and unlinks its deleted disks and VM history; running it again is harmless.

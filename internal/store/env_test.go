@@ -300,8 +300,9 @@ func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	private := mustCreateEnv(t, s, envVar(org, mid, store.EnvSecret, store.EnvScopeUser, &mid, "P"), "p")
 	shared := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeOrg, nil, "S"), "s")
 	ownerVar := mustCreateEnv(t, s, envVar(org, owner.User.ID, store.EnvPlain, store.EnvScopeUser, &owner.User.ID, "O"), "o")
-	if err := s.PurgeMember(ctx, org.ID, mid); err != nil {
-		t.Fatal(err)
+	execSQL(t, pool, `DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, mid)
+	if purged, err := s.PurgeMember(ctx, org.ID, mid); err != nil || !purged {
+		t.Fatalf("purge: %v %v", purged, err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("private: %v", err)
@@ -313,11 +314,17 @@ func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	}
 }
 
-func TestDeleteTeamDeletesTeamEnv(t *testing.T) {
+func TestPurgeTeamDeletesTeamEnv(t *testing.T) {
 	ctx := context.Background()
 	s, u, org, team := newEnvStore(t)
 	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeTeam, &team.ID, "T"), "t")
 	if err := s.DeleteTeam(ctx, org.ID, team.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnvVar(ctx, org.ID, v.ID); err != nil {
+		t.Fatalf("team env gone before the purge: %v", err)
+	}
+	if err := s.PurgeTeam(ctx, org.ID, team.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, v.ID); !errors.Is(err, store.ErrNotFound) {

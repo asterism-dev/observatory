@@ -381,6 +381,10 @@ func TestTeamDeleteEventPurges(t *testing.T) {
 	e.exec("INSERT INTO disks (org_id, team_id, name, size_gb, deleted_at) VALUES ($1, $2, 'gone', 1, now())", e.org.ID, core.ID)
 	e.exec(`INSERT INTO vm_history (id, org_id, team_id, name, cpus, memory_mb, disk_gb, created_at, reason)
 		VALUES ($1, $2, $3, 'old', 1, 512, 10, now(), 'user')`, uuid.New(), e.org.ID, core.ID)
+	manifest := e.imageManifest(store.EnvScopeTeam, core.ID)
+	if err := e.s.DeleteTeam(ctx, e.org.ID, core.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	e.publish(store.ActionTeamDelete, &e.org.ID, authz.TeamObject(core.ID), eventsv1.Result_RESULT_ALLOWED)
 	e.waitFor("core's rows to go", func() bool { return total(e.rows(store.EnvScopeTeam, core.ID)) == 0 })
@@ -391,6 +395,9 @@ func TestTeamDeleteEventPurges(t *testing.T) {
 		t.Fatalf("other team's rows: %v", got)
 	}
 	e.waitFor("the org to be notified", func() bool { return slices.Contains(e.notifications(), e.org.ID) })
+	if got := e.manifests.list(); !slices.Equal(got, []string{manifest}) {
+		t.Fatalf("deleted manifests %v, want %s", got, manifest)
+	}
 }
 
 func TestDeniedEventIgnored(t *testing.T) {
@@ -448,7 +455,7 @@ func TestSessionRevokeDropsRegistryCredentials(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := e.s.CreateRegistryCredential(ctx, sess.ID, time.Hour); err != nil {
+		if _, _, err := e.s.CreateRegistryCredential(ctx, sess.UserID, sess.ID, sess.ExpiresAt, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 		sessions[action] = sess.ID

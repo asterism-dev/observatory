@@ -95,32 +95,34 @@ func purge(ctx context.Context, s *store.Store, notify func(uuid.UUID), manifest
 		if err != nil {
 			return err
 		}
-		// A stale event, e.g. replayed to a fresh consumer, must not wipe a re-joined member's rows.
-		if _, err := s.Membership(ctx, org, user); err == nil {
-			slog.Info("hub: member is back in the org, keeping their rows", "org", org, "user", user, "id", e.GetId())
-			return nil
-		} else if !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
 		images, err := api.OwnedImageVersions(ctx, s, org, store.EnvScopeUser, user)
 		if err != nil {
 			return err
 		}
-		if err := s.PurgeMember(ctx, org, user); err != nil {
+		// A stale event, e.g. replayed to a fresh consumer, must not wipe a re-joined member's rows.
+		purged, err := s.PurgeMember(ctx, org, user)
+		if err != nil {
 			return err
 		}
-		for image, digests := range images {
-			api.DeleteManifests(ctx, manifests, image, digests)
+		if !purged {
+			slog.Info("hub: member is back in the org, keeping their rows", "org", org, "user", user, "id", e.GetId())
+			return nil
 		}
+		deleteManifests(ctx, manifests, images)
 		notify(org)
 	case store.ActionTeamDelete:
 		org, team, err := orgAndID(e, authz.ObjTeams+"/")
 		if err != nil {
 			return err
 		}
+		images, err := api.OwnedImageVersions(ctx, s, org, store.EnvScopeTeam, team)
+		if err != nil {
+			return err
+		}
 		if err := s.PurgeTeam(ctx, org, team); err != nil {
 			return err
 		}
+		deleteManifests(ctx, manifests, images)
 		notify(org)
 	case store.ActionAuthLogout, store.ActionSessionRevoke:
 		session, err := idAfter(e.GetResource(), "session/")
@@ -132,6 +134,12 @@ func purge(ctx context.Context, s *store.Store, notify func(uuid.UUID), manifest
 		return fmt.Errorf("%w: type %q", errUnparsable, e.GetType())
 	}
 	return nil
+}
+
+func deleteManifests(ctx context.Context, m api.ManifestDeleter, images map[uuid.UUID][]string) {
+	for image, digests := range images {
+		api.DeleteManifests(ctx, m, image, digests)
+	}
 }
 
 func orgAndID(e *eventsv1.Event, prefix string) (org, id uuid.UUID, err error) {
