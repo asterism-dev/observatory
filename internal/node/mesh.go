@@ -328,8 +328,13 @@ func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
 // stepUnreachable keeps a candidate-less peer's proven path until stale, since dropping it on one side black-holes both.
 func (m *mesh) stepUnreachable(p *meshPeer, hs time.Time, present bool, now time.Time) {
 	if !present {
-		// The kernel peer is gone; whatever re-adds it later starts without allowed-ips.
-		p.mode, p.handshake, p.cleared = pathRelay, time.Time{}, false
+		// Key-only, so the other side's try can still handshake with us; a new peer has no allowed-ips.
+		p.mode, p.handshake = pathRelay, time.Time{}
+		_, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey)
+		if err != nil {
+			slog.Warn("adding underlay peer", "node", p.NodeID, "err", err)
+		}
+		p.cleared = err == nil
 		return
 	}
 	p.handshake = hs

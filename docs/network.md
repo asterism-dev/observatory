@@ -118,8 +118,8 @@ unreachable the relay is used.
 - A node tries each candidate for 15 s. A path counts as direct only after a fresh WireGuard handshake (younger than
   3 min); until then traffic stays on the relay and the peer gets no allowed IPs. If every candidate fails the node
   keeps the relay and retries every 2 min. A direct path whose handshake is older than 3 min falls back to the relay.
-  A peer whose candidates are not known yet (e.g. right after a hub restart) is not tried, but a direct path it
-  already has stays until its handshake goes stale.
+  A peer whose candidates are not known yet (e.g. right after a hub restart) is not tried but configured with its key
+  only, so the other node's try still succeeds; a direct path it already has stays until its handshake goes stale.
 - On `wg-underlay` the node admits only Geneve (UDP 6081), ICMP echo and established/related traffic from peers, and
   everything from the gateway (`10.198.0.1`); see [nodes.md](nodes.md#underlay).
 

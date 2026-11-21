@@ -57,7 +57,7 @@ func (f *fakeWG) run(name string, args ...string) (string, error) {
 		}
 		return out.String(), nil
 	}
-	if name != "wg" || len(args) < 5 || args[0] != "set" || args[1] != "wg-underlay" || args[2] != "peer" {
+	if name != "wg" || len(args) < 4 || args[0] != "set" || args[1] != "wg-underlay" || args[2] != "peer" {
 		f.t.Fatalf("unexpected command %q", call)
 	}
 	key, rest := args[3], args[4:]
@@ -389,6 +389,23 @@ func TestMeshKeepsListedPeerWithoutCandidates(t *testing.T) {
 	}
 }
 
+func TestMeshAddsPeerWithoutCandidatesKeyOnly(t *testing.T) {
+	e := newMeshEnv(t)
+	unknown := peerA
+	unknown.Candidates = nil
+	e.m.update(proto.Peers{Peers: []proto.Peer{unknown}})
+	keyOnly := "wg set wg-underlay peer " + peerA.PublicKey
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" || p.endpoint != "" || !e.wg.took(keyOnly) {
+		t.Fatalf("peer = %+v, want added key-only: %v", p, e.wg.calls)
+	}
+	e.wg.peers = map[string]*wgPeer{gwKey: {hs: e.now.Unix(), ips: "10.198.0.0/16"}}
+	e.wg.calls = nil
+	e.advance(5 * time.Second)
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" || !e.wg.took(keyOnly) {
+		t.Fatalf("peer = %+v after wg-quick restart, want re-added key-only: %v", p, e.wg.calls)
+	}
+}
+
 func TestMeshClearsLeftoverRouteWithoutCandidates(t *testing.T) {
 	e := newMeshEnv(t)
 	e.wg.peers[peerA.PublicKey] = &wgPeer{hs: e.now.Add(-4 * time.Minute).Unix(), ips: "10.198.0.5/32", endpoint: "192.168.1.5:51822"}
@@ -437,7 +454,10 @@ func TestMeshNeverTouchesGatewayPeer(t *testing.T) {
 		if strings.Contains(c, gwKey) || strings.Contains(c, "10.198.0.1/") || strings.Contains(c, "10.198.0.1:") {
 			t.Fatalf("gateway touched: %q", c)
 		}
-		for _, bad := range []string{"10.1.0.1", "x --help", "10.198.0.11", "1.2.3.4", "x;rm", "127.0.0.1", testKey(7)} {
+		if strings.Contains(c, testKey(7)) && c != "wg set wg-underlay peer "+testKey(7) && !strings.HasPrefix(c, "wg show") {
+			t.Fatalf("peer without candidates configured beyond its key: %q", c)
+		}
+		for _, bad := range []string{"10.1.0.1", "x --help", "10.198.0.11", "1.2.3.4", "x;rm", "127.0.0.1"} {
 			if strings.Contains(c, bad) {
 				t.Fatalf("unvalidated value %q passed to wg: %q", bad, c)
 			}
