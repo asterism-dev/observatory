@@ -19,7 +19,7 @@ Logs, from two sources:
 - `firecracker`: Firecracker's own log per VM, at level Warning and above.
 
 The guest's serial console (`console.log`) never appears on the node page. It is VM-internal output and is shown only on
-the VM page under `vm:metrics` (stream `console`, see below).
+the VM page under `compute.instances.getMetrics` (stream `console`, see below).
 
 ## VMs
 
@@ -78,8 +78,8 @@ for example `{observatory.stream="build"} observatory.image:"<image id>"`.
 
 ## Access
 
-`node:metrics` gates the usage graphs and logs on the node page. Admins and owners have it; members only through a
-custom role ([permissions.md](permissions.md)). `vm:metrics` gates a VM's usage, processes and logs: the owner, team
+`compute.nodes.getMetrics` gates the usage graphs and logs on the node page. Admins and owners have it; members only through a
+custom role ([permissions.md](permissions.md)). `compute.instances.getMetrics` gates a VM's usage, processes and logs: the owner, team
 members of a team VM, team admins and org admins and owners have it. Admins read VM telemetry but never connect. VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
 
 To browse and search logs across all VMs, nodes and builds, including deleted ones, see [Logs](logs.md). To chart this
@@ -111,5 +111,5 @@ assigned to that node, and must not be a builder VM (else 403). The hub then als
 `observatory.vm_name`, and on logs `observatory.stream`; VM logs are stored under the stream fields
 `observatory.org,observatory.vm,observatory.stream`, apart from the node's own logs.
 
-`GET /api/orgs/{org}/vms/{id}/processes` (needs `vm:metrics`) returns the running VM's live process list, at most 500
+`GET /api/orgs/{org}/vms/{id}/processes` (needs `compute.instances.getMetrics`) returns the running VM's live process list, at most 500
 entries. `cpuPercent` is percent of one core over a 200 ms sample, like `top`, so it can exceed 100 on a multi-core VM.

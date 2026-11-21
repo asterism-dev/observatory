@@ -126,10 +126,10 @@ A VM can be given a time at which the hub deletes it: `deleteAfter` when creatin
 
 - Accepted: `<n>m`, `<n>h`, `<n>d` (whole minutes, hours, days) or an RFC 3339 time with offset
   (`2026-11-21T08:00:00+01:00`). The time must be at least 5 minutes ahead; there is no upper bound.
-- Setting, changing or clearing it needs `vm:delete`, since an expiry is a delayed delete. Plain members of a team
+- Setting, changing or clearing it needs `compute.instances.delete`, since an expiry is a delayed delete. Plain members of a team
   cannot change it on team VMs.
 - The hub checks once a minute. The deletion is the same as a manual one: root disk and snapshots are deleted,
-  attached disks are released and kept. It is audited as `vm:delete` by `system` with `reason: expired`.
+  attached disks are released and kept. It is audited as `compute.instances.delete` by `system` with `reason: expired`.
 - A VM that a pending fork still copies from is kept until the fork is provisioned, then deleted on the next check.
 - A VM without a delete-after time is never deleted automatically.
 
@@ -165,7 +165,7 @@ SSH host keys and machine id, entropy mixed into its RNG.
 ## Metrics
 
 The VM page's Metrics tab shows usage graphs (CPU, memory, disk, network), the live process list and log streams, read
-from the hub's telemetry stores. It needs `vm:metrics`; see [telemetry.md](telemetry.md#vms). The VM list and VM page
+from the hub's telemetry stores. It needs `compute.instances.getMetrics`; see [telemetry.md](telemetry.md#vms). The VM list and VM page
 show current CPU % and RAM from the latest usage sample, omitted if the store is slow or has none.
 
 ## Node restart

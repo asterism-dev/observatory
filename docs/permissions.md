@@ -33,26 +33,26 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 
 | Action | Object |
 |---|---|
-| `org:update`, `telemetry:token` | `org/settings` |
-| `member:read`, `member:invite`, `member:remove`, `member:set-role` | `org/members` |
-| `team:read`, `team:create` | `org/teams` |
-| `team:update`, `team:delete`, `team:manage-members`, `team:leave` | `org/teams/*` |
-| `role:read`, `role:write`, `role:bind` | `org/roles` |
-| `limit:read`, `limit:set` | `org/limits` |
-| `audit:read` | `org/audit` |
-| `logs:read` | `org/logs` |
-| `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
-| `integration:list`, `integration:set`, `integration:delete`, `integration:use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
-| `dashboard:read`, `dashboard:edit`, `dashboard:create` | `org/dashboards`, `org/team-dashboards/*`, `org/user-dashboards/*` |
-| `node:read`, `node:create` | `org/nodes` |
-| `node:read`, `node:update`, `node:delete`, `node:use`, `node:metrics` | `org/nodes/*` |
-| `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
-| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect`, `vm:snapshot`, `vm:restore`, `vm:fork`, `vm:metrics` | `org/vms/*` |
-| `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
-| `network:read`, `network:create` | `org/networks` |
-| `network:use`, `network:delete` | `org/networks/*` |
-| `disk:create` | `org/disks` (user disks), `org/team-disks/*` (team disks) |
-| `disk:read`, `disk:update`, `disk:delete`, `disk:use` | `org/disks/*` |
+| `iam.orgs.update`, `telemetry.tokens.create` | `org/settings` |
+| `iam.members.list`, `iam.invites.create`, `iam.members.delete`, `iam.members.setRole` | `org/members` |
+| `iam.teams.list`, `iam.teams.create` | `org/teams` |
+| `iam.teams.update`, `iam.teams.delete`, `iam.teams.manageMembers`, `iam.teams.leave` | `org/teams/*` |
+| `iam.roles.list`, `iam.roles.manage`, `iam.roleBindings.manage` | `org/roles` |
+| `quota.limits.get`, `quota.limits.update` | `org/limits` |
+| `audit.events.list` | `org/audit` |
+| `telemetry.logEntries.list` | `org/logs` |
+| `secrets.variables.list`, `secrets.variables.set`, `secrets.variables.delete`, `secrets.variables.use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
+| `secrets.integrations.list`, `secrets.integrations.set`, `secrets.integrations.delete`, `secrets.integrations.use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
+| `telemetry.dashboards.get`, `telemetry.dashboards.update`, `telemetry.dashboards.create` | `org/dashboards`, `org/team-dashboards/*`, `org/user-dashboards/*` |
+| `compute.nodes.get`, `compute.nodes.create` | `org/nodes` |
+| `compute.nodes.get`, `compute.nodes.update`, `compute.nodes.delete`, `compute.nodes.use`, `compute.nodes.getMetrics` | `org/nodes/*` |
+| `compute.instances.create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
+| `compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete`, `compute.instances.setNetworks`, `compute.instances.setDisks`, `compute.instances.connect`, `compute.instances.snapshot`, `compute.instances.restore`, `compute.instances.fork`, `compute.instances.getMetrics` | `org/vms/*` |
+| `network.devices.create`, `network.devices.list`, `network.devices.delete` | `org/user-devices/*` |
+| `network.networks.get`, `network.networks.create` | `org/networks` |
+| `network.networks.use`, `network.networks.delete` | `org/networks/*` |
+| `compute.disks.create` | `org/disks` (user disks), `org/team-disks/*` (team disks) |
+| `compute.disks.get`, `compute.disks.update`, `compute.disks.delete`, `compute.disks.use` | `org/disks/*` |
 
 ## Built-in roles
 
@@ -60,32 +60,32 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 
 | Permission | member | admin | owner |
 |---|---|---|---|
-| `member:read`, `team:read`, `team:leave`, `role:read`, `limit:read` | yes | yes | yes |
-| `org:update`, `telemetry:token`, `member:invite`, `member:remove` | | yes | yes |
-| `team:*` (create, update, delete, manage members, leave) | | yes | yes |
-| `role:write`, `role:bind`, `limit:set`, `audit:read` | | yes | yes |
-| `logs:read` (the org's logs explorer, all of the org's logs) | | yes | yes |
-| `member:set-role` | | | yes |
-| `env:list`, `env:use` on `org/env` | yes | yes | yes |
-| `env:*` on `org/env` and `org/team-env/*` | | yes | yes |
-| `integration:list`, `integration:use` on `org/integrations` | yes | yes | yes |
-| `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
-| `dashboard:read` on `org/dashboards` | yes | yes | yes |
-| `dashboard:*` on `org/dashboards` and `org/team-dashboards/*` | | yes | yes |
-| `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
-| `node:*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
-| `vm:metrics` on `org/vms/*` | | yes | yes |
-| `vm:create` on `org/vms` | yes | yes | yes |
-| `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:snapshot`, `vm:restore` on `org/vms/*` | | yes | yes |
-| `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
-| `network:delete` on `org/networks/*` | | yes | yes |
-| `device:list`, `device:delete` on `org/user-devices/*` | | yes | yes |
-| `disk:create` on `org/disks` | yes | yes | yes |
-| `disk:create` on `org/team-disks/*`; `disk:read`, `disk:update`, `disk:delete` on `org/disks/*` | | yes | yes |
+| `iam.members.list`, `iam.teams.list`, `iam.teams.leave`, `iam.roles.list`, `quota.limits.get` | yes | yes | yes |
+| `iam.orgs.update`, `telemetry.tokens.create`, `iam.invites.create`, `iam.members.delete` | | yes | yes |
+| `iam.teams.*` (create, update, delete, manage members, leave) | | yes | yes |
+| `iam.roles.manage`, `iam.roleBindings.manage`, `quota.limits.update`, `audit.events.list` | | yes | yes |
+| `telemetry.logEntries.list` (the org's logs explorer, all of the org's logs) | | yes | yes |
+| `iam.members.setRole` | | | yes |
+| `secrets.variables.list`, `secrets.variables.use` on `org/env` | yes | yes | yes |
+| `secrets.variables.*` on `org/env` and `org/team-env/*` | | yes | yes |
+| `secrets.integrations.list`, `secrets.integrations.use` on `org/integrations` | yes | yes | yes |
+| `secrets.integrations.*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
+| `telemetry.dashboards.get` on `org/dashboards` | yes | yes | yes |
+| `telemetry.dashboards.*` on `org/dashboards` and `org/team-dashboards/*` | | yes | yes |
+| `compute.nodes.get` on `org/nodes` and `org/nodes/*`, `compute.nodes.use` on `org/nodes/*` | yes | yes | yes |
+| `compute.nodes.*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
+| `compute.instances.getMetrics` on `org/vms/*` | | yes | yes |
+| `compute.instances.create` on `org/vms` | yes | yes | yes |
+| `compute.instances.create` on `org/team-vms/*`; `compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete`, `compute.instances.setNetworks`, `compute.instances.setDisks`, `compute.instances.snapshot`, `compute.instances.restore` on `org/vms/*` | | yes | yes |
+| `network.networks.get`, `network.networks.create` on `org/networks`, `network.networks.use` on `org/networks/*` | yes | yes | yes |
+| `network.networks.delete` on `org/networks/*` | | yes | yes |
+| `network.devices.list`, `network.devices.delete` on `org/user-devices/*` | | yes | yes |
+| `compute.disks.create` on `org/disks` | yes | yes | yes |
+| `compute.disks.create` on `org/team-disks/*`; `compute.disks.get`, `compute.disks.update`, `compute.disks.delete` on `org/disks/*` | | yes | yes |
 
-No built-in role holds `vm:connect`, `vm:fork`, `disk:use` or `device:create` on others' objects; those come only from the
-generated rules below. VM actions are always granted as explicit lists, never `vm:*`, so a new VM action
-is never granted by accident. Disk actions are explicit too, never `disk:*`.
+No built-in role holds `compute.instances.connect`, `compute.instances.fork`, `compute.disks.use` or `network.devices.create` on others' objects; those come only from the
+generated rules below. VM actions are always granted as explicit lists, never `compute.instances.*`, so a new VM action
+is never granted by accident. Disk actions are explicit too, never `compute.disks.*`.
 
 ## Custom roles and bindings
 
@@ -94,7 +94,7 @@ is never granted by accident. Disk actions are explicit too, never `disk:*`.
 - Inheritance chains (subject, team, role, parents) are limited to depth 8; cycles are rejected.
 - A **binding** attaches a role to a user or a team, org-wide. Shares (a binding on a single object) arrive
   with the first resource type.
-- Allow rules with action wildcards (`team:*`) are expanded against the catalog when written, so they
+- Allow rules with action wildcards (`iam.teams.*`) are expanded against the catalog when written, so they
   never silently gain future actions. Deny rules keep their wildcard, so a deny also covers future actions.
 
 ## Deny rules and the escalation rule
@@ -110,24 +110,24 @@ is never granted by accident. Disk actions are explicit too, never `disk:*`.
 
 ## Owners
 
-- An org may have several owners. Only owners (or holders of `member:set-role`, which an owner can grant via a custom role) promote to or demote from `admin` or `owner`.
+- An org may have several owners. Only owners (or holders of `iam.members.setRole`, which an owner can grant via a custom role) promote to or demote from `admin` or `owner`.
 - The last owner cannot be demoted, removed or leave.
 - Personal orgs are single-member and fixed: no invitations, role changes, removal, leaving or renaming.
 
 ## Invitations
 
 A link with a single-use token, valid 7 days; the hub sends no mail. Inviting as `admin` or `owner`
-requires being owner (or holding `member:set-role`). At accept time the creator must still be a member and still hold `member:invite`
-(plus `member:set-role` for admin/owner invites); otherwise the invite is invalid and must be reissued.
+requires being owner (or holding `iam.members.setRole`). At accept time the creator must still be a member and still hold `iam.invites.create`
+(plus `iam.members.setRole` for admin/owner invites); otherwise the invite is invalid and must be reissued.
 
 ## Teams
 
 A team has members, some of whom are team admins. Team admins manage membership of their team but cannot
-demote or remove a peer team admin; that needs `team:update`. Binding a role to a team gives it to every
+demote or remove a peer team admin; that needs `iam.teams.update`. Binding a role to a team gives it to every
 member.
 
-Members leave a team themselves with `team:leave`, which every member has by default; an org can forbid it
-with a deny rule (e.g. `deny team:leave@org/teams/*`, or one team only). Leaving never lifts a deny that
+Members leave a team themselves with `iam.teams.leave`, which every member has by default; an org can forbid it
+with a deny rule (e.g. `deny iam.teams.leave@org/teams/*`, or one team only). Leaving never lifts a deny that
 reaches you through the team, unless you are an owner.
 
 ## Environment variables
@@ -135,19 +135,19 @@ reaches you through the team, unless you are an owner.
 Variables (plain or secret) live in three scopes: the org (`org/env`), a team (`org/team-env/<team>`) and
 each member's private scope (`org/user-env/<user>`).
 
-- `env:list` lists names and metadata, including the hosts a secret is bound to; `env:set` and `env:delete`
-  manage variables; `env:use` lets a subject's workloads receive the values. There is no action that reads a secret
+- `secrets.variables.list` lists names and metadata, including the hosts a secret is bound to; `secrets.variables.set` and `secrets.variables.delete`
+  manage variables; `secrets.variables.use` lets a subject's workloads receive the values. There is no action that reads a secret
   value back.
 - Binding a secret to hosts, changing its hosts and unbinding it (which delivers the real value at the VMs' next
-  boot) need `env:set` on the variable's scope, like changing the value. Placeholders are never returned
+  boot) need `secrets.variables.set` on the variable's scope, like changing the value. Placeholders are never returned
   ([egress.md](egress.md)).
-- `vm:read` on a VM shows its Egress line: the host names and the number of the owner's secrets bound for it, never
+- `compute.instances.get` on a VM shows its Egress line: the host names and the number of the owner's secrets bound for it, never
   the secrets' names, values or placeholders. Org admins therefore see which hosts a member's VM has secrets for.
-- Team members get `env:list` and `env:use` on their team's scope; the team subject itself gets `env:use`
-  on `org/env` and its own scope. Team admins also get `env:set` and `env:delete` on their team.
+- Team members get `secrets.variables.list` and `secrets.variables.use` on their team's scope; the team subject itself gets `secrets.variables.use`
+  on `org/env` and its own scope. Team admins also get `secrets.variables.set` and `secrets.variables.delete` on their team.
 - A private scope is reachable only by its own user, who holds all four actions on it; no built-in role,
   not even owner, covers another member's private scope. Deny rules still win, e.g.
-  `deny env:set@org/user-env/*`.
+  `deny secrets.variables.set@org/user-env/*`.
 
 ## Integrations
 
@@ -155,26 +155,26 @@ GitHub, Claude and Linear logins ([integrations.md](integrations.md)) use the sa
 as variables: the org (`org/integrations`), a team (`org/team-integrations/<team>`) and each member's private scope
 (`org/user-integrations/<user>`).
 
-- `integration:list` shows kind, source, scope, delivery mode, account, status and expiry; `integration:set` connects,
-  replaces, signs in again and changes the mode; `integration:delete` disconnects; `integration:use` means "VMs I own
+- `secrets.integrations.list` shows kind, source, scope, delivery mode, account, status and expiry; `secrets.integrations.set` connects,
+  replaces, signs in again and changes the mode; `secrets.integrations.delete` disconnects; `secrets.integrations.use` means "VMs I own
   receive this integration" and is checked when a VM's integrations are resolved. No action returns a token or
   placeholder.
-- Generated rules: team admins get `integration:*` on their team's object; the team subject gets `integration:list`
-  and `integration:use` on its own object and `integration:use` on `org/integrations`; every member gets
-  `integration:*` on their own `org/user-integrations/<user>`. No built-in role, not even owner, covers another
+- Generated rules: team admins get `secrets.integrations.*` on their team's object; the team subject gets `secrets.integrations.list`
+  and `secrets.integrations.use` on its own object and `secrets.integrations.use` on `org/integrations`; every member gets
+  `secrets.integrations.*` on their own `org/user-integrations/<user>`. No built-in role, not even owner, covers another
   member's private scope.
-- Deny rules win as usual, e.g. `deny integration:set@org/user-integrations/*` ("no private integrations") or
-  `deny integration:use@org/integrations` (org integrations reach no VM). All actions go through the escalation rule.
+- Deny rules win as usual, e.g. `deny secrets.integrations.set@org/user-integrations/*` ("no private integrations") or
+  `deny secrets.integrations.use@org/integrations` (org integrations reach no VM). All actions go through the escalation rule.
 
 ## Dashboards
 
 Dashboards live in the same three scopes: the org (`org/dashboards`), a team (`org/team-dashboards/<team>`) and
 each member's private scope (`org/user-dashboards/<user>`).
 
-- `dashboard:read` shows a dashboard, `dashboard:create` creates one in (or moves one into) a scope, `dashboard:edit`
+- `telemetry.dashboards.get` shows a dashboard, `telemetry.dashboards.create` creates one in (or moves one into) a scope, `telemetry.dashboards.update`
   changes or deletes any dashboard of the scope.
-- Generated rules: the team subject gets `dashboard:read` and `dashboard:create` on its own object; team admins get
-  `dashboard:*` on it; every member gets `dashboard:*` on their own `org/user-dashboards/<user>`. No built-in role,
+- Generated rules: the team subject gets `telemetry.dashboards.get` and `telemetry.dashboards.create` on its own object; team admins get
+  `telemetry.dashboards.*` on it; every member gets `telemetry.dashboards.*` on their own `org/user-dashboards/<user>`. No built-in role,
   not even owner, covers another member's private scope.
 - A dashboard's creator may also edit it while it is in the org scope, or in a team scope while they are a member of
   that team; this is checked by the API, not by a rule.
@@ -182,49 +182,49 @@ each member's private scope (`org/user-dashboards/<user>`).
 ## Nodes and VMs
 
 Every VM object is org-scoped (`org/vms/<id>`), whether a user or a team owns it, so org-wide rules such
-as `deny vm:delete@org/vms/*` also cover a member's own VMs. Owner rights come from generated rules:
+as `deny compute.instances.delete@org/vms/*` also cover a member's own VMs. Owner rights come from generated rules:
 
-- A user VM gives its user `vm:read`, `vm:power`, `vm:delete`, `vm:network` and `vm:connect` on that VM.
-- A team VM gives the team subject `vm:read`, `vm:power` and `vm:connect` on it, and each admin of that
-  team `vm:read`, `vm:power`, `vm:delete` and `vm:network`.
-- Team admins also get `vm:create` on `org/team-vms/<team>`, so they create VMs for their own team only.
+- A user VM gives its user `compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete`, `compute.instances.setNetworks` and `compute.instances.connect` on that VM.
+- A team VM gives the team subject `compute.instances.get`, `compute.instances.setPower` and `compute.instances.connect` on it, and each admin of that
+  team `compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete` and `compute.instances.setNetworks`.
+- Team admins also get `compute.instances.create` on `org/team-vms/<team>`, so they create VMs for their own team only.
 
-Org admins and owners see, power, delete and re-network every VM (`vm:read`, `vm:power`, `vm:delete`,
-`vm:network` on `org/vms/*`); they never get `vm:connect`, so no action lets them look inside a VM.
+Org admins and owners see, power, delete and re-network every VM (`compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete`,
+`compute.instances.setNetworks` on `org/vms/*`); they never get `compute.instances.connect`, so no action lets them look inside a VM.
 
 **Connect check.** Whether a person's devices may reach a VM is decided by `CanConnect`, not by
-`vm:connect` alone: a user VM admits only its owner, a team VM only members of the owning team, and then
-`vm:connect` must still be allowed, so an org deny such as `deny vm:connect@org/vms/*` cuts even the owner
-off. A custom role granting `vm:connect` has no effect on connecting in this version, and since nobody
-holds `vm:connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`node:use`); only admins and owners
-add, rename or delete nodes. Node usage graphs and logs need `node:metrics`; admins and owners have it, members only through a custom role.
+`compute.instances.connect` alone: a user VM admits only its owner, a team VM only members of the owning team, and then
+`compute.instances.connect` must still be allowed, so an org deny such as `deny compute.instances.connect@org/vms/*` cuts even the owner
+off. A custom role granting `compute.instances.connect` has no effect on connecting in this version, and since nobody
+holds `compute.instances.connect` on `org/vms/*`, the escalation rule rejects such grants anyway. Members see every node and may place VMs on it (`compute.nodes.use`); only admins and owners
+add, rename or delete nodes. Node usage graphs and logs need `compute.nodes.getMetrics`; admins and owners have it, members only through a custom role.
 
 A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
 disks cannot be deleted (`409` "owns VMs or disks").
 
 ## VM lifecycle
 
-Pause, hibernate, resume and the auto-suspend setting are power actions (`vm:power`). Snapshots are VM sub-resources,
-so their actions are on the VM object; listing snapshots needs `vm:read`
+Pause, hibernate, resume and the auto-suspend setting are power actions (`compute.instances.setPower`). Snapshots are VM sub-resources,
+so their actions are on the VM object; listing snapshots needs `compute.instances.get`
 ([vm-lifecycle.md](vm-lifecycle.md)).
 
 | Action | Allows |
 |---|---|
-| `vm:power` | start, shut down, stop, pause, hibernate, resume, set auto-suspend |
-| `vm:delete` | delete the VM; set, change or clear its [delete-after](vm-lifecycle.md#delete-after) time |
-| `vm:snapshot` | take and delete snapshots |
-| `vm:restore` | restore the VM to one of its snapshots |
-| `vm:fork` | create a new VM from a snapshot; the owner also needs `vm:create` for the new VM |
-| `vm:metrics` | read the VM's telemetry: usage, processes and logs |
+| `compute.instances.setPower` | start, shut down, stop, pause, hibernate, resume, set auto-suspend |
+| `compute.instances.delete` | delete the VM; set, change or clear its [delete-after](vm-lifecycle.md#delete-after) time |
+| `compute.instances.snapshot` | take and delete snapshots |
+| `compute.instances.restore` | restore the VM to one of its snapshots |
+| `compute.instances.fork` | create a new VM from a snapshot; the owner also needs `compute.instances.create` for the new VM |
+| `compute.instances.getMetrics` | read the VM's telemetry: usage, processes and logs |
 
-- A user VM gives its user `vm:snapshot`, `vm:restore` and `vm:fork` on it.
-- A team VM gives the team subject `vm:snapshot`, and each admin of that team `vm:snapshot`, `vm:restore` and
-  `vm:fork`.
-- Org admins and owners get `vm:snapshot` and `vm:restore` on every VM, never `vm:fork`: a fork holds the source's
-  memory and disks, so like `vm:connect` and `disk:use` it is data access. All three actions go through the escalation
+- A user VM gives its user `compute.instances.snapshot`, `compute.instances.restore` and `compute.instances.fork` on it.
+- A team VM gives the team subject `compute.instances.snapshot`, and each admin of that team `compute.instances.snapshot`, `compute.instances.restore` and
+  `compute.instances.fork`.
+- Org admins and owners get `compute.instances.snapshot` and `compute.instances.restore` on every VM, never `compute.instances.fork`: a fork holds the source's
+  memory and disks, so like `compute.instances.connect` and `compute.disks.use` it is data access. All three actions go through the escalation
   rule.
-- A user VM gives its user `vm:metrics`; a team VM gives it to the team subject and each team admin. Org admins and
-  owners may read every VM's telemetry (`vm:metrics`, incl. logs and processes) but still never connect.
+- A user VM gives its user `compute.instances.getMetrics`; a team VM gives it to the team subject and each team admin. Org admins and
+  owners may read every VM's telemetry (`compute.instances.getMetrics`, incl. logs and processes) but still never connect.
 
 | | member | team admin (of that team) | admin | owner |
 |---|---|---|---|---|
@@ -235,40 +235,40 @@ so their actions are on the VM object; listing snapshots needs `vm:read`
 | every VM: power incl. hibernate, snapshots, restore | | | yes | yes |
 | every VM: fork | | | | |
 
-Audit rows: `vm:power` (details `action`, or `autoSuspendMinutes`), `vm:snapshot` (name, memory, disk names),
-`vm:snapshot-delete`, `vm:restore` (snapshot name, memory), `vm:fork` on the source (details: the new VM) plus
-`vm:create` for the new VM. Suspend and wake by the node are logged, not audited.
+Audit rows: `compute.instances.setPower` (details `action`, or `autoSuspendMinutes`), `compute.instances.snapshot` (name, memory, disk names),
+`compute.snapshots.delete`, `compute.instances.restore` (snapshot name, memory), `compute.instances.fork` on the source (details: the new VM) plus
+`compute.instances.create` for the new VM. Suspend and wake by the node are logged, not audited.
 
 ## Disks
 
 Every disk object is org-scoped (`org/disks/<id>`), whether a user or a team owns it, so org-wide rules such
-as `deny disk:delete@org/disks/*` also cover a member's own disks. Owner rights come from generated rules:
+as `deny compute.disks.delete@org/disks/*` also cover a member's own disks. Owner rights come from generated rules:
 
-- A user disk gives its user `disk:read`, `disk:update`, `disk:delete` and `disk:use` on that disk.
-- A team disk gives the team subject `disk:read` and `disk:use`, and each admin of that team `disk:read`,
-  `disk:update`, `disk:delete` and `disk:use`.
-- Team admins also get `disk:create` on `org/team-disks/<team>`.
-- Owners of a user VM and admins of the owning team of a team VM get `vm:disks` on it (attach and detach).
+- A user disk gives its user `compute.disks.get`, `compute.disks.update`, `compute.disks.delete` and `compute.disks.use` on that disk.
+- A team disk gives the team subject `compute.disks.get` and `compute.disks.use`, and each admin of that team `compute.disks.get`,
+  `compute.disks.update`, `compute.disks.delete` and `compute.disks.use`.
+- Team admins also get `compute.disks.create` on `org/team-disks/<team>`.
+- Owners of a user VM and admins of the owning team of a team VM get `compute.instances.setDisks` on it (attach and detach).
 
-Org admins and owners may detach and delete any disk (`disk:read`, `disk:update`, `disk:delete`,
-`vm:disks`) but never get `disk:use`, so no action lets them read a member's disk contents. An org admin can
-still add themselves to a team (`team:update`) and so gets `disk:use` on that team's disks, as with team VMs;
+Org admins and owners may detach and delete any disk (`compute.disks.get`, `compute.disks.update`, `compute.disks.delete`,
+`compute.instances.setDisks`) but never get `compute.disks.use`, so no action lets them read a member's disk contents. An org admin can
+still add themselves to a team (`iam.teams.update`) and so gets `compute.disks.use` on that team's disks, as with team VMs;
 user disks stay out of reach.
 
 ## Devices and networks
 
 A device is a person's WireGuard peer in one org, kept under `org/user-devices/<user>`. Every member gets
-`device:create`, `device:list` and `device:delete` on their own object (a generated rule); admins and
+`network.devices.create`, `network.devices.list` and `network.devices.delete` on their own object (a generated rule); admins and
 owners list and delete everyone's devices but never create devices for others.
 
 Networks (`org/networks/<id>`) connect VMs of one org to each other. Members read, create and use
-(attach VMs to) networks; only admins and owners delete them. Attaching a VM also needs `vm:network` on
+(attach VMs to) networks; only admins and owners delete them. Attaching a VM also needs `compute.instances.setNetworks` on
 that VM. The connect check does not apply to network traffic: every VM on a network reaches the others.
 
 ## Limits
 
 Fields: vCPU, RAM (MB), disk (GB), VM count, snapshots (`snapshotCount`); `null` is unlimited. Set per org by platform admins, per team
-and per member by org admins (`limit:set`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
+and per member by org admins (`quota.limits.update`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
 team or member limit (both return `400` "limit exceeds org limit"). Creating a VM that would exceed a limit returns `409` "limit exceeded".
 
 ## Platform admins

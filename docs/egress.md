@@ -197,7 +197,7 @@ Future VM sharing must not reopen this.
   most.
 - A compromised process in the VM can use a bound secret against its bound hosts while it runs; it cannot take the
   value away.
-- `vm:read` holders (e.g. org admins) see a VM's bound host names and how many of the owner's secrets are bound
+- `compute.instances.get` holders (e.g. org admins) see a VM's bound host names and how many of the owner's secrets are bound
   (`GET /api/orgs/{org}/vms/{id}/egress`), never names, values or placeholders of the secrets.
 
 ## Known limits

@@ -48,7 +48,7 @@ observatory integration connect gcloud [--quota-project P] [--from-file F]
 The command sends the local ADC file to the hub (or pastes it on the Integrations page) and creates the integration or
 replaces its token, so the daily command is always the same. A quota project from `--quota-project` or the file is
 stored and can be edited on the integration page (`PATCH /api/orgs/{org}/integrations/{id}` `{"quotaProject": "…"}`,
-empty or a project id; audited as `integration:set`, action `quota-project`). The hub verifies the login by refreshing
+empty or a project id; audited as `secrets.integrations.set`, action `quota-project`). The hub verifies the login by refreshing
 it and refreshes the access token 10 minutes before it expires; failures retry after 1, then every 2 minutes. If Google answers `invalid_grant` the status becomes
 `expired` ("sign in again"): run the two commands above.
 
@@ -85,11 +85,11 @@ kind and scope; to move one, disconnect it and connect it in the other scope.
 
 - A **user VM** gets the org's and its owner's private integrations; a **team VM** the org's and its team's, never a
   private one.
-- A scope counts only if the VM's owner has `integration:use` on it ([permissions.md](permissions.md#integrations)).
+- A scope counts only if the VM's owner has `secrets.integrations.use` on it ([permissions.md](permissions.md#integrations)).
 - Per kind the narrowest scope wins (private or team over org).
 - There is no per-VM selection: a VM gets every integration its owner is entitled to.
 
-Changes (connect, replace, refresh, mode switch, disconnect, rules affecting `integration:use`, team membership) reach
+Changes (connect, replace, refresh, mode switch, disconnect, rules affecting `secrets.integrations.use`, team membership) reach
 the affected VMs' nodes with the next push. A node only receives the integrations of VMs scheduled on it, so a node of
 another org never receives them.
 
@@ -100,7 +100,7 @@ another org never receives them.
 | `proxy` (default) | The placeholder; the node's egress proxy puts the real token into requests to the bound hosts. | Same guarantees as host-bound variables: the value never enters the guest, snapshots, hibernate files or forks. Anything running in the VM can still *use* the token against the bound hosts while it runs. |
 | `vm` ("inside the VM") | The real token. | Every process in the guest, every memory snapshot, hibernate file and fork can hold the token. A team-scope integration in `vm` mode is readable by every member who can connect to a team VM. |
 
-The mode is changed by whoever may `integration:set` the scope, and audited.
+The mode is changed by whoever may `secrets.integrations.set` the scope, and audited.
 
 **Placeholder:** `obsph_` followed by 32 base32 characters, generated when the integration is connected and kept for
 its whole life (replace, sign in again, refresh, mode switches), so a token change needs no reboot. No endpoint returns
@@ -124,14 +124,14 @@ Integrations page (`/orgs/:orgId/integrations`, tabs All / Org / Teams / Private
 | `PUT /api/orgs/{org}/integrations/{id}/accounts/{accountId}/token` | Replace one account's token |
 | `POST /api/orgs/{org}/integrations/{id}/accounts/{accountId}/activate` | Make the account active |
 | `PUT /api/orgs/{org}/integrations/{id}/accounts/order` | Set the order: `{"ids":[…]}`, every account once |
-| `DELETE /api/orgs/{org}/integrations/{id}/accounts/{accountId}` | Remove an account; the last one disconnects the integration (needs `integration:delete` too) |
+| `DELETE /api/orgs/{org}/integrations/{id}/accounts/{accountId}` | Remove an account; the last one disconnects the integration (needs `secrets.integrations.delete` too) |
 | `POST /api/orgs/{org}/integrations/claude/sign-in`, `…/sign-in/finish` | Claude sign-in (below); `addToId` (integration) adds an account, `replaceAccountId` replaces one |
 
 From the CLI, the token comes from stdin, never an argument: `printf %s "$TOKEN" | observatory integration connect github`
 (see [cli.md](cli.md#secrets-input)).
 
-Request bodies of these endpoints are never logged. Audit rows `integration:set` (create, replace, sign-in, mode
-change) and `integration:delete` carry kind, source, scope, owner, mode and account, never a token; a mode change also
+Request bodies of these endpoints are never logged. Audit rows `secrets.integrations.set` (create, replace, sign-in, mode
+change) and `secrets.integrations.delete` carry kind, source, scope, owner, mode and account, never a token; a mode change also
 carries `previousMode`.
 
 ### Claude sign-in
@@ -164,7 +164,7 @@ its email (setup-token accounts: "Setup token"), position and active flag. The s
   only below). When off, the hub never switches by itself, the node gets only the active account's token (the other
   tokens never reach it), and a confirmed 429 reaches Claude Code; switch yourself. Usage, polling and manual
   switching work either way. Set it with `PATCH /api/orgs/{org}/integrations/{id}` `{"autoSwitch": true|false}`
-  (`mode` may be sent alongside or alone); refused for non-Claude integrations (400); audited as `integration:set`
+  (`mode` may be sent alongside or alone); refused for non-Claude integrations (400); audited as `secrets.integrations.set`
   with `action` = `auto-switch`. The list shows `autoSwitch` on each integration.
 - **Add** with the same sign-in or a pasted setup token (`addToId`); the account is appended, switched off. **Sign in
   again** per account (`replaceAccountId` or the token route). **Remove** any account: removing the active one
@@ -192,9 +192,9 @@ its email (setup-token accounts: "Setup token"), position and active flag. The s
   available one.
 - **Page:** after an automatic switch the integration shows "Switched automatically at <time>: <email> reached its
   limit" until the next manual action. Automatic switches are logged, not audited. Adding, replacing, removing,
-  activating and ordering are audited as `integration:set` (`action` = `account-add`, `account-replace`,
-  `account-remove`, `account-activate`, `account-order`); removing the last account is one `integration:delete` row.
-- **Permissions:** `integration:set` on your private integration; no new actions.
+  activating and ordering are audited as `secrets.integrations.set` (`action` = `account-add`, `account-replace`,
+  `account-remove`, `account-activate`, `account-order`); removing the last account is one `secrets.integrations.delete` row.
+- **Permissions:** `secrets.integrations.set` on your private integration; no new actions.
 
 List JSON (Claude): `accounts: [{id, account, source, position, active, status, lastError, usage: {fiveHourPct,
 fiveHourResetsAt, weekPct, weekResetsAt, limitedUntil, source, at}}]` and `lastSwitch: {at, fromId, from, toId, to}`
@@ -260,7 +260,7 @@ example a database error): the push marks them unresolved, the node keeps the la
 | proxy → vm | Real value delivered on the next sync | — |
 | vm → proxy | Placeholder delivered on the next sync; the real value was in the guest, so the page asks to rotate or revoke it at the provider | — |
 | Disconnect | Next request fails; config removed within 5 min | Config removed within 5 min; the token stays valid at the provider, so the UI links to the provider's token page to revoke it |
-| Owner loses `integration:use`, member leaves team | Next push | Next push + sync; same caveat |
+| Owner loses `secrets.integrations.use`, member leaves team | Next push | Next push + sync; same caveat |
 
 Claude Code's OAuth client has no revoke endpoint: disconnecting a signed-in Claude integration drops both tokens on
 the hub, and an access token already inside a `vm`-mode guest stays valid until it expires (hours).

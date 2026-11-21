@@ -10,8 +10,8 @@ In the web app, open *Organization settings*, *Telemetry*, and choose *Create to
 `obs_grafana_` and is shown once; the hub stores only a hash. An organization has at most 20 active tokens, with
 unique names.
 
-To create a token you need `telemetry:token` on the organization settings and org-wide `vm:metrics` and
-`node:metrics`, with no deny rule on them ([Permissions](permissions.md)). Owners and admins have all three. Platform
+To create a token you need `telemetry.tokens.create` on the organization settings and org-wide `compute.instances.getMetrics` and
+`compute.nodes.getMetrics`, with no deny rule on them ([Permissions](permissions.md)). Owners and admins have all three. Platform
 admin status grants nothing here, and there are no platform-wide tokens.
 
 ## Prometheus datasource
@@ -43,7 +43,7 @@ organization filter to every query and drops any filter the client sends to chan
 
 Revoke a token in *Telemetry* settings; it stops working immediately. When its creator leaves or is removed from the
 organization, the hub revokes the creator's tokens at once. A token also dies when its creator loses
-`telemetry:token`, `vm:metrics` or `node:metrics`, for example through a role change or a deny rule. That is checked
+`telemetry.tokens.create`, `compute.instances.getMetrics` or `compute.nodes.getMetrics`, for example through a role change or a deny rule. That is checked
 on every use against an access state that may be up to 60 seconds old, so such a change takes effect on the token's
 next use after that; the hub then revokes the token and answers 401.
 
