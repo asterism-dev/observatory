@@ -12,6 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
+	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -32,6 +36,28 @@ func TestServeEdgeRequiresConfig(t *testing.T) {
 	if code := run(c, []string{"serve", "edge"}); code != 1 ||
 		!strings.Contains(stderr.String(), "OBSERVATORY_EDGE_TOKEN") || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_HUB_URL") ||
 		!strings.Contains(stderr.String(), "OBSERVATORY_SERVICE_TOKEN") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestServeAuditRequiresConfig(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_AUDIT_LISTEN": "127.0.0.1:0"}[k] }
+	code := run(c, []string{"serve", "audit"})
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_HUB_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+		if code != 1 || !strings.Contains(stderr.String(), k) {
+			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
+		}
+	}
+}
+
+func TestServeEdgeRejectsBadServices(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string {
+		return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0", "OBSERVATORY_EDGE_TOKEN": strings.Repeat("t", 32),
+			"OBSERVATORY_EDGE_HUB_URL": "http://hub", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_EDGE_SERVICES": "audit"}[k]
+	}
+	if code := run(c, []string{"serve", "edge"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_SERVICES") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
@@ -74,7 +100,7 @@ func TestServeHubListensOnHubListen(t *testing.T) {
 	}
 }
 
-// TestServeAllRecordsClientIPThroughEdge runs the real edge and hub: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
+// TestServeAllRecordsClientIPThroughEdge runs the real edge, hub and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
 func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	edgeLn, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
@@ -107,6 +133,21 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		// Invalid on purpose: serve all must replace it with the tokens it generates, or the hub would refuse to start.
 		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}
+	// Created before start: the hub loads its policy snapshot then and is not told about later direct writes.
+	s := store.New(pool)
+	alice, err := s.Login(t.Context(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(t.Context(), "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, _, err := s.CreateSession(t.Context(), alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- serveAll(ctx, func(k string) string { return env[k] }, edgeLn) }()
@@ -143,6 +184,23 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	}
 	if len(ips) != 2 || ips[0] != "::1" || ips[1] != "::1" {
 		t.Fatalf("audited IPs %v, want the edge's ::1 twice", ips)
+	}
+
+	auditClient := auditv1connect.NewAuditServiceClient(client, "http://"+edgeLn.Addr().String()+"/api/audit/v1")
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		req := connect.NewRequest(&auditv1.ListEventsRequest{Org: org.ID.String()})
+		req.Header().Set("Authorization", "Bearer "+session)
+		_, err := auditClient.ListEvents(t.Context(), req)
+		if err == nil {
+			break
+		}
+		// Unavailable until the audit service has its first policy snapshot from the hub.
+		if connect.CodeOf(err) != connect.CodeUnavailable || time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("audit through the edge: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	cancel()

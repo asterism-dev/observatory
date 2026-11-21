@@ -263,3 +263,21 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestParseServices(t *testing.T) {
+	got, err := ParseServices(" audit=http://audit:8092 , iam=http://iam:8093/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["audit"] != "http://audit:8092" || got["iam"] != "http://iam:8093/" {
+		t.Fatalf("got %v", got)
+	}
+	if got, err := ParseServices(""); err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v, %v", got, err)
+	}
+	for _, env := range []string{"audit", "=http://a", "audit=", "audit=audit:8092", "Audit=http://a", "a/b=http://a", "audit=http://a,audit=http://b"} {
+		if _, err := ParseServices(env); err == nil {
+			t.Errorf("%q accepted", env)
+		}
+	}
+}

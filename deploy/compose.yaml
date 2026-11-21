@@ -18,10 +18,13 @@ services:
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
       OBSERVATORY_EDGE_HUB_URL: http://hub:8091
       OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_EDGE_SERVICES: audit=http://audit:8092
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     depends_on:
       hub:
+        condition: service_started
+      audit:
         condition: service_started
   # Listens on 8091 inside the compose network only: the edge and the internal callers (registry, gateway, storage) reach it there.
   hub:
@@ -37,7 +40,7 @@ services:
       OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
-      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env},audit=${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
       OBSERVATORY_REGISTRY_URL: http://registry:5000
       OBSERVATORY_REGISTRY_KEY_DIR: /keys
       OBSERVATORY_REGISTRY_CERT_DIR: /certs
@@ -53,6 +56,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+  # Stores the audit trail from the event bus and serves it on 8092 to the edge (/api/audit/v1/); not published.
+  audit:
+    <<: *observatory
+    command: ["audit"]
+    environment:
+      OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
+      OBSERVATORY_HUB_URL: http://hub:8091
+      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
+      OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_NATS_URL: nats://nats:4222
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      hub:
+        condition: service_started
   postgres:
     image: postgres:17.10-alpine
     restart: unless-stopped

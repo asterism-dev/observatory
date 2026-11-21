@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package observatory.audit.v1;
+
+import "google/protobuf/timestamp.proto";
+import "observatory/events/v1/event.proto";
+import "observatory/v1/annotations.proto";
+
+// AuditService reads the audit trail, newest first.
+service AuditService {
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.events.list"
+      object: "org/audit"
+      kind: KIND_READ
+    };
+  }
+  // ListAllEvents covers every org and platform events; platform admins only.
+  rpc ListAllEvents(ListAllEventsRequest) returns (ListAllEventsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.events.list"
+      object: "platform/audit"
+      kind: KIND_READ
+    };
+  }
+}
+
+// EventFilter fields are combined with AND; empty fields match everything.
+message EventFilter {
+  // actor_id matches the actor's id exactly.
+  string actor_id = 1;
+  // type matches the event type exactly, e.g. iam.members.delete.
+  string type = 2;
+  observatory.events.v1.Result result = 3;
+  // from is inclusive, to exclusive.
+  google.protobuf.Timestamp from = 4;
+  google.protobuf.Timestamp to = 5;
+}
+
+message ListEventsRequest {
+  string org = 1;
+  EventFilter filter = 2;
+  // page_size defaults to 50 and is capped at 200.
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListEventsResponse {
+  repeated observatory.events.v1.Event events = 1;
+  // next_page_token is empty on the last page.
+  string next_page_token = 2;
+}
+
+message ListAllEventsRequest {
+  EventFilter filter = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+  // filter_org limits the result to one org; not named org, which would make the method org-scoped.
+  string filter_org = 4;
+}
+
+message ListAllEventsResponse {
+  repeated observatory.events.v1.Event events = 1;
+  string next_page_token = 2;
+}

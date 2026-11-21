@@ -76,6 +76,26 @@ The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LIST
 when other containers must call the hub, and keep that port off public networks) in one process, with the edge and service tokens generated
 per start.
 
+## Audit service
+
+`audit` (`serve audit`) stores every audit event from the event bus and serves the trail at `/api/audit/v1/` through
+the edge (`OBSERVATORY_EDGE_SERVICES=audit=http://audit:8092` on the edge; a comma-separated list of `name=url` pairs).
+It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose network only; do not publish it.
+
+- Database: `OBSERVATORY_AUDIT_DATABASE_URL`, default `OBSERVATORY_DATABASE_URL`; the service owns schema `audit`.
+- Hub: `OBSERVATORY_HUB_URL` (internal hub address for signing keys and the policy stream), `OBSERVATORY_PUBLIC_URL`
+  (token issuer) and `OBSERVATORY_SERVICE_TOKEN`. In compose that token is `OBSERVATORY_AUDIT_SERVICE_TOKEN`, which the
+  hub also gets as `audit=<token>` in `OBSERVATORY_SERVICE_TOKENS`.
+- Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`. The durable consumer `audit` acknowledges an event only once
+  it is stored; a redelivered event is stored once (by event id).
+- `audit.events` is append-only: a trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Only the daily retention job
+  deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than 365 days are
+  removed. The setting guards against mistakes in application code, not against a database user who sets it too.
+
+`serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it also
+runs an embedded event bus, storing it under `OBSERVATORY_DATA_DIR/nats` or, when that is unset, in a temporary directory
+removed on exit (events not yet stored by the audit service are then lost on restart).
+
 ## Serving modes
 
 | Command | `deploy/.env` | Result |
@@ -182,6 +202,9 @@ check off (air-gapped hosts). Builds that are not a release tag never check.
 
 Upgrading to the release with identity at the edge: `OBSERVATORY_EDGE_SERVICE_TOKEN` in `deploy/.env` is required from
 this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); `docker compose` refuses to start without it.
+
+Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKEN` in `deploy/.env` is required
+(`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
 `registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data` and, with TLS, `caddy-data`.
