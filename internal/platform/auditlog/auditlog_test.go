@@ -32,7 +32,9 @@ import (
 const natsToken = "0123456789abcdef0123456789abcdef"
 
 // fakeSource serves whatever data-event set the test stores in it.
-type fakeSource struct{ enabled atomic.Pointer[[]*auditv1.DataEvents] }
+type fakeSource struct {
+	enabled atomic.Pointer[[]*auditv1.DataEvents]
+}
 
 func (f *fakeSource) set(es ...*auditv1.DataEvents) { f.enabled.Store(&es) }
 
