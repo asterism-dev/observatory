@@ -38,8 +38,9 @@ type env struct {
 
 	mu       sync.Mutex
 	notified []uuid.UUID
-	// rev counts z's reloads, standing in for the published policy revision.
-	rev atomic.Uint64
+	// rev counts z's reloads, standing in for the published policy revision; byRev keeps the enforcer of each.
+	rev   atomic.Uint64
+	byRev sync.Map
 }
 
 // fakeResources reports the subjects in owners as owning VMs, and those in diskOwners as owning disks, in any org.
@@ -109,7 +110,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
-	z.OnReload(func(authz.Policy) { e.rev.Add(1) })
+	z.OnReload(func(authz.Policy) { e.byRev.Store(e.rev.Add(1), z.Enforcer()) })
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,
 		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify, Revision: e.rev.Load})
 	if err != nil {

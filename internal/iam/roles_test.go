@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -14,6 +16,8 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/db"
+	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -680,22 +684,23 @@ func TestGrantOwnedVMActionViaHub(t *testing.T) {
 	}
 }
 
-// hubOnLatest answers CanHold like a hub on the latest published policy, which here is e.z after its last reload.
-func (e *env) hubOnLatest(r *hubv1.CanHoldRequest) error {
-	if r.MinRevision > e.rev.Load() {
+// laggingHub answers CanHold like a hub that has only just reached min_revision: on the policy published at exactly that revision.
+func (e *env) laggingHub(r *hubv1.CanHoldRequest) error {
+	v, ok := e.byRev.Load(r.MinRevision)
+	if !ok {
 		return connect.NewError(connect.CodeUnavailable, errors.New("policy behind"))
 	}
 	rules := make([]authz.Rule, len(r.Rules))
 	for i, x := range r.Rules {
 		rules[i] = authz.Rule{Effect: authz.Effect(x.Effect), Object: x.Object, Action: x.Action}
 	}
-	if err := e.z.Enforcer().CanHold(r.Actor, uuid.MustParse(r.OrgId), rules); err != nil {
+	if err := v.(*authz.Enforcer).CanHold(r.Actor, uuid.MustParse(r.OrgId), rules); err != nil {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	}
 	return nil
 }
 
-// A removal committed but not yet published must not let the fallback approve on the older policy.
+// A removal committed but not yet published must not let the fallback approve on the older policy: min_revision must cover it.
 func TestFallbackDecidesOnCommittedPolicy(t *testing.T) {
 	e := newEnv(t)
 	_, ownerTok := e.user("alice")
@@ -704,7 +709,7 @@ func TestFallbackDecidesOnCommittedPolicy(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/roles", "iam.roles.manage")
 	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/vms/*", "compute.instances.get")
-	e.resources.setCanHold(e.hubOnLatest)
+	e.resources.setCanHold(e.laggingHub)
 	viewer := &iamv1.CreateRoleRequest{Name: "viewer", Rules: []*iamv1.RoleRule{rule("allow", authz.VMObject(uuid.New()), "compute.instances.get")}}
 	e.exec(`DELETE FROM role_bindings WHERE subject = $1 AND role_id IN (SELECT role_id FROM role_rules WHERE object = 'org/vms/*')`, authz.UserSubject(bob.ID))
 
@@ -737,5 +742,49 @@ func TestFallbackSendsInheritedRules(t *testing.T) {
 	e.resources.mu.Unlock()
 	if !slices.ContainsFunc(got, func(r *hubv1.Rule) bool { return r.Object == vm && r.Action == "compute.instances.get" }) {
 		t.Fatalf("CanHold rules %v lack the inherited rule", got)
+	}
+}
+
+// The escalation reload needs a second connection; with the pool exhausted by the caller's own transaction it fails Unavailable instead of hanging.
+func TestFallbackReloadBoundedOnBusyPool(t *testing.T) {
+	old := reloadWait
+	reloadWait = 200 * time.Millisecond
+	t.Cleanup(func() { reloadWait = old })
+	ctx := context.Background()
+	u, err := url.Parse(dbtest.Empty(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, u.String()); err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("pool_max_conns", "1")
+	u.RawQuery = q.Encode()
+	pool, err := db.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	s := store.New(pool)
+	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &server{Deps: Deps{Store: s, Policy: z, Resources: &fakeResources{}, Revision: func() uint64 { return 0 }}}
+	org, user := uuid.New(), uuid.New()
+	e, err := authz.New(authz.Policy{Memberships: []authz.MemberRole{{OrgID: org, UserID: user, Role: "member"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err = s.InTx(ctx, func(*store.Store) error {
+		return srv.canGrant(ctx, e, authz.UserSubject(user), org, false, []authz.Rule{{Effect: authz.Allow, Object: authz.VMObject(uuid.New()), Action: "compute.instances.get"}}, nil)
+	})
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("escalation on a starved pool: %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %v", d)
 	}
 }

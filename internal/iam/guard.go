@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -14,6 +15,9 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 )
+
+// reloadWait bounds the policy reload on the escalation path, like the hub's CanHold wait.
+var reloadWait = 5 * time.Second
 
 // canGrant is CanGrantRole on iam's policy; on an escalation it asks the hub, whose policy adds the grants of service-owned objects.
 func (s *server) canGrant(ctx context.Context, e *authz.Enforcer, actor string, org uuid.UUID, isAdmin bool, rules []authz.Rule, parents []string) error {
@@ -25,8 +29,10 @@ func (s *server) canGrant(ctx context.Context, e *authz.Enforcer, actor string, 
 	if err != nil {
 		return fmt.Errorf("%w: %w", authz.ErrInvalidPattern, err)
 	}
-	// The caller holds LockOrg, so this reload sees every earlier commit for org, like the denial did; the hub must not decide on less.
-	if err := s.Policy.Reload(ctx); err != nil {
+	// Under the caller's LockOrg this sees every earlier commit for org; bounded since it needs a second connection while the caller holds one.
+	rctx, cancel := context.WithTimeout(ctx, reloadWait)
+	defer cancel()
+	if err := s.Policy.Reload(rctx); err != nil {
 		slog.Error("policy reload before can hold", "org", org, "err", err)
 		return connect.NewError(connect.CodeUnavailable, errors.New("cannot check the grant against service-owned resources, retry"))
 	}
