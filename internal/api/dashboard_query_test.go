@@ -439,6 +439,12 @@ func TestDashboardQueryScopingLive(t *testing.T) {
 		if rec.Code != 200 || !slices.Equal(names.Names, want) {
 			t.Fatalf("node=%v names: %d %s", node, rec.Code, rec.Body.String())
 		}
+		rec = d.do("GET", dashboardsPath(d.org)+"/metric-names", d.bobTok)
+		names.Names = nil
+		decode(t, rec, &names)
+		if rec.Code != 200 || !slices.Contains(names.Names, "dash_probe_a") || slices.Contains(names.Names, "dash_probe_b") || slices.Contains(names.Names, "dash_probe_node") != node {
+			t.Fatalf("node=%v names without match: %d %s", node, rec.Code, rec.Body.String())
+		}
 	}
 	var res struct{ Series []json.RawMessage }
 	if err := json.Unmarshal([]byte(instant(d.aliceTok, sel)), &res); err != nil || len(res.Series) != 3 {
