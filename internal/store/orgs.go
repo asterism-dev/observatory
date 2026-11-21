@@ -133,7 +133,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, role
 	})
 }
 
-// RemoveMember also drops the user's team memberships, role bindings, limits, private variables and private integrations in the org; devices go by cascade.
+// RemoveMember also drops the user's team memberships and role bindings in the org; the hub purges its own rows from the event (PurgeMember).
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		current, err := tx.LockMember(ctx, orgID, userID)
@@ -143,38 +143,11 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 		if err := tx.checkNotLastOwner(ctx, orgID, current); err != nil {
 			return err
 		}
-		var owns bool
-		if err := tx.q.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND user_id = $2)
-				OR EXISTS (SELECT 1 FROM disks WHERE org_id = $1 AND user_id = $2 AND deleted_at IS NULL)`, orgID, userID).Scan(&owns); err != nil {
-			return err
-		}
-		if owns {
-			return ErrOwnsResources
-		}
 		if _, err := tx.q.Exec(ctx, `
 			DELETE FROM team_members WHERE user_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`, orgID, userID); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.UserSubject(userID)); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", orgID, authz.UserSubject(userID)); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM env_vars WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM integrations WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM images WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM image_defaults WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
-			return err
-		}
-		if _, err := tx.q.Exec(ctx, "DELETE FROM dashboards WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
 			return err
 		}
 		_, err = tx.q.Exec(ctx, "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID)

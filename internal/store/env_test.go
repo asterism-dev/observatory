@@ -288,7 +288,7 @@ func TestEnvVarNoKey(t *testing.T) {
 	}
 }
 
-func TestRemoveMemberDeletesPrivateEnv(t *testing.T) {
+func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool).WithMasterKey(testKey(1))
@@ -300,7 +300,7 @@ func TestRemoveMemberDeletesPrivateEnv(t *testing.T) {
 	private := mustCreateEnv(t, s, envVar(org, mid, store.EnvSecret, store.EnvScopeUser, &mid, "P"), "p")
 	shared := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeOrg, nil, "S"), "s")
 	ownerVar := mustCreateEnv(t, s, envVar(org, owner.User.ID, store.EnvPlain, store.EnvScopeUser, &owner.User.ID, "O"), "o")
-	if err := s.RemoveMember(ctx, org.ID, mid); err != nil {
+	if err := s.PurgeMember(ctx, org.ID, mid); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

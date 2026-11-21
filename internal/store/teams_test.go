@@ -86,6 +86,9 @@ func TestTeamStore(t *testing.T) {
 	if err := s.DeleteTeam(ctx, orgA.ID, other.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.PurgeTeam(ctx, orgA.ID, other.ID); err != nil {
+		t.Fatal(err)
+	}
 	if ls, err := s.Limits(ctx, orgA.ID); err != nil || len(ls) != 0 {
 		t.Fatalf("limits after team delete: %+v %v", ls, err)
 	}

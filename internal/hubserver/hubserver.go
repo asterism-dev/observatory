@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
@@ -32,6 +33,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/run"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -58,12 +60,6 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	defer pool.Close()
-	relayCtx, stopRelay := context.WithCancel(ctx)
-	relayDone := make(chan struct{})
-	go func() { relayEvents(relayCtx, pool, cfg.NATSURL, cfg.NATSToken); close(relayDone) }()
-	// The relay must stop before the pool closes under it, also when Run fails before ctx ends.
-	defer func() { stopRelay(); <-relayDone }()
-
 	oidc, err := auth.NewOIDC(ctx, cfg.Issuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
 	if err != nil {
 		return err
@@ -101,12 +97,19 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	}
 	// In-process until iam runs as its own service.
 	iam := iaminternal.Server{Store: s}
+	resources := api.ResourceServer{Store: s}
+	mux.Handle("/internal/hub/", servicetoken.Middleware(cfg.ServiceTokens)(internalHub(resources)))
 	f, err := fleet.New(ctx, s, z, nh, iam)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	nh.OnChange(f.NotifyOrg)
+	busCtx, stopBus := context.WithCancel(ctx)
+	busDone := make(chan struct{})
+	go func() { runBus(busCtx, pool, s, f.NotifyOrg, cfg.NATSURL, cfg.NATSToken); close(busDone) }()
+	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
+	defer func() { stopBus(); <-busDone }()
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
 	var tc *telemetry.Client
@@ -197,7 +200,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		go api.NewAutoRebuilds(s, z, iam, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	apiHandler := api.New(s, iam, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
+	apiHandler := api.New(s, iam, resources, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
 	handler := a.TrustEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -227,8 +230,8 @@ func dialAddr(addr net.Addr) string {
 	return net.JoinHostPort(host, port)
 }
 
-// relayEvents publishes the outbox once the bus is reachable; until then the hub serves and the outbox buffers.
-func relayEvents(ctx context.Context, pool *pgxpool.Pool, url, token string) {
+// runBus relays the outbox and consumes iam events once the bus is reachable; until then the hub serves and the outbox buffers.
+func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func(uuid.UUID), url, token string) {
 	js, closeBus, err := bus.Await(ctx, url, token)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -252,7 +255,26 @@ func relayEvents(ctx context.Context, pool *pgxpool.Pool, url, token string) {
 		case <-time.After(wait):
 		}
 	}
+	consumed := make(chan struct{})
+	go func() { consumeUntilDone(ctx, js, s, notify); close(consumed) }()
+	defer func() { <-consumed }()
 	outbox.NewRelay(pool, js).Run(ctx)
+}
+
+// consumeUntilDone restarts the iam event consumer whenever it fails; unpurged rows wait in the meantime.
+func consumeUntilDone(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(uuid.UUID)) {
+	for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
+		err := consumeIAMEvents(ctx, js, s, notify)
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Error("iam event consumer stopped, cleanup waits", "err", err, "retry_in", wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -362,5 +363,23 @@ func TestTeamLeave(t *testing.T) {
 	var n int
 	if err := e.pool.QueryRow(t.Context(), `SELECT count(*) FROM team_members WHERE team_id = $1 AND user_id = $2`, team, member.ID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("still member: %d %v", n, err)
+	}
+}
+
+func TestDeleteTeamOwningDisk409(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	team := e.createTeam(ownerTok, org, "core")
+	d := e.createDisk(ownerTok, org, diskBody("t", teamOwner(team), 1))
+
+	if rec := e.do("DELETE", teamPath(org, team), ownerTok); rec.Code != 409 {
+		t.Fatalf("delete disk-owning team: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := e.store.DeleteDisk(context.Background(), org, uuid.MustParse(d.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("DELETE", teamPath(org, team), ownerTok); rec.Code != 204 {
+		t.Fatalf("delete after disk deleted: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package observatory.hub.v1;
+
+// ResourceService answers what the hub's resources depend on; callers authenticate with a service token.
+service ResourceService {
+  // CheckOwnership reports whether subject (user:<uuid> or team:<uuid>) owns VMs or live disks in the org.
+  rpc CheckOwnership(CheckOwnershipRequest) returns (CheckOwnershipResponse);
+}
+
+message CheckOwnershipRequest {
+  string org_id = 1;
+  string subject = 2;
+}
+
+message CheckOwnershipResponse {
+  bool owns_vms = 1;
+  bool owns_disks = 2;
+}

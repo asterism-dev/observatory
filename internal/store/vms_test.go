@@ -225,7 +225,7 @@ func TestVMLifecycleAndNodeScoping(t *testing.T) {
 	}
 }
 
-func TestVMOwnersCannotBeRemoved(t *testing.T) {
+func TestOwnsVMs(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
 	b := login(t, e.s, "b")
@@ -236,23 +236,28 @@ func TestVMOwnersCannotBeRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.RemoveMember(ctx, e.org.ID, b.User.ID); !errors.Is(err, store.ErrOwnsResources) {
-		t.Fatalf("member: %v", err)
-	}
 	tvm, err := e.s.CreateVM(ctx, e.vm("tvm", &e.team.ID, 1, 1, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); !errors.Is(err, store.ErrOwnsResources) {
-		t.Fatalf("team: %v", err)
+	owns := func(scope store.EnvScope, id uuid.UUID) bool {
+		t.Helper()
+		vms, disks, err := e.s.Owns(ctx, e.org.ID, scope, id)
+		if err != nil || disks {
+			t.Fatalf("owns %s %s: %v %v", scope, id, disks, err)
+		}
+		return vms
+	}
+	if !owns(store.EnvScopeUser, b.User.ID) || !owns(store.EnvScopeTeam, e.team.ID) {
+		t.Fatal("VM owners not reported")
+	}
+	if _, _, err := e.s.Owns(ctx, e.org.ID, store.EnvScopeOrg, e.org.ID); err == nil {
+		t.Fatal("org scope accepted")
 	}
 	_ = e.s.DeleteVM(ctx, e.org.ID, vm.ID, nil, store.DeleteReasonUser)
 	_ = e.s.DeleteVM(ctx, e.org.ID, tvm.ID, nil, store.DeleteReasonUser)
-	if err := e.s.RemoveMember(ctx, e.org.ID, b.User.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); err != nil {
-		t.Fatal(err)
+	if owns(store.EnvScopeUser, b.User.ID) || owns(store.EnvScopeTeam, e.team.ID) {
+		t.Fatal("deleted VMs still owned")
 	}
 }
 

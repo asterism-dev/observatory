@@ -211,28 +211,30 @@ func TestDiskLimitsIgnoreOtherDimensions(t *testing.T) {
 	}
 }
 
-func TestOwnerOfDisksBlocksRemoval(t *testing.T) {
+func TestOwnsLiveDisks(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
 	b := login(t, e.s, "b")
 	execSQL(t, e.pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, e.org.ID, b.User.ID)
 	bd := mustCreateDisk(t, e, store.Disk{OrgID: e.org.ID, UserID: &b.User.ID, Name: "b", SizeGB: 1, CreatedBy: e.user})
 	td := mustCreateDisk(t, e, e.disk("t", &e.team.ID, 1))
-	if err := e.s.RemoveMember(ctx, e.org.ID, b.User.ID); !errors.Is(err, store.ErrOwnsResources) {
-		t.Fatalf("member: %v", err)
+	owns := func(scope store.EnvScope, id uuid.UUID) bool {
+		t.Helper()
+		vms, disks, err := e.s.Owns(ctx, e.org.ID, scope, id)
+		if err != nil || vms {
+			t.Fatalf("owns %s %s: %v %v", scope, id, vms, err)
+		}
+		return disks
 	}
-	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); !errors.Is(err, store.ErrOwnsResources) {
-		t.Fatalf("team: %v", err)
+	if !owns(store.EnvScopeUser, b.User.ID) || !owns(store.EnvScopeTeam, e.team.ID) {
+		t.Fatal("disk owners not reported")
 	}
 	for _, id := range []uuid.UUID{bd.ID, td.ID} {
 		if err := e.s.DeleteDisk(ctx, e.org.ID, id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := e.s.RemoveMember(ctx, e.org.ID, b.User.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.DeleteTeam(ctx, e.org.ID, e.team.ID); err != nil {
-		t.Fatal(err)
+	if owns(store.EnvScopeUser, b.User.ID) || owns(store.EnvScopeTeam, e.team.ID) {
+		t.Fatal("deleted disks still owned")
 	}
 }

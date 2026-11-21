@@ -321,7 +321,7 @@ func TestResolveIntegrationsUseDenied(t *testing.T) {
 	}
 }
 
-func TestIntegrationCascade(t *testing.T) {
+func TestIntegrationPurge(t *testing.T) {
 	ctx := context.Background()
 	s, pool, uid, org, team := newIntegrationStore(t)
 	member := login(t, s, "integ-member").User.ID
@@ -332,10 +332,10 @@ func TestIntegrationCascade(t *testing.T) {
 		mustCreateIntegration(t, s, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil), store.IntegrationSecret{Token: dummyGH}),
 		mustCreateIntegration(t, s, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &uid), store.IntegrationSecret{Token: dummyGH}),
 	}
-	if err := s.DeleteTeam(ctx, org.ID, team.ID); err != nil {
+	if err := s.PurgeTeam(ctx, org.ID, team.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RemoveMember(ctx, org.ID, member); err != nil {
+	if err := s.PurgeMember(ctx, org.ID, member); err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []store.Integration{teamInt, memberInt} {

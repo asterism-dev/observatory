@@ -645,6 +645,10 @@ func TestRemoveMemberDeletesPrivateImages(t *testing.T) {
 	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), aliceTok); rec.Code != 204 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
+	// The row itself goes when the hub consumes the removal event.
+	if err := e.store.PurgeMember(context.Background(), org, bob.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.store.Image(context.Background(), org, id); err != store.ErrNotFound {
 		t.Fatalf("private image kept: %v", err)
 	}

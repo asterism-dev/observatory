@@ -162,6 +162,9 @@ func TestRemoveMemberCleansTeamsAndBindings(t *testing.T) {
 	if err := s.RemoveMember(ctx, orgs[0], m.User.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.PurgeMember(ctx, orgs[0], m.User.ID); err != nil {
+		t.Fatal(err)
+	}
 	count := func(sql string, args ...any) int {
 		t.Helper()
 		var n int

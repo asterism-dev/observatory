@@ -139,6 +139,9 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
+		if err := h.checkOwnership(r.Context(), m.OrgID, authz.UserSubject(target)); err != nil {
+			return err
+		}
 		if private, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeUser, target); err != nil {
 			return err
 		}

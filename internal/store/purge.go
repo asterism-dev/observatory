@@ -1,0 +1,54 @@
+package store
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/authz"
+)
+
+var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
+
+// PurgeMember deletes the hub rows of a user who left org; running it again is harmless.
+func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.purgeScoped(ctx, org, EnvScopeUser, "user_id", user, authz.UserSubject(user)); err != nil {
+			return err
+		}
+		_, err := tx.q.Exec(ctx, "DELETE FROM devices WHERE org_id = $1 AND user_id = $2", org, user)
+		return err
+	})
+}
+
+// PurgeTeam deletes the hub rows of a deleted team and unlinks its deleted disks and VM history; running it again is harmless.
+func (s *Store) PurgeTeam(ctx context.Context, org, team uuid.UUID) error {
+	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.purgeScoped(ctx, org, EnvScopeTeam, "team_id", team, authz.TeamSubject(team)); err != nil {
+			return err
+		}
+		// A live disk can't lose its owner (CHECK); the ownership check keeps those from existing here.
+		if _, err := tx.q.Exec(ctx, "UPDATE disks SET team_id = NULL WHERE org_id = $1 AND team_id = $2 AND deleted_at IS NOT NULL", org, team); err != nil {
+			return err
+		}
+		_, err := tx.q.Exec(ctx, "UPDATE vm_history SET team_id = NULL WHERE org_id = $1 AND team_id = $2", org, team)
+		return err
+	})
+}
+
+func (s *Store) purgeScoped(ctx context.Context, org uuid.UUID, scope EnvScope, col string, id uuid.UUID, subject string) error {
+	for _, table := range scopedTables {
+		if _, err := s.q.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE org_id = $1 AND scope = $2 AND %s = $3", table, col), org, scope, id); err != nil {
+			return fmt.Errorf("purge %s: %w", table, err)
+		}
+	}
+	_, err := s.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", org, subject)
+	return err
+}
+
+// DeleteSessionCredentials drops the registry credentials issued to a session.
+func (s *Store) DeleteSessionCredentials(ctx context.Context, session uuid.UUID) error {
+	_, err := s.q.Exec(ctx, "DELETE FROM registry_credentials WHERE session_id = $1", session)
+	return err
+}

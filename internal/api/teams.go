@@ -158,6 +158,9 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
+		if err := h.checkOwnership(r.Context(), m.OrgID, authz.TeamSubject(id)); err != nil {
+			return err
+		}
 		if images, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeTeam, id); err != nil {
 			return err
 		}

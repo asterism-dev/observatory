@@ -449,3 +449,25 @@ func TestRemoveMemberCarryingDeny(t *testing.T) {
 		t.Fatalf("admin removes restricted: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRemoveMemberOwningVM409(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	vm := e.createVM(bobTok, org, vmBody("b", userOwner(), e.enrolledNode(ownerTok, org, "n1")))
+
+	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 409 {
+		t.Fatalf("remove VM owner: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("DELETE", memberPath(org, bob), bobTok); rec.Code != 409 {
+		t.Fatalf("VM owner leaves: %d", rec.Code)
+	}
+	if err := e.store.DeleteVM(context.Background(), org, uuid.MustParse(vm.ID), nil, store.DeleteReasonUser); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 204 {
+		t.Fatalf("remove after VM deleted: %d %s", rec.Code, rec.Body.String())
+	}
+}

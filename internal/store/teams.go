@@ -58,20 +58,11 @@ func (s *Store) RenameTeam(ctx context.Context, orgID, teamID uuid.UUID, name st
 	return nil
 }
 
-// DeleteTeam also drops the team's memberships (cascade) the role bindings whose subject is the team and its limits.
+// DeleteTeam also drops the team's memberships (cascade) and the role bindings whose subject is the team; the hub purges its own rows from the event (PurgeTeam).
 func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
 		if err := tx.LockOrg(ctx, orgID); err != nil {
 			return err
-		}
-		var owns bool
-		if err := tx.q.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND team_id = $2)
-				OR EXISTS (SELECT 1 FROM disks WHERE org_id = $1 AND team_id = $2 AND deleted_at IS NULL)`, orgID, teamID).Scan(&owns); err != nil {
-			return err
-		}
-		if owns {
-			return ErrOwnsResources
 		}
 		tag, err := tx.q.Exec(ctx, "DELETE FROM teams WHERE org_id = $1 AND id = $2", orgID, teamID)
 		if err != nil {
@@ -80,10 +71,7 @@ func (s *Store) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		if _, err = tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.TeamSubject(teamID)); err != nil {
-			return err
-		}
-		_, err = tx.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", orgID, authz.TeamSubject(teamID))
+		_, err = tx.q.Exec(ctx, "DELETE FROM role_bindings WHERE org_id = $1 AND subject = $2", orgID, authz.TeamSubject(teamID))
 		return err
 	})
 }

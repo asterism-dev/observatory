@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"time"
 
@@ -292,4 +293,20 @@ func (s *Store) SetVMStatus(ctx context.Context, node uuid.UUID, st proto.VMStat
 			provisioned = provisioned OR $3 IN ('starting', 'running', 'stopped', 'paused', 'hibernated', 'suspended')
 		WHERE id = $1 AND node_id = $2`, id, node, st.State, st.IP, st.Error, st.Image)
 	return err
+}
+
+// Owns reports whether the user or team (scope EnvScopeUser or EnvScopeTeam) owns VMs or live disks in org.
+func (s *Store) Owns(ctx context.Context, org uuid.UUID, scope EnvScope, id uuid.UUID) (vms, disks bool, err error) {
+	col := "user_id"
+	switch scope {
+	case EnvScopeUser:
+	case EnvScopeTeam:
+		col = "team_id"
+	default:
+		return false, false, fmt.Errorf("owner scope %q", scope)
+	}
+	err = s.q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM vms WHERE org_id = $1 AND `+col+` = $2),
+			EXISTS (SELECT 1 FROM disks WHERE org_id = $1 AND `+col+` = $2 AND deleted_at IS NULL)`, org, id).Scan(&vms, &disks)
+	return vms, disks, err
 }
