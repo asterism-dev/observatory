@@ -101,6 +101,10 @@ func Run() error {
 	// Before SetReady: takeoff reads agent.Sync and StopDesktop, and none is served until ready.
 	startIntegrations(root, agent, img)
 	agent.StopDesktop = startDesktop(root, agent, devSpawn(root, img))
+	// Also before SetReady: the agent's ops read /proc and /sys, and the node snapshots a template as soon as ping answers.
+	if !waitImageMounts("/proc", "/sys", imageMountsTimeout) {
+		logf("init: the image did not mount /proc and /sys within %s", imageMountsTimeout)
+	}
 	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 
@@ -116,6 +120,25 @@ func Run() error {
 		shutdown(img, proc, img.shutdownCmd())
 	}
 	return nil
+}
+
+const imageMountsTimeout = 10 * time.Second
+
+// waitImageMounts waits until proc and sys are procfs and sysfs again: StartImage detaches the init's, and the image mounts its own in the shared mount namespace.
+func waitImageMounts(proc, sys string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !hasFSType(proc, unix.PROC_SUPER_MAGIC) || !hasFSType(sys, unix.SYSFS_MAGIC) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return true
+}
+
+func hasFSType(path string, magic int64) bool {
+	var st unix.Statfs_t
+	return unix.Statfs(path, &st) == nil && int64(st.Type) == magic
 }
 
 // startIntegrations syncs at boot, every 5 minutes and on takeoff; claude runs inside the image as dev.
