@@ -303,7 +303,7 @@ token. Services verify the token offline against the hub's published keys.
 - The hub's own `/api/` routes use the same token: the edge swaps a session (the `obs_session` cookie or an
   `obs_…` bearer) for it, removes the session cookie and the hub verifies the token offline. The hub never sees a
   session there, but it checks on every request that the token's session is neither revoked nor expired, so hub
-  routes refuse a logged-out or revoked session immediately. Other bearer tokens
+  routes and the IAM API refuse a logged-out or revoked session immediately. Other bearer tokens
   (node, gateway, storage, builder, registry events, telemetry) pass through unchanged. A stale session is dropped
   rather than refused, so public routes such as `/api/auth/config` keep working; protected ones answer 401. While the
   issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` keeps using the
@@ -326,7 +326,7 @@ The service's interceptor checks it before the handler runs:
 ## IAM API
 
 Users, sessions, SSH keys, orgs, members, invites, teams, roles, bindings and the platform admin calls are one service,
-`observatory.iam.v1.IAMService`, served at `/api/iam/v1/` over Connect, gRPC and REST. All three take the same path
+`observatory.iam.v1.IAMService`, served at `/api/iam/v1/` over Connect and REST. Both take the same path
 through authorization and audit. REST paths follow the methods, for example `GET /api/iam/v1/me`,
 `DELETE /api/iam/v1/orgs/{org}/members/{user}` or `POST /api/iam/v1/invites:accept`; the Connect path is
 `/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. The service runs inside the hub for now.
@@ -341,6 +341,11 @@ through authorization and audit. REST paths follow the methods, for example `GET
   member who still owns VMs are failed precondition. Bad input is invalid argument.
 - A REST request with a query string is refused with `400` before authentication, so a query field cannot override
   the org in the path.
+- Request bodies are capped at 1 MiB; a larger one is refused (resource exhausted) before authentication.
+- Every call checks that the token's session is neither revoked nor expired, as hub routes do, so a logged-out or
+  revoked session is refused (unauthenticated, `401` over REST) immediately.
+- `UpdateRole` replaces the whole role (name, description, rules and parents), so its REST form is
+  `PUT /api/iam/v1/orgs/{org}/roles/{role}`.
 - Writes record their audit events in their own transaction, with the same types and resources as before, so the hub's
   cleanup sees each removal exactly once.
 - The hub keeps `GET /api/info` (docs URL, version, latest version) and the platform admin's org limits

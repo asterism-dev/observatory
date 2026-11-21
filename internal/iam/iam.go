@@ -1,4 +1,4 @@
-// Package iam serves the public IAMService over Connect, gRPC and REST; it runs inside the hub on the hub's store for now.
+// Package iam serves the public IAMService over Connect and REST; it runs inside the hub on the hub's store for now.
 package iam
 
 import (
