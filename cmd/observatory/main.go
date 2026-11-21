@@ -94,7 +94,7 @@ func commands() []command {
 		{"org create", "<name>", "create an org", cmdOrgCreate},
 		{"org rename", "<name>", "rename the current org", cmdOrgRename},
 		{"org audit", "[flags]", "show the org's audit log", cmdOrgAudit},
-	}, vmCommands(), connectCommands(), deviceCommands(), snapshotCommands(), diskCommands(), networkCommands(), varCommands(), integrationCommands(), imageCommands(), nodeCommands(), orgCommands())
+	}, vmCommands(), connectCommands(), deviceCommands(), snapshotCommands(), diskCommands(), networkCommands(), varCommands(), integrationCommands(), imageCommands(), nodeCommands(), orgCommands(), serveCommands())
 }
 
 func main() {
@@ -138,13 +138,13 @@ func run(c *cli, args []string) int {
 		c.cfgDir = dir
 		c.cfg, err = loadConfig(dir)
 	}
-	// A corrupt config must not block logging in again, which overwrites it, nor updating the CLI.
-	if err != nil && cmd.path != "login" && cmd.path != "help" && cmd.path != "version" && cmd.path != "update" {
+	// A corrupt config must not block logging in again, which overwrites it, updating the CLI, nor running services.
+	if err != nil && cmd.path != "login" && cmd.path != "help" && cmd.path != "version" && cmd.path != "update" && cmd.path != "serve" {
 		fmt.Fprintf(c.stderr, "observatory: %v\n", err)
 		return 1
 	}
 	err = cmd.fn(c, rest)
-	if err == nil && cmd.path != "update" && cmd.path != "version" && cmd.path != "help" {
+	if err == nil && cmd.path != "update" && cmd.path != "version" && cmd.path != "help" && cmd.path != "serve" {
 		c.updateHint()
 	}
 	if errors.Is(err, flag.ErrHelp) {

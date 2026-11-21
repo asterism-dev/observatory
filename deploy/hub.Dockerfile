@@ -20,7 +20,7 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist web/dist
 RUN ldflags="-X github.com/asterism-dev/observatory/internal/version.Version=$VERSION" \
-    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "$ldflags" -o /hub ./cmd/hub \
+    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "$ldflags" -o /hub ./cmd/observatory \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o /observatory-node ./cmd/node \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o /guestboot/observatory-init ./cmd/init
 COPY --from=guestboot /vmlinux /mke2fs /resize2fs /guestboot/
@@ -38,4 +38,4 @@ COPY --from=registry /bin/registry /usr/local/bin/registry
 ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar OBSERVATORY_LISTEN=:8090
 USER 65532
 EXPOSE 8090
-ENTRYPOINT ["/usr/local/bin/hub"]
+ENTRYPOINT ["/usr/local/bin/hub", "serve", "all"]

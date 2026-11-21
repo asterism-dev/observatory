@@ -23,6 +23,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -31,6 +32,7 @@ import (
 
 // Run serves the hub on ln until ctx is done; the SPA and public routing are the edge's.
 func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error {
+	defer ln.Close()
 	cfg, err := loadConfig(getenv)
 	if err != nil {
 		return err
@@ -183,17 +185,8 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
 	slog.Info("hub listening", "addr", ln.Addr().String())
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return run.Serve(ctx, srv, ln)
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.
