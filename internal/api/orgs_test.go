@@ -96,12 +96,14 @@ func TestOrgPermissionsByRole(t *testing.T) {
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, member, store.RoleMember)
 
-	memberPerms := []string{"dashboard:read", "disk:create", "env:list", "env:use", "image:list", "image:use", "integration:list", "integration:use", "limit:read", "member:read", "network:create", "network:read", "network:use", "node:read", "node:use", "role:read", "team:leave", "team:read", "vm:create"}
-	adminPerms := []string{"audit:read", "dashboard:create", "dashboard:edit", "dashboard:read", "device:delete", "device:list", "disk:create", "disk:delete", "disk:read", "disk:update", "env:delete", "env:list", "env:set", "env:use", "image:build", "image:default", "image:edit", "image:list", "image:use", "integration:delete", "integration:list", "integration:set", "integration:use", "limit:read", "limit:set", "logs:read", "member:invite", "member:read", "member:remove",
-		"network:create", "network:delete", "network:read", "network:use", "node:create", "node:delete", "node:metrics", "node:read", "node:update", "node:use", "org:update",
-		"role:bind", "role:read", "role:write", "team:create", "team:delete", "team:leave", "team:manage-members", "team:read", "team:update", "telemetry:token",
-		"vm:create", "vm:delete", "vm:disks", "vm:metrics", "vm:network", "vm:power", "vm:read", "vm:restore", "vm:snapshot"}
-	ownerPerms := append(slices.Clone(adminPerms), "member:set-role")
+	memberPerms := []string{"telemetry.dashboards.get", "compute.disks.create", "secrets.variables.list", "secrets.variables.use", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.list", "secrets.integrations.use", "quota.limits.get", "iam.members.list", "network.networks.create", "network.networks.get", "network.networks.use", "compute.nodes.get", "compute.nodes.use", "iam.roles.list", "iam.teams.leave", "iam.teams.list", "compute.instances.create"}
+	adminPerms := []string{"audit.events.list", "telemetry.dashboards.create", "telemetry.dashboards.update", "telemetry.dashboards.get", "network.devices.delete", "network.devices.list", "compute.disks.create", "compute.disks.delete", "compute.disks.get", "compute.disks.update", "secrets.variables.delete", "secrets.variables.list", "secrets.variables.set", "secrets.variables.use", "build.builds.create", "artifacts.images.setDefault", "artifacts.images.update", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.delete", "secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.use", "quota.limits.get", "quota.limits.update", "telemetry.logEntries.list", "iam.invites.create", "iam.members.list", "iam.members.delete",
+		"network.networks.create", "network.networks.delete", "network.networks.get", "network.networks.use", "compute.nodes.create", "compute.nodes.delete", "compute.nodes.getMetrics", "compute.nodes.get", "compute.nodes.update", "compute.nodes.use", "iam.orgs.update",
+		"iam.roleBindings.manage", "iam.roles.list", "iam.roles.manage", "iam.teams.create", "iam.teams.delete", "iam.teams.leave", "iam.teams.manageMembers", "iam.teams.list", "iam.teams.update", "telemetry.tokens.create",
+		"compute.instances.create", "compute.instances.delete", "compute.instances.setDisks", "compute.instances.getMetrics", "compute.instances.setNetworks", "compute.instances.setPower", "compute.instances.get", "compute.instances.restore", "compute.instances.snapshot"}
+	slices.Sort(memberPerms)
+	slices.Sort(adminPerms)
+	ownerPerms := append(slices.Clone(adminPerms), "iam.members.setRole")
 	slices.Sort(ownerPerms)
 
 	for _, c := range []struct {
@@ -184,7 +186,7 @@ func TestRenameOrg(t *testing.T) {
 	if rec := e.send("PATCH", "/api/orgs/"+org.String(), adminTok, `{"name":" Acme Inc "}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"Acme Inc"`) {
 		t.Fatalf("admin rename: %d %s", rec.Code, rec.Body.String())
 	}
-	es := e.audit("org:update")
+	es := e.audit("iam.orgs.update")
 	if len(es) != 1 || es[0].ActorID != admin.ID.String() || *es[0].OrgID != org || es[0].Result != store.ResultAllowed || es[0].Details["name"] != "Acme Inc" {
 		t.Fatalf("audit: %+v", es)
 	}
@@ -192,7 +194,7 @@ func TestRenameOrg(t *testing.T) {
 	if rec := e.send("PATCH", "/api/orgs/"+org.String(), memberTok, `{"name":"Hacked"}`); rec.Code != 403 || !strings.Contains(rec.Body.String(), `"forbidden"`) {
 		t.Fatalf("member rename: %d %s", rec.Code, rec.Body.String())
 	}
-	es = e.audit("org:update")
+	es = e.audit("iam.orgs.update")
 	if len(es) != 2 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() || *es[0].OrgID != org || es[0].Resource != "org/settings" {
 		t.Fatalf("denied audit: %+v", es)
 	}
@@ -247,7 +249,7 @@ func TestOrgAuditScoped(t *testing.T) {
 	if rec := e.do("GET", "/api/orgs/"+org.String()+"/audit", memberTok); rec.Code != 403 {
 		t.Fatalf("member: %d", rec.Code)
 	}
-	es := e.audit("audit:read")
+	es := e.audit("audit.events.list")
 	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() || *es[0].OrgID != org || es[0].Resource != "org/audit" {
 		t.Fatalf("denied audit: %+v", es)
 	}
@@ -267,7 +269,7 @@ func TestPermissionChangeIsImmediate(t *testing.T) {
 	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'auditor') RETURNING id`, org).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
-	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/audit', 'audit:read')`, role)
+	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/audit', 'audit.events.list')`, role)
 	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+member.ID.String(), role)
 	e.reload()
 	if rec := e.do("GET", path, memberTok); rec.Code != 200 {

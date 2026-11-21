@@ -59,8 +59,8 @@ func (h *api) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := []deviceJSON{}
 	for _, d := range ds {
 		obj := authz.UserDevicesObject(d.UserID)
-		if e.Allowed(sub, m.Org.ID, obj, "device:list") {
-			out = append(out, h.deviceJSON(d, names[d.UserID], e.Allowed(sub, m.Org.ID, obj, store.ActionDeviceDelete)))
+		if e.Allowed(sub, m.Org.ID, obj, "network.devices.list") {
+			out = append(out, h.deviceJSON(d, names[d.UserID], e.Allowed(sub, m.Org.ID, obj, "network.devices.delete")))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -81,7 +81,7 @@ func (h *api) createDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	if !h.authorize(w, r, m.Org.ID, authz.UserDevicesObject(p.User.ID), store.ActionDeviceCreate) {
+	if !h.authorize(w, r, m.Org.ID, authz.UserDevicesObject(p.User.ID), "network.devices.create") {
 		return
 	}
 	priv, pub, err := wgkey.Generate()
@@ -146,7 +146,7 @@ func (h *api) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "device", err)
 		return
 	}
-	if !h.authorize(w, r, d.OrgID, authz.UserDevicesObject(d.UserID), store.ActionDeviceDelete) {
+	if !h.authorize(w, r, d.OrgID, authz.UserDevicesObject(d.UserID), "network.devices.delete") {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {

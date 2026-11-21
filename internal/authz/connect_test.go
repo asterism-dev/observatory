@@ -29,7 +29,7 @@ func referenceConnect(e *Enforcer, p Policy, user uuid.UUID, vm VMRef) bool {
 	default:
 		return false
 	}
-	return e.Allowed(UserSubject(user), vm.OrgID, VMObject(vm.ID), "vm:connect")
+	return e.Allowed(UserSubject(user), vm.OrgID, VMObject(vm.ID), "compute.instances.connect")
 }
 
 func randomConnectPolicy(r *rand.Rand) (Policy, []uuid.UUID, []VMRef) {
@@ -81,7 +81,7 @@ func randomConnectPolicy(r *rand.Rand) (Policy, []uuid.UUID, []VMRef) {
 			}
 			cr := CustomRole{ID: uuid.New(), OrgID: org, Name: "r"}
 			for range 1 + pick(3) {
-				cr.Rules = append(cr.Rules, Rule{[]Effect{Allow, Deny}[pick(2)], objects[pick(len(objects))], []string{"vm:connect", "vm:*", "*", "vm:read"}[pick(4)]})
+				cr.Rules = append(cr.Rules, Rule{[]Effect{Allow, Deny}[pick(2)], objects[pick(len(objects))], []string{"compute.instances.connect", "compute.instances.*", "*", "compute.instances.get"}[pick(4)]})
 			}
 			if len(roles) > 0 && pick(2) == 0 {
 				cr.Parents = []string{roles[pick(len(roles))].ID.String()}

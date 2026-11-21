@@ -94,7 +94,7 @@ func (d *dashQueryEnv) upstream() ([]string, []url.Values) {
 }
 
 func (d *dashQueryEnv) grantNodeMetrics() {
-	role := d.createRole(d.aliceTok, d.org, `{"name":"nodes","rules":[{"effect":"allow","object":"org/nodes/*","action":"node:metrics"}]}`)
+	role := d.createRole(d.aliceTok, d.org, `{"name":"nodes","rules":[{"effect":"allow","object":"org/nodes/*","action":"compute.nodes.getMetrics"}]}`)
 	d.bind(d.aliceTok, d.org, authz.UserSubject(d.bob.ID), role)
 }
 

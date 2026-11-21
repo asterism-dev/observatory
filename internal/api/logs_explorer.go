@@ -90,14 +90,14 @@ func (c *logGroupCache) get(org uuid.UUID, now time.Time, load func() ([]telemet
 	return groups, nil
 }
 
-// logsRequest checks telemetry, membership, logs:read and the caller's rate limit; it writes errors itself.
+// logsRequest checks telemetry, membership, telemetry.logEntries.list and the caller's rate limit; it writes errors itself.
 func (h *api) logsRequest(w http.ResponseWriter, r *http.Request) (org, user uuid.UUID, ok bool) {
 	if h.telemetry == nil {
 		writeError(w, http.StatusNotFound, "not found")
 		return org, user, false
 	}
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLogs, store.ActionLogsRead) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLogs, "telemetry.logEntries.list") {
 		return org, user, false
 	}
 	p, _ := auth.PrincipalFrom(r.Context())

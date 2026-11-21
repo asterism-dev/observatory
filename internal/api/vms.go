@@ -153,12 +153,12 @@ func (h *api) vmJSON(r *http.Request, v store.VM, names vmNames) vmJSON {
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.VMObject(v.ID)
 	j := vmJSON{ID: v.ID, Name: v.Name, Node: refJSON{v.NodeID, names.nodes[v.NodeID]}, State: v.State, Power: v.Power,
 		StopMode: v.StopMode, AutoSuspendMinutes: v.AutoSuspendMinutes, Error: v.Error, IP: v.IP, CPUs: v.CPUs, MemoryMB: v.MemoryMB, DiskGB: v.DiskGB, Image: v.Image, ImageRef: v.ImageRef, ImageDigest: v.ImageDigest, ImageSource: v.ImageSource, LegacyRuntime: v.LegacyRuntime, CreatedAt: v.CreatedAt, DeleteAt: v.DeleteAt,
-		CanPower:  e.Allowed(sub, v.OrgID, obj, store.ActionVMPower),
-		CanDelete: e.Allowed(sub, v.OrgID, obj, store.ActionVMDelete), CanNetwork: e.Allowed(sub, v.OrgID, obj, store.ActionVMNetwork),
-		CanDisks: e.Allowed(sub, v.OrgID, obj, store.ActionVMDisks), CanSnapshot: e.Allowed(sub, v.OrgID, obj, store.ActionVMSnapshot),
-		CanRestore: e.Allowed(sub, v.OrgID, obj, store.ActionVMRestore), CanFork: e.Allowed(sub, v.OrgID, obj, store.ActionVMFork),
+		CanPower:  e.Allowed(sub, v.OrgID, obj, "compute.instances.setPower"),
+		CanDelete: e.Allowed(sub, v.OrgID, obj, "compute.instances.delete"), CanNetwork: e.Allowed(sub, v.OrgID, obj, "compute.instances.setNetworks"),
+		CanDisks: e.Allowed(sub, v.OrgID, obj, "compute.instances.setDisks"), CanSnapshot: e.Allowed(sub, v.OrgID, obj, "compute.instances.snapshot"),
+		CanRestore: e.Allowed(sub, v.OrgID, obj, "compute.instances.restore"), CanFork: e.Allowed(sub, v.OrgID, obj, "compute.instances.fork"),
 		Restoring:    v.RestoreState == "node" || v.RestoreState == "storage",
-		CanTelemetry: h.telemetry != nil && v.Kind != store.VMKindBuilder && e.Allowed(sub, v.OrgID, obj, store.ActionVMMetrics),
+		CanTelemetry: h.telemetry != nil && v.Kind != store.VMKindBuilder && e.Allowed(sub, v.OrgID, obj, "compute.instances.getMetrics"),
 		DNSName:      v.Name + ".internal", Networks: []vmNICJSON{}, Disks: []vmDiskJSON{}}
 	if n, ok := names.usage[v.ID]; ok {
 		j.Usage = newVMUsageJSON(n)
@@ -250,7 +250,7 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	visible := []store.VM{}
 	for _, v := range vms {
-		if e.Allowed(sub, m.Org.ID, authz.VMObject(v.ID), "vm:read") {
+		if e.Allowed(sub, m.Org.ID, authz.VMObject(v.ID), "compute.instances.get") {
 			visible = append(visible, v)
 		}
 	}
@@ -260,11 +260,11 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 		out = append(out, h.vmJSON(r, v, names))
 	}
 	owners := []ownerJSON{}
-	if e.Allowed(sub, m.Org.ID, authz.ObjVMs, store.ActionVMCreate) {
+	if e.Allowed(sub, m.Org.ID, authz.ObjVMs, "compute.instances.create") {
 		owners = append(owners, ownerJSON{"user", p.User.ID, p.User.Name})
 	}
 	for _, t := range names.teamList {
-		if e.Allowed(sub, m.Org.ID, authz.TeamVMsObject(t.ID), store.ActionVMCreate) {
+		if e.Allowed(sub, m.Org.ID, authz.TeamVMsObject(t.ID), "compute.instances.create") {
 			owners = append(owners, ownerJSON{"team", t.ID, t.Name})
 		}
 	}
@@ -275,7 +275,7 @@ func (h *api) listVMs(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes := []nodeRef{}
 	for _, n := range names.nodeList {
-		if n.Enrolled && e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "node:use") {
+		if n.Enrolled && e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.use") {
 			nodes = append(nodes, nodeRef{n.ID, n.Name, h.fleet.Online(n.ID)})
 		}
 	}
@@ -327,7 +327,7 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 		}
 		v.DeleteAt = &at
 	}
-	if !h.authorize(w, r, m.Org.ID, obj, store.ActionVMCreate) || !h.authorize(w, r, m.Org.ID, authz.NodeObject(v.NodeID), "node:use") {
+	if !h.authorize(w, r, m.Org.ID, obj, "compute.instances.create") || !h.authorize(w, r, m.Org.ID, authz.NodeObject(v.NodeID), "compute.nodes.use") {
 		return
 	}
 	if !h.resolveVMImage(w, r, &v, body.Image) {
@@ -386,7 +386,7 @@ func (h *api) resolveVMImage(w http.ResponseWriter, r *http.Request, v *store.VM
 }
 
 func (h *api) getVM(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, "vm:read")
+	v, ok := h.vmFromPath(w, r, "compute.instances.get")
 	if !ok {
 		return
 	}
@@ -395,7 +395,7 @@ func (h *api) getVM(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v, ok := h.vmFromPath(w, r, store.ActionVMPower)
+		v, ok := h.vmFromPath(w, r, "compute.instances.setPower")
 		if !ok {
 			return
 		}
@@ -426,7 +426,7 @@ func (h *api) powerVM(action string, power proto.Power, mode proto.StopMode) htt
 }
 
 func (h *api) setAutoSuspend(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMPower)
+	v, ok := h.vmFromPath(w, r, "compute.instances.setPower")
 	if !ok {
 		return
 	}
@@ -456,7 +456,7 @@ func (h *api) setAutoSuspend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMDelete)
+	v, ok := h.vmFromPath(w, r, "compute.instances.delete")
 	if !ok {
 		return
 	}
@@ -476,7 +476,7 @@ func (h *api) deleteVM(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMNetwork)
+	v, ok := h.vmFromPath(w, r, "compute.instances.setNetworks")
 	if !ok {
 		return
 	}
@@ -497,7 +497,7 @@ func (h *api) setVMNetworks(w http.ResponseWriter, r *http.Request) {
 		attached[n.NetworkID] = true
 	}
 	for _, id := range body.NetworkIDs {
-		if !attached[id] && !h.authorize(w, r, v.OrgID, authz.NetworkObject(id), "network:use") {
+		if !attached[id] && !h.authorize(w, r, v.OrgID, authz.NetworkObject(id), "network.networks.use") {
 			return
 		}
 	}
@@ -575,7 +575,7 @@ func validateVMDisks(disks []store.VMDisk) error {
 }
 
 func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMDisks)
+	v, ok := h.vmFromPath(w, r, "compute.instances.setDisks")
 	if !ok {
 		return
 	}
@@ -610,7 +610,7 @@ func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			if !e.Allowed(sub, v.OrgID, authz.DiskObject(disk.ID), "disk:use") {
+			if !e.Allowed(sub, v.OrgID, authz.DiskObject(disk.ID), "compute.disks.use") {
 				denied = disk.ID
 				return errForbidden
 			}
@@ -643,7 +643,7 @@ func (h *api) setVMDisks(w http.ResponseWriter, r *http.Request) {
 		return tx.Audit(r.Context(), ae)
 	}) {
 		if denied != uuid.Nil {
-			h.auditDenied(r, v.OrgID, authz.DiskObject(denied), "disk:use")
+			h.auditDenied(r, v.OrgID, authz.DiskObject(denied), "compute.disks.use")
 		}
 		return
 	}

@@ -359,8 +359,8 @@ func (s *Store) ResolveVMEnv(ctx context.Context, e *authz.Enforcer, org uuid.UU
 	if scope == "team" {
 		ownScope, ownObj = EnvScopeTeam, authz.TeamEnvObject(id)
 	}
-	orgOK := e.Allowed(owner, org, authz.ObjEnv, "env:use")
-	ownOK := e.Allowed(owner, org, ownObj, "env:use")
+	orgOK := e.Allowed(owner, org, authz.ObjEnv, "secrets.variables.use")
+	ownOK := e.Allowed(owner, org, ownObj, "secrets.variables.use")
 	if !orgOK && !ownOK {
 		return map[string]string{}, nil, nil
 	}

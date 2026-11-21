@@ -75,7 +75,7 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 	var catalog []struct{ Action, Object string }
 	rec := e.do("GET", "/api/orgs/"+org.String()+"/catalog", memberTok)
 	decode(t, rec, &catalog)
-	if rec.Code != 200 || len(catalog) != len(authz.Catalog) || catalog[0].Action != "org:update" || catalog[0].Object != "org/settings" {
+	if rec.Code != 200 || len(catalog) != len(authz.Catalog) || catalog[0].Action != "iam.orgs.update" || catalog[0].Object != "org/settings" {
 		t.Fatalf("catalog: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -85,11 +85,11 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 	for _, body := range []string{
 		`{"name":""}`,
 		`{"name":"x","description":"a\u0000b"}`,
-		`{"name":"x","rules":[{"effect":"allow","object":"teams","action":"team:read"}]}`,
-		`{"name":"x","rules":[{"effect":"maybe","object":"org/teams","action":"team:read"}]}`,
-		`{"name":"x","rules":[{"effect":"allow","object":"org/teams","action":"nope:*"}]}`,
+		`{"name":"x","rules":[{"effect":"allow","object":"teams","action":"iam.teams.list"}]}`,
+		`{"name":"x","rules":[{"effect":"maybe","object":"org/teams","action":"iam.teams.list"}]}`,
+		`{"name":"x","rules":[{"effect":"allow","object":"org/teams","action":"nope.things.*"}]}`,
 		`{"name":"x","parents":["owner"]}`,
-		`{"name":"x","rules":[` + strings.Repeat(`{"effect":"allow","object":"org/roles","action":"role:read"},`, 200) + `{"effect":"allow","object":"org/roles","action":"role:read"}]}`,
+		`{"name":"x","rules":[` + strings.Repeat(`{"effect":"allow","object":"org/roles","action":"iam.roles.list"},`, 200) + `{"effect":"allow","object":"org/roles","action":"iam.roles.list"}]}`,
 		`nope`,
 	} {
 		if rec := e.send("POST", rolesPath(org), ownerTok, body); rec.Code != 400 {
@@ -100,14 +100,14 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 		t.Fatal("invalid role stored")
 	}
 
-	rec = e.send("POST", rolesPath(org), ownerTok, `{"name":" team lead ","description":"leads","rules":[{"effect":"allow","object":"org/teams/*","action":"team:*"}],"parents":["member"]}`)
+	rec = e.send("POST", rolesPath(org), ownerTok, `{"name":" team lead ","description":"leads","rules":[{"effect":"allow","object":"org/teams/*","action":"iam.teams.*"}],"parents":["member"]}`)
 	var created roleJSONT
 	decode(t, rec, &created)
 	if rec.Code != 201 || created.Name != "team lead" || created.Description != "leads" || len(created.Parents) != 1 || created.Parents[0] != "member" {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	// Wildcard actions are stored expanded so future catalog actions aren't granted implicitly.
-	if len(created.Rules) != len(authz.ExpandActions("team:*")) || created.Rules[0].Action != "team:read" || created.Rules[0].Object != "org/teams/*" {
+	if len(created.Rules) != len(authz.ExpandActions("iam.teams.*")) || created.Rules[0].Action != "iam.teams.list" || created.Rules[0].Object != "org/teams/*" {
 		t.Fatalf("rules not expanded: %+v", created.Rules)
 	}
 	if rec := e.send("POST", rolesPath(org), ownerTok, `{"name":"team lead"}`); rec.Code != 409 {
@@ -124,7 +124,7 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
 	}
 
-	if rec := e.send("PUT", rolePath(org, created.ID), ownerTok, `{"name":"lead","rules":[{"effect":"deny","object":"org/teams/*","action":"team:delete"}],"parents":[]}`); rec.Code != 204 {
+	if rec := e.send("PUT", rolePath(org, created.ID), ownerTok, `{"name":"lead","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.delete"}],"parents":[]}`); rec.Code != 204 {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
 	rec = e.do("GET", rolesPath(org), ownerTok)
@@ -203,20 +203,20 @@ func TestAdminCannotCreateEscalatingRole(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
 	harmless := e.createRole(ownerTok, org, `{"name":"harmless"}`)
-	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"member:set-role"}]}`)
+	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"iam.members.setRole"}]}`)
 
-	rec := e.send("POST", rolesPath(org), adminTok, `{"name":"esc","rules":[{"effect":"allow","object":"org/members","action":"member:*"}]}`)
-	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "member:set-role") {
+	rec := e.send("POST", rolesPath(org), adminTok, `{"name":"esc","rules":[{"effect":"allow","object":"org/members","action":"iam.members.*"}]}`)
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "iam.members.setRole") {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	if e.roleCount(org) != 2 {
 		t.Fatal("escalating role stored")
 	}
 	es := e.audit(store.ActionRoleCreate)
-	if len(es) == 0 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "member:set-role@org/members") {
+	if len(es) == 0 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "iam.members.setRole@org/members") {
 		t.Fatalf("denied audit: %+v", es)
 	}
-	if rec := e.send("PUT", rolePath(org, harmless), adminTok, `{"name":"harmless","rules":[{"effect":"allow","object":"org/members","action":"member:set-role"}]}`); rec.Code != 403 {
+	if rec := e.send("PUT", rolePath(org, harmless), adminTok, `{"name":"harmless","rules":[{"effect":"allow","object":"org/members","action":"iam.members.setRole"}]}`); rec.Code != 403 {
 		t.Fatalf("update: %d", rec.Code)
 	}
 	if es := e.audit(store.ActionRoleUpdate); len(es) != 1 || es[0].Result != store.ResultDenied {
@@ -225,7 +225,7 @@ func TestAdminCannotCreateEscalatingRole(t *testing.T) {
 	if rec := e.send("POST", rolesPath(org), adminTok, `{"name":"via parent","parents":["`+promoter.String()+`"]}`); rec.Code != 403 {
 		t.Fatalf("via parent: %d", rec.Code)
 	}
-	if rec := e.send("POST", rolesPath(org), adminTok, `{"name":"ok","rules":[{"effect":"allow","object":"org/teams/*","action":"team:*"}],"parents":["admin"]}`); rec.Code != 201 {
+	if rec := e.send("POST", rolesPath(org), adminTok, `{"name":"ok","rules":[{"effect":"allow","object":"org/teams/*","action":"iam.teams.*"}],"parents":["admin"]}`); rec.Code != 201 {
 		t.Fatalf("admin within own rights: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -236,11 +236,11 @@ func TestMemberCannotWriteDeny(t *testing.T) {
 	member, memberTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"role:*"}]}`)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.*"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
-	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 
-	if rec := e.send("POST", rolesPath(org), memberTok, `{"name":"d","rules":[{"effect":"deny","object":"org/teams/*","action":"team:delete"}]}`); rec.Code != 403 {
+	if rec := e.send("POST", rolesPath(org), memberTok, `{"name":"d","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.delete"}]}`); rec.Code != 403 {
 		t.Fatalf("deny: %d %s", rec.Code, rec.Body.String())
 	}
 	if es := e.audit(store.ActionRoleCreate); es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() {
@@ -253,7 +253,7 @@ func TestMemberCannotWriteDeny(t *testing.T) {
 	if rec := e.do("DELETE", rolePath(org, denying), memberTok); rec.Code != 403 {
 		t.Fatalf("delete deny role: %d", rec.Code)
 	}
-	if rec := e.send("POST", rolesPath(org), memberTok, `{"name":"reader","rules":[{"effect":"allow","object":"org/roles","action":"role:read"}]}`); rec.Code != 201 {
+	if rec := e.send("POST", rolesPath(org), memberTok, `{"name":"reader","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.list"}]}`); rec.Code != 201 {
 		t.Fatalf("allow within rights: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -265,7 +265,7 @@ func TestBindRoleAppliesImmediately(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
 	auditPath := "/api/orgs/" + org.String() + "/audit"
-	auditor := e.createRole(ownerTok, org, `{"name":"auditor","rules":[{"effect":"allow","object":"org/audit","action":"audit:read"}]}`)
+	auditor := e.createRole(ownerTok, org, `{"name":"auditor","rules":[{"effect":"allow","object":"org/audit","action":"audit.events.list"}]}`)
 
 	if rec := e.do("GET", auditPath, memberTok); rec.Code != 403 {
 		t.Fatalf("before: %d", rec.Code)
@@ -320,17 +320,17 @@ func TestBindingEscalation(t *testing.T) {
 	admin, adminTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
-	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"member:set-role"}]}`)
+	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"iam.members.setRole"}]}`)
 
 	rec := e.send("POST", bindingsPath(org), adminTok, `{"subject":"`+authz.UserSubject(admin.ID)+`","roleId":"`+promoter.String()+`"}`)
-	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "member:set-role") {
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "iam.members.setRole") {
 		t.Fatalf("bind: %d %s", rec.Code, rec.Body.String())
 	}
 	if e.bindingCount(org) != 0 {
 		t.Fatal("binding stored")
 	}
 	es := e.audit(store.ActionRoleBind)
-	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "member:set-role") {
+	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "iam.members.setRole") {
 		t.Fatalf("denied audit: %+v", es)
 	}
 }
@@ -342,7 +342,7 @@ func TestDenyRuleRestrictsAdmin(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
 	team := e.createTeam(ownerTok, org, "core")
-	noDelete := e.createRole(ownerTok, org, `{"name":"no delete","rules":[{"effect":"deny","object":"org/teams/*","action":"team:delete"}]}`)
+	noDelete := e.createRole(ownerTok, org, `{"name":"no delete","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.delete"}]}`)
 	wrapper := e.createRole(ownerTok, org, `{"name":"wrapper","parents":["`+noDelete.String()+`"]}`)
 	binding := e.bind(ownerTok, org, authz.UserSubject(admin.ID), wrapper)
 
@@ -355,7 +355,7 @@ func TestDenyRuleRestrictsAdmin(t *testing.T) {
 		t.Fatalf("unbind own deny: %d", rec.Code)
 	}
 	if es := e.audit(store.ActionRoleUnbind); len(es) != before+1 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() ||
-		!strings.Contains(es[0].Details["error"].(string), "deny team:delete@org/teams/*") {
+		!strings.Contains(es[0].Details["error"].(string), "deny iam.teams.delete@org/teams/*") {
 		t.Fatalf("unbind denied audit: %+v", es)
 	}
 	if rec := e.send("PUT", rolePath(org, noDelete), adminTok, `{"name":"no delete"}`); rec.Code != 403 {
@@ -417,10 +417,10 @@ func TestWildcardDenyKeptAsWritten(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
 	team := e.createTeam(ownerTok, org, "core")
-	rec := e.send("POST", rolesPath(org), ownerTok, `{"name":"no teams","rules":[{"effect":"deny","object":"org/teams/*","action":"team:*"},{"effect":"allow","object":"org/audit","action":"audit:*"}]}`)
+	rec := e.send("POST", rolesPath(org), ownerTok, `{"name":"no teams","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.*"},{"effect":"allow","object":"org/audit","action":"audit.*"}]}`)
 	var created roleJSONT
 	decode(t, rec, &created)
-	if rec.Code != 201 || len(created.Rules) != 2 || created.Rules[0].Action != "team:*" || created.Rules[1].Action != "audit:read" {
+	if rec.Code != 201 || len(created.Rules) != 2 || created.Rules[0].Action != "iam.teams.*" || created.Rules[1].Action != "audit.events.list" {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	e.bind(ownerTok, org, authz.UserSubject(admin.ID), created.ID)
@@ -442,7 +442,7 @@ func TestTeamJoinEscalation(t *testing.T) {
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, member, store.RoleMember)
 	e.addMember(org, lead, store.RoleMember)
-	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"member:set-role"}]}`)
+	promoter := e.createRole(ownerTok, org, `{"name":"promoter","rules":[{"effect":"allow","object":"org/members","action":"iam.members.setRole"}]}`)
 	elevated := e.createTeam(ownerTok, org, "elevated")
 	e.bind(ownerTok, org, authz.TeamSubject(elevated), promoter)
 
@@ -452,7 +452,7 @@ func TestTeamJoinEscalation(t *testing.T) {
 		}
 	}
 	es := e.audit(store.ActionTeamMemberSet)
-	if len(es) != 2 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "member:set-role@org/members") {
+	if len(es) != 2 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() || !strings.Contains(es[0].Details["error"].(string), "iam.members.setRole@org/members") {
 		t.Fatalf("denied audit: %+v", es)
 	}
 	if ms, _ := e.store.TeamMembers(t.Context(), org, elevated); len(ms) != 0 {
@@ -462,7 +462,7 @@ func TestTeamJoinEscalation(t *testing.T) {
 		t.Fatalf("owner adds: %d %s", rec.Code, rec.Body.String())
 	}
 
-	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 	restricted := e.createTeam(ownerTok, org, "restricted")
 	e.bind(ownerTok, org, authz.TeamSubject(restricted), denying)
 	if rec := e.send("PUT", teamMemberPath(org, restricted, lead), ownerTok, `{"admin":true}`); rec.Code != 204 {
@@ -488,7 +488,7 @@ func TestTeamDenyEscape(t *testing.T) {
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, member, store.RoleMember)
 	auditPath := "/api/orgs/" + org.String() + "/audit"
-	denying := e.createRole(ownerTok, org, `{"name":"no audit","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	denying := e.createRole(ownerTok, org, `{"name":"no audit","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 	team := e.createTeam(ownerTok, org, "restricted")
 	e.bind(ownerTok, org, authz.TeamSubject(team), denying)
 	if rec := e.send("PUT", teamMemberPath(org, team, admin), ownerTok, `{"admin":false}`); rec.Code != 204 {
@@ -501,7 +501,7 @@ func TestTeamDenyEscape(t *testing.T) {
 	if rec := e.do("DELETE", teamMemberPath(org, team, admin), adminTok); rec.Code != 403 {
 		t.Fatalf("leave deny team: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultDenied || !strings.Contains(es[0].Details["error"].(string), "deny audit:read@org/audit") {
+	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultDenied || !strings.Contains(es[0].Details["error"].(string), "deny audit.events.list@org/audit") {
 		t.Fatalf("leave audit: %+v", es)
 	}
 	if rec := e.do("DELETE", teamPath(org, team), adminTok); rec.Code != 403 {
@@ -514,7 +514,7 @@ func TestTeamDenyEscape(t *testing.T) {
 		t.Fatalf("deny lifted: %d", rec.Code)
 	}
 
-	deleter := e.createRole(ownerTok, org, `{"name":"deleter","rules":[{"effect":"allow","object":"org/teams/*","action":"team:delete"}]}`)
+	deleter := e.createRole(ownerTok, org, `{"name":"deleter","rules":[{"effect":"allow","object":"org/teams/*","action":"iam.teams.delete"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), deleter)
 	if rec := e.do("DELETE", teamPath(org, team), memberTok); rec.Code != 403 {
 		t.Fatalf("member deletes deny team: %d", rec.Code)
@@ -538,11 +538,11 @@ func TestGuardsSeeUnreloadedPolicy(t *testing.T) {
 	member, memberTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"role:*"}]}`)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.*"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
 	target := e.createRole(ownerTok, org, `{"name":"target"}`)
 
-	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'deny', 'org/audit', 'audit:read')`, target)
+	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'deny', 'org/audit', 'audit.events.list')`, target)
 	if rec := e.send("PUT", rolePath(org, target), memberTok, `{"name":"target"}`); rec.Code != 403 {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
@@ -580,11 +580,11 @@ func TestNonAdminCannotAttachDenyViaParent(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, member, store.RoleMember)
-	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"role:*"}]}`)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.*"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
 	harmless := e.createRole(ownerTok, org, `{"name":"harmless"}`)
 	e.bind(ownerTok, org, authz.UserSubject(admin.ID), harmless)
-	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 	wrapper := e.createRole(ownerTok, org, `{"name":"wrapper","parents":["`+denying.String()+`"]}`)
 
 	for _, parent := range []uuid.UUID{denying, wrapper} {

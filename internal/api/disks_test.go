@@ -88,7 +88,7 @@ func TestCreateDisk(t *testing.T) {
 	if rec := e.send("POST", disksPath(org), bobTok, diskBody("data", userOwner(), 1)); rec.Code != 409 {
 		t.Fatalf("duplicate: %d", rec.Code)
 	}
-	if es := e.audit("disk:create"); len(es) != 2 || es[0].Result != store.ResultDenied || es[1].Details["name"] != "data" || es[1].Details["sizeGB"] != float64(10) {
+	if es := e.audit("compute.disks.create"); len(es) != 2 || es[0].Result != store.ResultDenied || es[1].Details["name"] != "data" || es[1].Details["sizeGB"] != float64(10) {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -198,7 +198,7 @@ func TestForceReleaseAPI(t *testing.T) {
 	if rec := e.do("DELETE", disksPath(org)+"/"+d.ID, tok); rec.Code != 204 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("disk:delete"); len(es) != 1 {
+	if es := e.audit("compute.disks.delete"); len(es) != 1 {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -317,20 +317,20 @@ func TestDiskAuthorizationDenied(t *testing.T) {
 	if rec := e.send("POST", base+"/copy", adminTok, `{"name":"c","owner":{"kind":"user"}}`); rec.Code != 403 {
 		t.Fatalf("admin copy: %d", rec.Code)
 	}
-	if e.deniedRows("disk:use") != 1 {
+	if e.deniedRows("compute.disks.use") != 1 {
 		t.Fatal("no denied row for admin copy")
 	}
 	if rec := e.send("POST", base+"/copy", bobTok, `{"name":"c","owner":`+teamOwner(team)+`}`); rec.Code != 403 {
 		t.Fatalf("team copy without create: %d", rec.Code)
 	}
-	if e.deniedRows("disk:create") != 1 {
+	if e.deniedRows("compute.disks.create") != 1 {
 		t.Fatal("no denied row for team copy")
 	}
 
 	for _, c := range []struct{ method, path, body, action string }{
-		{"POST", base + "/grow", `{"sizeGB":2}`, "disk:update"},
-		{"POST", base + "/release", "", "disk:update"},
-		{"DELETE", base, "", "disk:delete"},
+		{"POST", base + "/grow", `{"sizeGB":2}`, "compute.disks.update"},
+		{"POST", base + "/release", "", "compute.disks.update"},
+		{"DELETE", base, "", "compute.disks.delete"},
 	} {
 		before := e.deniedRows(c.action)
 		if rec := e.send(c.method, c.path, carolTok, c.body); rec.Code != 403 {

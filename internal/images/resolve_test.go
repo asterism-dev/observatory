@@ -77,9 +77,9 @@ func newFixture(t *testing.T, g grants) fixture {
 	if f.team, err = s.CreateTeam(ctx, f.org.ID, "core"); err != nil {
 		t.Fatal(err)
 	}
-	g[authz.ObjImages+" image:use"] = true
-	g[authz.UserImagesObject(f.user)+" image:use"] = true
-	g[authz.TeamImagesObject(f.team.ID)+" image:use"] = true
+	g[authz.ObjImages+" artifacts.images.use"] = true
+	g[authz.UserImagesObject(f.user)+" artifacts.images.use"] = true
+	g[authz.TeamImagesObject(f.team.ID)+" artifacts.images.use"] = true
 	f.r = images.Resolver{Store: s, Authz: g}
 	return f
 }
@@ -238,7 +238,7 @@ func TestResolveNoUseRight(t *testing.T) {
 	}
 	team := f.image(t, store.EnvScopeTeam, &f.team.ID, "internal")
 	f.tag(t, team, "latest")
-	f.r.Authz = grants{authz.ObjImages + " image:use": true}
+	f.r.Authz = grants{authz.ObjImages + " artifacts.images.use": true}
 	if _, err := f.r.Resolve(context.Background(), f.org.ID, f.user, images.Owner{TeamID: &f.team.ID}, "core/internal"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("team without use: %v", err)
 	}

@@ -26,9 +26,9 @@ type vmHistoryJSON struct {
 	Reason    string    `json:"reason"`
 }
 
-// setDeleteAfter needs vm:delete even to extend or clear: an expiry is a delayed delete.
+// setDeleteAfter needs compute.instances.delete even to extend or clear: an expiry is a delayed delete.
 func (h *api) setDeleteAfter(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMDelete)
+	v, ok := h.vmFromPath(w, r, "compute.instances.delete")
 	if !ok {
 		return
 	}
@@ -109,7 +109,7 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 	out := []vmHistoryJSON{}
 	for _, row := range rows {
 		visible := row.UserID != nil && *row.UserID == p.User.ID || row.TeamID != nil && inTeam[*row.TeamID] ||
-			e.Allowed(sub, m.Org.ID, authz.VMObject(row.ID), "vm:read")
+			e.Allowed(sub, m.Org.ID, authz.VMObject(row.ID), "compute.instances.get")
 		if !visible {
 			continue
 		}

@@ -394,7 +394,7 @@ func TestDashboardMoveToPrivateCreatorOnly(t *testing.T) {
 			t.Fatalf("%s moves to private: %d", c.who, code)
 		}
 	}
-	if es := e.audit("dashboard:edit"); len(es) != 3 || es[0].Result != store.ResultDenied {
+	if es := e.audit("telemetry.dashboards.update"); len(es) != 3 || es[0].Result != store.ResultDenied {
 		t.Fatalf("denied audit: %+v", es)
 	}
 	if got, _ := e.getDashboard(bobTok, org, teamDash.ID); got.Scope != "team" {

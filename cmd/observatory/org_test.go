@@ -11,7 +11,7 @@ const (
 	memAda   = `{"id":"u1","email":"ada@example.com","name":"Ada Lovelace","role":"owner","joinedAt":"2026-10-01T09:00:00Z"}`
 	memGrace = `{"id":"u2","email":"grace@example.com","name":"Grace Hopper","role":"member","joinedAt":"2026-11-02T10:30:00Z"}`
 	teamBack = `{"id":"t1","name":"backend","memberCount":2,"createdAt":"2026-10-05T08:00:00Z"}`
-	roleCust = `{"id":"r1","name":"viewer","description":"read only","rules":[{"effect":"allow","object":"org/vms","action":"vm:read"}],"parents":[]}`
+	roleCust = `{"id":"r1","name":"viewer","description":"read only","rules":[{"effect":"allow","object":"org/vms","action":"compute.instances.get"}],"parents":[]}`
 	roleBase = `{"key":"member","name":"Member","builtin":true,"rules":[]}`
 )
 
@@ -125,7 +125,7 @@ func TestRoleCreateFromFile(t *testing.T) {
 	h.on("POST /api/orgs/o1/roles", 201, roleCust)
 	dir := t.TempDir()
 	good, bad := filepath.Join(dir, "good.json"), filepath.Join(dir, "bad.json")
-	const body = `{"name":"viewer","description":"","rules":[{"effect":"allow","object":"org/vms","action":"vm:read"}],"parents":[]}`
+	const body = `{"name":"viewer","description":"","rules":[{"effect":"allow","object":"org/vms","action":"compute.instances.get"}],"parents":[]}`
 	os.WriteFile(good, []byte(body+"\n"), 0o600)
 	os.WriteFile(bad, []byte(`{"name":`), 0o600)
 	mustRun(t, c, errb, 2, "role", "create", "--file", bad)

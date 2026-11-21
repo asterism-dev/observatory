@@ -247,7 +247,7 @@ func (h *api) getOrg(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, store.ActionOrgUpdate) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "iam.orgs.update") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -270,7 +270,7 @@ func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) orgAudit(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjAudit, store.ActionAuditRead) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjAudit, "audit.events.list") {
 		return
 	}
 	f, err := auditFilter(r)

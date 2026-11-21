@@ -117,7 +117,7 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 		t.Fatalf("duplicate name: %d", rec.Code)
 	}
 
-	es := e.audit("vm:create")
+	es := e.audit("compute.instances.create")
 	if len(es) != 1 || es[0].Resource != "org/vms/"+v.ID {
 		t.Fatalf("audit: %+v", es)
 	}
@@ -185,7 +185,7 @@ func TestVMTeamPermissions(t *testing.T) {
 	if rec := e.do("DELETE", vmsPath(org)+"/"+v.ID, carolTok); rec.Code != 204 {
 		t.Fatalf("team admin delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("vm:delete"); len(es) == 0 || es[0].Result != store.ResultAllowed {
+	if es := e.audit("compute.instances.delete"); len(es) == 0 || es[0].Result != store.ResultAllowed {
 		t.Fatalf("delete audit: %+v", es)
 	}
 }
@@ -231,7 +231,7 @@ func TestVMPowerAndVisibility(t *testing.T) {
 		if got.Power != c.power {
 			t.Fatalf("%s: %+v", c.action, got)
 		}
-		es := e.audit("vm:power")
+		es := e.audit("compute.instances.setPower")
 		if es[0].Details["power"] != c.power || (c.mode != "" && es[0].Details["stopMode"] != c.mode) {
 			t.Fatalf("%s audit: %+v", c.action, es[0].Details)
 		}
@@ -263,7 +263,7 @@ func TestPowerPauseHibernateResume(t *testing.T) {
 		if got.Power != c.power {
 			t.Fatalf("%s: %+v", c.action, got)
 		}
-		if d := e.audit("vm:power")[0].Details; d["action"] != c.action || d["power"] != c.power {
+		if d := e.audit("compute.instances.setPower")[0].Details; d["action"] != c.action || d["power"] != c.power {
 			t.Fatalf("%s audit: %+v", c.action, d)
 		}
 	}
@@ -384,10 +384,10 @@ func TestSetVMDisksAPI(t *testing.T) {
 	if rec.Code != 200 || len(got.Disks) != 1 || got.Disks[0].MountPath != "/d0" || got.Disks[0].Name != "data" || got.Disks[0].SizeGB != 1 || !got.CanDisks {
 		t.Fatalf("attach: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("vm:disks"); len(es) != 1 || es[0].Details["name"] != "dev" || es[0].Details["disks"].([]any)[0] != "data:/d0" {
+	if es := e.audit("compute.instances.setDisks"); len(es) != 1 || es[0].Details["name"] != "dev" || es[0].Details["disks"].([]any)[0] != "data:/d0" {
 		t.Fatalf("audit: %+v", es)
 	}
-	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 200 || len(e.audit("vm:disks")) != 1 {
+	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID); rec.Code != 200 || len(e.audit("compute.instances.setDisks")) != 1 {
 		t.Fatalf("same list: %d", rec.Code)
 	}
 	if rec := e.setVMDisks(tok, org, v.ID, false, d.ID, td.ID); rec.Code != 409 {
@@ -443,15 +443,15 @@ func TestVMDisksAuthorizationDenied(t *testing.T) {
 	e.stopVM(bobTok, org, bobVM.ID)
 	e.stopVM(adminTok, org, adminVM.ID)
 
-	before := e.deniedRows("vm:disks")
-	if rec := e.setVMDisks(carolTok, org, bobVM.ID, true); rec.Code != 403 || e.deniedRows("vm:disks") != before+1 {
+	before := e.deniedRows("compute.instances.setDisks")
+	if rec := e.setVMDisks(carolTok, org, bobVM.ID, true); rec.Code != 403 || e.deniedRows("compute.instances.setDisks") != before+1 {
 		t.Fatalf("other member on vm: %d", rec.Code)
 	}
 	if rec := e.setVMDisks(carolTok, org, uuid.NewString(), true); rec.Code != 404 {
 		t.Fatalf("unknown vm: %d", rec.Code)
 	}
-	before = e.deniedRows("disk:use")
-	if rec := e.setVMDisks(adminTok, org, adminVM.ID, true, bobDisk.ID); rec.Code != 403 || e.deniedRows("disk:use") != before+1 {
+	before = e.deniedRows("compute.disks.use")
+	if rec := e.setVMDisks(adminTok, org, adminVM.ID, true, bobDisk.ID); rec.Code != 403 || e.deniedRows("compute.disks.use") != before+1 {
 		t.Fatalf("admin attaches member disk: %d", rec.Code)
 	}
 	if d := e.listDisks(bobTok, org)[0]; d.Attachment != nil {
@@ -463,7 +463,7 @@ func TestVMDisksAuthorizationDenied(t *testing.T) {
 	if rec := e.setVMDisks(adminTok, org, bobVM.ID, false); rec.Code != 200 {
 		t.Fatalf("admin detach: %d", rec.Code)
 	}
-	if es := e.audit("vm:disks"); es[0].Result != store.ResultAllowed || len(es[0].Details["disks"].([]any)) != 0 {
+	if es := e.audit("compute.instances.setDisks"); es[0].Result != store.ResultAllowed || len(es[0].Details["disks"].([]any)) != 0 {
 		t.Fatalf("detach audit: %+v", es)
 	}
 }
@@ -508,7 +508,7 @@ func TestAutoSuspendValidation(t *testing.T) {
 			if got.AutoSuspendMinutes != minutes {
 				t.Fatalf("minutes %d: %+v", minutes, got)
 			}
-			if d := e.audit("vm:power")[0].Details; d["autoSuspendMinutes"] != float64(minutes) {
+			if d := e.audit("compute.instances.setPower")[0].Details; d["autoSuspendMinutes"] != float64(minutes) {
 				t.Fatalf("audit: %+v", d)
 			}
 		}
@@ -523,7 +523,7 @@ func TestAutoSuspendPermission(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	v := e.createVM(ownerTok, org, vmBody("a", userOwner(), e.enrolledNode(ownerTok, org, "n1")))
 	if rec := e.send("PUT", vmsPath(org)+"/"+v.ID+"/auto-suspend", bobTok, `{"minutes":15}`); rec.Code != 403 {
-		t.Fatalf("no vm:power: %d", rec.Code)
+		t.Fatalf("no compute.instances.setPower: %d", rec.Code)
 	}
 }
 

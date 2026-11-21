@@ -272,7 +272,7 @@ func TestAdminAudit(t *testing.T) {
 	if rec.Code != 403 {
 		t.Fatalf("non-admin: %d", rec.Code)
 	}
-	es := e.audit("audit:read")
+	es := e.audit("audit.events.list")
 	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != bob.ID.String() {
 		t.Fatalf("denied audit: %+v", es)
 	}

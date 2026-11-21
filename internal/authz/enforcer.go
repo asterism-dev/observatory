@@ -109,11 +109,12 @@ func New(p Policy) (*Enforcer, error) {
 		groups = append(groups, []string{u, RoleSubject(mr.Role), org})
 		// Users may do everything with their own resources; org deny rules still win.
 		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
-		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
-		rules = append(rules, []string{u, org, UserIntegrationsObject(mr.UserID), "integration:*", string(Allow)})
-		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "image:*", string(Allow)})
-		rules = append(rules, []string{u, org, UserDashboardsObject(mr.UserID), "dashboard:*", string(Allow)})
-		for _, act := range []string{"device:create", "device:list", "device:delete"} {
+		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "secrets.variables.*", string(Allow)})
+		rules = append(rules, []string{u, org, UserIntegrationsObject(mr.UserID), "secrets.integrations.*", string(Allow)})
+		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "artifacts.images.*", string(Allow)})
+		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "build.builds.create", string(Allow)})
+		rules = append(rules, []string{u, org, UserDashboardsObject(mr.UserID), "telemetry.dashboards.*", string(Allow)})
+		for _, act := range []string{"network.devices.create", "network.devices.list", "network.devices.delete"} {
 			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
 		}
 	}
@@ -121,30 +122,31 @@ func New(p Policy) (*Enforcer, error) {
 		u, org := UserSubject(tm.UserID), tm.OrgID.String()
 		groups = append(groups, []string{u, TeamSubject(tm.TeamID), org})
 		if tm.Admin {
-			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "team:manage-members", string(Allow)})
-			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamIntegrationsObject(tm.TeamID), "integration:*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "image:*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamDashboardsObject(tm.TeamID), "dashboard:*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "vm:create", string(Allow)})
-			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "disk:create", string(Allow)})
+			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "iam.teams.manageMembers", string(Allow)})
+			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "secrets.variables.*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamIntegrationsObject(tm.TeamID), "secrets.integrations.*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "artifacts.images.*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "build.builds.create", string(Allow)})
+			rules = append(rules, []string{u, org, TeamDashboardsObject(tm.TeamID), "telemetry.dashboards.*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "compute.instances.create", string(Allow)})
+			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "compute.disks.create", string(Allow)})
 			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
 		}
 	}
 	for _, t := range p.Teams {
 		sub, org := TeamSubject(t.ID), t.OrgID.String()
 		rules = append(rules,
-			[]string{sub, org, TeamEnvObject(t.ID), "env:list", string(Allow)},
-			[]string{sub, org, TeamEnvObject(t.ID), "env:use", string(Allow)},
-			[]string{sub, org, ObjEnv, "env:use", string(Allow)},
-			[]string{sub, org, TeamIntegrationsObject(t.ID), "integration:list", string(Allow)},
-			[]string{sub, org, TeamIntegrationsObject(t.ID), "integration:use", string(Allow)},
-			[]string{sub, org, ObjIntegrations, "integration:use", string(Allow)},
-			[]string{sub, org, TeamImagesObject(t.ID), "image:list", string(Allow)},
-			[]string{sub, org, TeamImagesObject(t.ID), "image:use", string(Allow)},
-			[]string{sub, org, ObjImages, "image:use", string(Allow)},
-			[]string{sub, org, TeamDashboardsObject(t.ID), "dashboard:read", string(Allow)},
-			[]string{sub, org, TeamDashboardsObject(t.ID), "dashboard:create", string(Allow)},
+			[]string{sub, org, TeamEnvObject(t.ID), "secrets.variables.list", string(Allow)},
+			[]string{sub, org, TeamEnvObject(t.ID), "secrets.variables.use", string(Allow)},
+			[]string{sub, org, ObjEnv, "secrets.variables.use", string(Allow)},
+			[]string{sub, org, TeamIntegrationsObject(t.ID), "secrets.integrations.list", string(Allow)},
+			[]string{sub, org, TeamIntegrationsObject(t.ID), "secrets.integrations.use", string(Allow)},
+			[]string{sub, org, ObjIntegrations, "secrets.integrations.use", string(Allow)},
+			[]string{sub, org, TeamImagesObject(t.ID), "artifacts.images.list", string(Allow)},
+			[]string{sub, org, TeamImagesObject(t.ID), "artifacts.images.use", string(Allow)},
+			[]string{sub, org, ObjImages, "artifacts.images.use", string(Allow)},
+			[]string{sub, org, TeamDashboardsObject(t.ID), "telemetry.dashboards.get", string(Allow)},
+			[]string{sub, org, TeamDashboardsObject(t.ID), "telemetry.dashboards.create", string(Allow)},
 		)
 	}
 	for _, vm := range p.VMs {
@@ -156,11 +158,11 @@ func New(p Policy) (*Enforcer, error) {
 		}
 		switch {
 		case vm.UserID != nil:
-			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:connect", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics")
+			grant(UserSubject(*vm.UserID), "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.connect", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics")
 		case vm.TeamID != nil:
-			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect", "vm:snapshot", "vm:metrics")
+			grant(TeamSubject(*vm.TeamID), "compute.instances.get", "compute.instances.setPower", "compute.instances.connect", "compute.instances.snapshot", "compute.instances.getMetrics")
 			for _, admin := range teamAdmins[*vm.TeamID] {
-				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics")
+				grant(UserSubject(admin), "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics")
 			}
 		}
 	}
@@ -173,11 +175,11 @@ func New(p Policy) (*Enforcer, error) {
 		}
 		switch {
 		case d.UserID != nil:
-			grant(UserSubject(*d.UserID), "disk:read", "disk:update", "disk:delete", "disk:use")
+			grant(UserSubject(*d.UserID), "compute.disks.get", "compute.disks.update", "compute.disks.delete", "compute.disks.use")
 		case d.TeamID != nil:
-			grant(TeamSubject(*d.TeamID), "disk:read", "disk:use")
+			grant(TeamSubject(*d.TeamID), "compute.disks.get", "compute.disks.use")
 			for _, admin := range teamAdmins[*d.TeamID] {
-				grant(UserSubject(admin), "disk:read", "disk:update", "disk:delete", "disk:use")
+				grant(UserSubject(admin), "compute.disks.get", "compute.disks.update", "compute.disks.delete", "compute.disks.use")
 			}
 		}
 	}
@@ -258,10 +260,10 @@ func (c *ConnectChecker) CanConnect(user uuid.UUID, vm VMRef) bool {
 	default:
 		return false
 	}
-	// The owner relation implies the generated vm:connect grant, so only denies remain; they match exactly as the casbin matcher does.
+	// The owner relation implies the generated compute.instances.connect grant, so only denies remain; they match exactly as the casbin matcher does.
 	obj := VMObject(vm.ID)
 	return !slices.ContainsFunc(c.denyRules(user, vm.OrgID), func(d Rule) bool {
-		return util.KeyMatch(obj, d.Object) && util.KeyMatch("vm:connect", d.Action)
+		return util.KeyMatch(obj, d.Object) && util.KeyMatch("compute.instances.connect", d.Action)
 	})
 }
 

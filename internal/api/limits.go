@@ -67,7 +67,7 @@ func limitDetails(l store.Limits) map[string]any {
 
 func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, "limit:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, "quota.limits.get") {
 		return
 	}
 	ls, err := h.store.Limits(r.Context(), m.Org.ID)
@@ -81,7 +81,7 @@ func (h *api) getLimits(w http.ResponseWriter, r *http.Request) {
 // setScopeLimits handles team and member scopes; the org scope belongs to platform admins only.
 func (h *api) setScopeLimits(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, store.ActionLimitSet) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjLimits, "quota.limits.update") {
 		return
 	}
 	scope := r.PathValue("scope")

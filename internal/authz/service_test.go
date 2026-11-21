@@ -27,13 +27,13 @@ func TestServiceReloadPicksUpChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub := UserSubject(user)
-	if svc.Allowed(sub, org, ObjMembers, "member:set-role") {
+	if svc.Allowed(sub, org, ObjMembers, "iam.members.setRole") {
 		t.Fatal("member must not set roles")
 	}
 	if err := svc.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !svc.Allowed(sub, org, ObjMembers, "member:set-role") {
+	if !svc.Allowed(sub, org, ObjMembers, "iam.members.setRole") {
 		t.Fatal("owner should set roles after reload")
 	}
 }
@@ -55,7 +55,7 @@ func TestServiceReloadFailureKeepsOldEnforcer(t *testing.T) {
 	if err := svc.Reload(context.Background()); err == nil {
 		t.Fatal("want error")
 	}
-	if svc.Enforcer() != old || !svc.Allowed(UserSubject(user), org, ObjMembers, "member:set-role") {
+	if svc.Enforcer() != old || !svc.Allowed(UserSubject(user), org, ObjMembers, "iam.members.setRole") {
 		t.Fatal("old enforcer must stay in place")
 	}
 }
@@ -107,7 +107,7 @@ func TestServiceConcurrentReloads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 50 {
-				if !svc.Allowed(UserSubject(user), org, ObjMembers, "member:set-role") {
+				if !svc.Allowed(UserSubject(user), org, ObjMembers, "iam.members.setRole") {
 					t.Error("denied during reload")
 				}
 			}

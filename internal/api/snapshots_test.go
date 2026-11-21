@@ -157,7 +157,7 @@ func TestForkDenyRule(t *testing.T) {
 	v := e.createVM(bobTok, org, vmBody("bobvm", userOwner(), e.enrolledNode(ownerTok, org, "n1")))
 	sn := e.takeSnapshot(bobTok, org, v.ID, `{"name":"base"}`)
 	e.snapshotsReady()
-	role := e.createRole(ownerTok, org, `{"name":"nofork","rules":[{"effect":"deny","object":"org/vms/*","action":"vm:fork"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"nofork","rules":[{"effect":"deny","object":"org/vms/*","action":"compute.instances.fork"}]}`)
 	e.bind(ownerTok, org, "user:"+bob.ID.String(), role)
 	if rec := e.send("POST", snapshotsPath(org, v.ID)+"/"+sn.ID+"/fork", bobTok, `{"name":"copy"}`); rec.Code != 403 {
 		t.Fatalf("denied fork: %d %s", rec.Code, rec.Body.String())

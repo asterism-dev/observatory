@@ -71,7 +71,7 @@ type bindingJSON struct {
 
 func (h *api) catalog(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roles.list") {
 		return
 	}
 	type permJSON struct {
@@ -87,7 +87,7 @@ func (h *api) catalog(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) listRoles(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roles.list") {
 		return
 	}
 	roles, err := h.store.Roles(r.Context(), m.Org.ID)
@@ -153,7 +153,7 @@ func expandRules(rules []authz.Rule) []authz.Rule {
 
 func (h *api) createRole(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roles.manage") {
 		return
 	}
 	role, ok := readRoleBody(w, r)
@@ -191,7 +191,7 @@ func (h *api) createRole(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roles.manage") {
 		return
 	}
 	id, ok := pathID(w, r, "role")
@@ -239,7 +239,7 @@ func (h *api) updateRole(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "role:write") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roles.manage") {
 		return
 	}
 	id, ok := pathID(w, r, "role")
@@ -273,7 +273,7 @@ func (h *api) deleteRole(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) listBindings(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roleBindings.manage") {
 		return
 	}
 	bs, err := h.store.Bindings(r.Context(), m.Org.ID)
@@ -290,7 +290,7 @@ func (h *api) listBindings(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) bind(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roleBindings.manage") {
 		return
 	}
 	var body struct {
@@ -336,7 +336,7 @@ func (h *api) bind(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) unbind(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, store.ActionRoleBind) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjRoles, "iam.roleBindings.manage") {
 		return
 	}
 	id, ok := pathID(w, r, "id")

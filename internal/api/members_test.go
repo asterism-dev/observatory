@@ -383,7 +383,7 @@ func TestInviteNeedsCreatorStillAllowed(t *testing.T) {
 	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'inviter') RETURNING id`, org).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
-	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/members', 'member:invite')`, role)
+	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/members', 'iam.invites.create')`, role)
 	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+inviter.ID.String(), role)
 	e.reload()
 	boundInvite := e.invite(org, inviterTok, "member")
@@ -427,9 +427,9 @@ func TestRemoveMemberCarryingDeny(t *testing.T) {
 	for _, u := range []store.User{remover, restricted, plain} {
 		e.addMember(org, u, store.RoleMember)
 	}
-	removerRole := e.createRole(ownerTok, org, `{"name":"remover","rules":[{"effect":"allow","object":"org/members","action":"member:remove"}]}`)
+	removerRole := e.createRole(ownerTok, org, `{"name":"remover","rules":[{"effect":"allow","object":"org/members","action":"iam.members.delete"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(remover.ID), removerRole)
-	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit:read"}]}`)
+	denying := e.createRole(ownerTok, org, `{"name":"denying","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(restricted.ID), denying)
 
 	if rec := e.do("DELETE", memberPath(org, restricted), removerTok); rec.Code != 403 {

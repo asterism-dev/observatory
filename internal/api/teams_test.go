@@ -339,12 +339,12 @@ func TestTeamLeave(t *testing.T) {
 	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultAllowed || es[0].ActorID != member.ID.String() {
 		t.Fatalf("leave audit: %+v", es)
 	}
-	// A team admin may leave too, although demoting a team admin otherwise needs team:update.
+	// A team admin may leave too, although demoting a team admin otherwise needs iam.teams.update.
 	if rec := e.do("DELETE", teamMemberPath(org, team, lead), leadTok); rec.Code != 204 {
 		t.Fatalf("team admin leaves: %d %s", rec.Code, rec.Body.String())
 	}
 
-	noLeave := e.createRole(ownerTok, org, `{"name":"stay","rules":[{"effect":"deny","object":"org/teams/*","action":"team:leave"}]}`)
+	noLeave := e.createRole(ownerTok, org, `{"name":"stay","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.leave"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), noLeave)
 	if rec := e.send("PUT", teamMemberPath(org, team, member), ownerTok, `{"admin":false}`); rec.Code != 204 {
 		t.Fatalf("re-add: %d", rec.Code)

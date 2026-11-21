@@ -165,15 +165,15 @@ func TestNodeUpdateRejections(t *testing.T) {
 		tok, body string
 		code      int
 	}{
-		"non-member":     {carolTok, startBody(good.ID), 404},
-		"no node:update": {bobTok, startBody(good.ID), 403},
-		"no hypervisor":  {tok, startBody(noHV.ID), 409},
-		"up to date":     {tok, startBody(current.ID), 409},
-		"foreign node":   {tok, startBody(foreign.ID), 404},
-		"unknown node":   {tok, startBody(uuid.New()), 404},
-		"empty":          {tok, `{"nodes":[]}`, 400},
-		"duplicate":      {tok, startBody(good.ID, good.ID), 400},
-		"bad id":         {tok, `{"nodes":["x"]}`, 400},
+		"non-member":              {carolTok, startBody(good.ID), 404},
+		"no compute.nodes.update": {bobTok, startBody(good.ID), 403},
+		"no hypervisor":           {tok, startBody(noHV.ID), 409},
+		"up to date":              {tok, startBody(current.ID), 409},
+		"foreign node":            {tok, startBody(foreign.ID), 404},
+		"unknown node":            {tok, startBody(uuid.New()), 404},
+		"empty":                   {tok, `{"nodes":[]}`, 400},
+		"duplicate":               {tok, startBody(good.ID, good.ID), 400},
+		"bad id":                  {tok, `{"nodes":["x"]}`, 400},
 	} {
 		if rec := e.send("POST", updatesPath(org), tc.tok, tc.body); rec.Code != tc.code {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())

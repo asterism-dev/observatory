@@ -25,7 +25,7 @@ func toTeamJSON(t store.Team) teamJSON { return teamJSON{t.ID, t.Name, t.MemberC
 
 func (h *api) listTeams(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "team:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.list") {
 		return
 	}
 	ts, err := h.store.Teams(r.Context(), m.Org.ID)
@@ -52,7 +52,7 @@ func readTeamName(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, store.ActionTeamCreate) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.create") {
 		return
 	}
 	name, ok := readTeamName(w, r)
@@ -76,7 +76,7 @@ func (h *api) createTeam(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "team:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjTeams, "iam.teams.list") {
 		return
 	}
 	id, ok := pathID(w, r, "team")
@@ -110,15 +110,15 @@ func (h *api) getTeam(w http.ResponseWriter, r *http.Request) {
 	e, sub, obj := h.z.Enforcer(), authz.UserSubject(p.User.ID), authz.TeamObject(id)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": team.ID, "name": team.Name, "members": ms,
-		"canManageMembers": e.Allowed(sub, m.Org.ID, obj, "team:manage-members"),
-		"canUpdate":        e.Allowed(sub, m.Org.ID, obj, store.ActionTeamUpdate),
-		"canDelete":        e.Allowed(sub, m.Org.ID, obj, store.ActionTeamDelete),
-		"canLeave":         e.Allowed(sub, m.Org.ID, obj, store.ActionTeamLeave),
+		"canManageMembers": e.Allowed(sub, m.Org.ID, obj, "iam.teams.manageMembers"),
+		"canUpdate":        e.Allowed(sub, m.Org.ID, obj, "iam.teams.update"),
+		"canDelete":        e.Allowed(sub, m.Org.ID, obj, "iam.teams.delete"),
+		"canLeave":         e.Allowed(sub, m.Org.ID, obj, "iam.teams.leave"),
 	})
 }
 
 func (h *api) renameTeam(w http.ResponseWriter, r *http.Request) {
-	m, id, ok := h.teamAction(w, r, store.ActionTeamUpdate)
+	m, id, ok := h.teamAction(w, r, "iam.teams.update")
 	if !ok {
 		return
 	}
@@ -140,7 +140,7 @@ func (h *api) renameTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
-	m, id, ok := h.teamAction(w, r, store.ActionTeamDelete)
+	m, id, ok := h.teamAction(w, r, "iam.teams.delete")
 	if !ok {
 		return
 	}
@@ -177,7 +177,7 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
-	m, id, ok := h.teamAction(w, r, "team:manage-members")
+	m, id, ok := h.teamAction(w, r, "iam.teams.manageMembers")
 	if !ok {
 		return
 	}
@@ -196,7 +196,7 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	admin := *body.Admin
-	if admin && !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), store.ActionTeamUpdate) {
+	if admin && !h.authorize(w, r, m.Org.ID, authz.TeamObject(id), "iam.teams.update") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -237,11 +237,11 @@ func (h *api) setTeamMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	// Leaving needs team:leave instead of team:manage-members; the own-deny guard below still applies.
+	// Leaving needs iam.teams.leave instead of iam.teams.manageMembers; the own-deny guard below still applies.
 	leaving := r.PathValue("user") == p.User.ID.String()
-	act, auditAct := "team:manage-members", store.ActionTeamMemberRemove
+	act, auditAct := "iam.teams.manageMembers", store.ActionTeamMemberRemove
 	if leaving {
-		act, auditAct = store.ActionTeamLeave, store.ActionTeamLeave
+		act, auditAct = "iam.teams.leave", store.ActionTeamLeave
 	}
 	m, id, ok := h.teamAction(w, r, act)
 	if !ok {
@@ -262,7 +262,7 @@ func (h *api) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if leaving {
-			if leaveDenied = !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.TeamObject(id), store.ActionTeamLeave); leaveDenied {
+			if leaveDenied = !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.TeamObject(id), "iam.teams.leave"); leaveDenied {
 				return errForbidden
 			}
 		} else {
@@ -309,7 +309,7 @@ func (h *api) teamAction(w http.ResponseWriter, r *http.Request, act string) (st
 	return m, id, true
 }
 
-// demotesTeamAdmin reports whether the target is a team admin (read under lock) and the caller lacks team:update, which changing an admin requires.
+// demotesTeamAdmin reports whether the target is a team admin (read under lock) and the caller lacks iam.teams.update, which changing an admin requires.
 func demotesTeamAdmin(r *http.Request, tx *store.Store, e *authz.Enforcer, org, team, user uuid.UUID) (bool, error) {
 	admin, err := tx.LockTeamMember(r.Context(), org, team, user)
 	if errors.Is(err, store.ErrNotFound) {
@@ -319,7 +319,7 @@ func demotesTeamAdmin(r *http.Request, tx *store.Store, e *authz.Enforcer, org, 
 		return false, err
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	return !e.Allowed(authz.UserSubject(p.User.ID), org, authz.TeamObject(team), store.ActionTeamUpdate), nil
+	return !e.Allowed(authz.UserSubject(p.User.ID), org, authz.TeamObject(team), "iam.teams.update"), nil
 }
 
 // teamRoles returns the IDs of the custom roles bound to team.

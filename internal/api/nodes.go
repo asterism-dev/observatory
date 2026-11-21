@@ -132,9 +132,9 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
-	j.CanUpdate = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeUpdate)
-	j.CanDelete = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeDelete)
-	j.CanTelemetry = h.telemetry != nil && e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeMetrics)
+	j.CanUpdate = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), "compute.nodes.update")
+	j.CanDelete = e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), "compute.nodes.delete")
+	j.CanTelemetry = h.telemetry != nil && e.Allowed(sub, n.OrgID, authz.NodeObject(n.ID), "compute.nodes.getMetrics")
 	return j, nil
 }
 
@@ -168,7 +168,7 @@ func (h *api) nodeFromPath(w http.ResponseWriter, r *http.Request, act string) (
 
 func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "node:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "compute.nodes.get") {
 		return
 	}
 	nodes, err := h.store.Nodes(r.Context(), m.Org.ID)
@@ -180,7 +180,7 @@ func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	out := []nodeJSON{}
 	for _, n := range nodes {
-		if !e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "node:read") {
+		if !e.Allowed(sub, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.get") {
 			continue
 		}
 		// ponytail: one VM query per node; aggregate in the store if orgs run many nodes.
@@ -196,7 +196,7 @@ func (h *api) listNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) createNode(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "node:create") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjNodes, "compute.nodes.create") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -224,7 +224,7 @@ func (h *api) createNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) getNode(w http.ResponseWriter, r *http.Request) {
-	n, ok := h.nodeFromPath(w, r, "node:read")
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.get")
 	if !ok {
 		return
 	}
@@ -237,7 +237,7 @@ func (h *api) getNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) renameNode(w http.ResponseWriter, r *http.Request) {
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeUpdate)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.update")
 	if !ok {
 		return
 	}
@@ -261,7 +261,7 @@ func (h *api) renameNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) regenerateNodeCredential(w http.ResponseWriter, r *http.Request) {
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeUpdate)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.update")
 	if !ok {
 		return
 	}
@@ -285,7 +285,7 @@ func (h *api) regenerateNodeCredential(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeDelete)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.delete")
 	if !ok {
 		return
 	}

@@ -283,7 +283,7 @@ func TestIntegrationsPermissions(t *testing.T) {
 	}
 	carolID := e.connect(carolTok, org, githubBody("user", ""))
 
-	role := e.createRole(ownerTok, org, `{"name":"no private","rules":[{"effect":"deny","object":"org/user-integrations/*","action":"integration:set"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"no private","rules":[{"effect":"deny","object":"org/user-integrations/*","action":"secrets.integrations.set"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(bob.ID), role)
 	if rec := e.send("POST", integrationsPath(org), bobTok, githubBody("user", "")); rec.Code != 403 {
 		t.Fatalf("deny private: %d", rec.Code)
@@ -437,7 +437,7 @@ func TestVMIntegrationsLine(t *testing.T) {
 		t.Fatalf("admin: %s", got)
 	}
 	if rec := e.do("GET", path, bobTok); rec.Code != 403 {
-		t.Fatalf("no vm:read: %d", rec.Code)
+		t.Fatalf("no compute.instances.get: %d", rec.Code)
 	}
 }
 

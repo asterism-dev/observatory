@@ -431,8 +431,8 @@ func (s *Store) ResolveVMIntegrations(ctx context.Context, e *authz.Enforcer, or
 		ownScope, ownObj = EnvScopeTeam, authz.TeamIntegrationsObject(id)
 	}
 	allowed := map[EnvScope]bool{
-		EnvScopeOrg: e.Allowed(owner, org, authz.ObjIntegrations, "integration:use"),
-		ownScope:    e.Allowed(owner, org, ownObj, "integration:use"),
+		EnvScopeOrg: e.Allowed(owner, org, authz.ObjIntegrations, "secrets.integrations.use"),
+		ownScope:    e.Allowed(owner, org, ownObj, "secrets.integrations.use"),
 	}
 	if !allowed[EnvScopeOrg] && !allowed[ownScope] {
 		return nil, nil

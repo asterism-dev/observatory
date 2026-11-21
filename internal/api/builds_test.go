@@ -151,19 +151,19 @@ func TestBuildRequiresRefUse(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "tools", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	bare := e.createImage(aliceTok, org, `{"name":"bare","scope":"org"}`)
-	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
 
 	if rec := e.do("POST", buildsPath(org, bare), aliceTok); rec.Code != 422 {
 		t.Fatalf("no recipe: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.do("POST", buildsPath(org, img), carolTok); rec.Code != 403 {
-		t.Fatalf("member without image:build: %d", rec.Code)
+		t.Fatalf("member without build.builds.create: %d", rec.Code)
 	}
 	if rec := e.do("POST", buildsPath(org, img), bobTok); rec.Code != 403 || !strings.Contains(rec.Body.String(), "forbidden") {
 		t.Fatalf("builder without use on the reference: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("env:use"); len(es) != 1 || es[0].ActorID != bob.ID.String() || es[0].Result != store.ResultDenied {
+	if es := e.audit("secrets.variables.use"); len(es) != 1 || es[0].ActorID != bob.ID.String() || es[0].Result != store.ResultDenied {
 		t.Fatalf("denied audit: %+v", es)
 	}
 	id := e.startBuild(aliceTok, org, img)
@@ -510,10 +510,10 @@ func TestAgentEndpointsNeedBuildSecret(t *testing.T) {
 			t.Fatalf("%s: %d %v", c.name, code, got)
 		}
 	}
-	noUse := e.createRole(aliceTok, org, `{"name":"no images","rules":[{"effect":"deny","object":"org/images","action":"image:use"}]}`)
+	noUse := e.createRole(aliceTok, org, `{"name":"no images","rules":[{"effect":"deny","object":"org/images","action":"artifacts.images.use"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(alice.ID), noUse)
 	if _, got := grant(t, e.agent, "observatory", secret, repoScope(base, "pull")); len(got) != 0 {
-		t.Fatalf("base pull without the starter's image:use: %v", got)
+		t.Fatalf("base pull without the starter's artifacts.images.use: %v", got)
 	}
 
 	rec = e.do("POST", buildsPath(org, img)+"/"+b.ID.String()+"/cancel", aliceTok)
