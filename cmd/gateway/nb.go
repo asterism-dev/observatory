@@ -191,13 +191,14 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		{"lrp-set-gateway-chassis", "lrp-transit", s.GatewayChassis.Name, "1"},
 		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
 	}
-	if s.GatewayChassis.Name != "hub-gw" {
-		gcs, err := names("gateway_chassis")
-		if err != nil {
-			return errors.Join(append(errs, err)...)
-		}
-		if gcs["lrp-transit-hub-gw"] {
-			hub = append(hub, []string{"lrp-del-gateway-chassis", "lrp-transit", "hub-gw"})
+	gcs, err := names("gateway_chassis")
+	if err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	// A former gateway chassis at the same priority would leave the active one to chance.
+	for n := range gcs {
+		if ch, ok := strings.CutPrefix(n, "lrp-transit-"); ok && ch != s.GatewayChassis.Name {
+			hub = append(hub, []string{"lrp-del-gateway-chassis", "lrp-transit", ch})
 		}
 	}
 	if err := tx(append(hub, transitACLs(s)...)); err != nil {

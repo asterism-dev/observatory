@@ -325,44 +325,47 @@ func TestReconcileNBDefaultHubGW(t *testing.T) {
 	if !has(hub, "lsp-set-options gw0 requested-chassis=hub-gw") || !has(hub, "lrp-set-gateway-chassis lrp-transit hub-gw 1") {
 		t.Fatalf("hub-gw not requested: %v", hub)
 	}
+	if !has(f.cmds, "ovn-nbctl --bare --columns=name list gateway_chassis") {
+		t.Error("gateway chassis rows not read")
+	}
 	for _, c := range f.cmds {
-		if strings.Contains(c, "gateway_chassis") || strings.Contains(c, "lrp-del-gateway-chassis") {
-			t.Errorf("self-contained mode ran %s", c)
+		if strings.Contains(c, "lrp-del-gateway-chassis") {
+			t.Errorf("steady state deletes: %s", c)
 		}
 	}
 }
 
-func TestReconcileNBUsesGatewayChassis(t *testing.T) {
-	st, out := twoOrgs()
-	st.GatewayChassis = proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}
-	list := "ovn-nbctl --bare --columns=name list gateway_chassis"
-	out[list] = "lrp-transit-hub-gw\n"
-	f := &fakeRun{out: out}
-	if err := reconcileNB(f.run, st); err != nil {
-		t.Fatal(err)
-	}
-	hub := f.txWith(t, "--may-exist lr-add lr-gw")
-	for _, want := range []string{
-		"lsp-set-options gw0 requested-chassis=" + nodeA,
-		"lrp-set-gateway-chassis lrp-transit " + nodeA + " 1",
-		"lrp-del-gateway-chassis lrp-transit hub-gw",
+func TestReconcileNBRemovesStaleGatewayChassis(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		gateway proto.GatewayChassisRef
+		rows    string
+		del     []string
+	}{
+		{"hub-gw to node", proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}, "lrp-transit-hub-gw\n", []string{"hub-gw"}},
+		{"node to hub-gw", hubGW, "lrp-transit-hub-gw\nlrp-transit-" + nodeA + "\n", []string{nodeA}},
+		{"node to node", proto.GatewayChassisRef{Name: nodeB, IP: "10.198.0.21"}, "lrp-transit-" + nodeA + "\n", []string{nodeA}},
+		{"node steady", proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}, "lrp-transit-" + nodeA + "\n", nil},
 	} {
-		if !has(hub, want) {
-			t.Errorf("hub transaction missing %q", want)
+		st, out := twoOrgs()
+		st.GatewayChassis = c.gateway
+		out["ovn-nbctl --bare --columns=name list gateway_chassis"] = c.rows
+		f := &fakeRun{out: out}
+		if err := reconcileNB(f.run, st); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if slices.IndexFunc(hub, func(c string) bool {
-		return strings.Contains(c, "hub-gw") && !strings.HasPrefix(c, "lrp-del-gateway-chassis")
-	}) >= 0 {
-		t.Errorf("still requests hub-gw: %v", hub)
-	}
-
-	out[list] = "lrp-transit-" + nodeA + "\n"
-	f = &fakeRun{out: out}
-	if err := reconcileNB(f.run, st); err != nil {
-		t.Fatal(err)
-	}
-	if hub := f.txWith(t, "--may-exist lr-add lr-gw"); has(hub, "lrp-del-gateway-chassis lrp-transit hub-gw") {
-		t.Errorf("deletes an absent hub-gw gateway chassis: %v", hub)
+		hub := f.txWith(t, "--may-exist lr-add lr-gw")
+		if !has(hub, "lsp-set-options gw0 requested-chassis="+c.gateway.Name) || !has(hub, "lrp-set-gateway-chassis lrp-transit "+c.gateway.Name+" 1") {
+			t.Errorf("%s: gateway chassis not requested: %v", c.name, hub)
+		}
+		var del []string
+		for _, cmd := range f.tx(t) {
+			if d, ok := strings.CutPrefix(cmd, "lrp-del-gateway-chassis lrp-transit "); ok {
+				del = append(del, d)
+			}
+		}
+		if !slices.Equal(del, c.del) {
+			t.Errorf("%s: deleted %v, want %v", c.name, del, c.del)
+		}
 	}
 }

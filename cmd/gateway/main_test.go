@@ -192,7 +192,7 @@ func TestGuardBindings(t *testing.T) {
 		}
 		return "", nil
 	}
-	got, claims, err := guardBindings(run, "hub-gw")
+	got, claims, err := guardBindings(run, "hub-gw", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func guardPolls(t *testing.T, gateway, nb string, polls ...string) [][]string {
 			}
 			return "", nil
 		}
-		_, claims, err := guardBindings(run, gateway)
+		_, claims, err := guardBindings(run, gateway, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -484,7 +484,7 @@ func TestGuardDoesNotClaimGatewayChassis(t *testing.T) {
 		}
 		return "", nil
 	}
-	rebound, claims, err := guardBindings(run, "node-a")
+	rebound, claims, err := guardBindings(run, "node-a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,6 +494,53 @@ func TestGuardDoesNotClaimGatewayChassis(t *testing.T) {
 	}
 	if got := guardPolls(t, "node-a", nb, "u4,gw0,ch-b,\n", "u4,gw0,ch-b,\n"); strings.Join(got[1], ",") != "node-b" {
 		t.Fatalf("other node holding gw0 not caught: %v", got)
+	}
+}
+
+func TestGuardExemptsFormerGatewayChassis(t *testing.T) {
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		switch {
+		case strings.Contains(c, "list logical_switch_port"):
+			return "gw0,requested-chassis=node-a\nvm1-mgmt,requested-chassis=node-a\n", nil
+		case strings.Contains(c, "list chassis"):
+			return "ch-a,node-a\nch-b,node-b\n", nil
+		case strings.Contains(c, "list port_binding"):
+			return "u3,cr-lrp-transit,ch-b,\nu4,gw0,ch-b,\n", nil
+		}
+		return "", nil
+	}
+	rebound, claims, err := guardBindings(run, "node-a", "node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rebound, ",") != "cr-lrp-transit,gw0" || len(claims) != 0 {
+		t.Fatalf("rebound %v claims %v", rebound, claims)
+	}
+	if _, claims, _ := guardBindings(run, "node-a", ""); len(claims) != 2 {
+		t.Fatalf("claims without a former gateway %v", claims)
+	}
+}
+
+func TestGatewayNamesFormerUntilSecondApply(t *testing.T) {
+	var g gatewayNames
+	g.set("hub-gw")
+	g.applied()
+	if g.former != "" {
+		t.Fatalf("former %q at start", g.former)
+	}
+	g.set(nodeA)
+	if g.current != nodeA || g.former != "hub-gw" {
+		t.Fatalf("after switch %+v", g)
+	}
+	g.applied()
+	g.set(nodeA)
+	if g.former != "hub-gw" {
+		t.Fatal("former released by the switching apply")
+	}
+	g.applied()
+	if g.former != "" {
+		t.Fatalf("former %q kept after the next apply", g.former)
 	}
 }
 

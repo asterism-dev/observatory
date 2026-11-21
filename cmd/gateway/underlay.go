@@ -40,8 +40,8 @@ func underlayRules(s proto.GatewayState) string {
 	}
 	// Shared mode: the hub-host node relays Geneve for every org's devices, so it may reach nodes of other orgs.
 	if gc := s.GatewayChassis; gc.Name != "hub-gw" {
-		for _, r := range []string{"ip saddr " + gc.IP + " udp dport", "ip daddr " + gc.IP + " udp dport", "ip saddr " + gc.IP + " udp sport", "ip daddr " + gc.IP + " udp sport"} {
-			fmt.Fprintf(&rules, "\t\tiifname \"wg-underlay\" oifname \"wg-underlay\" %s %d accept\n", r, geneveUDPPort)
+		for _, dir := range []string{"saddr", "daddr"} {
+			fmt.Fprintf(&rules, "\t\tiifname \"wg-underlay\" oifname \"wg-underlay\" ip %s %s udp dport %d accept\n", dir, gc.IP, geneveUDPPort)
 		}
 	}
 	return "table inet obs_underlay\ndelete table inet obs_underlay\ntable inet obs_underlay {\n" + sets.String() +

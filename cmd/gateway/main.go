@@ -91,19 +91,19 @@ func main() {
 	rebound := map[string]bool{}
 	// caught holds offending chassis names until the hub has stored them; it then sends them back as quarantined.
 	caught := map[string]bool{}
-	// gatewayChassis is empty until the first valid state, so the guard never judges bindings against a guessed chassis.
-	var gatewayChassis string
+	// gateway.current is empty until the first valid state, so the guard never judges bindings against a guessed chassis.
+	var gateway gatewayNames
 	go func() {
 		var lastClaims map[claim]bool
 		for range time.Tick(2 * time.Second) {
 			reboundMu.Lock()
-			gateway := gatewayChassis
+			g := gateway
 			reboundMu.Unlock()
 			var ports []string
 			var claims []claim
 			var err error
-			if gateway != "" {
-				ports, claims, err = guardBindings(run, gateway)
+			if g.current != "" {
+				ports, claims, err = guardBindings(run, g.current, g.former)
 			}
 			var offenders []string
 			lastClaims, offenders = confirmClaims(lastClaims, claims)
@@ -176,7 +176,7 @@ func main() {
 		dns.setViews(st.Orgs, st.Devices)
 
 		reboundMu.Lock()
-		gatewayChassis = st.GatewayChassis.Name
+		gateway.set(st.GatewayChassis.Name)
 		st = withQuarantine(st, caught)
 		reboundMu.Unlock()
 		chassis, _ := json.Marshal(st.Chassis)
@@ -185,9 +185,33 @@ func main() {
 				log.Print(err)
 			} else {
 				lastHash, lastApply = h, time.Now()
+				reboundMu.Lock()
+				gateway.applied()
+				reboundMu.Unlock()
 			}
 		}
 	}
+}
+
+// gatewayNames is the gateway chassis the guard checks against; after a switch the former one stays exempt from claims
+// until the apply after the switching one, while its bindings move over.
+type gatewayNames struct {
+	current, former string
+	settled         bool
+}
+
+func (g *gatewayNames) set(name string) {
+	if g.current != "" && g.current != name {
+		g.former, g.settled = g.current, false
+	}
+	g.current = name
+}
+
+func (g *gatewayNames) applied() {
+	if g.settled {
+		g.former = ""
+	}
+	g.settled = true
 }
 
 // withQuarantine also quarantines the chassis caught since the last status report, before the hub echoes them back.
@@ -371,7 +395,7 @@ func confirmClaims(last map[claim]bool, claims []claim) (map[claim]bool, []strin
 	return next, offenders
 }
 
-func guardBindings(run runner, gateway string) (rebound []string, claims []claim, err error) {
+func guardBindings(run runner, gateway, former string) (rebound []string, claims []claim, err error) {
 	out, err := run("ovn-nbctl", "--format=csv", "--data=bare", "--no-headings", "--columns=name,options", "list", "logical_switch_port")
 	if err != nil {
 		return nil, nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
@@ -423,7 +447,7 @@ func guardBindings(run runner, gateway string) (rebound []string, claims []claim
 		}
 		for _, w := range wrong {
 			// hub-gw is the gateway's own chassis in either mode, never a node to quarantine.
-			if suspect && w != "" && w != gateway && w != "hub-gw" {
+			if suspect && w != "" && w != gateway && w != former && w != "hub-gw" {
 				claims = append(claims, claim{port, w})
 			}
 		}

@@ -79,8 +79,6 @@ func TestUnderlayRulesGatewayExemption(t *testing.T) {
 	want := []string{
 		`iifname "wg-underlay" oifname "wg-underlay" ip saddr 10.198.0.11 udp dport 6081 accept`,
 		`iifname "wg-underlay" oifname "wg-underlay" ip daddr 10.198.0.11 udp dport 6081 accept`,
-		`iifname "wg-underlay" oifname "wg-underlay" ip saddr 10.198.0.11 udp sport 6081 accept`,
-		`iifname "wg-underlay" oifname "wg-underlay" ip daddr 10.198.0.11 udp sport 6081 accept`,
 	}
 	r := underlayRules(st)
 	quarantine := strings.Index(r, "oifname \"wg-underlay\" ip daddr @quarantine drop\n\t\t"+`iifname "wg-underlay" oifname`)
@@ -90,7 +88,7 @@ func TestUnderlayRulesGatewayExemption(t *testing.T) {
 			t.Errorf("missing %q after the quarantine drops and before the final drop in:\n%s", w, r)
 		}
 	}
-	if strings.Count(r, "6081") != len(want) {
+	if strings.Count(r, "6081") != len(want) || strings.Contains(r, "sport 6081") {
 		t.Errorf("exemption beyond the gateway chassis IP:\n%s", r)
 	}
 	st.GatewayChassis = hubGW
