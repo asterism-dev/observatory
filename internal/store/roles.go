@@ -15,18 +15,39 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 )
 
-// PolicySnapshot reads the whole policy; inside a transaction it sees that transaction's uncommitted rows.
+// PolicySnapshot reads the IAM policy without owner refs; inside a transaction it sees that transaction's uncommitted rows.
 func (s *Store) PolicySnapshot(ctx context.Context) (authz.Policy, error) {
+	return s.snapshot(ctx, readPolicy)
+}
+
+// HubPolicy is PolicySnapshot with OwnerRefs, read from one snapshot: the policy the hub enforces.
+func (s *Store) HubPolicy(ctx context.Context) (authz.Policy, error) {
+	return s.snapshot(ctx, func(ctx context.Context, q querier) (authz.Policy, error) {
+		p, err := readPolicy(ctx, q)
+		if err != nil {
+			return p, err
+		}
+		p.VMs, p.Disks, err = readOwnerRefs(ctx, q)
+		return p, err
+	})
+}
+
+// OwnerRefs reads the owners of VMs and live disks, which grant their owners access.
+func (s *Store) OwnerRefs(ctx context.Context) ([]authz.VMRef, []authz.DiskRef, error) {
+	return readOwnerRefs(ctx, s.q)
+}
+
+func (s *Store) snapshot(ctx context.Context, read func(context.Context, querier) (authz.Policy, error)) (authz.Policy, error) {
 	pool, ok := s.q.(*pgxpool.Pool)
 	if !ok {
-		return readPolicy(ctx, s.q)
+		return read(ctx, s.q)
 	}
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return authz.Policy{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	return readPolicy(ctx, tx)
+	return read(ctx, tx)
 }
 
 func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
@@ -67,30 +88,6 @@ func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
 		return p, err
 	}
 
-	rows, err = q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM vms`)
-	if err != nil {
-		return p, err
-	}
-	p.VMs, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (v authz.VMRef, err error) {
-		err = r.Scan(&v.OrgID, &v.ID, &v.UserID, &v.TeamID)
-		return
-	})
-	if err != nil {
-		return p, err
-	}
-
-	rows, err = q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM disks WHERE deleted_at IS NULL`)
-	if err != nil {
-		return p, err
-	}
-	p.Disks, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (d authz.DiskRef, err error) {
-		err = r.Scan(&d.OrgID, &d.ID, &d.UserID, &d.TeamID)
-		return
-	})
-	if err != nil {
-		return p, err
-	}
-
 	if p.Roles, err = readRoles(ctx, q, nil); err != nil {
 		return p, err
 	}
@@ -104,6 +101,29 @@ func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
 		return
 	})
 	return p, err
+}
+
+func readOwnerRefs(ctx context.Context, q querier) ([]authz.VMRef, []authz.DiskRef, error) {
+	rows, err := q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM vms`)
+	if err != nil {
+		return nil, nil, err
+	}
+	vms, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (v authz.VMRef, err error) {
+		err = r.Scan(&v.OrgID, &v.ID, &v.UserID, &v.TeamID)
+		return
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err = q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM disks WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, nil, err
+	}
+	disks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (d authz.DiskRef, err error) {
+		err = r.Scan(&d.OrgID, &d.ID, &d.UserID, &d.TeamID)
+		return
+	})
+	return vms, disks, err
 }
 
 // readRoles reads the custom roles of org, or of all orgs if org is nil, ordered by name.
@@ -203,6 +223,14 @@ func (s *Store) LockHubOrg(ctx context.Context, orgID uuid.UUID) error {
 	}
 	_, err := s.q.Exec(ctx, "SELECT 1 FROM hub_orgs WHERE org_id = $1 FOR UPDATE", orgID)
 	return err
+}
+
+// lockUserScope orders a user-scope create against PurgeMember, which holds LockHubOrg.
+func (s *Store) lockUserScope(ctx context.Context, orgID uuid.UUID, scope EnvScope) error {
+	if scope != EnvScopeUser {
+		return nil
+	}
+	return s.LockHubOrg(ctx, orgID)
 }
 
 func (s *Store) CreateRole(ctx context.Context, orgID uuid.UUID, r authz.CustomRole) (authz.CustomRole, error) {

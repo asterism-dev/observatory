@@ -162,7 +162,7 @@ func TestRemoveMemberCleansTeamsAndBindings(t *testing.T) {
 	if err := s.RemoveMember(ctx, orgs[0], m.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PurgeMember(ctx, orgs[0], m.User.ID); err != nil {
+	if _, err := s.PurgeMember(ctx, orgs[0], m.User.ID, memberIn(s, orgs[0], m.User.ID)); err != nil {
 		t.Fatal(err)
 	}
 	count := func(sql string, args ...any) int {
@@ -197,38 +197,78 @@ func execSQL(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
 	}
 }
 
-func TestPurgeMemberWaitsForConcurrentRejoin(t *testing.T) {
+// memberIn answers like iam's GetMembership, from the memberships table.
+func memberIn(s *store.Store, org, user uuid.UUID) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		_, err := s.Membership(ctx, org, user)
+		if errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+}
+
+func TestPurgeSkipsWhenIAMSaysMember(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
 	a, m := login(t, s, "a"), login(t, s, "m")
 	org := mustCreateOrg(t, s, "A", a.User.ID)
-	rejoin, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	mid := m.User.ID
+	v := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "P"), "p")
+	asked := false
+	purged, err := s.PurgeMember(ctx, org.ID, mid, func(context.Context) (bool, error) { asked = true; return true, nil })
+	if err != nil || purged || !asked {
+		t.Fatalf("purge: purged=%v asked=%v err=%v", purged, asked, err)
 	}
-	defer func() { _ = rejoin.Rollback(ctx) }()
-	if _, err := rejoin.Exec(ctx, "INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", org.ID, m.User.ID); err != nil {
-		t.Fatal(err)
+	if _, err := s.EnvVar(ctx, org.ID, v.ID); err != nil {
+		t.Fatalf("member's variable: %v", err)
 	}
-	type result struct {
-		purged bool
-		err    error
-	}
-	done := make(chan result, 1)
+}
+
+func TestUserScopeCreateWaitsForPurge(t *testing.T) {
+	ctx := context.Background()
+	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
+	a, m := login(t, s, "a"), login(t, s, "m")
+	org := mustCreateOrg(t, s, "A", a.User.ID)
+	mid := m.User.ID
+	old := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "OLD"), "o")
+	locked, release := make(chan struct{}), make(chan struct{})
+	purgeDone := make(chan error, 1)
 	go func() {
-		purged, err := s.PurgeMember(ctx, org.ID, m.User.ID)
-		done <- result{purged, err}
+		_, err := s.PurgeMember(ctx, org.ID, mid, func(context.Context) (bool, error) {
+			close(locked)
+			<-release
+			return false, nil
+		})
+		purgeDone <- err
+	}()
+	<-locked
+	type created struct {
+		v   store.EnvVar
+		err error
+	}
+	createDone := make(chan created, 1)
+	go func() {
+		v, err := s.CreateEnvVar(ctx, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "NEW"), "n")
+		createDone <- created{v, err}
 	}()
 	select {
-	case r := <-done:
-		t.Fatalf("purge didn't wait for the uncommitted re-join: %+v", r)
+	case c := <-createDone:
+		t.Fatalf("create didn't wait for the purge: %+v", c)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if err := rejoin.Commit(ctx); err != nil {
+	close(release)
+	if err := <-purgeDone; err != nil {
 		t.Fatal(err)
 	}
-	if r := <-done; r.err != nil || r.purged {
-		t.Fatalf("purge after the re-join: %+v", r)
+	c := <-createDone
+	if c.err != nil {
+		t.Fatal(c.err)
+	}
+	if _, err := s.EnvVar(ctx, org.ID, old.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old variable: %v", err)
+	}
+	if _, err := s.EnvVar(ctx, org.ID, c.v.ID); err != nil {
+		t.Fatalf("variable created after the purge: %v", err)
 	}
 }

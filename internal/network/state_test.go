@@ -39,7 +39,7 @@ func newFixture(t testing.TB) *fixture {
 	f.member(f.orgA, f.a2, store.RoleMember)
 	f.member(f.orgA, f.adm, store.RoleAdmin)
 	f.nodeA, f.nodeB = f.node(f.orgA, f.owner, "n"), f.node(f.orgB, f.b1, "n")
-	z, err := authz.NewService(ctx, f.s.PolicySnapshot)
+	z, err := authz.NewService(ctx, f.s.HubPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}

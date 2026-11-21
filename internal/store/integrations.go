@@ -173,6 +173,9 @@ func (s *Store) CreateIntegration(ctx context.Context, v Integration, sec Integr
 		return Integration{}, err
 	}
 	err = s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, v.OrgID, v.Scope); err != nil {
+			return err
+		}
 		key, err := tx.orgKey(ctx, v.OrgID)
 		if err != nil {
 			return err

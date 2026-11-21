@@ -9,6 +9,7 @@ package iamv1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -449,11 +450,219 @@ func (x *Team) GetName() string {
 	return ""
 }
 
+type GetMembershipRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMembershipRequest) Reset() {
+	*x = GetMembershipRequest{}
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMembershipRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMembershipRequest) ProtoMessage() {}
+
+func (x *GetMembershipRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMembershipRequest.ProtoReflect.Descriptor instead.
+func (*GetMembershipRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_iam_v1_internal_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetMembershipRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *GetMembershipRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+type GetMembershipResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Member        bool                   `protobuf:"varint,1,opt,name=member,proto3" json:"member,omitempty"`
+	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMembershipResponse) Reset() {
+	*x = GetMembershipResponse{}
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMembershipResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMembershipResponse) ProtoMessage() {}
+
+func (x *GetMembershipResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMembershipResponse.ProtoReflect.Descriptor instead.
+func (*GetMembershipResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_iam_v1_internal_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetMembershipResponse) GetMember() bool {
+	if x != nil {
+		return x.Member
+	}
+	return false
+}
+
+func (x *GetMembershipResponse) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+type GetSessionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSessionRequest) Reset() {
+	*x = GetSessionRequest{}
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSessionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSessionRequest) ProtoMessage() {}
+
+func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSessionRequest.ProtoReflect.Descriptor instead.
+func (*GetSessionRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_iam_v1_internal_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *GetSessionRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type GetSessionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Revoked       bool                   `protobuf:"varint,3,opt,name=revoked,proto3" json:"revoked,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSessionResponse) Reset() {
+	*x = GetSessionResponse{}
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSessionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSessionResponse) ProtoMessage() {}
+
+func (x *GetSessionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_iam_v1_internal_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSessionResponse.ProtoReflect.Descriptor instead.
+func (*GetSessionResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_iam_v1_internal_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetSessionResponse) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *GetSessionResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *GetSessionResponse) GetRevoked() bool {
+	if x != nil {
+		return x.Revoked
+	}
+	return false
+}
+
 var File_observatory_iam_v1_internal_proto protoreflect.FileDescriptor
 
 const file_observatory_iam_v1_internal_proto_rawDesc = "" +
 	"\n" +
-	"!observatory/iam/v1/internal.proto\x12\x12observatory.iam.v1\",\n" +
+	"!observatory/iam/v1/internal.proto\x12\x12observatory.iam.v1\x1a\x1fgoogle/protobuf/timestamp.proto\",\n" +
 	"\x0fGetUsersRequest\x12\x19\n" +
 	"\buser_ids\x18\x01 \x03(\tR\auserIds\"B\n" +
 	"\x10GetUsersResponse\x12.\n" +
@@ -476,11 +685,28 @@ const file_observatory_iam_v1_internal_proto_rawDesc = "" +
 	"\x05teams\x18\x01 \x03(\v2\x18.observatory.iam.v1.TeamR\x05teams\"*\n" +
 	"\x04Team\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name2\xa5\x02\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"F\n" +
+	"\x14GetMembershipRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\"C\n" +
+	"\x15GetMembershipResponse\x12\x16\n" +
+	"\x06member\x18\x01 \x01(\bR\x06member\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\"2\n" +
+	"\x11GetSessionRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x82\x01\n" +
+	"\x12GetSessionResponse\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x18\n" +
+	"\arevoked\x18\x03 \x01(\bR\arevoked2\xe8\x03\n" +
 	"\x12IAMInternalService\x12U\n" +
 	"\bGetUsers\x12#.observatory.iam.v1.GetUsersRequest\x1a$.observatory.iam.v1.GetUsersResponse\x12^\n" +
 	"\vListSSHKeys\x12&.observatory.iam.v1.ListSSHKeysRequest\x1a'.observatory.iam.v1.ListSSHKeysResponse\x12X\n" +
-	"\tListTeams\x12$.observatory.iam.v1.ListTeamsRequest\x1a%.observatory.iam.v1.ListTeamsResponseB\xd6\x01\n" +
+	"\tListTeams\x12$.observatory.iam.v1.ListTeamsRequest\x1a%.observatory.iam.v1.ListTeamsResponse\x12d\n" +
+	"\rGetMembership\x12(.observatory.iam.v1.GetMembershipRequest\x1a).observatory.iam.v1.GetMembershipResponse\x12[\n" +
+	"\n" +
+	"GetSession\x12%.observatory.iam.v1.GetSessionRequest\x1a&.observatory.iam.v1.GetSessionResponseB\xd6\x01\n" +
 	"\x16com.observatory.iam.v1B\rInternalProtoP\x01ZCgithub.com/asterism-dev/observatory/gen/go/observatory/iam/v1;iamv1\xa2\x02\x03OIX\xaa\x02\x12Observatory.Iam.V1\xca\x02\x12Observatory\\Iam\\V1\xe2\x02\x1eObservatory\\Iam\\V1\\GPBMetadata\xea\x02\x14Observatory::Iam::V1b\x06proto3"
 
 var (
@@ -495,33 +721,43 @@ func file_observatory_iam_v1_internal_proto_rawDescGZIP() []byte {
 	return file_observatory_iam_v1_internal_proto_rawDescData
 }
 
-var file_observatory_iam_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_observatory_iam_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_observatory_iam_v1_internal_proto_goTypes = []any{
-	(*GetUsersRequest)(nil),     // 0: observatory.iam.v1.GetUsersRequest
-	(*GetUsersResponse)(nil),    // 1: observatory.iam.v1.GetUsersResponse
-	(*User)(nil),                // 2: observatory.iam.v1.User
-	(*ListSSHKeysRequest)(nil),  // 3: observatory.iam.v1.ListSSHKeysRequest
-	(*ListSSHKeysResponse)(nil), // 4: observatory.iam.v1.ListSSHKeysResponse
-	(*SSHKey)(nil),              // 5: observatory.iam.v1.SSHKey
-	(*ListTeamsRequest)(nil),    // 6: observatory.iam.v1.ListTeamsRequest
-	(*ListTeamsResponse)(nil),   // 7: observatory.iam.v1.ListTeamsResponse
-	(*Team)(nil),                // 8: observatory.iam.v1.Team
+	(*GetUsersRequest)(nil),       // 0: observatory.iam.v1.GetUsersRequest
+	(*GetUsersResponse)(nil),      // 1: observatory.iam.v1.GetUsersResponse
+	(*User)(nil),                  // 2: observatory.iam.v1.User
+	(*ListSSHKeysRequest)(nil),    // 3: observatory.iam.v1.ListSSHKeysRequest
+	(*ListSSHKeysResponse)(nil),   // 4: observatory.iam.v1.ListSSHKeysResponse
+	(*SSHKey)(nil),                // 5: observatory.iam.v1.SSHKey
+	(*ListTeamsRequest)(nil),      // 6: observatory.iam.v1.ListTeamsRequest
+	(*ListTeamsResponse)(nil),     // 7: observatory.iam.v1.ListTeamsResponse
+	(*Team)(nil),                  // 8: observatory.iam.v1.Team
+	(*GetMembershipRequest)(nil),  // 9: observatory.iam.v1.GetMembershipRequest
+	(*GetMembershipResponse)(nil), // 10: observatory.iam.v1.GetMembershipResponse
+	(*GetSessionRequest)(nil),     // 11: observatory.iam.v1.GetSessionRequest
+	(*GetSessionResponse)(nil),    // 12: observatory.iam.v1.GetSessionResponse
+	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
 }
 var file_observatory_iam_v1_internal_proto_depIdxs = []int32{
-	2, // 0: observatory.iam.v1.GetUsersResponse.users:type_name -> observatory.iam.v1.User
-	5, // 1: observatory.iam.v1.ListSSHKeysResponse.keys:type_name -> observatory.iam.v1.SSHKey
-	8, // 2: observatory.iam.v1.ListTeamsResponse.teams:type_name -> observatory.iam.v1.Team
-	0, // 3: observatory.iam.v1.IAMInternalService.GetUsers:input_type -> observatory.iam.v1.GetUsersRequest
-	3, // 4: observatory.iam.v1.IAMInternalService.ListSSHKeys:input_type -> observatory.iam.v1.ListSSHKeysRequest
-	6, // 5: observatory.iam.v1.IAMInternalService.ListTeams:input_type -> observatory.iam.v1.ListTeamsRequest
-	1, // 6: observatory.iam.v1.IAMInternalService.GetUsers:output_type -> observatory.iam.v1.GetUsersResponse
-	4, // 7: observatory.iam.v1.IAMInternalService.ListSSHKeys:output_type -> observatory.iam.v1.ListSSHKeysResponse
-	7, // 8: observatory.iam.v1.IAMInternalService.ListTeams:output_type -> observatory.iam.v1.ListTeamsResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	2,  // 0: observatory.iam.v1.GetUsersResponse.users:type_name -> observatory.iam.v1.User
+	5,  // 1: observatory.iam.v1.ListSSHKeysResponse.keys:type_name -> observatory.iam.v1.SSHKey
+	8,  // 2: observatory.iam.v1.ListTeamsResponse.teams:type_name -> observatory.iam.v1.Team
+	13, // 3: observatory.iam.v1.GetSessionResponse.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 4: observatory.iam.v1.IAMInternalService.GetUsers:input_type -> observatory.iam.v1.GetUsersRequest
+	3,  // 5: observatory.iam.v1.IAMInternalService.ListSSHKeys:input_type -> observatory.iam.v1.ListSSHKeysRequest
+	6,  // 6: observatory.iam.v1.IAMInternalService.ListTeams:input_type -> observatory.iam.v1.ListTeamsRequest
+	9,  // 7: observatory.iam.v1.IAMInternalService.GetMembership:input_type -> observatory.iam.v1.GetMembershipRequest
+	11, // 8: observatory.iam.v1.IAMInternalService.GetSession:input_type -> observatory.iam.v1.GetSessionRequest
+	1,  // 9: observatory.iam.v1.IAMInternalService.GetUsers:output_type -> observatory.iam.v1.GetUsersResponse
+	4,  // 10: observatory.iam.v1.IAMInternalService.ListSSHKeys:output_type -> observatory.iam.v1.ListSSHKeysResponse
+	7,  // 11: observatory.iam.v1.IAMInternalService.ListTeams:output_type -> observatory.iam.v1.ListTeamsResponse
+	10, // 12: observatory.iam.v1.IAMInternalService.GetMembership:output_type -> observatory.iam.v1.GetMembershipResponse
+	12, // 13: observatory.iam.v1.IAMInternalService.GetSession:output_type -> observatory.iam.v1.GetSessionResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_observatory_iam_v1_internal_proto_init() }
@@ -535,7 +771,7 @@ func file_observatory_iam_v1_internal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_iam_v1_internal_proto_rawDesc), len(file_observatory_iam_v1_internal_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

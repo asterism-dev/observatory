@@ -336,7 +336,7 @@ func TestIntegrationPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	execSQL(t, pool, `DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, member)
-	if _, err := s.PurgeMember(ctx, org.ID, member); err != nil {
+	if _, err := s.PurgeMember(ctx, org.ID, member, memberIn(s, org.ID, member)); err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []store.Integration{teamInt, memberInt} {

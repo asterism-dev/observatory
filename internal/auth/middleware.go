@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
@@ -72,11 +73,11 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		// ponytail: one session lookup per hub request so logout and revoke apply at once; 5b-2 moves this to an iam call/stream.
-		active, err := h.Store.SessionActive(r.Context(), p.Session)
+		// ponytail: one iam call per hub request so logout and revoke apply at once; cache briefly if iam's load matters.
+		active, err := iaminternal.SessionActive(r.Context(), h.IAM, p.Session)
 		if err != nil {
-			slog.Error("session lookup", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			slog.Error("session check at iam", "err", err)
+			writeError(w, http.StatusServiceUnavailable, "session check unavailable")
 			return
 		}
 		if !active {

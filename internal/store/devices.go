@@ -42,6 +42,10 @@ func (s *Store) CreateDevice(ctx context.Context, d Device) (Device, error) {
 	}
 	var out Device
 	err := s.InTx(ctx, func(tx *Store) error {
+		// Orders the create against PurgeMember; taken before the address lock like every hub org write.
+		if err := tx.LockHubOrg(ctx, d.OrgID); err != nil {
+			return err
+		}
 		if err := tx.lockAddresses(ctx); err != nil {
 			return err
 		}

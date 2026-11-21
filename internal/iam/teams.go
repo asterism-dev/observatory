@@ -197,7 +197,7 @@ func (s *server) SetTeamMember(ctx context.Context, req *connect.Request[iamv1.S
 		} else if needsUpdate {
 			return errForbidden
 		}
-		if guardErr = checkTeamRoles(ctx, tx, e, org, role, actor, id); guardErr != nil {
+		if guardErr = s.checkTeamRoles(ctx, tx, e, org, role, actor, id); guardErr != nil {
 			return guardErr
 		}
 		if err := tx.SetTeamMember(ctx, org, id, user, admin); err != nil {
@@ -328,7 +328,7 @@ func teamRoles(ctx context.Context, tx *store.Store, org, team uuid.UUID) ([]uui
 }
 
 // checkTeamRoles applies the bind guard to every role bound to team, since adding a member grants them those roles.
-func checkTeamRoles(ctx context.Context, tx *store.Store, e *authz.Enforcer, org uuid.UUID, role store.Role, actor string, team uuid.UUID) error {
+func (s *server) checkTeamRoles(ctx context.Context, tx *store.Store, e *authz.Enforcer, org uuid.UUID, role store.Role, actor string, team uuid.UUID) error {
 	ids, err := teamRoles(ctx, tx, org, team)
 	if err != nil || len(ids) == 0 {
 		return err
@@ -337,7 +337,7 @@ func checkTeamRoles(ctx context.Context, tx *store.Store, e *authz.Enforcer, org
 	for _, id := range ids {
 		keys = append(keys, id.String())
 	}
-	if err := e.CanGrantRole(actor, org, privileged(role), nil, keys); err != nil {
+	if err := s.canGrant(ctx, e, actor, org, privileged(role), nil, keys); err != nil {
 		return err
 	}
 	if privileged(role) {

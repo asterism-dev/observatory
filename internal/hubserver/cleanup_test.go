@@ -19,6 +19,7 @@ import (
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -92,7 +93,7 @@ func (e *cleanupEnv) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- consumeIAMEvents(ctx, e.js, e.s, func(org uuid.UUID) {
+		done <- consumeIAMEvents(ctx, e.js, e.s, iaminternal.Server{Store: e.s}, func(org uuid.UUID) {
 			e.mu.Lock()
 			e.notified = append(e.notified, org)
 			e.mu.Unlock()
@@ -333,6 +334,25 @@ func TestReplayedRemovalKeepsRejoinedMemberRows(t *testing.T) {
 	e.settled()
 	if got := e.rows(store.EnvScopeUser, bob); total(got) != len(got) {
 		t.Fatalf("re-joined bob's rows after replay: %v", got)
+	}
+}
+
+// A removal redelivered after bob re-joined and created a variable must keep it.
+func TestPurgeAfterRejoinedCreateKeepsRow(t *testing.T) {
+	e := newCleanupEnv(t)
+	bob := e.member("bob")
+	e.seed(store.EnvScopeUser, bob, bob)
+	e.leave(bob)
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	e.waitFor("bob's rows to go", func() bool { return total(e.rows(store.EnvScopeUser, bob)) == 0 })
+	e.rejoin(bob)
+	if _, err := e.s.CreateEnvVar(context.Background(), store.EnvVar{OrgID: e.org.ID, Kind: store.EnvPlain, Scope: store.EnvScopeUser, OwnerID: &bob, Name: "NEW", CreatedBy: bob, UpdatedBy: bob}, "n"); err != nil {
+		t.Fatal(err)
+	}
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	e.settled()
+	if got := e.rows(store.EnvScopeUser, bob)["env_vars"]; got != 1 {
+		t.Fatalf("re-joined bob's variables: %d", got)
 	}
 }
 

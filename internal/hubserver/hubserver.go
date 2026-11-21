@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -69,7 +70,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	if err := s.CheckMasterKey(ctx); err != nil {
 		return err
 	}
-	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	z, err := authz.NewService(ctx, s.HubPolicy)
 	if err != nil {
 		return err
 	}
@@ -89,16 +90,17 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	if err != nil {
 		return err
 	}
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken, Verifier: verifier}
+	// In-process until iam runs as its own service.
+	iam := iaminternal.Server{Store: s}
+	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken, Verifier: verifier, IAM: iam}
 
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	if err := mountIdentity(ctx, mux, s, z, cfg); err != nil {
+	policies, err := mountIdentity(ctx, mux, s, z, cfg)
+	if err != nil {
 		return err
 	}
-	// In-process until iam runs as its own service.
-	iam := iaminternal.Server{Store: s}
-	resources := api.ResourceServer{Store: s}
+	resources := api.ResourceServer{Store: s, Policy: hubPolicy{z, policies}}
 	mux.Handle("/internal/hub/", servicetoken.Middleware(cfg.ServiceTokens)(internalHub(resources)))
 	f, err := fleet.New(ctx, s, z, nh, iam)
 	if err != nil {
@@ -187,7 +189,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		} else {
 			slog.Warn("OBSERVATORY_REGISTRY_CONFIG is not set; the hub does not garbage-collect the registry")
 		}
-		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, OtherURLs: []*url.URL{cfg.NodeURL, builderHub}, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret, GC: gc})
+		api.RegistryEndpoints(mux, s, z, api.Registry{Upstream: upstream, PublicURL: publicURL, OtherURLs: []*url.URL{cfg.NodeURL, builderHub}, Issuer: iss, Builds: s, Manifests: client, Tags: tags, EventsSecret: cfg.RegistryEventsSecret, GC: gc, IAM: iam})
 		manifests = client
 		f.PullImagesFrom(cfg.NodeURL, iss)
 		f.BootBuildersWith(sched.BootEnv)
@@ -197,13 +199,13 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	}
 	busCtx, stopBus := context.WithCancel(ctx)
 	busDone := make(chan struct{})
-	go func() { runBus(busCtx, pool, s, f.NotifyOrg, manifests, cfg.NATSURL, cfg.NATSToken); close(busDone) }()
+	go func() { runBus(busCtx, pool, s, iam, f.NotifyOrg, manifests, cfg.NATSURL, cfg.NATSToken); close(busDone) }()
 	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
 	defer func() { stopBus(); <-busDone }()
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	apiHandler := api.New(s, iam, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
-	iamHandler, err := iamapi.Handler(iamapi.Deps{Store: s, Policy: z, Verifier: verifier, Resources: resources, Notify: f.NotifyOrg, Pool: pool, PublicURL: publicURL})
+	iamHandler, err := iamapi.Handler(iamapi.Deps{Store: s, Policy: z, Verifier: verifier, Resources: resources, Notify: f.NotifyOrg, Pool: pool, PublicURL: publicURL, Revision: policies.Revision})
 	if err != nil {
 		return err
 	}
@@ -237,7 +239,7 @@ func dialAddr(addr net.Addr) string {
 }
 
 // runBus relays the outbox and consumes iam events once the bus is reachable; until then the hub serves and the outbox buffers.
-func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter, url, token string) {
+func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), manifests api.ManifestDeleter, url, token string) {
 	js, closeBus, err := bus.Await(ctx, url, token)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -262,15 +264,15 @@ func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func
 		}
 	}
 	consumed := make(chan struct{})
-	go func() { consumeUntilDone(ctx, js, s, notify, manifests); close(consumed) }()
+	go func() { consumeUntilDone(ctx, js, s, iam, notify, manifests); close(consumed) }()
 	defer func() { <-consumed }()
 	outbox.NewRelay(pool, js).Run(ctx)
 }
 
 // consumeUntilDone restarts the iam event consumer whenever it fails; unpurged rows wait in the meantime.
-func consumeUntilDone(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter) {
+func consumeUntilDone(ctx context.Context, js jetstream.JetStream, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), manifests api.ManifestDeleter) {
 	for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
-		err := consumeIAMEvents(ctx, js, s, notify, manifests)
+		err := consumeIAMEvents(ctx, js, s, iam, notify, manifests)
 		if ctx.Err() != nil {
 			return
 		}

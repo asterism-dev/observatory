@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,8 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -40,7 +44,12 @@ type Registry struct {
 	Tags         *TagSync
 	EventsSecret string
 	GC           *registry.GC
+	// IAM checks a user credential's session on every use.
+	IAM iamv1connect.IAMInternalServiceClient
 }
+
+// errSessionCheck means iam could not say whether a credential's session is still live.
+var errSessionCheck = errors.New("session check unavailable")
 
 // RegistryEndpoints serves the token endpoint and the registry's push events, and proxies the rest of /v2/ to the registry.
 func RegistryEndpoints(mux *http.ServeMux, s *store.Store, z *authz.Service, reg Registry) {
@@ -75,6 +84,10 @@ func (t *registryTokens) token(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, store.ErrNotFound) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="observatory"`)
 		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	} else if errors.Is(err, errSessionCheck) {
+		slog.Error("registry session check", "err", err)
+		writeError(w, http.StatusServiceUnavailable, errSessionCheck.Error())
 		return
 	} else if err != nil {
 		serverError(w, "registry principal", err)
@@ -114,9 +127,19 @@ func (t *registryTokens) principal(r *http.Request) (registryPrincipal, error) {
 	if !ok || user != registryUser || secret == "" {
 		return registryPrincipal{}, store.ErrNotFound
 	}
-	id, err := t.store.RegistryCredentialUser(r.Context(), secret)
+	id, session, err := t.store.RegistryCredentialUser(r.Context(), secret)
+	if err == nil {
+		active, err := iaminternal.SessionActive(r.Context(), t.reg.IAM, session)
+		if err != nil {
+			return registryPrincipal{}, fmt.Errorf("%w: %w", errSessionCheck, err)
+		}
+		if !active {
+			return registryPrincipal{}, store.ErrNotFound
+		}
+		return registryPrincipal{user: id}, nil
+	}
 	if !errors.Is(err, store.ErrNotFound) || t.reg.Builds == nil {
-		return registryPrincipal{user: id}, err
+		return registryPrincipal{}, err
 	}
 	b, err := t.reg.Builds.BuildBySecret(r.Context(), secret)
 	return registryPrincipal{build: b}, err
@@ -239,10 +262,6 @@ func (h *api) createRegistryCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, expires, err := h.store.CreateRegistryCredential(r.Context(), p.User.ID, p.Session.ID, p.Session.ExpiresAt, registryCredentialTTL)
-	if errors.Is(err, store.ErrSessionRevoked) {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
 	if err != nil {
 		serverError(w, "registry credential", err)
 		return

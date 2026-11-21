@@ -36,12 +36,16 @@ const (
 	// ResourceServiceCheckOwnershipProcedure is the fully-qualified name of the ResourceService's
 	// CheckOwnership RPC.
 	ResourceServiceCheckOwnershipProcedure = "/observatory.hub.v1.ResourceService/CheckOwnership"
+	// ResourceServiceCanHoldProcedure is the fully-qualified name of the ResourceService's CanHold RPC.
+	ResourceServiceCanHoldProcedure = "/observatory.hub.v1.ResourceService/CanHold"
 )
 
 // ResourceServiceClient is a client for the observatory.hub.v1.ResourceService service.
 type ResourceServiceClient interface {
 	// CheckOwnership reports whether subject (user:<uuid> or team:<uuid>) owns VMs or live disks in the org.
 	CheckOwnership(context.Context, *connect.Request[v1.CheckOwnershipRequest]) (*connect.Response[v1.CheckOwnershipResponse], error)
+	// CanHold checks actor's allow rules on the hub's policy at min_revision or later: PermissionDenied, or Unavailable after 5 s below it.
+	CanHold(context.Context, *connect.Request[v1.CanHoldRequest]) (*connect.Response[v1.CanHoldResponse], error)
 }
 
 // NewResourceServiceClient constructs a client for the observatory.hub.v1.ResourceService service.
@@ -61,12 +65,19 @@ func NewResourceServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(resourceServiceMethods.ByName("CheckOwnership")),
 			connect.WithClientOptions(opts...),
 		),
+		canHold: connect.NewClient[v1.CanHoldRequest, v1.CanHoldResponse](
+			httpClient,
+			baseURL+ResourceServiceCanHoldProcedure,
+			connect.WithSchema(resourceServiceMethods.ByName("CanHold")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // resourceServiceClient implements ResourceServiceClient.
 type resourceServiceClient struct {
 	checkOwnership *connect.Client[v1.CheckOwnershipRequest, v1.CheckOwnershipResponse]
+	canHold        *connect.Client[v1.CanHoldRequest, v1.CanHoldResponse]
 }
 
 // CheckOwnership calls observatory.hub.v1.ResourceService.CheckOwnership.
@@ -74,10 +85,17 @@ func (c *resourceServiceClient) CheckOwnership(ctx context.Context, req *connect
 	return c.checkOwnership.CallUnary(ctx, req)
 }
 
+// CanHold calls observatory.hub.v1.ResourceService.CanHold.
+func (c *resourceServiceClient) CanHold(ctx context.Context, req *connect.Request[v1.CanHoldRequest]) (*connect.Response[v1.CanHoldResponse], error) {
+	return c.canHold.CallUnary(ctx, req)
+}
+
 // ResourceServiceHandler is an implementation of the observatory.hub.v1.ResourceService service.
 type ResourceServiceHandler interface {
 	// CheckOwnership reports whether subject (user:<uuid> or team:<uuid>) owns VMs or live disks in the org.
 	CheckOwnership(context.Context, *connect.Request[v1.CheckOwnershipRequest]) (*connect.Response[v1.CheckOwnershipResponse], error)
+	// CanHold checks actor's allow rules on the hub's policy at min_revision or later: PermissionDenied, or Unavailable after 5 s below it.
+	CanHold(context.Context, *connect.Request[v1.CanHoldRequest]) (*connect.Response[v1.CanHoldResponse], error)
 }
 
 // NewResourceServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -93,10 +111,18 @@ func NewResourceServiceHandler(svc ResourceServiceHandler, opts ...connect.Handl
 		connect.WithSchema(resourceServiceMethods.ByName("CheckOwnership")),
 		connect.WithHandlerOptions(opts...),
 	)
+	resourceServiceCanHoldHandler := connect.NewUnaryHandler(
+		ResourceServiceCanHoldProcedure,
+		svc.CanHold,
+		connect.WithSchema(resourceServiceMethods.ByName("CanHold")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/observatory.hub.v1.ResourceService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ResourceServiceCheckOwnershipProcedure:
 			resourceServiceCheckOwnershipHandler.ServeHTTP(w, r)
+		case ResourceServiceCanHoldProcedure:
+			resourceServiceCanHoldHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -108,4 +134,8 @@ type UnimplementedResourceServiceHandler struct{}
 
 func (UnimplementedResourceServiceHandler) CheckOwnership(context.Context, *connect.Request[v1.CheckOwnershipRequest]) (*connect.Response[v1.CheckOwnershipResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.hub.v1.ResourceService.CheckOwnership is not implemented"))
+}
+
+func (UnimplementedResourceServiceHandler) CanHold(context.Context, *connect.Request[v1.CanHoldRequest]) (*connect.Response[v1.CanHoldResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.hub.v1.ResourceService.CanHold is not implemented"))
 }

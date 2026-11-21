@@ -6,6 +6,8 @@ package observatory.hub.v1;
 service ResourceService {
   // CheckOwnership reports whether subject (user:<uuid> or team:<uuid>) owns VMs or live disks in the org.
   rpc CheckOwnership(CheckOwnershipRequest) returns (CheckOwnershipResponse);
+  // CanHold checks actor's allow rules on the hub's policy at min_revision or later: PermissionDenied, or Unavailable after 5 s below it.
+  rpc CanHold(CanHoldRequest) returns (CanHoldResponse);
 }
 
 message CheckOwnershipRequest {
@@ -17,3 +19,19 @@ message CheckOwnershipResponse {
   bool owns_vms = 1;
   bool owns_disks = 2;
 }
+
+message CanHoldRequest {
+  string org_id = 1;
+  // actor is a subject such as user:<uuid>.
+  string actor = 2;
+  repeated Rule rules = 3;
+  uint64 min_revision = 4;
+}
+
+message Rule {
+  string effect = 1;
+  string object = 2;
+  string action = 3;
+}
+
+message CanHoldResponse {}

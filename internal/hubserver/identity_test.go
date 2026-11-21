@@ -44,7 +44,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	t.Helper()
 	ctx := context.Background()
 	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})
-	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	z, err := authz.NewService(ctx, s.HubPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,5 +461,31 @@ func TestPolicyPublishSkipsUnchanged(t *testing.T) {
 	ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
 	if got := ps.latest().Revision; got <= rev {
 		t.Fatalf("changed snapshot kept revision %d", got)
+	}
+}
+
+func TestPolicyWaitRevision(t *testing.T) {
+	ps := NewPolicyServer()
+	ps.Publish(authz.Policy{})
+	rev := ps.Revision()
+	if err := ps.WaitRevision(t.Context(), rev); err != nil {
+		t.Fatalf("current revision: %v", err)
+	}
+	short, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := ps.WaitRevision(short, rev+1); err == nil {
+		t.Fatal("returned before the revision was published")
+	}
+	done := make(chan error, 1)
+	go func() { done <- ps.WaitRevision(t.Context(), rev+1) }()
+	time.Sleep(20 * time.Millisecond)
+	ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("WaitRevision missed the publish")
 	}
 }

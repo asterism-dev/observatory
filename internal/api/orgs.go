@@ -112,7 +112,7 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		if err := fn(tx); err != nil {
 			return err
 		}
-		p, err := tx.PolicySnapshot(ctx)
+		p, err := tx.HubPolicy(ctx)
 		if err != nil {
 			return err
 		}

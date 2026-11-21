@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/hub/v1/resources.proto.
  */
 export const file_observatory_hub_v1_resources: GenFile = /*@__PURE__*/
-  fileDesc("CiJvYnNlcnZhdG9yeS9odWIvdjEvcmVzb3VyY2VzLnByb3RvEhJvYnNlcnZhdG9yeS5odWIudjEiOAoVQ2hlY2tPd25lcnNoaXBSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIPCgdzdWJqZWN0GAIgASgJIj4KFkNoZWNrT3duZXJzaGlwUmVzcG9uc2USEAoIb3duc192bXMYASABKAgSEgoKb3duc19kaXNrcxgCIAEoCDJ6Cg9SZXNvdXJjZVNlcnZpY2USZwoOQ2hlY2tPd25lcnNoaXASKS5vYnNlcnZhdG9yeS5odWIudjEuQ2hlY2tPd25lcnNoaXBSZXF1ZXN0Gioub2JzZXJ2YXRvcnkuaHViLnYxLkNoZWNrT3duZXJzaGlwUmVzcG9uc2VC1wEKFmNvbS5vYnNlcnZhdG9yeS5odWIudjFCDlJlc291cmNlc1Byb3RvUAFaQ2dpdGh1Yi5jb20vYXN0ZXJpc20tZGV2L29ic2VydmF0b3J5L2dlbi9nby9vYnNlcnZhdG9yeS9odWIvdjE7aHVidjGiAgNPSFiqAhJPYnNlcnZhdG9yeS5IdWIuVjHKAhJPYnNlcnZhdG9yeVxIdWJcVjHiAh5PYnNlcnZhdG9yeVxIdWJcVjFcR1BCTWV0YWRhdGHqAhRPYnNlcnZhdG9yeTo6SHViOjpWMWIGcHJvdG8z");
+  fileDesc("CiJvYnNlcnZhdG9yeS9odWIvdjEvcmVzb3VyY2VzLnByb3RvEhJvYnNlcnZhdG9yeS5odWIudjEiOAoVQ2hlY2tPd25lcnNoaXBSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIPCgdzdWJqZWN0GAIgASgJIj4KFkNoZWNrT3duZXJzaGlwUmVzcG9uc2USEAoIb3duc192bXMYASABKAgSEgoKb3duc19kaXNrcxgCIAEoCCJuCg5DYW5Ib2xkUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSDQoFYWN0b3IYAiABKAkSJwoFcnVsZXMYAyADKAsyGC5vYnNlcnZhdG9yeS5odWIudjEuUnVsZRIUCgxtaW5fcmV2aXNpb24YBCABKAQiNgoEUnVsZRIOCgZlZmZlY3QYASABKAkSDgoGb2JqZWN0GAIgASgJEg4KBmFjdGlvbhgDIAEoCSIRCg9DYW5Ib2xkUmVzcG9uc2UyzgEKD1Jlc291cmNlU2VydmljZRJnCg5DaGVja093bmVyc2hpcBIpLm9ic2VydmF0b3J5Lmh1Yi52MS5DaGVja093bmVyc2hpcFJlcXVlc3QaKi5vYnNlcnZhdG9yeS5odWIudjEuQ2hlY2tPd25lcnNoaXBSZXNwb25zZRJSCgdDYW5Ib2xkEiIub2JzZXJ2YXRvcnkuaHViLnYxLkNhbkhvbGRSZXF1ZXN0GiMub2JzZXJ2YXRvcnkuaHViLnYxLkNhbkhvbGRSZXNwb25zZULXAQoWY29tLm9ic2VydmF0b3J5Lmh1Yi52MUIOUmVzb3VyY2VzUHJvdG9QAVpDZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L2h1Yi92MTtodWJ2MaICA09IWKoCEk9ic2VydmF0b3J5Lkh1Yi5WMcoCEk9ic2VydmF0b3J5XEh1YlxWMeICHk9ic2VydmF0b3J5XEh1YlxWMVxHUEJNZXRhZGF0YeoCFE9ic2VydmF0b3J5OjpIdWI6OlYxYgZwcm90bzM");
 
 /**
  * @generated from message observatory.hub.v1.CheckOwnershipRequest
@@ -57,6 +57,80 @@ export const CheckOwnershipResponseSchema: GenMessage<CheckOwnershipResponse> = 
   messageDesc(file_observatory_hub_v1_resources, 1);
 
 /**
+ * @generated from message observatory.hub.v1.CanHoldRequest
+ */
+export type CanHoldRequest = Message<"observatory.hub.v1.CanHoldRequest"> & {
+  /**
+   * @generated from field: string org_id = 1;
+   */
+  orgId: string;
+
+  /**
+   * actor is a subject such as user:<uuid>.
+   *
+   * @generated from field: string actor = 2;
+   */
+  actor: string;
+
+  /**
+   * @generated from field: repeated observatory.hub.v1.Rule rules = 3;
+   */
+  rules: Rule[];
+
+  /**
+   * @generated from field: uint64 min_revision = 4;
+   */
+  minRevision: bigint;
+};
+
+/**
+ * Describes the message observatory.hub.v1.CanHoldRequest.
+ * Use `create(CanHoldRequestSchema)` to create a new message.
+ */
+export const CanHoldRequestSchema: GenMessage<CanHoldRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_hub_v1_resources, 2);
+
+/**
+ * @generated from message observatory.hub.v1.Rule
+ */
+export type Rule = Message<"observatory.hub.v1.Rule"> & {
+  /**
+   * @generated from field: string effect = 1;
+   */
+  effect: string;
+
+  /**
+   * @generated from field: string object = 2;
+   */
+  object: string;
+
+  /**
+   * @generated from field: string action = 3;
+   */
+  action: string;
+};
+
+/**
+ * Describes the message observatory.hub.v1.Rule.
+ * Use `create(RuleSchema)` to create a new message.
+ */
+export const RuleSchema: GenMessage<Rule> = /*@__PURE__*/
+  messageDesc(file_observatory_hub_v1_resources, 3);
+
+/**
+ * @generated from message observatory.hub.v1.CanHoldResponse
+ */
+export type CanHoldResponse = Message<"observatory.hub.v1.CanHoldResponse"> & {
+};
+
+/**
+ * Describes the message observatory.hub.v1.CanHoldResponse.
+ * Use `create(CanHoldResponseSchema)` to create a new message.
+ */
+export const CanHoldResponseSchema: GenMessage<CanHoldResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_hub_v1_resources, 4);
+
+/**
  * ResourceService answers what the hub's resources depend on; callers authenticate with a service token.
  *
  * @generated from service observatory.hub.v1.ResourceService
@@ -71,6 +145,16 @@ export const ResourceService: GenService<{
     methodKind: "unary";
     input: typeof CheckOwnershipRequestSchema;
     output: typeof CheckOwnershipResponseSchema;
+  },
+  /**
+   * CanHold checks actor's allow rules on the hub's policy at min_revision or later: PermissionDenied, or Unavailable after 5 s below it.
+   *
+   * @generated from rpc observatory.hub.v1.ResourceService.CanHold
+   */
+  canHold: {
+    methodKind: "unary";
+    input: typeof CanHoldRequestSchema;
+    output: typeof CanHoldResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_hub_v1_resources, 0);

@@ -71,7 +71,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	z, err := authz.NewService(ctx, s.HubPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}

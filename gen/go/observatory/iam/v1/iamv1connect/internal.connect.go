@@ -42,6 +42,12 @@ const (
 	// IAMInternalServiceListTeamsProcedure is the fully-qualified name of the IAMInternalService's
 	// ListTeams RPC.
 	IAMInternalServiceListTeamsProcedure = "/observatory.iam.v1.IAMInternalService/ListTeams"
+	// IAMInternalServiceGetMembershipProcedure is the fully-qualified name of the IAMInternalService's
+	// GetMembership RPC.
+	IAMInternalServiceGetMembershipProcedure = "/observatory.iam.v1.IAMInternalService/GetMembership"
+	// IAMInternalServiceGetSessionProcedure is the fully-qualified name of the IAMInternalService's
+	// GetSession RPC.
+	IAMInternalServiceGetSessionProcedure = "/observatory.iam.v1.IAMInternalService/GetSession"
 )
 
 // IAMInternalServiceClient is a client for the observatory.iam.v1.IAMInternalService service.
@@ -51,6 +57,10 @@ type IAMInternalServiceClient interface {
 	// ListSSHKeys returns the SSH public keys of user_ids, at most 1000 per call.
 	ListSSHKeys(context.Context, *connect.Request[v1.ListSSHKeysRequest]) (*connect.Response[v1.ListSSHKeysResponse], error)
 	ListTeams(context.Context, *connect.Request[v1.ListTeamsRequest]) (*connect.Response[v1.ListTeamsResponse], error)
+	// GetMembership reports whether user_id is a member of org_id, and with which built-in role.
+	GetMembership(context.Context, *connect.Request[v1.GetMembershipRequest]) (*connect.Response[v1.GetMembershipResponse], error)
+	// GetSession returns a session whether or not it ended; NotFound if it never existed.
+	GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error)
 }
 
 // NewIAMInternalServiceClient constructs a client for the observatory.iam.v1.IAMInternalService
@@ -82,14 +92,28 @@ func NewIAMInternalServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(iAMInternalServiceMethods.ByName("ListTeams")),
 			connect.WithClientOptions(opts...),
 		),
+		getMembership: connect.NewClient[v1.GetMembershipRequest, v1.GetMembershipResponse](
+			httpClient,
+			baseURL+IAMInternalServiceGetMembershipProcedure,
+			connect.WithSchema(iAMInternalServiceMethods.ByName("GetMembership")),
+			connect.WithClientOptions(opts...),
+		),
+		getSession: connect.NewClient[v1.GetSessionRequest, v1.GetSessionResponse](
+			httpClient,
+			baseURL+IAMInternalServiceGetSessionProcedure,
+			connect.WithSchema(iAMInternalServiceMethods.ByName("GetSession")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // iAMInternalServiceClient implements IAMInternalServiceClient.
 type iAMInternalServiceClient struct {
-	getUsers    *connect.Client[v1.GetUsersRequest, v1.GetUsersResponse]
-	listSSHKeys *connect.Client[v1.ListSSHKeysRequest, v1.ListSSHKeysResponse]
-	listTeams   *connect.Client[v1.ListTeamsRequest, v1.ListTeamsResponse]
+	getUsers      *connect.Client[v1.GetUsersRequest, v1.GetUsersResponse]
+	listSSHKeys   *connect.Client[v1.ListSSHKeysRequest, v1.ListSSHKeysResponse]
+	listTeams     *connect.Client[v1.ListTeamsRequest, v1.ListTeamsResponse]
+	getMembership *connect.Client[v1.GetMembershipRequest, v1.GetMembershipResponse]
+	getSession    *connect.Client[v1.GetSessionRequest, v1.GetSessionResponse]
 }
 
 // GetUsers calls observatory.iam.v1.IAMInternalService.GetUsers.
@@ -107,6 +131,16 @@ func (c *iAMInternalServiceClient) ListTeams(ctx context.Context, req *connect.R
 	return c.listTeams.CallUnary(ctx, req)
 }
 
+// GetMembership calls observatory.iam.v1.IAMInternalService.GetMembership.
+func (c *iAMInternalServiceClient) GetMembership(ctx context.Context, req *connect.Request[v1.GetMembershipRequest]) (*connect.Response[v1.GetMembershipResponse], error) {
+	return c.getMembership.CallUnary(ctx, req)
+}
+
+// GetSession calls observatory.iam.v1.IAMInternalService.GetSession.
+func (c *iAMInternalServiceClient) GetSession(ctx context.Context, req *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error) {
+	return c.getSession.CallUnary(ctx, req)
+}
+
 // IAMInternalServiceHandler is an implementation of the observatory.iam.v1.IAMInternalService
 // service.
 type IAMInternalServiceHandler interface {
@@ -115,6 +149,10 @@ type IAMInternalServiceHandler interface {
 	// ListSSHKeys returns the SSH public keys of user_ids, at most 1000 per call.
 	ListSSHKeys(context.Context, *connect.Request[v1.ListSSHKeysRequest]) (*connect.Response[v1.ListSSHKeysResponse], error)
 	ListTeams(context.Context, *connect.Request[v1.ListTeamsRequest]) (*connect.Response[v1.ListTeamsResponse], error)
+	// GetMembership reports whether user_id is a member of org_id, and with which built-in role.
+	GetMembership(context.Context, *connect.Request[v1.GetMembershipRequest]) (*connect.Response[v1.GetMembershipResponse], error)
+	// GetSession returns a session whether or not it ended; NotFound if it never existed.
+	GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error)
 }
 
 // NewIAMInternalServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -142,6 +180,18 @@ func NewIAMInternalServiceHandler(svc IAMInternalServiceHandler, opts ...connect
 		connect.WithSchema(iAMInternalServiceMethods.ByName("ListTeams")),
 		connect.WithHandlerOptions(opts...),
 	)
+	iAMInternalServiceGetMembershipHandler := connect.NewUnaryHandler(
+		IAMInternalServiceGetMembershipProcedure,
+		svc.GetMembership,
+		connect.WithSchema(iAMInternalServiceMethods.ByName("GetMembership")),
+		connect.WithHandlerOptions(opts...),
+	)
+	iAMInternalServiceGetSessionHandler := connect.NewUnaryHandler(
+		IAMInternalServiceGetSessionProcedure,
+		svc.GetSession,
+		connect.WithSchema(iAMInternalServiceMethods.ByName("GetSession")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/observatory.iam.v1.IAMInternalService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case IAMInternalServiceGetUsersProcedure:
@@ -150,6 +200,10 @@ func NewIAMInternalServiceHandler(svc IAMInternalServiceHandler, opts ...connect
 			iAMInternalServiceListSSHKeysHandler.ServeHTTP(w, r)
 		case IAMInternalServiceListTeamsProcedure:
 			iAMInternalServiceListTeamsHandler.ServeHTTP(w, r)
+		case IAMInternalServiceGetMembershipProcedure:
+			iAMInternalServiceGetMembershipHandler.ServeHTTP(w, r)
+		case IAMInternalServiceGetSessionProcedure:
+			iAMInternalServiceGetSessionHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -169,4 +223,12 @@ func (UnimplementedIAMInternalServiceHandler) ListSSHKeys(context.Context, *conn
 
 func (UnimplementedIAMInternalServiceHandler) ListTeams(context.Context, *connect.Request[v1.ListTeamsRequest]) (*connect.Response[v1.ListTeamsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.iam.v1.IAMInternalService.ListTeams is not implemented"))
+}
+
+func (UnimplementedIAMInternalServiceHandler) GetMembership(context.Context, *connect.Request[v1.GetMembershipRequest]) (*connect.Response[v1.GetMembershipResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.iam.v1.IAMInternalService.GetMembership is not implemented"))
+}
+
+func (UnimplementedIAMInternalServiceHandler) GetSession(context.Context, *connect.Request[v1.GetSessionRequest]) (*connect.Response[v1.GetSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.iam.v1.IAMInternalService.GetSession is not implemented"))
 }

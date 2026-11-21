@@ -261,7 +261,7 @@ func TestOwnsVMs(t *testing.T) {
 	}
 }
 
-func TestPolicySnapshotLoadsVMs(t *testing.T) {
+func TestOwnerRefsLoadVMs(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
 	u, err := e.s.CreateVM(ctx, e.vm("u", nil, 1, 1, 1))
@@ -273,11 +273,15 @@ func TestPolicySnapshotLoadsVMs(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := e.s.PolicySnapshot(ctx)
+	if err != nil || len(p.VMs) != 0 {
+		t.Fatalf("policy snapshot: %d VMs, %v", len(p.VMs), err)
+	}
+	vms, _, err := e.s.OwnerRefs(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[uuid.UUID]authz.VMRef{}
-	for _, v := range p.VMs {
+	for _, v := range vms {
 		got[v.ID] = v
 	}
 	if r := got[u.ID]; r.OrgID != e.org.ID || r.UserID == nil || *r.UserID != e.user || r.TeamID != nil {

@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
@@ -71,6 +73,40 @@ func (s Server) ListTeams(ctx context.Context, req *connect.Request[iamv1.ListTe
 	return connect.NewResponse(out), nil
 }
 
+func (s Server) GetMembership(ctx context.Context, req *connect.Request[iamv1.GetMembershipRequest]) (*connect.Response[iamv1.GetMembershipResponse], error) {
+	org, err := uuid.Parse(req.Msg.OrgId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid org_id"))
+	}
+	user, err := uuid.Parse(req.Msg.UserId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid user_id"))
+	}
+	m, err := s.Store.Membership(ctx, org, user)
+	if errors.Is(err, store.ErrNotFound) {
+		return connect.NewResponse(&iamv1.GetMembershipResponse{}), nil
+	}
+	if err != nil {
+		return nil, internal("membership", err)
+	}
+	return connect.NewResponse(&iamv1.GetMembershipResponse{Member: true, Role: string(m.Role)}), nil
+}
+
+func (s Server) GetSession(ctx context.Context, req *connect.Request[iamv1.GetSessionRequest]) (*connect.Response[iamv1.GetSessionResponse], error) {
+	id, err := uuid.Parse(req.Msg.SessionId)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid session_id"))
+	}
+	user, expires, revoked, err := s.Store.SessionState(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, connect.NewError(connect.CodeNotFound, errors.New("no such session"))
+	}
+	if err != nil {
+		return nil, internal("session", err)
+	}
+	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: user.String(), ExpiresAt: timestamppb.New(expires), Revoked: revoked}), nil
+}
+
 func parseIDs(raw []string) ([]uuid.UUID, error) {
 	if len(raw) > MaxIDs {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("at most %d user_ids", MaxIDs))
@@ -106,6 +142,27 @@ func ListTeams(ctx context.Context, c iamv1connect.IAMInternalServiceClient, org
 		out = append(out, store.Team{ID: id, OrgID: org, Name: t.Name})
 	}
 	return out, nil
+}
+
+// IsMember asks iam whether user is a member of org.
+func IsMember(ctx context.Context, c iamv1connect.IAMInternalServiceClient, org, user uuid.UUID) (bool, error) {
+	res, err := c.GetMembership(ctx, connect.NewRequest(&iamv1.GetMembershipRequest{OrgId: org.String(), UserId: user.String()}))
+	if err != nil {
+		return false, err
+	}
+	return res.Msg.Member, nil
+}
+
+// SessionActive asks iam whether a session is neither revoked nor expired; an error means iam could not answer, and callers must refuse.
+func SessionActive(ctx context.Context, c iamv1connect.IAMInternalServiceClient, id uuid.UUID) (bool, error) {
+	res, err := c.GetSession(ctx, connect.NewRequest(&iamv1.GetSessionRequest{SessionId: id.String()}))
+	if connect.CodeOf(err) == connect.CodeNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !res.Msg.Revoked && res.Msg.ExpiresAt.AsTime().After(time.Now()), nil
 }
 
 // UserNames maps ids to display names; unknown users are absent.

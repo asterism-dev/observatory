@@ -2,11 +2,14 @@ package iaminternal
 
 import (
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/store"
 )
 
 func TestGetUsersLimit(t *testing.T) {
@@ -32,5 +35,61 @@ func TestListTeamsInvalidOrg(t *testing.T) {
 	_, err := Server{}.ListTeams(t.Context(), connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: "nope"}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("ListTeams with a malformed org_id: %v", err)
+	}
+}
+
+func TestGetSessionUnknownNotFound(t *testing.T) {
+	s := store.New(dbtest.New(t))
+	srv := Server{Store: s}
+	_, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: uuid.NewString()}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("unknown session: %v", err)
+	}
+	u, err := s.Login(t.Context(), store.Identity{Subject: "u", Email: "u@x.io", Name: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sess, err := s.CreateSession(t.Context(), u.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: sess.ID.String()}))
+	if err != nil || res.Msg.UserId != u.User.ID.String() || res.Msg.Revoked || res.Msg.ExpiresAt.AsTime().Sub(sess.ExpiresAt).Abs() > time.Millisecond {
+		t.Fatalf("live session: %+v %v", res, err)
+	}
+	if err := s.RevokeSession(t.Context(), u.User.ID, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: sess.ID.String()})); err != nil || !res.Msg.Revoked {
+		t.Fatalf("revoked session: %+v %v", res, err)
+	}
+	if active, err := SessionActive(t.Context(), srv, sess.ID); err != nil || active {
+		t.Fatalf("revoked session active=%v err=%v", active, err)
+	}
+	if active, err := SessionActive(t.Context(), srv, uuid.New()); err != nil || active {
+		t.Fatalf("unknown session active=%v err=%v", active, err)
+	}
+}
+
+func TestGetMembership(t *testing.T) {
+	s := store.New(dbtest.New(t))
+	srv := Server{Store: s}
+	u, err := s.Login(t.Context(), store.Identity{Subject: "u", Email: "u@x.io", Name: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(t.Context(), "A", u.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := srv.GetMembership(t.Context(), connect.NewRequest(&iamv1.GetMembershipRequest{OrgId: org.ID.String(), UserId: u.User.ID.String()}))
+	if err != nil || !res.Msg.Member || res.Msg.Role != string(store.RoleOwner) {
+		t.Fatalf("owner: %+v %v", res, err)
+	}
+	if member, err := IsMember(t.Context(), srv, org.ID, uuid.New()); err != nil || member {
+		t.Fatalf("stranger member=%v err=%v", member, err)
+	}
+	if _, err := srv.GetMembership(t.Context(), connect.NewRequest(&iamv1.GetMembershipRequest{OrgId: "nope", UserId: u.User.ID.String()})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("bad org: %v", err)
 	}
 }

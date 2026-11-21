@@ -164,7 +164,7 @@ func TestRemoveMemberDeletesDevicesAPI(t *testing.T) {
 	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 200 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
-	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID); err != nil {
+	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID, func(context.Context) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.listDevices(ownerTok, org); len(got) != 0 {

@@ -85,10 +85,6 @@ func (s *server) RevokeSession(ctx context.Context, req *connect.Request[iamv1.R
 		if err := tx.RevokeSession(ctx, user, id); err != nil {
 			return err
 		}
-		// ponytail: iam writes a hub table so the registry refuses without the bus; 5b moves this into iam's revoke path.
-		if err := tx.DeleteSessionCredentials(ctx, id); err != nil {
-			return err
-		}
 		return tx.Audit(ctx, auditEntry(ctx, req.Header(), nil, store.ActionSessionRevoke, "session/"+id.String(), store.ResultAllowed))
 	})
 	if err != nil {

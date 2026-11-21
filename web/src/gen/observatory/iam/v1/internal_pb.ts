@@ -4,13 +4,15 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file observatory/iam/v1/internal.proto.
  */
 export const file_observatory_iam_v1_internal: GenFile = /*@__PURE__*/
-  fileDesc("CiFvYnNlcnZhdG9yeS9pYW0vdjEvaW50ZXJuYWwucHJvdG8SEm9ic2VydmF0b3J5LmlhbS52MSIjCg9HZXRVc2Vyc1JlcXVlc3QSEAoIdXNlcl9pZHMYASADKAkiOwoQR2V0VXNlcnNSZXNwb25zZRInCgV1c2VycxgBIAMoCzIYLm9ic2VydmF0b3J5LmlhbS52MS5Vc2VyIi8KBFVzZXISCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRINCgVlbWFpbBgDIAEoCSImChJMaXN0U1NIS2V5c1JlcXVlc3QSEAoIdXNlcl9pZHMYASADKAkiPwoTTGlzdFNTSEtleXNSZXNwb25zZRIoCgRrZXlzGAEgAygLMhoub2JzZXJ2YXRvcnkuaWFtLnYxLlNTSEtleSItCgZTU0hLZXkSDwoHdXNlcl9pZBgBIAEoCRISCgpwdWJsaWNfa2V5GAIgASgJIiIKEExpc3RUZWFtc1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJIjwKEUxpc3RUZWFtc1Jlc3BvbnNlEicKBXRlYW1zGAEgAygLMhgub2JzZXJ2YXRvcnkuaWFtLnYxLlRlYW0iIAoEVGVhbRIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJMqUCChJJQU1JbnRlcm5hbFNlcnZpY2USVQoIR2V0VXNlcnMSIy5vYnNlcnZhdG9yeS5pYW0udjEuR2V0VXNlcnNSZXF1ZXN0GiQub2JzZXJ2YXRvcnkuaWFtLnYxLkdldFVzZXJzUmVzcG9uc2USXgoLTGlzdFNTSEtleXMSJi5vYnNlcnZhdG9yeS5pYW0udjEuTGlzdFNTSEtleXNSZXF1ZXN0Gicub2JzZXJ2YXRvcnkuaWFtLnYxLkxpc3RTU0hLZXlzUmVzcG9uc2USWAoJTGlzdFRlYW1zEiQub2JzZXJ2YXRvcnkuaWFtLnYxLkxpc3RUZWFtc1JlcXVlc3QaJS5vYnNlcnZhdG9yeS5pYW0udjEuTGlzdFRlYW1zUmVzcG9uc2VC1gEKFmNvbS5vYnNlcnZhdG9yeS5pYW0udjFCDUludGVybmFsUHJvdG9QAVpDZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L2lhbS92MTtpYW12MaICA09JWKoCEk9ic2VydmF0b3J5LklhbS5WMcoCEk9ic2VydmF0b3J5XElhbVxWMeICHk9ic2VydmF0b3J5XElhbVxWMVxHUEJNZXRhZGF0YeoCFE9ic2VydmF0b3J5OjpJYW06OlYxYgZwcm90bzM");
+  fileDesc("CiFvYnNlcnZhdG9yeS9pYW0vdjEvaW50ZXJuYWwucHJvdG8SEm9ic2VydmF0b3J5LmlhbS52MSIjCg9HZXRVc2Vyc1JlcXVlc3QSEAoIdXNlcl9pZHMYASADKAkiOwoQR2V0VXNlcnNSZXNwb25zZRInCgV1c2VycxgBIAMoCzIYLm9ic2VydmF0b3J5LmlhbS52MS5Vc2VyIi8KBFVzZXISCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRINCgVlbWFpbBgDIAEoCSImChJMaXN0U1NIS2V5c1JlcXVlc3QSEAoIdXNlcl9pZHMYASADKAkiPwoTTGlzdFNTSEtleXNSZXNwb25zZRIoCgRrZXlzGAEgAygLMhoub2JzZXJ2YXRvcnkuaWFtLnYxLlNTSEtleSItCgZTU0hLZXkSDwoHdXNlcl9pZBgBIAEoCRISCgpwdWJsaWNfa2V5GAIgASgJIiIKEExpc3RUZWFtc1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJIjwKEUxpc3RUZWFtc1Jlc3BvbnNlEicKBXRlYW1zGAEgAygLMhgub2JzZXJ2YXRvcnkuaWFtLnYxLlRlYW0iIAoEVGVhbRIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJIjcKFEdldE1lbWJlcnNoaXBSZXF1ZXN0Eg4KBm9yZ19pZBgBIAEoCRIPCgd1c2VyX2lkGAIgASgJIjUKFUdldE1lbWJlcnNoaXBSZXNwb25zZRIOCgZtZW1iZXIYASABKAgSDAoEcm9sZRgCIAEoCSInChFHZXRTZXNzaW9uUmVxdWVzdBISCgpzZXNzaW9uX2lkGAEgASgJImYKEkdldFNlc3Npb25SZXNwb25zZRIPCgd1c2VyX2lkGAEgASgJEi4KCmV4cGlyZXNfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB3Jldm9rZWQYAyABKAgy6AMKEklBTUludGVybmFsU2VydmljZRJVCghHZXRVc2VycxIjLm9ic2VydmF0b3J5LmlhbS52MS5HZXRVc2Vyc1JlcXVlc3QaJC5vYnNlcnZhdG9yeS5pYW0udjEuR2V0VXNlcnNSZXNwb25zZRJeCgtMaXN0U1NIS2V5cxImLm9ic2VydmF0b3J5LmlhbS52MS5MaXN0U1NIS2V5c1JlcXVlc3QaJy5vYnNlcnZhdG9yeS5pYW0udjEuTGlzdFNTSEtleXNSZXNwb25zZRJYCglMaXN0VGVhbXMSJC5vYnNlcnZhdG9yeS5pYW0udjEuTGlzdFRlYW1zUmVxdWVzdBolLm9ic2VydmF0b3J5LmlhbS52MS5MaXN0VGVhbXNSZXNwb25zZRJkCg1HZXRNZW1iZXJzaGlwEigub2JzZXJ2YXRvcnkuaWFtLnYxLkdldE1lbWJlcnNoaXBSZXF1ZXN0Gikub2JzZXJ2YXRvcnkuaWFtLnYxLkdldE1lbWJlcnNoaXBSZXNwb25zZRJbCgpHZXRTZXNzaW9uEiUub2JzZXJ2YXRvcnkuaWFtLnYxLkdldFNlc3Npb25SZXF1ZXN0GiYub2JzZXJ2YXRvcnkuaWFtLnYxLkdldFNlc3Npb25SZXNwb25zZULWAQoWY29tLm9ic2VydmF0b3J5LmlhbS52MUINSW50ZXJuYWxQcm90b1ABWkNnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvaWFtL3YxO2lhbXYxogIDT0lYqgIST2JzZXJ2YXRvcnkuSWFtLlYxygIST2JzZXJ2YXRvcnlcSWFtXFYx4gIeT2JzZXJ2YXRvcnlcSWFtXFYxXEdQQk1ldGFkYXRh6gIUT2JzZXJ2YXRvcnk6OklhbTo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
 
 /**
  * @generated from message observatory.iam.v1.GetUsersRequest
@@ -186,6 +188,94 @@ export const TeamSchema: GenMessage<Team> = /*@__PURE__*/
   messageDesc(file_observatory_iam_v1_internal, 8);
 
 /**
+ * @generated from message observatory.iam.v1.GetMembershipRequest
+ */
+export type GetMembershipRequest = Message<"observatory.iam.v1.GetMembershipRequest"> & {
+  /**
+   * @generated from field: string org_id = 1;
+   */
+  orgId: string;
+
+  /**
+   * @generated from field: string user_id = 2;
+   */
+  userId: string;
+};
+
+/**
+ * Describes the message observatory.iam.v1.GetMembershipRequest.
+ * Use `create(GetMembershipRequestSchema)` to create a new message.
+ */
+export const GetMembershipRequestSchema: GenMessage<GetMembershipRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_iam_v1_internal, 9);
+
+/**
+ * @generated from message observatory.iam.v1.GetMembershipResponse
+ */
+export type GetMembershipResponse = Message<"observatory.iam.v1.GetMembershipResponse"> & {
+  /**
+   * @generated from field: bool member = 1;
+   */
+  member: boolean;
+
+  /**
+   * @generated from field: string role = 2;
+   */
+  role: string;
+};
+
+/**
+ * Describes the message observatory.iam.v1.GetMembershipResponse.
+ * Use `create(GetMembershipResponseSchema)` to create a new message.
+ */
+export const GetMembershipResponseSchema: GenMessage<GetMembershipResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_iam_v1_internal, 10);
+
+/**
+ * @generated from message observatory.iam.v1.GetSessionRequest
+ */
+export type GetSessionRequest = Message<"observatory.iam.v1.GetSessionRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+};
+
+/**
+ * Describes the message observatory.iam.v1.GetSessionRequest.
+ * Use `create(GetSessionRequestSchema)` to create a new message.
+ */
+export const GetSessionRequestSchema: GenMessage<GetSessionRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_iam_v1_internal, 11);
+
+/**
+ * @generated from message observatory.iam.v1.GetSessionResponse
+ */
+export type GetSessionResponse = Message<"observatory.iam.v1.GetSessionResponse"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 2;
+   */
+  expiresAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: bool revoked = 3;
+   */
+  revoked: boolean;
+};
+
+/**
+ * Describes the message observatory.iam.v1.GetSessionResponse.
+ * Use `create(GetSessionResponseSchema)` to create a new message.
+ */
+export const GetSessionResponseSchema: GenMessage<GetSessionResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_iam_v1_internal, 12);
+
+/**
  * IAMInternalService answers services' identity lookups; callers authenticate with a service token.
  *
  * @generated from service observatory.iam.v1.IAMInternalService
@@ -218,6 +308,26 @@ export const IAMInternalService: GenService<{
     methodKind: "unary";
     input: typeof ListTeamsRequestSchema;
     output: typeof ListTeamsResponseSchema;
+  },
+  /**
+   * GetMembership reports whether user_id is a member of org_id, and with which built-in role.
+   *
+   * @generated from rpc observatory.iam.v1.IAMInternalService.GetMembership
+   */
+  getMembership: {
+    methodKind: "unary";
+    input: typeof GetMembershipRequestSchema;
+    output: typeof GetMembershipResponseSchema;
+  },
+  /**
+   * GetSession returns a session whether or not it ended; NotFound if it never existed.
+   *
+   * @generated from rpc observatory.iam.v1.IAMInternalService.GetSession
+   */
+  getSession: {
+    methodKind: "unary";
+    input: typeof GetSessionRequestSchema;
+    output: typeof GetSessionResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_iam_v1_internal, 0);

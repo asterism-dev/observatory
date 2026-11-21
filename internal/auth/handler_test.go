@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -114,6 +115,7 @@ func newEnv(t *testing.T) *env {
 		CLIClientID: "cli-client",
 		PublicURL:   &url.URL{Scheme: "https", Host: "hub.test"},
 		EdgeToken:   edgeToken,
+		IAM:         iaminternal.Server{Store: s},
 	}
 	mux := http.NewServeMux()
 	h.Routes(mux)
@@ -404,7 +406,7 @@ func TestRequireFailsClosedOnSessionLookupError(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	e.a.Require(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError || called {
+	if rec.Code != http.StatusServiceUnavailable || called {
 		t.Fatalf("status %d, handler called %v", rec.Code, called)
 	}
 }
@@ -416,11 +418,6 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cred, _, err := e.store.CreateRegistryCredential(context.Background(), sess.UserID, sess.ID, sess.ExpiresAt, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(sc)
 	if rec := e.do(req); rec.Code != http.StatusForbidden ||
@@ -444,12 +441,8 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if !e.actions(store.ResultAllowed)[store.ActionAuthLogout] {
 		t.Fatal("no iam.sessions.delete audit")
 	}
-	// No consumer runs here, so the refusal must come from the logout itself, not from the bus.
-	if _, err := e.store.RegistryCredentialUser(context.Background(), cred); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("registry credential after logout: %v", err)
-	}
-	if _, _, err := e.store.CreateRegistryCredential(context.Background(), sess.UserID, sess.ID, sess.ExpiresAt, time.Hour); !errors.Is(err, store.ErrSessionRevoked) {
-		t.Fatalf("new registry credential after logout: %v", err)
+	if active, err := e.store.SessionActive(context.Background(), sess.ID); err != nil || active {
+		t.Fatalf("session active after logout: %v %v", active, err)
 	}
 
 	req = httptest.NewRequest("POST", "/auth/logout", nil)

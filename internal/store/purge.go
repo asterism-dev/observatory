@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -12,15 +11,16 @@ import (
 
 var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
 
-// PurgeMember deletes the hub rows of a user who left org, unless they are a member again; running it again is harmless.
-func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID) (purged bool, err error) {
+// PurgeMember deletes the hub rows of a user who left org unless member, asked under the hub org lock, says they are back; running it again is harmless.
+func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, member func(context.Context) (bool, error)) (purged bool, err error) {
 	err = s.InTx(ctx, func(tx *Store) error {
-		// The org row lock conflicts with the key-share lock a membership insert takes, so a re-join can't interleave.
-		if err := tx.LockOrg(ctx, org); err != nil && !errors.Is(err, ErrNotFound) {
+		// User-scope creates take this lock too: one that saw the re-join committed before, one after waits and keeps its row.
+		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
 		}
-		var member bool
-		if err := tx.q.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2)", org, user).Scan(&member); err != nil || member {
+		// ponytail: the transaction holds a connection and the org lock during the iam call; fine at today's purge rate.
+		back, err := member(ctx)
+		if err != nil || back {
 			return err
 		}
 		if err := tx.purgeScoped(ctx, org, EnvScopeUser, "user_id", user, authz.UserSubject(user)); err != nil {
@@ -60,15 +60,8 @@ func (s *Store) purgeScoped(ctx context.Context, org uuid.UUID, scope EnvScope, 
 	return err
 }
 
-// DeleteSessionCredentials drops the registry credentials of an ended session and refuses new ones for it.
+// DeleteSessionCredentials drops the registry credentials of an ended session; their use is refused already, since iam reports the session ended.
 func (s *Store) DeleteSessionCredentials(ctx context.Context, session uuid.UUID) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if _, err := tx.q.Exec(ctx, `
-			INSERT INTO registry_revoked_sessions (session_id, expires_at) VALUES ($1, now() + make_interval(secs => $2))
-			ON CONFLICT DO NOTHING`, session, revokedSessionRetention.Seconds()); err != nil {
-			return err
-		}
-		_, err := tx.q.Exec(ctx, "DELETE FROM registry_credentials WHERE session_id = $1", session)
-		return err
-	})
+	_, err := s.q.Exec(ctx, "DELETE FROM registry_credentials WHERE session_id = $1", session)
+	return err
 }

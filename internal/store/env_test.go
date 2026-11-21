@@ -301,7 +301,7 @@ func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	shared := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeOrg, nil, "S"), "s")
 	ownerVar := mustCreateEnv(t, s, envVar(org, owner.User.ID, store.EnvPlain, store.EnvScopeUser, &owner.User.ID, "O"), "o")
 	execSQL(t, pool, `DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, mid)
-	if purged, err := s.PurgeMember(ctx, org.ID, mid); err != nil || !purged {
+	if purged, err := s.PurgeMember(ctx, org.ID, mid, memberIn(s, org.ID, mid)); err != nil || !purged {
 		t.Fatalf("purge: %v %v", purged, err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

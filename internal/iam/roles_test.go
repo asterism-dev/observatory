@@ -2,6 +2,8 @@ package iam
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -639,5 +642,40 @@ func TestRESTUpdateRoleIsPut(t *testing.T) {
 	}
 	if code, _ := e.restSend("PATCH", path, tok, body); code == 200 {
 		t.Fatal("PATCH still updates the role")
+	}
+}
+
+func TestGrantOwnedVMActionViaHub(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/roles", "iam.roles.manage")
+	vm := authz.VMObject(uuid.New())
+	owned := &iamv1.CreateRoleRequest{Name: "viewer", Rules: []*iamv1.RoleRule{rule("allow", vm, "compute.instances.get")}}
+
+	_, err := e.tryCreateRole(bobTok, org, owned)
+	wantCode(t, err, connect.CodePermissionDenied)
+	if !strings.Contains(err.Error(), "compute.instances.get") {
+		t.Fatalf("message: %v", err)
+	}
+	e.resources.setCanHold(func(*hubv1.CanHoldRequest) error {
+		return connect.NewError(connect.CodeUnavailable, errors.New("policy behind"))
+	})
+	_, err = e.tryCreateRole(bobTok, org, owned)
+	wantCode(t, err, connect.CodeUnavailable)
+	e.resources.setCanHold(func(r *hubv1.CanHoldRequest) error {
+		if r.Actor != authz.UserSubject(bob.ID) || r.OrgId != org.String() || r.MinRevision != testRevision ||
+			len(r.Rules) != 1 || r.Rules[0].Object != vm || r.Rules[0].Action != "compute.instances.get" {
+			return connect.NewError(connect.CodePermissionDenied, fmt.Errorf("%w: unexpected request %v", authz.ErrEscalation, r))
+		}
+		return nil
+	})
+	if _, err := e.tryCreateRole(bobTok, org, owned); err != nil {
+		t.Fatalf("owner grants an owned VM action: %v", err)
+	}
+	if e.roleCount(org) != 2 {
+		t.Fatalf("roles: %d", e.roleCount(org))
 	}
 }

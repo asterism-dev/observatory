@@ -118,7 +118,7 @@ func (s *server) CreateRole(ctx context.Context, req *connect.Request[iamv1.Crea
 		if err != nil {
 			return err
 		}
-		if denied = e.CanGrantRole(actor, org, privileged(cur), role.Rules, role.Parents); denied != nil {
+		if denied = s.canGrant(ctx, e, actor, org, privileged(cur), role.Rules, role.Parents); denied != nil {
 			return denied
 		}
 		role.Rules = expandRules(role.Rules)
@@ -160,7 +160,7 @@ func (s *server) UpdateRole(ctx context.Context, req *connect.Request[iamv1.Upda
 		if err != nil {
 			return err
 		}
-		if denied = e.CanGrantRole(actor, org, privileged(cur), role.Rules, role.Parents); denied != nil {
+		if denied = s.canGrant(ctx, e, actor, org, privileged(cur), role.Rules, role.Parents); denied != nil {
 			return denied
 		}
 		if !privileged(cur) {
@@ -255,7 +255,7 @@ func (s *server) CreateRoleBinding(ctx context.Context, req *connect.Request[iam
 			return err
 		}
 		// Bindings only reference custom roles; the guard rejects anything else as an invalid parent.
-		if denied = e.CanGrantRole(actor, org, privileged(cur), nil, []string{roleID.String()}); denied != nil {
+		if denied = s.canGrant(ctx, e, actor, org, privileged(cur), nil, []string{roleID.String()}); denied != nil {
 			return denied
 		}
 		if !privileged(cur) {

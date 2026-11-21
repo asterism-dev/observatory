@@ -61,12 +61,12 @@ func TestIdentityEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})
-	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	z, err := authz.NewService(ctx, s.HubPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hubMux := http.NewServeMux()
-	if err := mountIdentity(ctx, hubMux, s, z, cfg); err != nil {
+	if _, err := mountIdentity(ctx, hubMux, s, z, cfg); err != nil {
 		t.Fatal(err)
 	}
 	hub := httptest.NewServer(hubMux)

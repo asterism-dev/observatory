@@ -12,9 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -36,13 +41,18 @@ func (e *env) registryHandler(upstream string, builds BuildCredentials) http.Han
 
 func (e *env) registryHandlerGC(upstream string, builds BuildCredentials, gc *registry.GC) http.Handler {
 	e.t.Helper()
+	return e.registryHandlerIAM(upstream, builds, gc, iaminternal.Server{Store: e.store})
+}
+
+func (e *env) registryHandlerIAM(upstream string, builds BuildCredentials, gc *registry.GC, iam iamv1connect.IAMInternalServiceClient) http.Handler {
+	e.t.Helper()
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	up, _ := url.Parse(upstream)
 	mux := http.NewServeMux()
-	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: up, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Builds: builds, GC: gc})
+	RegistryEndpoints(mux, e.store, e.z, Registry{Upstream: up, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Issuer: iss, Builds: builds, GC: gc, IAM: iam})
 	return mux
 }
 
@@ -319,19 +329,51 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 	}
 }
 
-func TestRegistryCredentialRefusedAfterSessionRevokeEvent(t *testing.T) {
+// fakeSessions answers GetSession with err, or else with a session that is revoked when revoked is set.
+type fakeSessions struct {
+	iamv1connect.IAMInternalServiceClient
+	revoked bool
+	err     error
+}
+
+func (f fakeSessions) GetSession(_ context.Context, req *connect.Request[iamv1.GetSessionRequest]) (*connect.Response[iamv1.GetSessionResponse], error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: uuid.NewString(), ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)), Revoked: f.revoked}), nil
+}
+
+// registrySetup returns a credential of alice's CLI session and a pull scope on an org image she may use.
+func (e *env) registrySetup() (cred, scope string) {
+	e.t.Helper()
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	return e.registryCredential(e.cliSession(alice)), repoScope(a, "pull")
+}
+
+// No consumer runs here: the refusal comes from iam's answer on use.
+func TestRegistryRefusesRevokedSession(t *testing.T) {
 	e := newEnv(t)
-	alice, _ := e.user("alice")
-	cli := e.cliSession(alice)
-	var session uuid.UUID
-	if err := e.pool.QueryRow(t.Context(), "SELECT id FROM sessions WHERE user_id = $1 AND kind = 'cli'", alice.ID).Scan(&session); err != nil {
-		t.Fatal(err)
+	cred, scope := e.registrySetup()
+	if code, _ := grant(t, e.registryHandlerIAM("http://registry.invalid", nil, nil, fakeSessions{}), "observatory", cred, scope); code != 200 {
+		t.Fatalf("live session: %d", code)
 	}
-	if err := e.store.DeleteSessionCredentials(t.Context(), session); err != nil {
-		t.Fatal(err)
+	if code, _ := grant(t, e.registryHandlerIAM("http://registry.invalid", nil, nil, fakeSessions{revoked: true}), "observatory", cred, scope); code != 401 {
+		t.Fatalf("revoked session: %d", code)
 	}
-	if rec := e.do("POST", "/api/registry/credentials", cli); rec.Code != 401 {
-		t.Fatalf("credential for a revoked session: %d %s", rec.Code, rec.Body.String())
+	gone := fakeSessions{err: connect.NewError(connect.CodeNotFound, errors.New("no session"))}
+	if code, _ := grant(t, e.registryHandlerIAM("http://registry.invalid", nil, nil, gone), "observatory", cred, scope); code != 401 {
+		t.Fatalf("unknown session: %d", code)
+	}
+}
+
+func TestRegistryIAMDownRefuses(t *testing.T) {
+	e := newEnv(t)
+	cred, scope := e.registrySetup()
+	down := fakeSessions{err: connect.NewError(connect.CodeUnavailable, errors.New("iam down"))}
+	if code, _ := grant(t, e.registryHandlerIAM("http://registry.invalid", nil, nil, down), "observatory", cred, scope); code != 503 {
+		t.Fatalf("iam unreachable: %d", code)
 	}
 }
 

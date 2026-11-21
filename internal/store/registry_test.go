@@ -21,14 +21,14 @@ func TestRegistryCredentialExpiresWithSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.RegistryCredentialUser(ctx, live); err != nil || got != user {
-		t.Fatalf("live: %v %v, want %v", got, err, user)
+	if got, sess, err := s.RegistryCredentialUser(ctx, live); err != nil || got != user || sess != session {
+		t.Fatalf("live: %v %v %v, want %v %v", got, sess, err, user, session)
 	}
 	ended, _, err := s.CreateRegistryCredential(ctx, user, session, time.Now().Add(-time.Second), 12*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RegistryCredentialUser(ctx, ended); !errors.Is(err, store.ErrNotFound) {
+	if _, _, err := s.RegistryCredentialUser(ctx, ended); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("after the session expired: %v", err)
 	}
 	if _, _, err := s.CreateRegistryCredential(ctx, user, uuid.New(), time.Now().Add(time.Hour), 12*time.Hour); err != nil {
@@ -40,32 +40,21 @@ func TestRegistryCredentialExpiresWithSession(t *testing.T) {
 	}
 }
 
-func TestRevokedSessionGetsNoRegistryCredential(t *testing.T) {
+func TestDeleteSessionCredentials(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	user, session := uuid.New(), uuid.New()
-	expires := time.Now().Add(time.Hour)
+	cred, _, err := s.CreateRegistryCredential(ctx, user, session, time.Now().Add(time.Hour), 12*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		if err := s.DeleteSessionCredentials(ctx, session); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.CreateRegistryCredential(ctx, user, session, expires, 12*time.Hour); !errors.Is(err, store.ErrSessionRevoked) {
-		t.Fatalf("create for a revoked session: %v", err)
-	}
-	// A credential whose insert raced the revocation must not work either.
-	execSQL(t, pool, `INSERT INTO registry_credentials (user_id, session_id, session_expires_at, secret_hash, expires_at)
-		VALUES ($1, $2, $3, sha256('raced'), now() + interval '1 hour')`, user, session, expires)
-	if _, err := s.RegistryCredentialUser(ctx, "raced"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("raced credential: %v", err)
-	}
-	execSQL(t, pool, `UPDATE registry_revoked_sessions SET expires_at = now() - interval '1 second'`)
-	if _, _, err := s.CreateRegistryCredential(ctx, user, uuid.New(), expires, 12*time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM registry_revoked_sessions").Scan(&n); err != nil || n != 0 {
-		t.Fatalf("expired revocation records: %d %v", n, err)
+	if _, _, err := s.RegistryCredentialUser(ctx, cred); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted credential: %v", err)
 	}
 }

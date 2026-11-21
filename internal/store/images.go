@@ -148,6 +148,9 @@ func imageOwner(v Image) EnvVar { return EnvVar{OrgID: v.OrgID, Scope: v.Scope, 
 
 func (s *Store) CreateImage(ctx context.Context, v Image) (Image, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, v.OrgID, v.Scope); err != nil {
+			return err
+		}
 		teamID, userID := envOwnerColumns(imageOwner(v))
 		var err error
 		v, err = scanImage(tx.q.QueryRow(ctx, `
@@ -757,6 +760,9 @@ func (s *Store) BuildLog(ctx context.Context, build uuid.UUID) ([]byte, error) {
 
 func (s *Store) SetImageDefault(ctx context.Context, d ImageDefault) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, d.OrgID, d.Scope); err != nil {
+			return err
+		}
 		teamID, userID := envOwnerColumns(EnvVar{Scope: d.Scope, OwnerID: d.OwnerID})
 		_, err := tx.q.Exec(ctx, `
 			INSERT INTO image_defaults (org_id, scope, team_id, user_id, image_id, tag, digest) VALUES ($1, $2, $3, $4, $5, $6, $7)

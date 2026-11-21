@@ -40,6 +40,8 @@ type Deps struct {
 	Settings *auditlog.Settings
 	// PublicURL builds invite links.
 	PublicURL *url.URL
+	// Revision is the latest policy revision published to the hub; CanHold waits for the hub to reach it.
+	Revision func() uint64
 }
 
 type server struct {

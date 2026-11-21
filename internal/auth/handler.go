@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -40,6 +41,8 @@ type Handler struct {
 	EdgeToken string
 	// Verifier checks the JWT the edge attaches to /api/ requests.
 	Verifier Verifier
+	// IAM answers Require's per-request session check.
+	IAM iamv1connect.IAMInternalServiceClient
 }
 
 type oidcState struct {
@@ -202,10 +205,6 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	ip, ua := RequestMeta(r)
 	err := h.Store.InTx(r.Context(), func(tx *store.Store) error {
 		if err := tx.RevokeSession(r.Context(), p.User.ID, p.Session.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-		// ponytail: iam writes a hub table so the registry refuses without the bus; 5b moves this into iam's revoke path.
-		if err := tx.DeleteSessionCredentials(r.Context(), p.Session.ID); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), store.AuditEntry{

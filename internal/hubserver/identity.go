@@ -67,6 +67,28 @@ func (p *PolicyServer) latest() *iamv1.Policy {
 	return p.last
 }
 
+// Revision is the latest published revision, 0 before the first.
+func (p *PolicyServer) Revision() uint64 {
+	if l := p.latest(); l != nil {
+		return l.Revision
+	}
+	return 0
+}
+
+// WaitRevision returns once rev or a later revision is published, or with ctx's error.
+func (p *PolicyServer) WaitRevision(ctx context.Context, rev uint64) error {
+	ch := p.subscribe()
+	defer p.unsubscribe(ch)
+	for p.Revision() < rev {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ch:
+		}
+	}
+	return nil
+}
+
 func (p *PolicyServer) subscribe() chan struct{} {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
@@ -138,10 +160,10 @@ func policyMessage(p authz.Policy) *iamv1.Policy {
 const selfService = "hub"
 
 // mountIdentity serves the transitional identity issuer under /internal/iam/, fed by every successful z.Reload.
-func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *authz.Service, cfg config) error {
+func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *authz.Service, cfg config) (*PolicyServer, error) {
 	jwtIssuer, err := auth.NewIssuer(ctx, s, strings.TrimRight(cfg.PublicURL, "/"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	policies := NewPolicyServer()
 	z.OnReload(policies.Publish)
@@ -149,7 +171,13 @@ func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *a
 		slog.Warn("OBSERVATORY_SERVICE_TOKENS is not set; the hub refuses every /internal/iam/ call")
 	}
 	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(jwtIssuer, policies, iaminternal.Server{Store: s})))
-	return nil
+	return policies, nil
+}
+
+// hubPolicy is the hub's enforcer with the revisions of the policy stream it feeds.
+type hubPolicy struct {
+	*authz.Service
+	*PolicyServer
 }
 
 // internalIAM serves /internal/iam/*; the caller wraps it in servicetoken.Middleware.

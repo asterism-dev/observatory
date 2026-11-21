@@ -188,6 +188,9 @@ func (s *Store) EnvValue(ctx context.Context, v EnvVar) (string, error) {
 
 func (s *Store) CreateEnvVar(ctx context.Context, v EnvVar, value string) (EnvVar, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, v.OrgID, v.Scope); err != nil {
+			return err
+		}
 		key, err := tx.orgKey(ctx, v.OrgID)
 		if err != nil {
 			return err

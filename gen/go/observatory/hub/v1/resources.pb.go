@@ -125,6 +125,171 @@ func (x *CheckOwnershipResponse) GetOwnsDisks() bool {
 	return false
 }
 
+type CanHoldRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	OrgId string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// actor is a subject such as user:<uuid>.
+	Actor         string  `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	Rules         []*Rule `protobuf:"bytes,3,rep,name=rules,proto3" json:"rules,omitempty"`
+	MinRevision   uint64  `protobuf:"varint,4,opt,name=min_revision,json=minRevision,proto3" json:"min_revision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CanHoldRequest) Reset() {
+	*x = CanHoldRequest{}
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CanHoldRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CanHoldRequest) ProtoMessage() {}
+
+func (x *CanHoldRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CanHoldRequest.ProtoReflect.Descriptor instead.
+func (*CanHoldRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_hub_v1_resources_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CanHoldRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *CanHoldRequest) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *CanHoldRequest) GetRules() []*Rule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
+func (x *CanHoldRequest) GetMinRevision() uint64 {
+	if x != nil {
+		return x.MinRevision
+	}
+	return 0
+}
+
+type Rule struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Effect        string                 `protobuf:"bytes,1,opt,name=effect,proto3" json:"effect,omitempty"`
+	Object        string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Action        string                 `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Rule) Reset() {
+	*x = Rule{}
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Rule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Rule) ProtoMessage() {}
+
+func (x *Rule) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Rule.ProtoReflect.Descriptor instead.
+func (*Rule) Descriptor() ([]byte, []int) {
+	return file_observatory_hub_v1_resources_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Rule) GetEffect() string {
+	if x != nil {
+		return x.Effect
+	}
+	return ""
+}
+
+func (x *Rule) GetObject() string {
+	if x != nil {
+		return x.Object
+	}
+	return ""
+}
+
+func (x *Rule) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+type CanHoldResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CanHoldResponse) Reset() {
+	*x = CanHoldResponse{}
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CanHoldResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CanHoldResponse) ProtoMessage() {}
+
+func (x *CanHoldResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_hub_v1_resources_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CanHoldResponse.ProtoReflect.Descriptor instead.
+func (*CanHoldResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_hub_v1_resources_proto_rawDescGZIP(), []int{4}
+}
+
 var File_observatory_hub_v1_resources_proto protoreflect.FileDescriptor
 
 const file_observatory_hub_v1_resources_proto_rawDesc = "" +
@@ -136,9 +301,20 @@ const file_observatory_hub_v1_resources_proto_rawDesc = "" +
 	"\x16CheckOwnershipResponse\x12\x19\n" +
 	"\bowns_vms\x18\x01 \x01(\bR\aownsVms\x12\x1d\n" +
 	"\n" +
-	"owns_disks\x18\x02 \x01(\bR\townsDisks2z\n" +
+	"owns_disks\x18\x02 \x01(\bR\townsDisks\"\x90\x01\n" +
+	"\x0eCanHoldRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x14\n" +
+	"\x05actor\x18\x02 \x01(\tR\x05actor\x12.\n" +
+	"\x05rules\x18\x03 \x03(\v2\x18.observatory.hub.v1.RuleR\x05rules\x12!\n" +
+	"\fmin_revision\x18\x04 \x01(\x04R\vminRevision\"N\n" +
+	"\x04Rule\x12\x16\n" +
+	"\x06effect\x18\x01 \x01(\tR\x06effect\x12\x16\n" +
+	"\x06object\x18\x02 \x01(\tR\x06object\x12\x16\n" +
+	"\x06action\x18\x03 \x01(\tR\x06action\"\x11\n" +
+	"\x0fCanHoldResponse2\xce\x01\n" +
 	"\x0fResourceService\x12g\n" +
-	"\x0eCheckOwnership\x12).observatory.hub.v1.CheckOwnershipRequest\x1a*.observatory.hub.v1.CheckOwnershipResponseB\xd7\x01\n" +
+	"\x0eCheckOwnership\x12).observatory.hub.v1.CheckOwnershipRequest\x1a*.observatory.hub.v1.CheckOwnershipResponse\x12R\n" +
+	"\aCanHold\x12\".observatory.hub.v1.CanHoldRequest\x1a#.observatory.hub.v1.CanHoldResponseB\xd7\x01\n" +
 	"\x16com.observatory.hub.v1B\x0eResourcesProtoP\x01ZCgithub.com/asterism-dev/observatory/gen/go/observatory/hub/v1;hubv1\xa2\x02\x03OHX\xaa\x02\x12Observatory.Hub.V1\xca\x02\x12Observatory\\Hub\\V1\xe2\x02\x1eObservatory\\Hub\\V1\\GPBMetadata\xea\x02\x14Observatory::Hub::V1b\x06proto3"
 
 var (
@@ -153,19 +329,25 @@ func file_observatory_hub_v1_resources_proto_rawDescGZIP() []byte {
 	return file_observatory_hub_v1_resources_proto_rawDescData
 }
 
-var file_observatory_hub_v1_resources_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_observatory_hub_v1_resources_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_observatory_hub_v1_resources_proto_goTypes = []any{
 	(*CheckOwnershipRequest)(nil),  // 0: observatory.hub.v1.CheckOwnershipRequest
 	(*CheckOwnershipResponse)(nil), // 1: observatory.hub.v1.CheckOwnershipResponse
+	(*CanHoldRequest)(nil),         // 2: observatory.hub.v1.CanHoldRequest
+	(*Rule)(nil),                   // 3: observatory.hub.v1.Rule
+	(*CanHoldResponse)(nil),        // 4: observatory.hub.v1.CanHoldResponse
 }
 var file_observatory_hub_v1_resources_proto_depIdxs = []int32{
-	0, // 0: observatory.hub.v1.ResourceService.CheckOwnership:input_type -> observatory.hub.v1.CheckOwnershipRequest
-	1, // 1: observatory.hub.v1.ResourceService.CheckOwnership:output_type -> observatory.hub.v1.CheckOwnershipResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	3, // 0: observatory.hub.v1.CanHoldRequest.rules:type_name -> observatory.hub.v1.Rule
+	0, // 1: observatory.hub.v1.ResourceService.CheckOwnership:input_type -> observatory.hub.v1.CheckOwnershipRequest
+	2, // 2: observatory.hub.v1.ResourceService.CanHold:input_type -> observatory.hub.v1.CanHoldRequest
+	1, // 3: observatory.hub.v1.ResourceService.CheckOwnership:output_type -> observatory.hub.v1.CheckOwnershipResponse
+	4, // 4: observatory.hub.v1.ResourceService.CanHold:output_type -> observatory.hub.v1.CanHoldResponse
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_observatory_hub_v1_resources_proto_init() }
@@ -179,7 +361,7 @@ func file_observatory_hub_v1_resources_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_hub_v1_resources_proto_rawDesc), len(file_observatory_hub_v1_resources_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

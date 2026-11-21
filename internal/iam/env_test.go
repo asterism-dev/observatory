@@ -44,6 +44,28 @@ type fakeResources struct {
 	hubv1connect.ResourceServiceClient
 	mu                 sync.Mutex
 	owners, diskOwners map[string]bool
+	// canHold answers CanHold; nil denies like a hub where the actor holds nothing more.
+	canHold  func(*hubv1.CanHoldRequest) error
+	canHolds []*hubv1.CanHoldRequest
+}
+
+func (f *fakeResources) CanHold(_ context.Context, req *connect.Request[hubv1.CanHoldRequest]) (*connect.Response[hubv1.CanHoldResponse], error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.canHolds = append(f.canHolds, req.Msg)
+	if f.canHold == nil {
+		return nil, connect.NewError(connect.CodePermissionDenied, authz.ErrEscalation)
+	}
+	if err := f.canHold(req.Msg); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&hubv1.CanHoldResponse{}), nil
+}
+
+func (f *fakeResources) setCanHold(fn func(*hubv1.CanHoldRequest) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.canHold = fn
 }
 
 func (f *fakeResources) CheckOwnership(_ context.Context, req *connect.Request[hubv1.CheckOwnershipRequest]) (*connect.Response[hubv1.CheckOwnershipResponse], error) {
@@ -63,6 +85,9 @@ func (f *fakeResources) setDiskOwner(subject string, owns bool) {
 	defer f.mu.Unlock()
 	f.diskOwners[subject] = owns
 }
+
+// testRevision is the policy revision iam reports to the fake hub.
+const testRevision = 42
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
@@ -85,7 +110,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,
-		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify})
+		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify, Revision: func() uint64 { return testRevision }})
 	if err != nil {
 		t.Fatal(err)
 	}
