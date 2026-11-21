@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -103,7 +102,7 @@ func (a *Agent) pathsLoop(ctx context.Context) {
 	defer t.Stop()
 	for {
 		cur := a.mesh.status()
-		if !reflect.DeepEqual(cur, last) || time.Since(sentAt) >= pathReport {
+		if pathsChanged(cur, last) || time.Since(sentAt) >= pathReport {
 			a.mu.Lock()
 			send := a.send
 			a.mu.Unlock()
@@ -117,4 +116,12 @@ func (a *Agent) pathsLoop(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// pathsChanged ignores handshakes, which move on every rekey; the periodic report refreshes them.
+func pathsChanged(a, b []proto.PathStatus) bool {
+	return !slices.EqualFunc(a, b, func(x, y proto.PathStatus) bool {
+		x.Handshake, y.Handshake = nil, nil
+		return x == y
+	})
 }

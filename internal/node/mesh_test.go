@@ -569,3 +569,16 @@ func TestMeshRetriesFailedProbeAndPrunes(t *testing.T) {
 		t.Fatal("stale endpoint kept")
 	}
 }
+
+func TestPathsChangedIgnoresHandshake(t *testing.T) {
+	t1, t2 := time.Unix(1, 0), time.Unix(2, 0)
+	base := []proto.PathStatus{{NodeID: "a", Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &t1}}
+	rekeyed := []proto.PathStatus{{NodeID: "a", Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &t2}}
+	if pathsChanged(base, rekeyed) {
+		t.Fatal("a new handshake alone counted as a change")
+	}
+	relayed := []proto.PathStatus{{NodeID: "a", Mode: "relay", Handshake: &t2}}
+	if !pathsChanged(base, relayed) || !pathsChanged(base, nil) || !pathsChanged(nil, base) {
+		t.Fatal("a mode or peer change not detected")
+	}
+}
