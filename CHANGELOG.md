@@ -1,3 +1,9 @@
+## v0.22.1 (2026-11-21)
+
+### Fix
+
+- **integrations**: honour Retry-After when polling Claude usage (#44)
+
 ## v0.22.0 (2026-11-21)
 
 ### Feat
