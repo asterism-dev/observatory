@@ -36,7 +36,7 @@ const rows = computed(() => {
   const q = search.value.trim().toLowerCase()
   return items.value.filter((d) => (!s || d.scope === s) && (!q || d.name.toLowerCase().includes(q)))
 })
-const scopes = computed(() => dashboardScopes(own.value, can('dashboard:create'), true))
+const scopes = computed(() => dashboardScopes(own.value, can('telemetry.dashboards.create'), true))
 const scopeOptions = computed(() => scopes.value.map((s) => ({ value: scopeKey(s), label: scopeLabel(s, t) })))
 
 async function refresh() {
@@ -58,7 +58,7 @@ async function openCreate() {
   scope.value = 'user'
   createError.value = ''
   createOpen.value = true
-  if (org.value && me.value) own.value = await creatableTeams(api, org.value.id, me.value.user.id, can('dashboard:create'), teams.value)
+  if (org.value && me.value) own.value = await creatableTeams(api, org.value.id, me.value.user.id, can('telemetry.dashboards.create'), teams.value)
 }
 
 async function create() {

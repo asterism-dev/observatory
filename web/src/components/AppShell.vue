@@ -93,7 +93,7 @@ const navGroups = computed(() => {
       { path: `/orgs/${id}/env`, label: t('nav.env'), icon: KeyRound },
       { path: `/orgs/${id}/integrations`, label: t('nav.integrations'), icon: Plug },
       { path: `/orgs/${id}/dashboards`, label: t('nav.dashboards'), icon: ChartLine },
-      ...(can('logs:read') ? [{ path: `/orgs/${id}/logs`, label: t('nav.logs'), icon: ScrollText }] : []),
+      ...(can('telemetry.logEntries.list') ? [{ path: `/orgs/${id}/logs`, label: t('nav.logs'), icon: ScrollText }] : []),
     ],
   ]
   const settings = orgTabs.value[0]

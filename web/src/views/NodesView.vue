@@ -114,10 +114,10 @@ watch(
 <template>
   <Page v-if="org" :icon="HardDrive" :title="t('nav.nodes')" :subtitle="t('nodes.subtitle')">
     <template #actions>
-      <Button v-if="can('node:update') && selectableIds.length" :disabled="!selected.length" @click="updateOpen = true">
+      <Button v-if="can('compute.nodes.update') && selectableIds.length" :disabled="!selected.length" @click="updateOpen = true">
         {{ t('nodes.update.selected', { n: selected.length }) }}
       </Button>
-      <Button v-if="can('node:create')" variant="accent" :icon="Plus" @click="addOpen = true">{{ t('nodes.add') }}</Button>
+      <Button v-if="can('compute.nodes.create')" variant="accent" :icon="Plus" @click="addOpen = true">{{ t('nodes.add') }}</Button>
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-if="run && summary" class="banner" role="status">
@@ -126,9 +126,9 @@ watch(
         {{ failed ? t('nodes.update.failed', { name: failed.name, reason: failed.reason }) : t('nodes.update.failedGeneric') }}
       </template>
       <template v-else>{{ t(`nodes.update.${run.state === 'cancelled' ? 'cancelled' : 'done'}`) }}</template>
-      <Button v-if="run.state === 'running' && can('node:update')" :disabled="cancelling" @click="cancelRun">{{ t('nodes.update.cancel') }}</Button>
+      <Button v-if="run.state === 'running' && can('compute.nodes.update')" :disabled="cancelling" @click="cancelRun">{{ t('nodes.update.cancel') }}</Button>
     </p>
-    <div v-if="can('node:update') && selectableIds.length" class="select-all">
+    <div v-if="can('compute.nodes.update') && selectableIds.length" class="select-all">
       <Checkbox :model-value="allSelected" :aria-label="t('nodes.update.selectAll')" @update:model-value="selected = allSelected === true ? [] : [...selectableIds]" />
     </div>
     <ResourceList :count="nodes.length" :empty="t('nodes.empty')">
@@ -152,7 +152,7 @@ watch(
         <span class="mono image">
           {{ imageLine(n.image, t, locale) }}
         </span>
-        <template v-if="can('node:update') && selectableIds.length" #actions>
+        <template v-if="can('compute.nodes.update') && selectableIds.length" #actions>
           <Checkbox
             v-if="selectable(n, runActive)"
             :model-value="selected.includes(n.id)"

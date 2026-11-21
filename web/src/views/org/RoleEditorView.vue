@@ -49,7 +49,7 @@ const error = ref('')
 
 const roleId = computed(() => route.params.roleId as string | undefined)
 const current = computed(() => roles.value.find((r) => (r.key ?? r.id) === roleId.value))
-const readonly = computed(() => !!current.value?.builtin || !can('role:write'))
+const readonly = computed(() => !!current.value?.builtin || !can('iam.roles.manage'))
 const { setCrumbs } = useCrumbs()
 watchEffect(() => {
   const label = roleId.value === 'new' ? t('roles.create') : current.value?.name

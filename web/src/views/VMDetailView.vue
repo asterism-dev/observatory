@@ -230,7 +230,7 @@ watch(
       <template v-if="tab === 'metrics'">
         <TelemetryUsage :url="`${base()}/usage`" :no-data="t('telemetry.noDataVm')" :mem-max="vm!.memoryMB * 2 ** 20" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
         <VMProcesses :org-id="org.id" :vm-id="vm!.id" :running="vm!.state === 'running'" />
-        <RouterLink v-if="can('logs:read')" class="muted" :to="`/orgs/${org.id}/logs/vm/${vmId}`">{{ t('logs.openIn') }}</RouterLink>
+        <RouterLink v-if="can('telemetry.logEntries.list')" class="muted" :to="`/orgs/${org.id}/logs/vm/${vmId}`">{{ t('logs.openIn') }}</RouterLink>
         <TelemetryLogs v-if="usageRange" :url="`${base()}/logs`" :range="usageRange" :hover-at="hoverAt" :filter="vmLogFilter" />
       </template>
       <VMNetworkingTab v-if="tab === 'networking'" :vm="vm!" :egress="egress" :busy="busy" @edit="networksOpen = true" />

@@ -75,7 +75,7 @@ async function refresh() {
     if (key !== base.value) return
     team.value = res
     name.value = res.name
-    // Without member:read the picker stays empty.
+    // Without iam.members.list the picker stays empty.
     orgMembers.value = res.canManageMembers
       ? await api<OrgMember[]>(`/api/orgs/${org.value.id}/members`).catch(() => [])
       : []

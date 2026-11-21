@@ -54,7 +54,7 @@ watch(
     group.value = null
     streams.value = []
     error.value = ''
-    if (!orgId || !can('logs:read')) return
+    if (!orgId || !can('telemetry.logEntries.list')) return
     try {
       const [list, ss] = await Promise.all([
         api<LogGroupList>(`/api/orgs/${orgId}/logs/groups?kind=${k}`),
@@ -79,7 +79,7 @@ watch(
       <Tag>{{ t(`logs.kind.${group.kind}`) }}</Tag>
       <Tag v-if="group.deleted" tone="warning">{{ t('logs.deleted') }}</Tag>
     </template>
-    <EmptyState v-if="!can('logs:read')" :label="t('nav.logs')" :title="t('logs.forbidden')" :text="t('logs.forbiddenText')" />
+    <EmptyState v-if="!can('telemetry.logEntries.list')" :label="t('nav.logs')" :title="t('logs.forbidden')" :text="t('logs.forbiddenText')" />
     <template v-else>
       <p v-if="error" role="alert">{{ error }}</p>
       <template v-if="group">

@@ -41,7 +41,7 @@ async function save() {
     <Card>
       <p v-if="org.personal" class="muted">{{ t('org.personalNote') }}</p>
       <ValueField :label="t('org.displayName')" :value="org.name">
-        <template v-if="!org.personal && can('org:update') && !editing" #actions>
+        <template v-if="!org.personal && can('iam.orgs.update') && !editing" #actions>
           <Button size="sm" @click="editing = true">{{ t('org.edit') }}</Button>
         </template>
         <form v-if="editing" class="row" @submit.prevent="save">
@@ -54,7 +54,7 @@ async function save() {
       <p v-if="error" role="alert">{{ error }}</p>
     </Card>
   </Section>
-  <DefaultImageSection v-if="org" :org-id="org.id" level="org" :editable="can('image:default')" :description="t('images.orgDefaultHint')" />
+  <DefaultImageSection v-if="org" :org-id="org.id" level="org" :editable="can('artifacts.images.setDefault')" :description="t('images.orgDefaultHint')" />
 </template>
 
 <style scoped>

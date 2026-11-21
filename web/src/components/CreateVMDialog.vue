@@ -73,7 +73,7 @@ watch(selected, async (o) => {
   cascade.value = null
   if (!o) return
   const level = o.kind === 'team' ? `team/${o.id}` : 'user'
-  // Without image:list on the team level the dialog just says the default applies.
+  // Without artifacts.images.list on the team level the dialog just says the default applies.
   const res = await api<ImageDefault>(`/api/orgs/${props.orgId}/image-defaults/${level}`).catch(() => null)
   if (selected.value === o) cascade.value = res?.effective ?? null
 })

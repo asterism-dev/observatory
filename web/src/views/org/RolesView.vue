@@ -54,9 +54,9 @@ async function refresh() {
   const base = `/api/orgs/${id}`
   try {
     const rs = await api<Omit<Role, 'rid'>[]>(`${base}/roles`)
-    const bs = can('role:bind') ? await api<Binding[]>(`${base}/bindings`) : []
-    // Without member:read or team:read the subject picker has fewer entries.
-    const [ms, ts] = can('role:bind')
+    const bs = can('iam.roleBindings.manage') ? await api<Binding[]>(`${base}/bindings`) : []
+    // Without iam.members.list or iam.teams.list the subject picker has fewer entries.
+    const [ms, ts] = can('iam.roleBindings.manage')
       ? await Promise.all([
           api<{ id: string; name: string; email: string }[]>(`${base}/members`).catch(() => []),
           api<{ id: string; name: string }[]>(`${base}/teams`).catch(() => []),
@@ -124,7 +124,7 @@ watch(
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
     <Section :label="t('nav.roles')">
-      <template v-if="can('role:write')" #actions>
+      <template v-if="can('iam.roles.manage')" #actions>
         <Button variant="accent" @click="router.push(`/orgs/${org!.id}/roles/new`)">{{ t('roles.create') }}</Button>
       </template>
       <DataTable :columns="columns" :rows="roles" row-key="rid">
@@ -134,9 +134,9 @@ watch(
         <template #cell-actions="{ row }">
           <span class="row">
             <Button size="sm" @click="router.push(`/orgs/${org!.id}/roles/${row.rid}`)">
-              {{ row.builtin || !can('role:write') ? t('roles.view') : t('roles.edit') }}
+              {{ row.builtin || !can('iam.roles.manage') ? t('roles.view') : t('roles.edit') }}
             </Button>
-            <Button v-if="!row.builtin && can('role:write')" variant="danger" size="sm" @click="pendingDelete = row">
+            <Button v-if="!row.builtin && can('iam.roles.manage')" variant="danger" size="sm" @click="pendingDelete = row">
               {{ t('roles.delete') }}
             </Button>
           </span>
@@ -144,7 +144,7 @@ watch(
       </DataTable>
     </Section>
 
-    <Section v-if="can('role:bind')" :label="t('roles.bindings')">
+    <Section v-if="can('iam.roleBindings.manage')" :label="t('roles.bindings')">
       <Card>
         <form class="row" @submit.prevent="bind">
           <Select v-model="subject" :options="subjectOptions" :placeholder="t('roles.subject')" :aria-label="t('roles.subject')" />
