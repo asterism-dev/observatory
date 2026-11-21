@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/builds"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
@@ -31,6 +32,8 @@ type config struct {
 	MetricsURL, LogsURL string
 	// LogsRetention mirrors the log store's retention and bounds the logs explorer's time range.
 	LogsRetention time.Duration
+	// ServiceTokens maps service names to the tokens they call /internal/iam/ with; empty refuses every internal call.
+	ServiceTokens map[string]string
 }
 
 const minTokenLen = 32
@@ -151,6 +154,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if cfg.LogsRetention, err = parseRetention(getenv("OBSERVATORY_LOGS_RETENTION")); err != nil {
 		return config{}, err
+	}
+	if cfg.ServiceTokens, err = servicetoken.Parse(getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
+		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

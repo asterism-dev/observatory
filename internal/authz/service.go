@@ -10,9 +10,10 @@ import (
 
 // Service holds the current Enforcer and swaps it atomically on Reload.
 type Service struct {
-	load func(context.Context) (Policy, error)
-	mu   sync.Mutex
-	cur  atomic.Pointer[Enforcer]
+	load     func(context.Context) (Policy, error)
+	mu       sync.Mutex
+	cur      atomic.Pointer[Enforcer]
+	onReload func(Policy)
 }
 
 func NewService(ctx context.Context, load func(context.Context) (Policy, error)) (*Service, error) {
@@ -37,7 +38,18 @@ func (s *Service) Reload(ctx context.Context) error {
 		return err
 	}
 	s.cur.Store(e)
+	if s.onReload != nil {
+		s.onReload(p)
+	}
 	return nil
+}
+
+// OnReload calls fn with the current policy now and after every successful Reload, in reload order; fn runs under the reload lock and must not block.
+func (s *Service) OnReload(fn func(Policy)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onReload = fn
+	fn(s.cur.Load().policy)
 }
 
 func (s *Service) Enforcer() *Enforcer { return s.cur.Load() }

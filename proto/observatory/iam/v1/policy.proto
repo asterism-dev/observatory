@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package observatory.iam.v1;
+
+// PolicyService streams the authorization snapshot to services; callers authenticate with a service token.
+service PolicyService {
+  // WatchPolicy sends the full snapshot on connect and again after every change.
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc WatchPolicy(WatchPolicyRequest) returns (stream Policy);
+}
+
+message WatchPolicyRequest {}
+
+// Policy mirrors the hub's authorization snapshot without resource owner refs; UUIDs are canonical strings.
+message Policy {
+  // revision increases with every snapshot the issuer sends.
+  uint64 revision = 1;
+  repeated MemberRole memberships = 2;
+  repeated TeamMember team_members = 3;
+  repeated CustomRole roles = 4;
+  repeated Binding bindings = 5;
+  // teams lists every team, including those without members.
+  repeated TeamRef teams = 6;
+}
+
+message MemberRole {
+  string org_id = 1;
+  string user_id = 2;
+  string role = 3;
+}
+
+message TeamMember {
+  string org_id = 1;
+  string team_id = 2;
+  string user_id = 3;
+  bool admin = 4;
+}
+
+message TeamRef {
+  string org_id = 1;
+  string id = 2;
+}
+
+message Rule {
+  // effect is "allow" or "deny".
+  string effect = 1;
+  string object = 2;
+  string action = 3;
+}
+
+message CustomRole {
+  string id = 1;
+  string org_id = 2;
+  string name = 3;
+  string description = 4;
+  repeated Rule rules = 5;
+  // parents are "member", "admin" or a custom role UUID of the same org.
+  repeated string parents = 6;
+}
+
+message Binding {
+  string org_id = 1;
+  string subject = 2;
+  string role_id = 3;
+}
