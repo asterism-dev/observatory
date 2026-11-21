@@ -57,7 +57,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		return err
 	}
 	defer pool.Close()
-	js, closeBus, err := bus.Connect(ctx, cfg.NATSURL, cfg.NATSToken)
+	js, closeBus, err := bus.Await(ctx, cfg.NATSURL, cfg.NATSToken)
 	if err != nil {
 		return err
 	}

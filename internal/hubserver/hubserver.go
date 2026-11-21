@@ -203,26 +203,30 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 
 // relayEvents publishes the outbox once the bus is reachable; until then the hub serves and the outbox buffers.
 func relayEvents(ctx context.Context, pool *pgxpool.Pool, url, token string) {
+	js, closeBus, err := bus.Await(ctx, url, token)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Error("event bus unusable, audit events wait in the outbox", "err", err)
+		}
+		return
+	}
+	defer closeBus()
 	for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
-		js, closeBus, err := bus.Connect(ctx, url, token)
+		err := bus.EnsureStream(ctx, js)
 		if err == nil {
-			if err = bus.EnsureStream(ctx, js); err == nil {
-				outbox.NewRelay(pool, js).Run(ctx)
-				closeBus()
-				return
-			}
-			closeBus()
+			break
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		slog.Warn("event bus unavailable, audit events wait in the outbox", "err", err, "retry_in", wait)
+		slog.Warn("event stream unavailable, audit events wait in the outbox", "err", err, "retry_in", wait)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
 		}
 	}
+	outbox.NewRelay(pool, js).Run(ctx)
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.

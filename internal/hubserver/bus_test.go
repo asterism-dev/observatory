@@ -1,13 +1,16 @@
 package hubserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,4 +134,44 @@ func TestHubServesWithoutBusAndRelaysOnceItAppears(t *testing.T) {
 	defer late.Close()
 	forward(t, late, strings.TrimPrefix(natsURL, "nats://"))
 	waitFor("the outbox row to be published", func() bool { return unsent() == 0 })
+}
+
+func TestRelayLogsAndRetriesWrongToken(t *testing.T) {
+	url, token, stop, err := bus.Embedded(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	var logs syncBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+	defer cancel()
+	wrong := token[:31] + "x"
+	relayEvents(ctx, nil, url, wrong)
+	if n := strings.Count(logs.String(), "event bus unavailable"); n < 2 {
+		t.Fatalf("logged %d retries, want >= 2:\n%s", n, logs.String())
+	}
+	if strings.Contains(logs.String(), wrong) {
+		t.Fatal("token logged")
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

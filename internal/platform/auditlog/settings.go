@@ -73,14 +73,16 @@ func (s *Settings) Run(ctx context.Context, nc *nats.Conn) {
 	} else {
 		defer func() { _ = sub.Unsubscribe() }()
 	}
-	// Changes published while disconnected are lost to a core subscription, so a reconnect reloads.
-	nc.SetReconnectHandler(func(*nats.Conn) { poke() })
+	// Changes published while disconnected are lost to a core subscription, so a reconnect reloads; a status listener leaves the connection's handlers alone.
+	connected := nc.StatusChanged(nats.CONNECTED)
+	defer nc.RemoveStatusListener(connected)
 	poke()
 	backoff := minBackoff
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-connected:
 		case <-reload:
 		}
 		if err := s.load(ctx); err != nil {

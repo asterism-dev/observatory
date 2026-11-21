@@ -1,9 +1,14 @@
 package bus_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,10 +62,42 @@ func TestUnauthenticatedRefused(t *testing.T) {
 		nc.Close()
 		t.Fatal("client without token connected")
 	}
-	short, cancel := context.WithTimeout(ctx, 2*time.Second)
+	long, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, _, err := bus.Connect(short, url, token[:31]+"x"); err == nil {
+	_, _, err = bus.Connect(long, url, token[:31]+"x")
+	if err == nil {
 		t.Fatal("client with wrong token connected")
+	}
+	// A wrong token must fail on its own, not hang until the caller gives up.
+	if long.Err() != nil || !errors.Is(err, nats.ErrAuthorization) {
+		t.Fatalf("Connect with wrong token = %v, ctx err = %v", err, long.Err())
+	}
+}
+
+func TestAwaitLogsAndRetries(t *testing.T) {
+	ctx := context.Background()
+	url, token, stop, err := bus.Embedded(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	var logs syncBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+
+	wrong := token[:31] + "x"
+	short, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	if _, _, err := bus.Await(short, url, wrong); err == nil {
+		t.Fatal("Await with wrong token connected")
+	}
+	out := logs.String()
+	if n := strings.Count(out, "event bus unavailable"); n < 2 {
+		t.Fatalf("logged %d retries, want >= 2:\n%s", n, out)
+	}
+	if strings.Contains(out, wrong) {
+		t.Fatal("token logged")
 	}
 }
 
@@ -121,4 +158,21 @@ func TestConnectHonoursContext(t *testing.T) {
 	if _, _, err := bus.Connect(ctx, "nats://127.0.0.1:1", "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("Connect succeeded without a server")
 	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

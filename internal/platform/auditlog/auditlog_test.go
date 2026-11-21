@@ -233,7 +233,9 @@ func TestSettingsReloadAfterReconnect(t *testing.T) {
 	l.Close()
 	dir := t.TempDir()
 	ns := startNATS(t, dir, port)
-	nc, err := nats.Connect("nats://127.0.0.1:"+strconv.Itoa(port), nats.Token(natsToken), nats.MaxReconnects(-1), nats.ReconnectWait(50*time.Millisecond))
+	var ownHandler atomic.Bool
+	nc, err := nats.Connect("nats://127.0.0.1:"+strconv.Itoa(port), nats.Token(natsToken), nats.MaxReconnects(-1), nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectHandler(func(*nats.Conn) { ownHandler.Store(true) }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,4 +258,6 @@ func TestSettingsReloadAfterReconnect(t *testing.T) {
 	ns = startNATS(t, dir, port)
 	t.Cleanup(ns.Shutdown)
 	waitFor(t, "reload after reconnect", func() bool { return !s.DataEvents(org, "compute") })
+	// Run must not replace the connection's own reconnect handler.
+	waitFor(t, "the connection's reconnect handler", ownHandler.Load)
 }

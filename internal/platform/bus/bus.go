@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -17,19 +19,40 @@ import (
 // Stream holds every event under events.<org or "platform">.<type>.
 const Stream = "EVENTS"
 
-// Connect waits until NATS accepts the token or ctx ends, then returns a JetStream handle that reconnects forever.
+const (
+	connectAttempt = 30 * time.Second
+	maxRetryWait   = 30 * time.Second
+	repeatWarning  = time.Minute
+)
+
+var errShortToken = errors.New("nats token must be at least 32 characters")
+
+// Connect waits until NATS accepts the token, gives up for good or ctx ends, then returns a JetStream handle that reconnects forever.
 func Connect(ctx context.Context, url, token string) (jetstream.JetStream, func(), error) {
 	if len(token) < 32 {
-		return nil, nil, errors.New("nats token must be at least 32 characters")
+		return nil, nil, errShortToken
 	}
 	connected := make(chan struct{}, 1)
-	nc, err := nats.Connect(url, nats.Token(token), nats.RetryOnFailedConnect(true), nats.MaxReconnects(-1),
-		nats.ReconnectWait(time.Second),
-		nats.ConnectHandler(func(*nats.Conn) {
+	closed := make(chan struct{}, 1)
+	signal := func(ch chan struct{}) func(*nats.Conn) {
+		return func(*nats.Conn) {
 			select {
-			case connected <- struct{}{}:
+			case ch <- struct{}{}:
 			default:
 			}
+		}
+	}
+	w := &warner{}
+	nc, err := nats.Connect(url, nats.Token(token), nats.RetryOnFailedConnect(true), nats.MaxReconnects(-1),
+		nats.ReconnectWait(time.Second),
+		nats.ConnectHandler(signal(connected)),
+		// nats gives up after the same auth error twice; without this Connect would wait for ctx forever.
+		nats.ClosedHandler(signal(closed)),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) { w.warn("event bus disconnected", err) }),
+		nats.ReconnectErrHandler(func(_ *nats.Conn, err error) { w.warn("event bus reconnect failed", err) }),
+		nats.ReconnectHandler(func(*nats.Conn) {
+			w.reset()
+			slog.Info("event bus reconnected")
 		}))
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to nats: %w", err)
@@ -37,6 +60,8 @@ func Connect(ctx context.Context, url, token string) (jetstream.JetStream, func(
 	if !nc.IsConnected() {
 		select {
 		case <-connected:
+		case <-closed:
+			return nil, nil, fmt.Errorf("connect to nats: %w", errors.Join(errors.New("connection closed"), nc.LastError()))
 		case <-ctx.Done():
 			lastErr := nc.LastError()
 			nc.Close()
@@ -49,6 +74,55 @@ func Connect(ctx context.Context, url, token string) (jetstream.JetStream, func(
 		return nil, nil, fmt.Errorf("jetstream: %w", err)
 	}
 	return js, nc.Close, nil
+}
+
+// Await is Connect with a time limit per attempt, retrying with logged backoff until it succeeds or ctx ends.
+func Await(ctx context.Context, url, token string) (jetstream.JetStream, func(), error) {
+	for wait := time.Second; ; wait = min(2*wait, maxRetryWait) {
+		attempt, cancel := context.WithTimeout(ctx, connectAttempt)
+		js, closeConn, err := Connect(attempt, url, token)
+		cancel()
+		if err == nil {
+			return js, closeConn, nil
+		}
+		if ctx.Err() != nil || errors.Is(err, errShortToken) {
+			return nil, nil, err
+		}
+		slog.Warn("event bus unavailable", "err", err, "retry_in", wait)
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// warner logs a connection problem when it changes and repeats it at most once a minute, since reconnects fail every second.
+type warner struct {
+	mu   sync.Mutex
+	last string
+	at   time.Time
+}
+
+func (w *warner) warn(msg string, err error) {
+	if err == nil {
+		return
+	}
+	key := msg + ": " + err.Error()
+	w.mu.Lock()
+	if key == w.last && time.Since(w.at) < repeatWarning {
+		w.mu.Unlock()
+		return
+	}
+	w.last, w.at = key, time.Now()
+	w.mu.Unlock()
+	slog.Warn(msg, "err", err)
+}
+
+func (w *warner) reset() {
+	w.mu.Lock()
+	w.last = ""
+	w.mu.Unlock()
 }
 
 // EnsureStream creates the EVENTS stream or updates it to the current config.
