@@ -887,3 +887,24 @@ func TestNodeBoundsGuestProcesses(t *testing.T) {
 		t.Fatalf("error reply: %d bytes, %d entries", len(r.Error), len(r.Processes))
 	}
 }
+
+func TestControlAnswersPingsDuringBlockedReconcile(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	block := make(chan struct{})
+	env.provider.mu.Lock()
+	env.provider.killBlock = block
+	env.provider.mu.Unlock()
+	t.Cleanup(func() { close(block) })
+	env.hub.delete(vm.ID)
+	eventually(t, "kill blocked", func() bool { return slices.Contains(env.provider.gotEvents(), "kill-blocked") })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := env.hub.ping(ctx); err != nil {
+		t.Fatalf("ping during a blocked reconcile: %v", err)
+	}
+	if n := len(env.hub.registers()); n != 1 {
+		t.Fatalf("reconnected: %d registers", n)
+	}
+}

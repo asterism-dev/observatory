@@ -236,29 +236,53 @@ func (a *Agent) connect(ctx context.Context) error {
 		a.mu.Unlock()
 	}()
 
+	// The reader never waits on a slow reconcile, so it keeps answering the hub's pings; the worker keeps message order.
+	msgs := make(chan proto.Message, 64)
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		for m := range msgs {
+			// A stopping node drains the queue without acting on it.
+			if ctx.Err() == nil {
+				a.handle(ctx, m, send)
+			}
+		}
+	}()
+	defer func() {
+		close(msgs)
+		<-handled
+	}()
 	dec := json.NewDecoder(ctrl)
 	for {
 		var m proto.Message
 		if err := dec.Decode(&m); err != nil {
 			return err
 		}
-		switch {
-		case m.Type == "desired":
-			a.reconcile(ctx, m.Seq, m.Desired)
-		case m.Type == "processes" && m.ReqID != "":
-			go func() { _ = send(a.processes(ctx, m)) }()
-		case m.Type == "update":
-			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
-			a.runUpdate(ctx, func(m proto.Message) error {
-				a.mu.Lock()
-				defer a.mu.Unlock()
-				if a.send != nil && a.send(m) == nil {
-					return nil
-				}
-				a.unsentUpdate = m.Update
-				return errors.New("not connected, sending after the next register")
-			})
+		select {
+		case msgs <- m:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+	}
+}
+
+func (a *Agent) handle(ctx context.Context, m proto.Message, send func(proto.Message) error) {
+	switch {
+	case m.Type == "desired":
+		a.reconcile(ctx, m.Seq, m.Desired)
+	case m.Type == "processes" && m.ReqID != "":
+		go func() { _ = send(a.processes(ctx, m)) }()
+	case m.Type == "update":
+		// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
+		a.runUpdate(ctx, func(m proto.Message) error {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.send != nil && a.send(m) == nil {
+				return nil
+			}
+			a.unsentUpdate = m.Update
+			return errors.New("not connected, sending after the next register")
+		})
 	}
 }
 

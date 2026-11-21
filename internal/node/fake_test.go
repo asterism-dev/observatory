@@ -50,8 +50,12 @@ func (i *fakeInstance) Stop() error {
 
 func (i *fakeInstance) Kill() error {
 	i.p.mu.Lock()
-	failKill := i.p.failKill
+	failKill, block := i.p.failKill, i.p.killBlock
 	i.p.mu.Unlock()
+	if block != nil {
+		i.p.record("kill-blocked")
+		<-block
+	}
 	if failKill != nil {
 		i.p.record("kill-failed")
 		return failKill
@@ -158,6 +162,7 @@ type fakeProvider struct {
 	restoreBlock  chan struct{}
 	failSaveState error
 	failKill      error
+	killBlock     chan struct{} // when set, Kill waits for it to close
 	guestResumes  []time.Time
 	restores      map[string]int
 	idle, wake    chan struct{} // a send makes a waiting WaitIdle or WaitWake return nil

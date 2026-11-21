@@ -365,3 +365,10 @@ func (h *fakeHub) underlayRequests() int {
 	defer h.mu.Unlock()
 	return len(h.underlayReqs)
 }
+
+func (h *fakeHub) ping(ctx context.Context) error {
+	h.connMu.Lock()
+	ws := h.ws
+	h.connMu.Unlock()
+	return ws.Ping(ctx)
+}
