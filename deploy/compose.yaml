@@ -197,9 +197,13 @@ services:
     environment:
       HUB_URL: http://hub:8091
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
+      OBSERVATORY_GATEWAY_DNS: ${OBSERVATORY_GATEWAY_DNS:-}
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch
+      # the host's upstream resolvers (docs/network.md, "Upstream DNS"); a directory, as resolved replaces the file
+      - /run/systemd/resolve:/host/resolve:ro
+      - /etc/resolv.conf:/host/resolv.conf:ro
   # In the netns service's namespace, with the gateway, so exports listen on the underlay address only, nothing published on the host.
   storage:
     image: ghcr.io/asterism-dev/observatory-storage:${OBSERVATORY_VERSION:-latest}
