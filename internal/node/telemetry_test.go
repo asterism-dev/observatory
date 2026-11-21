@@ -206,7 +206,7 @@ func TestTelemetryHubDownDoesNotBlock(t *testing.T) {
 	hub := httptest.NewServer(http.NotFoundHandler())
 	url := hub.URL
 	hub.Close()
-	tel := startTestTelemetry(t, url+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, url, nil)
 
 	start := time.Now()
 	for range 20000 {
@@ -504,7 +504,7 @@ func TestTelemetryDurationInGroupAsString(t *testing.T) {
 func TestVMTelemetryDroppedCounter(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	tel := &Telemetry{Meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")}
-	sink, fw, err := NewVMTelemetry("ws://127.0.0.1:1/api/nodes/connect", "cred", tel)
+	sink, fw, err := NewVMTelemetry("http://127.0.0.1:1", "cred", tel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestVMTelemetryDroppedCounter(t *testing.T) {
 func TestVMTelemetryDroppedCounterStartsAtRegister(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	tel := &Telemetry{Meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")}
-	sink, fw, err := NewVMTelemetry("ws://127.0.0.1:1/api/nodes/connect", "cred", tel)
+	sink, fw, err := NewVMTelemetry("http://127.0.0.1:1", "cred", tel)
 	if err != nil {
 		t.Fatal(err)
 	}
