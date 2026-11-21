@@ -286,6 +286,7 @@ func (f *Fleet) attach(c *conn) {
 	old := f.conns[c.node]
 	c.since = time.Now()
 	f.conns[c.node] = c
+	delete(f.emergency, c.node) // a live connection supersedes the report, so a later gap is not underlay_down
 	f.mu.Unlock()
 	if old != nil {
 		old.ws.CloseNow()

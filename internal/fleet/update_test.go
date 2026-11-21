@@ -715,3 +715,21 @@ func TestEmergencyRedeliversUpdateSentIntoDeadConnection(t *testing.T) {
 		t.Fatalf("run %+v", r)
 	}
 }
+
+func TestEmergencyUpdateNotRepeatedAfterRestart(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.underlayDown(ns[0])
+	e.start(ns[0])
+	waitFor(t, func() bool { return e.f.Updating(ns[0].ID) })
+	e.back(ns[0], oldVersion)
+	ns[0].conn.awaitUpdate()
+	// The installer restarts the node; the gap between the old and the new process must not look like underlay_down.
+	ns[0].conn.ws.CloseNow()
+	waitFor(t, func() bool { return !e.f.Online(ns[0].ID) })
+	time.Sleep(50 * time.Millisecond)
+	e.back(ns[0], version.Version)
+	ns[0].conn.noUpdate()
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}
