@@ -25,6 +25,8 @@ import (
 
 var errRollback = errors.New("rollback")
 
+const token = "0123456789abcdef0123456789abcdef"
+
 const org = "0b9d6a43-5d43-4a43-9a43-1d43c5d43a43"
 
 func freePort(t *testing.T) int {
@@ -39,7 +41,7 @@ func freePort(t *testing.T) int {
 
 func startNATS(t *testing.T, dir string, port int) *server.Server {
 	t.Helper()
-	s, err := server.NewServer(&server.Options{Host: "127.0.0.1", Port: port, JetStream: true, StoreDir: dir, NoSigs: true, NoLog: true})
+	s, err := server.NewServer(&server.Options{Host: "127.0.0.1", Port: port, JetStream: true, StoreDir: dir, Authorization: token, NoSigs: true, NoLog: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func setup(t *testing.T) *env {
 	e := &env{pool: pool, dir: t.TempDir(), port: freePort(t)}
 	e.nats = startNATS(t, e.dir, e.port)
 	t.Cleanup(func() { e.nats.Shutdown() })
-	js, closeConn, err := bus.Connect(ctx, "nats://127.0.0.1:"+strconv.Itoa(e.port))
+	js, closeConn, err := bus.Connect(ctx, "nats://127.0.0.1:"+strconv.Itoa(e.port), token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +235,7 @@ func TestWriteRejectsInvalid(t *testing.T) {
 		{Type: "iam.members.delete", Org: "not-a-uuid"},
 		{Type: "iam.members.delete", Org: "0B9D6A43-5D43-4A43-9A43-1D43C5D43A43"},
 		{Type: "iam.members.delete", Id: "nope"},
+		{Type: "iam.members.delete", Id: "0190F5A2-7C3B-7D4E-8F60-123456789ABC"},
 	} {
 		err := pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error { return outbox.Write(ctx, tx, ev) })
 		if err == nil {
@@ -261,15 +264,34 @@ func TestDeliveredAfterNATSReturns(t *testing.T) {
 	}
 }
 
-func TestRelayRestartKeepsOrder(t *testing.T) {
+// stopAfter cancels the relay right after its n-th publish, in the middle of a batch.
+type stopAfter struct {
+	jetstream.JetStream
+	n      int32
+	count  *atomic.Int32
+	cancel context.CancelFunc
+}
+
+func (s stopAfter) Publish(ctx context.Context, subject string, data []byte, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+	ack, err := s.JetStream.Publish(ctx, subject, data, opts...)
+	if s.count.Add(1) == s.n {
+		s.cancel()
+	}
+	return ack, err
+}
+
+func TestRelayStoppedMidBatchLosesAndReordersNothing(t *testing.T) {
 	e := setup(t)
 	var ids []string
 	for range 20 {
 		ids = append(ids, e.write(t, true).GetId())
 	}
-	stop := e.runRelay(t, nil)
-	eventually(t, "first rows sent", func() bool { return e.count(t, "sent_at IS NOT NULL") > 0 })
-	stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	outbox.NewRelay(e.pool, stopAfter{JetStream: e.js, n: 7, count: new(atomic.Int32), cancel: cancel}).Run(ctx)
+	if sent := e.count(t, "sent_at IS NOT NULL"); sent == 0 || sent == len(ids) {
+		t.Fatalf("relay did not stop mid-batch: %d of %d sent", sent, len(ids))
+	}
+
 	for range 20 {
 		ids = append(ids, e.write(t, true).GetId())
 	}

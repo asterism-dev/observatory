@@ -82,8 +82,8 @@ func Write(ctx context.Context, tx pgx.Tx, e *eventsv1.Event) error {
 			return fmt.Errorf("event id: %w", err)
 		}
 		e.Id = id.String()
-	} else if _, err := uuid.Parse(e.GetId()); err != nil {
-		return fmt.Errorf("event id %q is not a UUID", e.GetId())
+	} else if u, err := uuid.Parse(e.GetId()); err != nil || u.String() != e.GetId() {
+		return fmt.Errorf("event id %q is not a canonical UUID", e.GetId())
 	}
 	if e.GetTime() == nil {
 		e.Time = timestamppb.Now()
@@ -212,6 +212,8 @@ func (r *Relay) publishBatch(ctx context.Context) (int, error) {
 		sent = append(sent, m.id)
 	}
 	if len(sent) > 0 {
+		// Rows already acked are marked even when the relay is stopping, so a restart resends as little as possible.
+		ctx := context.WithoutCancel(ctx)
 		if _, err := tx.Exec(ctx, "UPDATE outbox SET sent_at = $1 WHERE id = ANY($2::uuid[])", r.now(), sent); err != nil {
 			return 0, errors.Join(pubErr, err)
 		}

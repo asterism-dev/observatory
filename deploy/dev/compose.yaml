@@ -22,7 +22,15 @@ services:
     image: nats:2.15.3-alpine
     profiles: [nats]
     restart: unless-stopped
-    command: ["-js", "-sd", "/data"]
+    environment:
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:-}
+    # make nats-token writes the token; the shell refuses a missing or short one before the server starts.
+    entrypoint: ["sh", "-c", '[ $${#OBSERVATORY_NATS_TOKEN} -ge 32 ] || { echo "OBSERVATORY_NATS_TOKEN must be at least 32 characters" >&2; exit 1; }; exec nats-server -js -sd /data -m 8222 --auth "$$OBSERVATORY_NATS_TOKEN"']
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
     ports:
       - "127.0.0.1:54222:4222"
     volumes:

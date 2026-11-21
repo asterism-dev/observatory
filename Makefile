@@ -1,4 +1,4 @@
-.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token service-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down nats-up nats-down idp-up idp-down idp-bootstrap observatory cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token service-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down nats-token nats-up nats-down idp-up idp-down idp-bootstrap observatory cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -43,8 +43,11 @@ telemetry-up: telemetry-env
 telemetry-down:
 	docker compose -f deploy/dev/compose.yaml rm -sf victoriametrics victorialogs
 
-nats-up:
-	docker compose -f deploy/dev/compose.yaml --profile nats up -d nats
+nats-token:
+	grep -q '^OBSERVATORY_NATS_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_NATS_TOKEN=$$(openssl rand -hex 32)"; echo "OBSERVATORY_NATS_URL=nats://localhost:54222"; } >> deploy/dev/hub.env
+
+nats-up: nats-token
+	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile nats up -d --wait nats
 
 nats-down:
 	docker compose -f deploy/dev/compose.yaml rm -sf nats

@@ -71,7 +71,10 @@ services:
   nats:
     image: nats:2.15.3-alpine
     restart: unless-stopped
-    command: ["-js", "-sd", "/data"]
+    environment:
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+    # The shell refuses a short token before the server starts.
+    entrypoint: ["sh", "-c", '[ $${#OBSERVATORY_NATS_TOKEN} -ge 32 ] || { echo "OBSERVATORY_NATS_TOKEN must be at least 32 characters" >&2; exit 1; }; exec nats-server -js -sd /data --auth "$$OBSERVATORY_NATS_TOKEN"']
     volumes:
       - nats-data:/data
   # Reached only through the hub's /v2/ proxy; restarts until the hub has written its token certificate.

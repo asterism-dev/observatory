@@ -3,6 +3,8 @@ package bus
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -15,11 +17,31 @@ import (
 // Stream holds every event under events.<org or "platform">.<type>.
 const Stream = "EVENTS"
 
-// Connect returns a JetStream handle that reconnects forever, and a func closing the connection.
-func Connect(_ context.Context, url string) (jetstream.JetStream, func(), error) {
-	nc, err := nats.Connect(url, nats.MaxReconnects(-1))
+// Connect waits until NATS accepts the token or ctx ends, then returns a JetStream handle that reconnects forever.
+func Connect(ctx context.Context, url, token string) (jetstream.JetStream, func(), error) {
+	if len(token) < 32 {
+		return nil, nil, errors.New("nats token must be at least 32 characters")
+	}
+	connected := make(chan struct{}, 1)
+	nc, err := nats.Connect(url, nats.Token(token), nats.RetryOnFailedConnect(true), nats.MaxReconnects(-1),
+		nats.ReconnectWait(time.Second),
+		nats.ConnectHandler(func(*nats.Conn) {
+			select {
+			case connected <- struct{}{}:
+			default:
+			}
+		}))
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to nats: %w", err)
+	}
+	if !nc.IsConnected() {
+		select {
+		case <-connected:
+		case <-ctx.Done():
+			lastErr := nc.LastError()
+			nc.Close()
+			return nil, nil, fmt.Errorf("connect to nats: %w", errors.Join(ctx.Err(), lastErr))
+		}
 	}
 	js, err := jetstream.New(nc)
 	if err != nil {
@@ -45,18 +67,24 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream) error {
 	return nil
 }
 
-// Embedded runs a JetStream-enabled NATS server in-process on a random loopback port.
-func Embedded(ctx context.Context, dataDir string) (url string, stop func(), err error) {
+// Embedded runs a JetStream-enabled NATS server in-process on a random loopback port, guarded by a random token.
+func Embedded(ctx context.Context, dataDir string) (url, token string, stop func(), err error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", "", nil, fmt.Errorf("nats token: %w", err)
+	}
+	token = hex.EncodeToString(secret)
 	s, err := server.NewServer(&server.Options{
-		Host:      "127.0.0.1",
-		Port:      server.RANDOM_PORT,
-		JetStream: true,
-		StoreDir:  dataDir,
-		NoSigs:    true,
-		NoLog:     true,
+		Host:          "127.0.0.1",
+		Port:          server.RANDOM_PORT,
+		JetStream:     true,
+		StoreDir:      dataDir,
+		Authorization: token,
+		NoSigs:        true,
+		NoLog:         true,
 	})
 	if err != nil {
-		return "", nil, fmt.Errorf("embedded nats: %w", err)
+		return "", "", nil, fmt.Errorf("embedded nats: %w", err)
 	}
 	go s.Start()
 	stop = func() {
@@ -68,8 +96,8 @@ func Embedded(ctx context.Context, dataDir string) (url string, stop func(), err
 	for !s.ReadyForConnections(100 * time.Millisecond) {
 		if ctx.Err() != nil {
 			stop()
-			return "", nil, errors.New("embedded nats did not become ready")
+			return "", "", nil, errors.New("embedded nats did not become ready")
 		}
 	}
-	return s.ClientURL(), stop, nil
+	return s.ClientURL(), token, stop, nil
 }
