@@ -140,6 +140,9 @@ nothing goes to a third party the host does not already use:
 - Without a usable server the gateway logs an error and answers SERVFAIL for public names; `*.internal` keeps
   working. It never falls back to public resolvers.
 
+VMs get `nameserver 10.192.0.1` as their only resolver, reached over the management NIC, so they resolve public
+names through the same upstreams and have no DNS while the gateway is down.
+
 `OBSERVATORY_GATEWAY_DNS` (`deploy/.env`) replaces the list: comma-separated IPs, each with an optional port, used
 as given apart from duplicates. The gateway refuses to start on a value that is not an IP address. `127.0.0.53` is the gateway's own
 loopback inside its namespace, so it never answers; Docker's DNS (`127.0.0.11`) ends at the host's stub and brings the
