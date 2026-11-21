@@ -320,6 +320,28 @@ The service's interceptor checks it before the handler runs:
   change reaches them within seconds. A service refuses requests until it has received a policy, and keeps the last one
   if the stream drops.
 
+## Hub as iam client
+
+The hub does not read users, memberships or teams for authorization. It verifies the identity token and takes an
+org's members and their roles from the same policy the other services get: a non-member gets not found, a member
+without the permission is denied. It reads user names, e-mails, SSH keys and team names through the internal iam API
+(`/internal/iam/`, service token).
+
+What a removed member or deleted team leaves behind is cleaned up from events, not in the same transaction. The hub
+consumes the allowed `iam.members.delete`, `iam.members.leave`, `iam.teams.delete`, `iam.sessions.delete` and
+`iam.sessions.revoke` events (durable consumer `hub`) and then deletes the subject's private env vars, integrations,
+images, dashboards, limits and devices, detaches a team from its disks and VM history, or drops the registry
+credentials of the session. Denied events are ignored. Cleanup is idempotent and retried until it succeeds; if the
+member rejoins in between, only what predates the removal is purged.
+
+- Removing a member or deleting a team is refused with `409` while the hub reports that the subject owns VMs or live
+  disks. The check and the delete are not one transaction, so a VM created in between is not caught.
+- Events stay on the bus for 7 days; cleanup that is delayed longer is lost.
+- Deleting a manifest (image cleanup) is best effort; a failure leaves a registry blob until garbage collection.
+- Deleting an org or a user does not clean up hub rows yet and leaves orphans until the iam service is extracted.
+- Registry credentials end with the session that issued them: after a logout or revoke the registry refuses them,
+  even before the credential's own expiry.
+
 ## Audit
 
 Every state change writes an audit event to the hub's outbox in the same transaction, so it is published only if the

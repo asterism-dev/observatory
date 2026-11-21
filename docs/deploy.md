@@ -82,6 +82,9 @@ per start.
 32 characters, `openssl rand -hex 32`) is the shared secret, and the `nats-data` volume holds the streams. The hub starts
 without the bus and buffers its events in the outbox until it is reachable; `OBSERVATORY_NATS_URL` and
 `OBSERVATORY_NATS_TOKEN` must still be set. A bus that is down or refuses the token is logged and retried.
+The hub also consumes iam events from the bus to clean up after removed members, deleted teams and revoked sessions
+(see [permissions](permissions.md#hub-as-iam-client)); without a reachable bus that cleanup waits, and the events are
+kept for 7 days.
 
 ## Audit service
 
