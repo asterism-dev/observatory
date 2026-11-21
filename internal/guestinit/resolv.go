@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -15,16 +16,11 @@ const (
 	instanceIDFile = "var/lib/observatory/instance-id"
 )
 
-// WriteResolv writes a fixed resolv.conf: the mgmt resolver first when the VM has a mgmt NIC, then the public ones.
+// WriteResolv points the VM at the gateway's resolver, reached over the mgmt NIC; without one it leaves the image's file alone rather than pick resolvers itself.
 func (r Root) WriteResolv(nics []proto.GuestNIC) error {
-	var b strings.Builder
-	for _, n := range nics {
-		if n.Mgmt {
-			fmt.Fprintf(&b, "nameserver %s\n", mgmtNameserver)
-			break
-		}
+	if !slices.ContainsFunc(nics, func(n proto.GuestNIC) bool { return n.Mgmt }) {
+		return nil
 	}
-	b.WriteString("nameserver 1.1.1.1\nnameserver 9.9.9.9\n")
 	path := r.join("etc/resolv.conf")
 	// Images often link it to a resolver stub that nothing runs here; writing through the link would also follow it out of the root.
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
@@ -32,7 +28,7 @@ func (r Root) WriteResolv(nics []proto.GuestNIC) error {
 			return err
 		}
 	}
-	return writeFileAtomic(path, []byte(b.String()), 0o644)
+	return writeFileAtomic(path, []byte("nameserver "+mgmtNameserver+"\n"), 0o644)
 }
 
 // WriteHostname writes hostname and its hosts entry, and a new machine-id whenever instanceID differs from the last boot's.
