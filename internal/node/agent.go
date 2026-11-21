@@ -896,7 +896,7 @@ func (a *Agent) queue(ctx context.Context, e *vmEntry, d proto.DesiredVM) {
 func (a *Agent) applyPending(ctx context.Context, e *vmEntry) {
 	<-e.booted
 	e.op.Lock()
-	e.op.Unlock()
+	e.op.Unlock() //nolint:staticcheck // waits for the running operation to finish
 	a.reconcileMu.Lock()
 	defer a.reconcileMu.Unlock()
 	a.mu.Lock()

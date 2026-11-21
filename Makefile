@@ -1,4 +1,4 @@
-.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap observatory cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -50,7 +50,7 @@ idp-down:
 idp-bootstrap:
 	sh deploy/idp/bootstrap.sh
 
-hub: web node
+observatory: web node
 	go build -o bin/observatory ./cmd/observatory
 
 cli:
@@ -78,4 +78,5 @@ gen-check: gen
 	test -z "$$(git ls-files --others --exclude-standard -- gen web/src/gen)"
 
 lint:
+	go tool -modfile=tools/go.mod golangci-lint run
 	go tool -modfile=tools/go.mod buf lint

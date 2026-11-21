@@ -150,8 +150,8 @@ func TestServeDrainsBeforeReturning(t *testing.T) {
 	<-started
 	cancel()
 	select {
-	case <-served:
-		t.Fatal("Serve returned with a request in flight")
+	case err := <-served:
+		t.Fatalf("Serve returned with a request in flight: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)

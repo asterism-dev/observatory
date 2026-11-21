@@ -20,7 +20,7 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist web/dist
 RUN ldflags="-X github.com/asterism-dev/observatory/internal/version.Version=$VERSION" \
-    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "$ldflags" -o /hub ./cmd/observatory \
+    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags "$ldflags" -o /observatory ./cmd/observatory \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o /observatory-node ./cmd/node \
     && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$ldflags" -o /guestboot/observatory-init ./cmd/init
 COPY --from=guestboot /vmlinux /mke2fs /resize2fs /guestboot/
@@ -31,11 +31,12 @@ FROM debian:trixie-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && install -d -o 65532 /keys /certs
-COPY --from=build /hub /usr/local/bin/hub
+COPY --from=build /observatory /usr/local/bin/observatory
 COPY --from=build /observatory-node /usr/local/lib/observatory/observatory-node
 COPY --from=build /guestboot.tar /usr/local/lib/observatory/guestboot.tar
 COPY --from=registry /bin/registry /usr/local/bin/registry
-ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar OBSERVATORY_LISTEN=:8090
+ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar
 USER 65532
-EXPOSE 8090
-ENTRYPOINT ["/usr/local/bin/hub", "serve", "all"]
+EXPOSE 8090 8091
+ENTRYPOINT ["observatory", "serve"]
+CMD ["all"]

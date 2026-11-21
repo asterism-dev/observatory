@@ -8,5 +8,5 @@
 {$OBSERVATORY_DOMAIN} {
 	import tls-{$OBSERVATORY_TLS}
 	respond /internal/* 404
-	reverse_proxy hub:8090
+	reverse_proxy edge:8090
 }
