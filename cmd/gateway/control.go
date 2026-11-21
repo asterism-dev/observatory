@@ -27,5 +27,5 @@ func controlProxy(hub *url.URL, gatewayToken string) http.Handler {
 }
 
 func newControlServer(hub *url.URL, gatewayToken string) *http.Server {
-	return &http.Server{Handler: controlProxy(hub, gatewayToken), ReadHeaderTimeout: 10 * time.Second}
+	return &http.Server{Handler: controlProxy(hub, gatewayToken), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
 }
