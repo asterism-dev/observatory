@@ -3,7 +3,9 @@ package fleet_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
@@ -2642,6 +2644,46 @@ func TestPeersExcludeQuarantined(t *testing.T) {
 	}
 	if got := peerIDs(a.nextPeers()); !slices.Equal(got, []string{n3.ID.String()}) {
 		t.Fatalf("after quarantine = %v", got)
+	}
+}
+
+func TestPeersAfterReenroll(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.nextPeers()
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{n2.ID.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := peerIDs(a.nextPeers()); len(got) != 0 {
+		t.Fatalf("after quarantine = %v", got)
+	}
+	tok, err := e.s.RegenerateNodeCredential(ctx, e.org.ID, n2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2, _, err = e.s.EnrollNode(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, csrKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.h.Underlay(ctx, n2, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.nextPeers(); len(got.Peers) != 1 || got.Peers[0].NodeID != n2.ID.String() || got.Peers[0].PublicKey != key {
+		t.Fatalf("after re-enroll = %+v, want n2 with key %s", got, key)
 	}
 }
 
