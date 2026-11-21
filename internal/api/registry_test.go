@@ -15,6 +15,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -399,6 +400,23 @@ func TestProxyRealmFollowsConfiguredHost(t *testing.T) {
 		h.ServeHTTP(w, r)
 		if got := w.Header().Get("WWW-Authenticate"); got != `Bearer realm="`+want+`",service="observatory"` {
 			t.Errorf("host %s: %q", host, got)
+		}
+	}
+}
+
+func TestProxyStripsEdgeHeaders(t *testing.T) {
+	got := make(chan http.Header, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got <- r.Header.Clone() }))
+	defer upstream.Close()
+	up, _ := url.Parse(upstream.URL)
+	r := httptest.NewRequest(http.MethodGet, "/v2/", nil)
+	r.Header.Set(clientip.HeaderClientIP, "203.0.113.7")
+	r.Header.Set(clientip.HeaderEdge, "0123456789abcdef0123456789abcdef")
+	registryProxy(up, &url.URL{Scheme: "https", Host: "hub.test"}, nil).ServeHTTP(httptest.NewRecorder(), r)
+	h := <-got
+	for _, k := range []string{clientip.HeaderClientIP, clientip.HeaderEdge} {
+		if v := h.Values(k); len(v) != 0 {
+			t.Errorf("registry saw %s: %q", k, v)
 		}
 	}
 }
