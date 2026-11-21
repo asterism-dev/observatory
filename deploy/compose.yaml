@@ -6,6 +6,8 @@ x-observatory: &observatory
     context: ..
     dockerfile: deploy/observatory.Dockerfile
   restart: unless-stopped
+  # Covers the 10s drain of in-flight requests before Docker kills the process.
+  stop_grace_period: 20s
 
 services:
   # Public entry point: serves the web app and forwards to the hub, never to /internal/*.

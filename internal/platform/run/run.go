@@ -79,7 +79,9 @@ func dialAddr(a *net.TCPAddr) string {
 	return a.String()
 }
 
-// Serve serves srv on ln until ctx is done, then drains in-flight requests for up to 10s before returning.
+var drainTimeout = 10 * time.Second
+
+// Serve serves srv on ln until ctx is done, then drains in-flight requests for up to drainTimeout and closes what is left.
 func Serve(ctx context.Context, srv *http.Server, ln net.Listener) error {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
@@ -88,10 +90,12 @@ func Serve(ctx context.Context, srv *http.Server, ln net.Listener) error {
 		return err
 	case <-ctx.Done():
 	}
-	shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainTimeout)
 	defer cancel()
 	err := srv.Shutdown(shutdown)
-	if err != nil {
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = srv.Close()
+	} else if err != nil {
 		srv.Close()
 	}
 	if serr := <-served; !errors.Is(serr, http.ErrServerClosed) {

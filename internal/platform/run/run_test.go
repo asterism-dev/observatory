@@ -221,3 +221,30 @@ func TestRunAllListensOnServiceAddr(t *testing.T) {
 		t.Fatalf("hub URL %q, want %q", u, want)
 	}
 }
+
+func TestServeDrainTimeoutIsANormalStop(t *testing.T) {
+	old := drainTimeout
+	drainTimeout = 50 * time.Millisecond
+	defer func() { drainTimeout = old }()
+	ln := listen(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	srv := &http.Server{Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		close(started)
+		<-release
+	})}
+	ctx, cancel := context.WithCancel(t.Context())
+	served := make(chan error, 1)
+	go func() { served <- Serve(ctx, srv, ln) }()
+	go get("http://" + ln.Addr().String()) //nolint:errcheck // the request is cut off on purpose
+	<-started
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve after drain timeout: %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after the drain timeout")
+	}
+}
