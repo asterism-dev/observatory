@@ -161,12 +161,17 @@ every 24 hours). Everything else normally runs over the underlay:
 - The hub accepts the control connection only through that proxy: the gateway token must be valid, the credential
   must be valid and the peer IP must be the node's underlay IP. A request to `/api/nodes/connect` on the public URL is
   refused, even with a valid credential, and so is node A's credential from node B's address.
+- The hub pings each control connection every 30 seconds and closes it when a ping goes unanswered for 10 seconds.
+  The gateway accepts at most 16 concurrent connections to the proxy per underlay address.
 
 ## Health check and emergency channel
 
 The node calls `GET /api/nodes/health` over the underlay every 60 seconds. After 3 consecutive failures it switches to
-the emergency channel and polls `POST /api/nodes/emergency` over HTTPS (the public URL) every minute. One passing
-health check switches back. VMs keep running throughout.
+the emergency channel and polls `POST /api/nodes/emergency` over HTTPS (the public URL) every minute. On entering it the
+node fetches a fresh underlay config once, which restarts its WireGuard link and re-resolves the gateway address. One
+passing health check switches back. VMs keep running throughout. An emergency poll makes the hub close a control
+connection the node still has attached, since it is half-open; an update request that was waiting in it moves to the
+emergency channel.
 
 The emergency poll carries only a status report and an update. The node reports its version and the result of the last
 update, and the hub stores the version the node reports. An update failure is reported in the next poll. The hub can only
@@ -175,7 +180,7 @@ trigger an update of the node that polls. A new underlay config is fetched separ
 
 | State | Meaning |
 | --- | --- |
-| `pending` | enrolled, never connected |
+| `pending` | created, not yet enrolled |
 | `online` | control connection is live |
 | `underlay_down` | no control connection, emergency report within the last 2 minutes |
 | `offline` | no control connection and no recent report |
