@@ -11,15 +11,14 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
 var dashboardQueryTimeout = 30 * time.Second
 
 var (
-	orgVMMetrics   = authz.Rule{Effect: authz.Allow, Object: authz.ObjVMs + "/*", Action: store.ActionVMMetrics}
-	orgNodeMetrics = authz.Rule{Effect: authz.Allow, Object: authz.ObjNodes + "/*", Action: store.ActionNodeMetrics}
+	orgVMMetrics   = authz.Rule{Effect: authz.Allow, Object: authz.ObjVMs + "/*", Action: "compute.instances.getMetrics"}
+	orgNodeMetrics = authz.Rule{Effect: authz.Allow, Object: authz.ObjNodes + "/*", Action: "compute.nodes.getMetrics"}
 	storeURL       = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S+`)
 )
 
@@ -50,7 +49,7 @@ func (h *api) dashboardScope(r *http.Request, org uuid.UUID) (telemetry.Scope, e
 		return s, err
 	}
 	for _, v := range vms {
-		if e.Allowed(sub, org, authz.VMObject(v.ID), store.ActionVMMetrics) {
+		if e.Allowed(sub, org, authz.VMObject(v.ID), "compute.instances.getMetrics") {
 			s.VMs = append(s.VMs, v.ID)
 		}
 	}

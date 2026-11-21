@@ -66,7 +66,7 @@ func TestSSHKeys(t *testing.T) {
 	}
 
 	keyBody := strings.Fields(key)[1]
-	for _, action := range []string{"sshkey:add", "sshkey:delete"} {
+	for _, action := range []string{"iam.sshKeys.create", "iam.sshKeys.delete"} {
 		es := e.audit(action)
 		if len(es) != 1 || es[0].OrgID != nil || es[0].ActorID != alice.ID.String() || len(es[0].Details) != 2 ||
 			es[0].Details["name"] != "laptop" || es[0].Details["fingerprint"] != added.Fingerprint {

@@ -37,9 +37,9 @@ const copied = ref(false)
 const busy = ref(false)
 const error = ref('')
 
-const canInvite = computed(() => can('member:invite') && !org.value?.personal)
+const canInvite = computed(() => can('iam.invites.create') && !org.value?.personal)
 const roleOptions = computed(() =>
-  (can('member:set-role') ? ['member', 'admin', 'owner'] : ['member']).map((r) => ({ value: r, label: t(`role.${r}`) })),
+  (can('iam.members.setRole') ? ['member', 'admin', 'owner'] : ['member']).map((r) => ({ value: r, label: t(`role.${r}`) })),
 )
 const isSelf = (m: Member) => m.id === me.value?.user.id
 
@@ -163,7 +163,7 @@ watch(
       <DataTable :columns="columns" :rows="members" row-key="id">
         <template #cell-role="{ row }">
           <Select
-            v-if="can('member:set-role')"
+            v-if="can('iam.members.setRole')"
             :model-value="row.role"
             :options="roleOptions"
             :disabled="busy"
@@ -175,7 +175,7 @@ watch(
         <template #cell-joinedAt="{ row }">{{ fmt(row.joinedAt) }}</template>
         <template #cell-actions="{ row }">
           <Button
-            v-if="isSelf(row) ? !org.personal : can('member:remove')"
+            v-if="isSelf(row) ? !org.personal : can('iam.members.delete')"
             variant="danger"
             size="sm"
             @click="pending = row"

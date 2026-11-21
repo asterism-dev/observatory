@@ -39,12 +39,12 @@ func readRole(w http.ResponseWriter, r *http.Request) (store.Role, bool) {
 	return "", false
 }
 
-// privileged roles can only be granted or taken away by holders of member:set-role (owners).
+// privileged roles can only be granted or taken away by holders of iam.members.setRole (owners).
 func privileged(role store.Role) bool { return role == store.RoleOwner || role == store.RoleAdmin }
 
 func (h *api) listMembers(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "member:read") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.list") {
 		return
 	}
 	ms, err := h.store.Members(r.Context(), m.Org.ID)
@@ -68,7 +68,7 @@ func (h *api) listMembers(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) setMemberRole(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
 		return
 	}
 	target, ok := pathID(w, r, "user")
@@ -108,7 +108,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 	action := store.ActionMemberLeave
 	if !leaving {
 		action = store.ActionMemberRemove
-		if !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberRemove) {
+		if !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.delete") {
 			return
 		}
 	}
@@ -124,7 +124,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if !leaving && privileged(current) && !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
+		if !leaving && privileged(current) && !e.Allowed(authz.UserSubject(p.User.ID), m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
 			removeErr = errForbidden
 			return removeErr
 		}
@@ -172,7 +172,7 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) listInvites(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberInvite) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
 	invs, err := h.store.Invites(r.Context(), m.Org.ID)
@@ -196,14 +196,14 @@ func (h *api) listInvites(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) createInvite(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberInvite) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
 	role, ok := readRole(w, r)
 	if !ok {
 		return
 	}
-	if privileged(role) && !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberSetRole) {
+	if privileged(role) && !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.members.setRole") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -229,7 +229,7 @@ func (h *api) createInvite(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) revokeInvite(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, store.ActionMemberInvite) {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjMembers, "iam.invites.create") {
 		return
 	}
 	id, ok := pathID(w, r, "id")
@@ -296,8 +296,8 @@ func (h *api) checkInviter(r *http.Request, tx *store.Store, inv store.Invite) e
 	if err != nil {
 		return err
 	}
-	if !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberInvite) ||
-		privileged(inv.Role) && !e.Allowed(sub, inv.OrgID, authz.ObjMembers, store.ActionMemberSetRole) {
+	if !e.Allowed(sub, inv.OrgID, authz.ObjMembers, "iam.invites.create") ||
+		privileged(inv.Role) && !e.Allowed(sub, inv.OrgID, authz.ObjMembers, "iam.members.setRole") {
 		return errInviter
 	}
 	return nil

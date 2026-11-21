@@ -441,7 +441,7 @@ func TestResolveEnv(t *testing.T) {
 
 	denied := policy
 	denied.Roles = []authz.CustomRole{{ID: uuid.New(), OrgID: org.ID, Name: "no-org-env",
-		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjEnv, Action: "env:use"}}}}
+		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjEnv, Action: "secrets.variables.use"}}}}
 	denied.Bindings = []authz.Binding{{OrgID: org.ID, Subject: authz.UserSubject(uid), RoleID: denied.Roles[0].ID}}
 	de, err := authz.New(denied)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestResolveEnv(t *testing.T) {
 
 	deniedOwn := policy
 	deniedOwn.Roles = []authz.CustomRole{{ID: uuid.New(), OrgID: org.ID, Name: "no-own-env",
-		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.UserEnvObject(uid), Action: "env:use"}}}}
+		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.UserEnvObject(uid), Action: "secrets.variables.use"}}}}
 	deniedOwn.Bindings = []authz.Binding{{OrgID: org.ID, Subject: authz.UserSubject(uid), RoleID: deniedOwn.Roles[0].ID}}
 	oe, err := authz.New(deniedOwn)
 	if err != nil {

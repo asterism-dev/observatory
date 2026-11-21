@@ -110,7 +110,7 @@ func TestAutoSettings(t *testing.T) {
 	e.addMember(org, bob, store.RoleAdmin)
 	img := e.recipeImage(aliceTok, org, "basis", "")
 	bare := e.createImage(aliceTok, org, `{"name":"bare","scope":"org"}`)
-	noBuild := e.createRole(aliceTok, org, `{"name":"no builds","rules":[{"effect":"deny","object":"org/images","action":"image:build"}]}`)
+	noBuild := e.createRole(aliceTok, org, `{"name":"no builds","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(bob.ID), noBuild)
 
 	if rec := e.send("PATCH", imagePath(org, img), aliceTok, `{"autoSchedule":"hourly"}`); rec.Code != 400 {
@@ -120,7 +120,7 @@ func TestAutoSettings(t *testing.T) {
 		t.Fatalf("no recipe: %d", rec.Code)
 	}
 	if rec := e.send("PATCH", imagePath(org, img), bobTok, `{"autoSchedule":"daily"}`); rec.Code != 403 {
-		t.Fatalf("without image:build: %d", rec.Code)
+		t.Fatalf("without build.builds.create: %d", rec.Code)
 	}
 	if rec := e.send("PATCH", imagePath(org, img), bobTok, `{"description":"still editable"}`); rec.Code != 200 {
 		t.Fatalf("plain edit: %d", rec.Code)
@@ -318,7 +318,7 @@ func TestAutoRunsWithStarterRights(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "basis", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	e.setAuto(bobTok, org, img, `{"autoSchedule":"weekly"}`)
-	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
 
 	e.autoTick()
@@ -364,7 +364,7 @@ func TestAutoEditorCannotBorrowRefs(t *testing.T) {
 	refs := `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`
 	img := e.recipeImage(aliceTok, org, "basis", refs)
 	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly"}`)
-	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"image:build"},{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
 	// "RlJPTSBhbHBpbmU=" is "FROM alpine"; the references stay as alice added them.
 	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
@@ -402,7 +402,7 @@ func TestAutoEditorCannotBorrowRefs(t *testing.T) {
 		t.Fatalf("stale approval: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.send("PATCH", imagePath(org, img), bobTok, `{"approveRevision":2}`); rec.Code != 403 {
-		t.Fatalf("approval without image:build: %d", rec.Code)
+		t.Fatalf("approval without build.builds.create: %d", rec.Code)
 	}
 	rec = e.send("PATCH", imagePath(org, img), aliceTok, `{"approveRevision":2}`)
 	decode(t, rec, &shown)
@@ -478,7 +478,7 @@ func TestAutoApprovalIsPersonal(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "basis", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly","approveRevision":1}`)
-	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"image:build"},{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
 	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
 	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())

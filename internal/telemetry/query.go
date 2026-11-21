@@ -397,7 +397,7 @@ const MaxQueryPoints = 11000
 
 // Scope confines a dashboard query to the series a viewer may see; the zero value matches nothing.
 type Scope struct {
-	// OrgWide is set for viewers holding vm:metrics and node:metrics on the whole org.
+	// OrgWide is set for viewers holding compute.instances.getMetrics and compute.nodes.getMetrics on the whole org.
 	OrgWide bool
 	VMs     []uuid.UUID
 	Nodes   bool

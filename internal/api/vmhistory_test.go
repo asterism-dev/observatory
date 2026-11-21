@@ -79,7 +79,7 @@ func TestSetDeleteAfter(t *testing.T) {
 	if rec := e.send("PUT", path, tok, `{"deleteAfter":"3m"}`); rec.Code != 400 {
 		t.Fatalf("3m: %d", rec.Code)
 	}
-	if es := e.audit("vm:delete-after"); len(es) != 2 || es[0].Details["deleteAt"] != nil || es[1].Details["deleteAt"] == nil {
+	if es := e.audit("compute.instances.setDeleteAfter"); len(es) != 2 || es[0].Details["deleteAt"] != nil || es[1].Details["deleteAt"] == nil {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -100,7 +100,7 @@ func TestSetDeleteAfterPermission(t *testing.T) {
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(team), e.enrolledNode(ownerTok, org, "n1")))
 	path := vmsPath(org) + "/" + v.ID + "/delete-after"
 	if rec := e.send("PUT", path, bobTok, `{"deleteAfter":null}`); rec.Code != 403 {
-		t.Fatalf("member without vm:delete: %d", rec.Code)
+		t.Fatalf("member without compute.instances.delete: %d", rec.Code)
 	}
 	if rec := e.send("PUT", path, carolTok, `{"deleteAfter":"1h"}`); rec.Code != 200 {
 		t.Fatalf("team admin: %d %s", rec.Code, rec.Body.String())

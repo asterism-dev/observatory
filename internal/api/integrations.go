@@ -198,10 +198,10 @@ func (h *api) accountByID(w http.ResponseWriter, r *http.Request, org, id uuid.U
 	return store.Integration{}, store.IntegrationAccount{}, false
 }
 
-// writableIntegrationFromPath loads the path's integration and checks integration:set on its scope.
+// writableIntegrationFromPath loads the path's integration and checks secrets.integrations.set on its scope.
 func (h *api) writableIntegrationFromPath(w http.ResponseWriter, r *http.Request) (store.Integration, bool) {
 	v, ok := h.integrationFromPath(w, r)
-	return v, ok && h.authorize(w, r, v.OrgID, integrationObject(v.Scope, v.OwnerID), store.ActionIntegrationSet)
+	return v, ok && h.authorize(w, r, v.OrgID, integrationObject(v.Scope, v.OwnerID), "secrets.integrations.set")
 }
 
 func (h *api) accountFromPath(w http.ResponseWriter, r *http.Request) (store.Integration, store.IntegrationAccount, bool) {
@@ -307,13 +307,13 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		if v.Scope == store.EnvScopeUser && *v.OwnerID != p.User.ID {
 			continue
 		}
-		if !e.Allowed(sub, m.Org.ID, obj, "integration:list") {
+		if !e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.list") {
 			continue
 		}
 		j := integrationJSON{ID: v.ID, Kind: v.Kind, Source: v.Source, Scope: v.Scope, Mode: v.Mode, Account: v.Account, Scopes: v.ScopesInfo,
 			ProviderExpiresAt: v.ProviderExpiresAt, Status: v.Status, LastError: v.LastError, WasInVM: v.WasInVM, UpdatedAt: v.UpdatedAt, AutoSwitch: v.AutoSwitch,
-			CanEdit:   e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationSet),
-			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationDelete)}
+			CanEdit:   e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.set"),
+			CanDelete: e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.delete")}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
 		}
@@ -343,7 +343,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := []scopeJSON{}
 	add := func(s scopeJSON, obj string) {
-		if e.Allowed(sub, m.Org.ID, obj, store.ActionIntegrationSet) {
+		if e.Allowed(sub, m.Org.ID, obj, "secrets.integrations.set") {
 			s.Connected = append([]integrations.Kind{}, connected[obj]...)
 			slices.Sort(s.Connected)
 			scopes = append(scopes, s)
@@ -393,7 +393,7 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, integrationObject(body.Scope, owner), store.ActionIntegrationSet) {
+	if !ok || !h.authorize(w, r, m.Org.ID, integrationObject(body.Scope, owner), "secrets.integrations.set") {
 		return
 	}
 	var sec store.IntegrationSecret
@@ -431,7 +431,7 @@ func (h *api) connectIntegration(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) replaceIntegrationToken(w http.ResponseWriter, r *http.Request) {
 	old, ok := h.integrationFromPath(w, r)
-	if !ok || !h.authorize(w, r, old.OrgID, integrationObject(old.Scope, old.OwnerID), store.ActionIntegrationSet) {
+	if !ok || !h.authorize(w, r, old.OrgID, integrationObject(old.Scope, old.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	var body struct {
@@ -495,7 +495,7 @@ func (h *api) commitReplace(w http.ResponseWriter, r *http.Request, old, v store
 
 func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 	old, ok := h.integrationFromPath(w, r)
-	if !ok || !h.authorize(w, r, old.OrgID, integrationObject(old.Scope, old.OwnerID), store.ActionIntegrationSet) {
+	if !ok || !h.authorize(w, r, old.OrgID, integrationObject(old.Scope, old.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	var body struct {
@@ -567,7 +567,7 @@ func (h *api) setIntegrationMode(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) deleteIntegration(w http.ResponseWriter, r *http.Request) {
 	v, ok := h.integrationFromPath(w, r)
-	if !ok || !h.authorize(w, r, v.OrgID, integrationObject(v.Scope, v.OwnerID), store.ActionIntegrationDelete) {
+	if !ok || !h.authorize(w, r, v.OrgID, integrationObject(v.Scope, v.OwnerID), "secrets.integrations.delete") {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
@@ -638,7 +638,7 @@ func (h *api) startClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		}
 		si.Scope, si.OwnerID = body.Scope, owner
 	}
-	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), store.ActionIntegrationSet) {
+	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	if si.ReplaceID != nil && replaceKind != integrations.Claude {
@@ -700,7 +700,7 @@ func (h *api) finishClaudeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The caller's rights may have changed since the sign-in started.
-	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), store.ActionIntegrationSet) {
+	if !h.authorize(w, r, m.Org.ID, integrationObject(si.Scope, si.OwnerID), "secrets.integrations.set") {
 		return
 	}
 	var old store.Integration
@@ -891,7 +891,7 @@ func (h *api) deleteIntegrationAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	// Removing the last account deletes the integration, so it needs the delete right too.
-	mayDelete := h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), v.OrgID, integrationObject(v.Scope, v.OwnerID), store.ActionIntegrationDelete)
+	mayDelete := h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), v.OrgID, integrationObject(v.Scope, v.OwnerID), "secrets.integrations.delete")
 	if !h.commit(w, r, func(tx *store.Store) error {
 		a.UpdatedBy = p.User.ID
 		last, err := tx.DeleteIntegrationAccount(r.Context(), a)
@@ -914,7 +914,7 @@ func (h *api) deleteIntegrationAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, "vm:read")
+	v, ok := h.vmFromPath(w, r, "compute.instances.get")
 	if !ok {
 		return
 	}
@@ -936,7 +936,7 @@ func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
 	for _, ri := range res {
 		j := lineJSON{Kind: ri.Kind}
 		private := ri.Scope == store.EnvScopeUser && *ri.OwnerID != p.User.ID
-		if !private && e.Allowed(sub, v.OrgID, integrationObject(ri.Scope, ri.OwnerID), "integration:list") {
+		if !private && e.Allowed(sub, v.OrgID, integrationObject(ri.Scope, ri.OwnerID), "secrets.integrations.list") {
 			j.Scope, j.Mode = ri.Scope, ri.Mode
 			if ri.Scope == store.EnvScopeTeam {
 				// A team deleted since the resolve just loses its name.

@@ -215,7 +215,7 @@ func TestCallbackStateMismatch(t *testing.T) {
 		t.Fatal("session cookie set")
 	}
 	if !e.actions(store.ResultFailed)[store.ActionAuthLogin] {
-		t.Fatal("no failed auth:login audit")
+		t.Fatal("no failed iam.sessions.create audit")
 	}
 	if len(e.actions(store.ResultAllowed)) != 0 {
 		t.Fatal("unexpected allowed audit entries")
@@ -327,7 +327,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 		t.Fatalf("after logout: %d", rec.Code)
 	}
 	if !e.actions(store.ResultAllowed)[store.ActionAuthLogout] {
-		t.Fatal("no auth:logout audit")
+		t.Fatal("no iam.sessions.delete audit")
 	}
 }
 

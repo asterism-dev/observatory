@@ -44,7 +44,7 @@ func TestPolicySnapshot(t *testing.T) {
 	must(pool.QueryRow(ctx, `INSERT INTO roles (org_id,name,description) VALUES ($1,'parent','pd') RETURNING id`, org).Scan(&parent))
 	must(pool.QueryRow(ctx, `INSERT INTO roles (org_id,name) VALUES ($1,'child') RETURNING id`, org).Scan(&child))
 	mustExec(ctx, t, pool, `INSERT INTO role_rules (role_id,position,effect,object,action) VALUES
-		($1,1,'deny','vms/*','vm:delete'), ($1,0,'allow','vms','vm:read')`, child)
+		($1,1,'deny','vms/*','compute.instances.delete'), ($1,0,'allow','vms','compute.instances.get')`, child)
 	mustExec(ctx, t, pool, `INSERT INTO role_parents (role_id,parent_builtin) VALUES ($1,'member')`, parent)
 	mustExec(ctx, t, pool, `INSERT INTO role_parents (role_id,parent_role) VALUES ($1,$2)`, child, parent)
 	mustExec(ctx, t, pool, `INSERT INTO role_bindings (org_id,subject,role_id) VALUES ($1,$2,$3)`, org, authz.TeamSubject(team), child)
@@ -74,7 +74,7 @@ func TestPolicySnapshot(t *testing.T) {
 				t.Errorf("parent role: %+v", r)
 			}
 		case child:
-			want := []authz.Rule{{Effect: authz.Allow, Object: "vms", Action: "vm:read"}, {Effect: authz.Deny, Object: "vms/*", Action: "vm:delete"}}
+			want := []authz.Rule{{Effect: authz.Allow, Object: "vms", Action: "compute.instances.get"}, {Effect: authz.Deny, Object: "vms/*", Action: "compute.instances.delete"}}
 			if len(r.Rules) != 2 || r.Rules[0] != want[0] || r.Rules[1] != want[1] {
 				t.Errorf("child rules not ordered by position: %+v", r.Rules)
 			}
@@ -137,7 +137,7 @@ func TestRoleStore(t *testing.T) {
 	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'t') RETURNING id`, org).Scan(&team))
 	must(pool.QueryRow(ctx, `INSERT INTO teams (org_id,name) VALUES ($1,'t') RETURNING id`, orgB).Scan(&teamB))
 
-	rules := []authz.Rule{{Effect: authz.Allow, Object: "org/audit", Action: "audit:read"}, {Effect: authz.Deny, Object: "org/teams/*", Action: "team:delete"}}
+	rules := []authz.Rule{{Effect: authz.Allow, Object: "org/audit", Action: "audit.events.list"}, {Effect: authz.Deny, Object: "org/teams/*", Action: "iam.teams.delete"}}
 	a, err := s.CreateRole(ctx, org, authz.CustomRole{Name: "a", Description: "d", Rules: rules, Parents: []string{"member"}})
 	must(err)
 	if a.ID == uuid.Nil || a.OrgID != org {

@@ -309,7 +309,7 @@ func TestResolveIntegrationsUseDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy.Roles = []authz.CustomRole{{ID: uuid.New(), OrgID: org.ID, Name: "no-org-integrations",
-		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjIntegrations, Action: "integration:use"}}}}
+		Rules: []authz.Rule{{Effect: authz.Deny, Object: authz.ObjIntegrations, Action: "secrets.integrations.use"}}}}
 	policy.Bindings = []authz.Binding{{OrgID: org.ID, Subject: authz.UserSubject(uid), RoleID: policy.Roles[0].ID}}
 	e, err := authz.New(policy)
 	if err != nil {

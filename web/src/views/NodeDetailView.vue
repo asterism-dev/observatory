@@ -212,7 +212,7 @@ watch(
 
         <template v-if="tab === 'metrics'">
           <TelemetryUsage :url="`${base()}/usage`" :no-data="t('telemetry.noData')" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
-          <RouterLink v-if="can('logs:read')" class="muted" :to="`/orgs/${org.id}/logs/node/${nodeId}`">{{ t('logs.openIn') }}</RouterLink>
+          <RouterLink v-if="can('telemetry.logEntries.list')" class="muted" :to="`/orgs/${org.id}/logs/node/${nodeId}`">{{ t('logs.openIn') }}</RouterLink>
           <TelemetryLogs v-if="usageRange" :url="`${base()}/logs`" :range="usageRange" :hover-at="hoverAt" :filter="nodeLogFilter" />
         </template>
 

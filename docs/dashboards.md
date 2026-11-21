@@ -30,10 +30,10 @@ The permission rules behind this are in [Permissions](permissions.md#dashboards)
 A dashboard holds queries, not data. Every panel runs as the person viewing it, and the hub restricts each query to
 the data that person may read:
 
-- Org admins and owners (org-wide `vm:metrics` and `node:metrics`) see all metrics of the organization, including those of
+- Org admins and owners (org-wide `compute.instances.getMetrics` and `compute.nodes.getMetrics`) see all metrics of the organization, including those of
   deleted VMs.
-- Everyone else sees only series of VMs they hold `vm:metrics` on: their own VMs and their teams' VMs. Node series are
-  included only for viewers with `node:metrics` on all nodes (a custom role). A viewer with neither sees empty panels.
+- Everyone else sees only series of VMs they hold `compute.instances.getMetrics` on: their own VMs and their teams' VMs. Node series are
+  included only for viewers with `compute.nodes.getMetrics` on all nodes (a custom role). A viewer with neither sees empty panels.
 
 The restriction is applied by the store to every series selector in the query, so query text such as
 `{__name__=~".+"}`, `label_replace`, subqueries or `absent()` cannot widen it. The metric-name suggestions in the
@@ -106,7 +106,7 @@ sort_desc(histogram_quantile(0.95, sum by (le, observatory_vm_name) (rate(http_r
 
 Two people editing the same dashboard do not overwrite each other: if it changed since you opened the editor, saving
 fails with "changed elsewhere" and you reload to see the other version. Creating, changing and deleting dashboards is
-recorded in the audit log (`dashboard:create`, `dashboard:update`, `dashboard:delete`); an update that moves a dashboard
+recorded in the audit log (`telemetry.dashboards.create`, `telemetry.dashboards.update`, `telemetry.dashboards.delete`); an update that moves a dashboard
 to another scope also records where it came from (`fromScope`, `fromOwnerId`).
 
 ## API

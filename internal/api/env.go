@@ -104,13 +104,13 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		obj := envObject(v.Scope, v.OwnerID)
-		if !e.Allowed(sub, m.Org.ID, obj, "env:list") {
+		if !e.Allowed(sub, m.Org.ID, obj, "secrets.variables.list") {
 			continue
 		}
 		j := varJSON{ID: v.ID, Name: v.Name, Kind: v.Kind, Scope: v.Scope, Hosts: append([]string{}, v.Hosts...), UpdatedAt: v.UpdatedAt,
 			UpdatedBy: userRef{v.UpdatedBy, userNames[v.UpdatedBy]},
-			CanEdit:   e.Allowed(sub, m.Org.ID, obj, store.ActionEnvSet),
-			CanDelete: e.Allowed(sub, m.Org.ID, obj, store.ActionEnvDelete)}
+			CanEdit:   e.Allowed(sub, m.Org.ID, obj, "secrets.variables.set"),
+			CanDelete: e.Allowed(sub, m.Org.ID, obj, "secrets.variables.delete")}
 		if v.Scope == store.EnvScopeTeam {
 			j.TeamID, j.TeamName = v.OwnerID, teamNames[*v.OwnerID]
 		}
@@ -126,15 +126,15 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		out = append(out, j)
 	}
 	scopes := []scopeJSON{}
-	if e.Allowed(sub, m.Org.ID, authz.ObjEnv, store.ActionEnvSet) {
+	if e.Allowed(sub, m.Org.ID, authz.ObjEnv, "secrets.variables.set") {
 		scopes = append(scopes, scopeJSON{Scope: store.EnvScopeOrg})
 	}
 	for _, t := range teams {
-		if e.Allowed(sub, m.Org.ID, authz.TeamEnvObject(t.ID), store.ActionEnvSet) {
+		if e.Allowed(sub, m.Org.ID, authz.TeamEnvObject(t.ID), "secrets.variables.set") {
 			scopes = append(scopes, scopeJSON{store.EnvScopeTeam, &t.ID, t.Name})
 		}
 	}
-	if e.Allowed(sub, m.Org.ID, authz.UserEnvObject(p.User.ID), store.ActionEnvSet) {
+	if e.Allowed(sub, m.Org.ID, authz.UserEnvObject(p.User.ID), "secrets.variables.set") {
 		scopes = append(scopes, scopeJSON{Scope: store.EnvScopeUser})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"vars": out, "writableScopes": scopes})
@@ -220,7 +220,7 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, envObject(body.Scope, owner), store.ActionEnvSet) {
+	if !ok || !h.authorize(w, r, m.Org.ID, envObject(body.Scope, owner), "secrets.variables.set") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -242,7 +242,7 @@ func (h *api) createEnv(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 	old, ok := h.envFromPath(w, r)
-	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), store.ActionEnvSet) {
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), "secrets.variables.set") {
 		return
 	}
 	v := old
@@ -306,7 +306,7 @@ func (h *api) updateEnv(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
 	old, ok := h.envFromPath(w, r)
-	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), store.ActionEnvDelete) {
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(old.Scope, old.OwnerID), "secrets.variables.delete") {
 		return
 	}
 	var body struct {
@@ -317,7 +317,7 @@ func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, ok := h.envTarget(w, r, old.OrgID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, old.OrgID, envObject(body.Scope, owner), store.ActionEnvSet) {
+	if !ok || !h.authorize(w, r, old.OrgID, envObject(body.Scope, owner), "secrets.variables.set") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -337,7 +337,7 @@ func (h *api) moveEnv(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) deleteEnv(w http.ResponseWriter, r *http.Request) {
 	v, ok := h.envFromPath(w, r)
-	if !ok || !h.authorize(w, r, v.OrgID, envObject(v.Scope, v.OwnerID), store.ActionEnvDelete) {
+	if !ok || !h.authorize(w, r, v.OrgID, envObject(v.Scope, v.OwnerID), "secrets.variables.delete") {
 		return
 	}
 	if !h.commit(w, r, func(tx *store.Store) error {
@@ -353,7 +353,7 @@ func (h *api) deleteEnv(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) vmEgress(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, "vm:read")
+	v, ok := h.vmFromPath(w, r, "compute.instances.get")
 	if !ok {
 		return
 	}

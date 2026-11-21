@@ -151,7 +151,7 @@ func (t *registryTokens) grant(ctx context.Context, p registryPrincipal, scope s
 		}
 	case img.Scope != store.EnvScopeUser || *img.OwnerID == p.user:
 		sub, obj := authz.UserSubject(p.user), imageObject(img.Scope, img.OwnerID)
-		pull, push = t.z.Allowed(sub, img.OrgID, obj, "image:use"), t.z.Allowed(sub, img.OrgID, obj, "image:build")
+		pull, push = t.z.Allowed(sub, img.OrgID, obj, "artifacts.images.use"), t.z.Allowed(sub, img.OrgID, obj, "build.builds.create")
 	}
 	if push && slices.Contains(requested, "push") {
 		over, err := overImageStorageLimit(ctx, t.store, img.OrgID)
@@ -191,7 +191,7 @@ func (t *registryTokens) buildMayPull(ctx context.Context, b store.ImageBuild, i
 	if img.OrgID != built.OrgID || !refAllowed(store.RecipeRef{Scope: img.Scope, OwnerID: img.OwnerID}, built.Scope, built.OwnerID) {
 		return false, nil
 	}
-	return t.z.Allowed(authz.UserSubject(b.StartedBy), img.OrgID, imageObject(img.Scope, img.OwnerID), "image:use"), nil
+	return t.z.Allowed(authz.UserSubject(b.StartedBy), img.OrgID, imageObject(img.Scope, img.OwnerID), "artifacts.images.use"), nil
 }
 
 var realmPattern = regexp.MustCompile(`realm="[^"]*"`)

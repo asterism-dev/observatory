@@ -117,7 +117,7 @@ func (h *api) imageFromPath(w http.ResponseWriter, r *http.Request, act string) 
 		return store.Image{}, false
 	}
 	if img.Platform {
-		if act != "image:list" {
+		if act != "artifacts.images.list" {
 			writeError(w, http.StatusForbidden, "the platform image is read-only")
 			return store.Image{}, false
 		}
@@ -205,7 +205,7 @@ func (h *api) imageJSON(ctx context.Context, img store.Image, teams map[uuid.UUI
 	p, _ := auth.PrincipalFrom(ctx)
 	sub, obj := authz.UserSubject(p.User.ID), imageObject(img.Scope, img.OwnerID)
 	j.Repository, j.OwnerID = imageRepo(img.ID), img.OwnerID
-	j.CanEdit, j.CanBuild = h.z.Allowed(sub, img.OrgID, obj, "image:edit"), h.z.Allowed(sub, img.OrgID, obj, "image:build")
+	j.CanEdit, j.CanBuild = h.z.Allowed(sub, img.OrgID, obj, "artifacts.images.update"), h.z.Allowed(sub, img.OrgID, obj, "build.builds.create")
 	switch img.Scope {
 	case store.EnvScopeTeam:
 		j.OwnerName = teams[*img.OwnerID]
@@ -257,7 +257,7 @@ func (h *api) listImages(w http.ResponseWriter, r *http.Request) {
 	for _, img := range append([]store.Image{platform}, list...) {
 		// Another member's private images are never listed, whatever rules a custom role grants.
 		if !img.Platform && ((img.Scope == store.EnvScopeUser && *img.OwnerID != p.User.ID) ||
-			!h.z.Allowed(sub, m.Org.ID, imageObject(img.Scope, img.OwnerID), "image:list")) {
+			!h.z.Allowed(sub, m.Org.ID, imageObject(img.Scope, img.OwnerID), "artifacts.images.list")) {
 			continue
 		}
 		j, err := h.imageJSON(ctx, img, teams)
@@ -292,7 +292,7 @@ func (h *api) createImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, imageObject(body.Scope, owner), "image:edit") {
+	if !ok || !h.authorize(w, r, m.Org.ID, imageObject(body.Scope, owner), "artifacts.images.update") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
@@ -324,7 +324,7 @@ func (h *api) writeImage(w http.ResponseWriter, r *http.Request, img store.Image
 }
 
 func (h *api) getImage(w http.ResponseWriter, r *http.Request) {
-	if img, ok := h.imageFromPath(w, r, "image:list"); ok {
+	if img, ok := h.imageFromPath(w, r, "artifacts.images.list"); ok {
 		h.writeImage(w, r, img)
 	}
 }
@@ -383,7 +383,7 @@ func dropBlindDefaults(ctx context.Context, tx *store.Store, img store.Image) er
 }
 
 func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
-	old, ok := h.imageFromPath(w, r, "image:edit")
+	old, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -414,7 +414,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 			v.AutoOnBaseChange = *body.AutoOnBaseChange
 		}
 		// Automatic builds run as whoever set them up, so that person needs the build right too.
-		if !h.authorize(w, r, old.OrgID, imageObject(old.Scope, old.OwnerID), "image:build") {
+		if !h.authorize(w, r, old.OrgID, imageObject(old.Scope, old.OwnerID), "build.builds.create") {
 			return
 		}
 		if old.RecipeRevision == nil && (v.AutoSchedule != "" || v.AutoOnBaseChange) {
@@ -444,7 +444,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		}
 		v.Scope, v.OwnerID = *body.Scope, owner
 		if v.Scope != old.Scope || !sameOwner(v.OwnerID, old.OwnerID) {
-			if !h.authorize(w, r, old.OrgID, imageObject(v.Scope, v.OwnerID), "image:edit") {
+			if !h.authorize(w, r, old.OrgID, imageObject(v.Scope, v.OwnerID), "artifacts.images.update") {
 				return
 			}
 			// Moving to another team shares the versions with new people just like widening.
@@ -524,7 +524,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteImage(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -641,7 +641,7 @@ func (h *api) checkRefs(w http.ResponseWriter, r *http.Request, img store.Image,
 		var found bool
 		var err error
 		if j.Kind == "secret" {
-			if !h.authorize(w, r, img.OrgID, envObject(ref.Scope, ref.OwnerID), "env:use") {
+			if !h.authorize(w, r, img.OrgID, envObject(ref.Scope, ref.OwnerID), "secrets.variables.use") {
 				return nil, false
 			}
 			if envs == nil {
@@ -651,7 +651,7 @@ func (h *api) checkRefs(w http.ResponseWriter, r *http.Request, img store.Image,
 				return v.Scope == ref.Scope && sameOwner(v.OwnerID, ref.OwnerID) && v.Name == ref.Name
 			})
 		} else {
-			if !h.authorize(w, r, img.OrgID, integrationObject(ref.Scope, ref.OwnerID), "integration:use") {
+			if !h.authorize(w, r, img.OrgID, integrationObject(ref.Scope, ref.OwnerID), "secrets.integrations.use") {
 				return nil, false
 			}
 			if igs == nil {
@@ -765,7 +765,7 @@ func readRecipeTar(rd io.Reader) ([]store.RecipeFile, *httpError) {
 }
 
 func (h *api) putRecipe(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -790,7 +790,7 @@ func (h *api) putRecipe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) editRecipe(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -882,7 +882,7 @@ func (h *api) saveRecipe(w http.ResponseWriter, r *http.Request, img store.Image
 }
 
 func (h *api) getRecipe(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:list")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -916,7 +916,7 @@ func (h *api) getRecipe(w http.ResponseWriter, r *http.Request) {
 
 // ponytail: loads the whole revision to serve one file; add a single-file store query if recipes get big.
 func (h *api) getRecipeFile(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:list")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -940,7 +940,7 @@ func (h *api) getRecipeFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) listImageVersions(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:list")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -978,7 +978,7 @@ func (h *api) listImageVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteImageVersion(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -1008,7 +1008,7 @@ func tagFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 func (h *api) setImageTag(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -1024,7 +1024,7 @@ func (h *api) setImageTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteImageTag(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:edit")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.update")
 	if !ok {
 		return
 	}
@@ -1093,7 +1093,7 @@ func (h *api) defaultLevelFromPath(w http.ResponseWriter, r *http.Request, act s
 func (h *api) resolver() images.Resolver { return images.Resolver{Store: h.store, Authz: h.z} }
 
 func (h *api) getImageDefault(w http.ResponseWriter, r *http.Request) {
-	l, ok := h.defaultLevelFromPath(w, r, "image:list")
+	l, ok := h.defaultLevelFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -1155,7 +1155,7 @@ func (h *api) getImageDefault(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) setImageDefault(w http.ResponseWriter, r *http.Request) {
-	l, ok := h.defaultLevelFromPath(w, r, "image:default")
+	l, ok := h.defaultLevelFromPath(w, r, "artifacts.images.setDefault")
 	if !ok {
 		return
 	}
@@ -1170,7 +1170,7 @@ func (h *api) setImageDefault(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(ctx)
-	// The resolver only finds images the caller may use, so image:use is checked here.
+	// The resolver only finds images the caller may use, so artifacts.images.use is checked here.
 	res, err := h.resolver().Resolve(ctx, l.org, p.User.ID, l.vmFor, body.Ref)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, images.ErrAmbiguous) || errors.Is(err, images.ErrPlatformPinned) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
@@ -1208,7 +1208,7 @@ func (h *api) setImageDefault(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) clearImageDefault(w http.ResponseWriter, r *http.Request) {
-	l, ok := h.defaultLevelFromPath(w, r, "image:default")
+	l, ok := h.defaultLevelFromPath(w, r, "artifacts.images.setDefault")
 	if !ok {
 		return
 	}

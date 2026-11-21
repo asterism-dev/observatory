@@ -21,13 +21,13 @@ func TestCanGrant(t *testing.T) {
 			{OrgID: org, UserID: member, Role: "member"},
 		},
 		Roles: []CustomRole{{ID: denyRole, OrgID: org, Name: "no-delete",
-			Rules: []Rule{{Effect: Deny, Object: TeamObject(team), Action: "team:delete"}}}},
+			Rules: []Rule{{Effect: Deny, Object: TeamObject(team), Action: "iam.teams.delete"}}}},
 		Bindings: []Binding{{OrgID: org, Subject: UserSubject(deniedAdmin), RoleID: denyRole}},
 	})
 	var all []Rule
 	for _, p := range Catalog {
-		// Nobody holds every member's private env scope, vm:connect, vm:fork, disk:use or device:create on every object.
-		if p.Object != ObjUserEnv+"/*" && p.Object != ObjUserIntegrations+"/*" && p.Object != ObjUserImages+"/*" && p.Object != ObjUserDashboards+"/*" && p.Action != "vm:connect" && p.Action != "vm:fork" && p.Action != "disk:use" && p.Action != "device:create" {
+		// Nobody holds every member's private env scope, compute.instances.connect, compute.instances.fork, compute.disks.use or network.devices.create on every object.
+		if p.Object != ObjUserEnv+"/*" && p.Object != ObjUserIntegrations+"/*" && p.Object != ObjUserImages+"/*" && p.Object != ObjUserDashboards+"/*" && p.Action != "compute.instances.connect" && p.Action != "compute.instances.fork" && p.Action != "compute.disks.use" && p.Action != "network.devices.create" {
 			all = append(all, Rule{Allow, p.Object, p.Action})
 		}
 	}
@@ -41,22 +41,22 @@ func TestCanGrant(t *testing.T) {
 		want    error
 	}{
 		{"owner grants whole catalog", owner, true, all, nil},
-		{"admin grants member:set-role", admin, true, allow(ObjMembers, "member:set-role"), ErrEscalation},
-		{"admin grants team:* on all teams", admin, true, allow(ObjTeams+"/*", "team:*"), nil},
-		{"denied admin grants team:delete on all teams", deniedAdmin, true, allow(ObjTeams+"/*", "team:delete"), ErrEscalation},
-		{"denied admin grants team:* on denied team", deniedAdmin, true, allow(TeamObject(team), "team:*"), ErrEscalation},
-		{"denied admin grants other action on denied team", deniedAdmin, true, allow(TeamObject(team), "team:update"), nil},
-		{"denied admin grants team:delete on other team", deniedAdmin, true, allow(TeamObject(uuid.New()), "team:delete"), nil},
-		{"admin grants org/*", admin, true, allow("org/*", "member:read"), ErrEscalation},
-		{"member grants member:read", member, false, allow(ObjMembers, "member:read"), nil},
-		{"member grants limit:set", member, false, allow(ObjLimits, "limit:set"), ErrEscalation},
-		{"member writes deny", member, false, deny(ObjLimits, "limit:read"), ErrDenyNotAllowed},
-		{"admin writes deny", admin, true, deny(ObjMembers, "member:set-role"), nil},
-		{"invalid object pattern", owner, true, allow("org/vm*", "team:read"), ErrInvalidPattern},
-		{"unknown action", owner, true, allow(ObjTeams, "nope:*"), ErrInvalidPattern},
-		{"invalid deny pattern", owner, true, deny("org/vm*", "team:read"), ErrInvalidPattern},
-		{"unknown effect", owner, true, []Rule{{"maybe", ObjTeams, "team:read"}}, ErrInvalidPattern},
-		{"non-member grants", uuid.New(), false, allow(ObjMembers, "member:read"), ErrEscalation},
+		{"admin grants iam.members.setRole", admin, true, allow(ObjMembers, "iam.members.setRole"), ErrEscalation},
+		{"admin grants iam.teams.* on all teams", admin, true, allow(ObjTeams+"/*", "iam.teams.*"), nil},
+		{"denied admin grants iam.teams.delete on all teams", deniedAdmin, true, allow(ObjTeams+"/*", "iam.teams.delete"), ErrEscalation},
+		{"denied admin grants iam.teams.* on denied team", deniedAdmin, true, allow(TeamObject(team), "iam.teams.*"), ErrEscalation},
+		{"denied admin grants other action on denied team", deniedAdmin, true, allow(TeamObject(team), "iam.teams.update"), nil},
+		{"denied admin grants iam.teams.delete on other team", deniedAdmin, true, allow(TeamObject(uuid.New()), "iam.teams.delete"), nil},
+		{"admin grants org/*", admin, true, allow("org/*", "iam.members.list"), ErrEscalation},
+		{"member grants iam.members.list", member, false, allow(ObjMembers, "iam.members.list"), nil},
+		{"member grants quota.limits.update", member, false, allow(ObjLimits, "quota.limits.update"), ErrEscalation},
+		{"member writes deny", member, false, deny(ObjLimits, "quota.limits.get"), ErrDenyNotAllowed},
+		{"admin writes deny", admin, true, deny(ObjMembers, "iam.members.setRole"), nil},
+		{"invalid object pattern", owner, true, allow("org/vm*", "iam.teams.list"), ErrInvalidPattern},
+		{"unknown action", owner, true, allow(ObjTeams, "nope.things.*"), ErrInvalidPattern},
+		{"invalid deny pattern", owner, true, deny("org/vm*", "iam.teams.list"), ErrInvalidPattern},
+		{"unknown effect", owner, true, []Rule{{"maybe", ObjTeams, "iam.teams.list"}}, ErrInvalidPattern},
+		{"non-member grants", uuid.New(), false, allow(ObjMembers, "iam.members.list"), ErrEscalation},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,13 +71,13 @@ func TestCanGrant(t *testing.T) {
 func TestEffectiveRulesIncludesParents(t *testing.T) {
 	org, other := uuid.New(), uuid.New()
 	base, child, foreign := uuid.New(), uuid.New(), uuid.New()
-	baseRule := Rule{Allow, ObjAudit, "audit:read"}
-	childRule := Rule{Allow, ObjLimits, "limit:set"}
+	baseRule := Rule{Allow, ObjAudit, "audit.events.list"}
+	childRule := Rule{Allow, ObjLimits, "quota.limits.update"}
 	e := mustNew(t, Policy{Roles: []CustomRole{
 		{ID: base, OrgID: org, Parents: []string{"member"}, Rules: []Rule{baseRule}},
 		{ID: child, OrgID: org, Parents: []string{base.String()},
-			Rules: []Rule{childRule, {Deny, ObjMembers, "member:read"}}},
-		{ID: foreign, OrgID: other, Rules: []Rule{{Allow, ObjSettings, "org:update"}}},
+			Rules: []Rule{childRule, {Deny, ObjMembers, "iam.members.list"}}},
+		{ID: foreign, OrgID: other, Rules: []Rule{{Allow, ObjSettings, "iam.orgs.update"}}},
 	}})
 	got, err := e.EffectiveRules([]string{child.String()}, org)
 	if err != nil {
@@ -107,9 +107,9 @@ func TestCanGrantRole(t *testing.T) {
 			{OrgID: org, UserID: member, Role: "member"},
 		},
 		Roles: []CustomRole{{ID: adminRole, OrgID: org, Parents: []string{"admin"},
-			Rules: []Rule{{Allow, ObjMembers, "member:set-role"}}}},
+			Rules: []Rule{{Allow, ObjMembers, "iam.members.setRole"}}}},
 	})
-	own := []Rule{{Allow, ObjMembers, "member:read"}}
+	own := []Rule{{Allow, ObjMembers, "iam.members.list"}}
 	tests := []struct {
 		name    string
 		actor   uuid.UUID
@@ -120,7 +120,7 @@ func TestCanGrantRole(t *testing.T) {
 		{"member, parent member", member, false, []string{"member"}, nil},
 		{"member, parent admin", member, false, []string{"admin"}, ErrEscalation},
 		{"admin, parent admin", admin, true, []string{"admin"}, nil},
-		{"admin, parent with member:set-role", admin, true, []string{adminRole.String()}, ErrEscalation},
+		{"admin, parent with iam.members.setRole", admin, true, []string{adminRole.String()}, ErrEscalation},
 		{"admin, parent owner", admin, true, []string{"owner"}, ErrInvalidPattern},
 		{"unknown parent", admin, true, []string{uuid.NewString()}, ErrInvalidPattern},
 		{"owner, parent owner", owner, true, []string{"owner"}, ErrInvalidPattern},
@@ -134,7 +134,7 @@ func TestCanGrantRole(t *testing.T) {
 			}
 		})
 	}
-	if err := e.CanHold(UserSubject(admin), org, []Rule{{Allow, ObjTeams, "nope:*"}}); !errors.Is(err, ErrInvalidPattern) {
+	if err := e.CanHold(UserSubject(admin), org, []Rule{{Allow, ObjTeams, "nope.things.*"}}); !errors.Is(err, ErrInvalidPattern) {
 		t.Errorf("CanHold unknown action: got %v", err)
 	}
 }

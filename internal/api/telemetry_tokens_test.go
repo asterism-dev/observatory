@@ -58,7 +58,7 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 		}
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"tokens","rules":[{"effect":"allow","object":"org/settings","action":"telemetry:token"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"tokens","rules":[{"effect":"allow","object":"org/settings","action":"telemetry.tokens.create"}]}`)
 	e.bind(ownerTok, org, "user:"+carol.ID.String(), role)
 	if rec := e.do("GET", tokensPath(org), carolTok); rec.Code != 200 {
 		t.Fatalf("custom role list: %d", rec.Code)
@@ -67,13 +67,13 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 		t.Fatalf("custom role create: %d %s", rec.Code, rec.Body.String())
 	}
 
-	deny := e.createRole(ownerTok, org, `{"name":"no-vm","rules":[{"effect":"deny","object":"org/vms/`+uuid.NewString()+`","action":"vm:metrics"}]}`)
+	deny := e.createRole(ownerTok, org, `{"name":"no-vm","rules":[{"effect":"deny","object":"org/vms/`+uuid.NewString()+`","action":"compute.instances.getMetrics"}]}`)
 	e.bind(ownerTok, org, "user:"+dave.ID.String(), deny)
 	if rec := e.send("POST", tokensPath(org), daveTok, `{"name":"g"}`); rec.Code != 403 {
 		t.Fatalf("admin with deny: %d %s", rec.Code, rec.Body.String())
 	}
 	es := e.audit(store.ActionGrafanaTokenCreate)
-	if len(es) != 2 {
+	if len(es) != 4 {
 		t.Fatalf("denied audits: %d", len(es))
 	}
 	for _, a := range es {
@@ -184,7 +184,7 @@ func TestTokenDiesWithCreatorAccess(t *testing.T) {
 	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+dave.ID.String(), ownerTok); rec.Code != 204 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
-	role := e.createRole(ownerTok, org, `{"name":"no-node","rules":[{"effect":"deny","object":"org/nodes/`+uuid.NewString()+`","action":"node:metrics"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"no-node","rules":[{"effect":"deny","object":"org/nodes/`+uuid.NewString()+`","action":"compute.nodes.getMetrics"}]}`)
 	e.bind(ownerTok, org, "user:"+carol.ID.String(), role)
 	if _, status := e.grafana("Bearer " + demoted.Token); status != 200 {
 		t.Fatalf("within cache: %d", status)

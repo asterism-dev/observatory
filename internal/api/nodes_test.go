@@ -112,7 +112,7 @@ func TestNodeLifecycleAndAudit(t *testing.T) {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 
-	for _, action := range []string{"node:create", "node:update", "node:enroll", "node:revoke", "node:delete"} {
+	for _, action := range []string{"compute.nodes.create", "compute.nodes.update", "compute.nodes.enroll", "compute.nodes.revokeCredential", "compute.nodes.delete"} {
 		es := e.audit(action)
 		if len(es) == 0 {
 			t.Fatalf("no %s audit row", action)
@@ -125,7 +125,7 @@ func TestNodeLifecycleAndAudit(t *testing.T) {
 			}
 		}
 	}
-	if es := e.audit("node:enroll"); es[0].ActorKind != store.ActorNode || es[0].ActorID != c.Node.ID {
+	if es := e.audit("compute.nodes.enroll"); es[0].ActorKind != store.ActorNode || es[0].ActorID != c.Node.ID {
 		t.Fatalf("enroll actor: %+v", es[0])
 	}
 }
@@ -138,10 +138,10 @@ func TestRegeneratePendingNodeAuditedAsUpdate(t *testing.T) {
 	if rec := e.do("POST", nodesPath(org)+"/"+c.Node.ID+"/credential", tok); rec.Code != 200 {
 		t.Fatalf("credential: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("node:revoke"); len(es) != 0 {
+	if es := e.audit("compute.nodes.revokeCredential"); len(es) != 0 {
 		t.Fatalf("pending node audited as revoke: %+v", es)
 	}
-	if es := e.audit("node:update"); len(es) != 1 || es[0].Details["regenerated"] != true {
+	if es := e.audit("compute.nodes.update"); len(es) != 1 || es[0].Details["regenerated"] != true {
 		t.Fatalf("update audit: %+v", es)
 	}
 }
@@ -170,8 +170,8 @@ func TestNodePermissionsAndIsolation(t *testing.T) {
 	if rec := e.send("POST", nodesPath(org), bobTok, `{"name":"x"}`); rec.Code != 403 {
 		t.Fatalf("member create: %d", rec.Code)
 	}
-	if len(e.audit("node:create")) == 0 || e.audit("node:create")[0].Result != store.ResultDenied {
-		t.Fatalf("denied create not audited first: %+v", e.audit("node:create"))
+	if len(e.audit("compute.nodes.create")) == 0 || e.audit("compute.nodes.create")[0].Result != store.ResultDenied {
+		t.Fatalf("denied create not audited first: %+v", e.audit("compute.nodes.create"))
 	}
 	for _, c := range [][2]string{{"PATCH", ""}, {"POST", "/credential"}, {"DELETE", ""}} {
 		if rec := e.send(c[0], nodesPath(org)+"/"+id+c[1], bobTok, `{"name":"x"}`); rec.Code != 403 {

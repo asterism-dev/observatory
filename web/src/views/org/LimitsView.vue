@@ -84,8 +84,8 @@ watch(
       <Section v-if="group.rows.length" :label="t(`limits.${group.key}`)">
         <Card v-for="row in group.rows" :key="row.id">
           <strong>{{ row.name }}</strong>
-          <LimitFields v-model="row.limits" v-model:valid="row.valid" :disabled="!can('limit:set') || !!busy" />
-          <p v-if="can('limit:set')">
+          <LimitFields v-model="row.limits" v-model:valid="row.valid" :disabled="!can('quota.limits.update') || !!busy" />
+          <p v-if="can('quota.limits.update')">
             <Button variant="accent" :disabled="!!busy || !row.valid" @click="save(`${group.prefix}:${row.id}`, row.limits)">
               {{ t('org.save') }}
             </Button>

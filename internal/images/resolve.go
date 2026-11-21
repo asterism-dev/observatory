@@ -156,13 +156,13 @@ func (r Resolver) lookup(ctx context.Context, org, caller uuid.UUID, scope store
 	case store.EnvScopeUser:
 		obj = authz.UserImagesObject(*id)
 	}
-	if !r.Authz.Allowed(authz.UserSubject(caller), org, obj, "image:use") {
+	if !r.Authz.Allowed(authz.UserSubject(caller), org, obj, "artifacts.images.use") {
 		return store.Image{}, store.ErrNotFound
 	}
 	return img, nil
 }
 
-// Defaults skip image:use because they are set by someone allowed to set them.
+// Defaults skip artifacts.images.use because they are set by someone allowed to set them.
 func (r Resolver) cascade(ctx context.Context, org uuid.UUID, owner Owner) (Resolved, error) {
 	defaults, err := r.Store.ImageDefaults(ctx, org)
 	if err != nil {

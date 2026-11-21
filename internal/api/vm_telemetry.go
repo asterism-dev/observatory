@@ -47,7 +47,7 @@ func (h *api) vmLatest(r *http.Request, org uuid.UUID, vms []store.VM, timeout t
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	ids := []uuid.UUID{}
 	for _, v := range vms {
-		if e.Allowed(sub, org, authz.VMObject(v.ID), store.ActionVMMetrics) {
+		if e.Allowed(sub, org, authz.VMObject(v.ID), "compute.instances.getMetrics") {
 			ids = append(ids, v.ID)
 		}
 	}
@@ -69,7 +69,7 @@ func (h *api) usageVM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	v, ok := h.vmFromPath(w, r, store.ActionVMMetrics)
+	v, ok := h.vmFromPath(w, r, "compute.instances.getMetrics")
 	if !ok {
 		return
 	}
@@ -99,7 +99,7 @@ func (h *api) vmLogQuery(w http.ResponseWriter, r *http.Request) (telemetry.LogQ
 		writeError(w, http.StatusNotFound, "not found")
 		return telemetry.LogQuery{}, false
 	}
-	v, ok := h.vmFromPath(w, r, store.ActionVMMetrics)
+	v, ok := h.vmFromPath(w, r, "compute.instances.getMetrics")
 	if !ok {
 		return telemetry.LogQuery{}, false
 	}
@@ -131,7 +131,7 @@ func (h *api) tailVMLogs(w http.ResponseWriter, r *http.Request) {
 
 // vmProcesses proxies the live list from the VM's node; cpuPercent is percent of one core, like top.
 func (h *api) vmProcesses(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMMetrics)
+	v, ok := h.vmFromPath(w, r, "compute.instances.getMetrics")
 	if !ok {
 		return
 	}

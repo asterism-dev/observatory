@@ -19,9 +19,9 @@ const telemetryTokenRecheck = 60 * time.Second
 
 // telemetryTokenRules are what a creator must hold, unblocked by any deny, to mint and keep an org-wide token.
 var telemetryTokenRules = []authz.Rule{
-	{Effect: authz.Allow, Object: authz.ObjSettings, Action: "telemetry:token"},
-	{Effect: authz.Allow, Object: authz.ObjVMs + "/*", Action: "vm:metrics"},
-	{Effect: authz.Allow, Object: authz.ObjNodes + "/*", Action: "node:metrics"},
+	{Effect: authz.Allow, Object: authz.ObjSettings, Action: "telemetry.tokens.create"},
+	{Effect: authz.Allow, Object: authz.ObjVMs + "/*", Action: "compute.instances.getMetrics"},
+	{Effect: authz.Allow, Object: authz.ObjNodes + "/*", Action: "compute.nodes.getMetrics"},
 }
 
 type telemetryTokenJSON struct {
@@ -44,7 +44,7 @@ func telemetryTokenAudit(r *http.Request, action string, t store.TelemetryToken)
 
 func (h *api) listTelemetryTokens(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry:token") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
 	ts, err := h.store.TelemetryTokens(r.Context(), m.Org.ID)
@@ -64,7 +64,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry:token") {
+	if !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
 	name, ok := readName(w, r)
@@ -74,7 +74,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	if err := h.z.Enforcer().CanHold(authz.UserSubject(p.User.ID), m.Org.ID, telemetryTokenRules); err != nil {
 		h.auditDenied(r, m.Org.ID, authz.ObjSettings, store.ActionGrafanaTokenCreate)
-		writeError(w, http.StatusForbidden, "creating a token requires org-wide vm:metrics and node:metrics without deny rules")
+		writeError(w, http.StatusForbidden, "creating a token requires org-wide compute.instances.getMetrics and compute.nodes.getMetrics without deny rules")
 		return
 	}
 	var tok store.TelemetryToken
@@ -96,7 +96,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 
 func (h *api) revokeTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry:token") {
+	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
 	id, ok := pathID(w, r, "id")

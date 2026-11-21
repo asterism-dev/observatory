@@ -65,7 +65,7 @@ async function load() {
   const vmRows = value('vms', vms)
   input.value = {
     me: me.value.user.id,
-    canCreateNode: can('node:create'),
+    canCreateNode: can('compute.nodes.create'),
     nodes: value('nodes', nodes),
     vms: vmRows,
     disks: value('disks', disks),
@@ -120,7 +120,7 @@ const myVms = computed(() => (vmList.value ?? []).filter((v) => v.owner.kind ===
             <span>{{ t(`dashboard.step.${s.id}`) }}</span>
             <template v-if="!s.done">
               <template v-if="s.id === 'node'">
-                <Button v-if="can('node:create')" size="sm" variant="accent" @click="addNodeOpen = true">{{ t('nodes.add') }}</Button>
+                <Button v-if="can('compute.nodes.create')" size="sm" variant="accent" @click="addNodeOpen = true">{{ t('nodes.add') }}</Button>
                 <small v-else class="muted">{{ t('dashboard.step.nodeAsk') }}</small>
               </template>
               <router-link v-else-if="s.id === 'sshKey'" to="/profile">{{ t('nav.profile') }}</router-link>

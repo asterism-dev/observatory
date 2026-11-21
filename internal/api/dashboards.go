@@ -137,7 +137,7 @@ func (a dashboardAccess) hidden(d store.Dashboard) bool {
 }
 
 func (a dashboardAccess) canRead(d store.Dashboard) bool {
-	return !a.hidden(d) && a.e.Allowed(a.sub, a.org, dashboardObject(d.Scope, d.OwnerID), "dashboard:read")
+	return !a.hidden(d) && a.e.Allowed(a.sub, a.org, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.get")
 }
 
 // canEdit adds the creator rule: a team dashboard's creator while in the team, an org dashboard's creator always.
@@ -145,7 +145,7 @@ func (a dashboardAccess) canEdit(d store.Dashboard) bool {
 	if a.hidden(d) {
 		return false
 	}
-	if a.e.Allowed(a.sub, a.org, dashboardObject(d.Scope, d.OwnerID), "dashboard:edit") {
+	if a.e.Allowed(a.sub, a.org, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.update") {
 		return true
 	}
 	return d.CreatedBy == a.user && a.canRead(d) && (d.Scope != store.EnvScopeTeam || slices.Contains(a.teams, *d.OwnerID))
@@ -202,14 +202,14 @@ func (h *api) dashboardFromPath(w http.ResponseWriter, r *http.Request) (store.D
 		serverError(w, "dashboard", err)
 		return store.Dashboard{}, dashboardAccess{}, false
 	}
-	return d, a, h.authorize(w, r, m.Org.ID, dashboardObject(d.Scope, d.OwnerID), "dashboard:read")
+	return d, a, h.authorize(w, r, m.Org.ID, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.get")
 }
 
 func (h *api) dashboardEditable(w http.ResponseWriter, r *http.Request, a dashboardAccess, d store.Dashboard) bool {
 	if a.canEdit(d) {
 		return true
 	}
-	h.auditDenied(r, d.OrgID, dashboardObject(d.Scope, d.OwnerID), "dashboard:edit")
+	h.auditDenied(r, d.OrgID, dashboardObject(d.Scope, d.OwnerID), "telemetry.dashboards.update")
 	writeError(w, http.StatusForbidden, "forbidden")
 	return false
 }
@@ -235,7 +235,7 @@ func (h *api) createDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	owner, ok := h.envTarget(w, r, m.Org.ID, body.Scope, body.TeamID)
-	if !ok || !h.authorize(w, r, m.Org.ID, dashboardObject(body.Scope, owner), "dashboard:create") {
+	if !ok || !h.authorize(w, r, m.Org.ID, dashboardObject(body.Scope, owner), "telemetry.dashboards.create") {
 		return
 	}
 	a, err := h.dashboardAccess(r, m.Org.ID)
@@ -285,11 +285,11 @@ func (h *api) updateDashboard(w http.ResponseWriter, r *http.Request) {
 	moved := body.Scope != old.Scope || (owner != nil && *owner != *old.OwnerID)
 	// Making a dashboard private would take it from everyone else, so only its creator may.
 	if moved && body.Scope == store.EnvScopeUser && old.CreatedBy != a.user {
-		h.auditDenied(r, old.OrgID, dashboardObject(old.Scope, old.OwnerID), "dashboard:edit")
+		h.auditDenied(r, old.OrgID, dashboardObject(old.Scope, old.OwnerID), "telemetry.dashboards.update")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if moved && !h.authorize(w, r, old.OrgID, dashboardObject(body.Scope, owner), "dashboard:create") {
+	if moved && !h.authorize(w, r, old.OrgID, dashboardObject(body.Scope, owner), "telemetry.dashboards.create") {
 		return
 	}
 	d := old

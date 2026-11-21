@@ -75,7 +75,7 @@ func (h *api) snapshotFromPath(w http.ResponseWriter, r *http.Request, act strin
 }
 
 func (h *api) listSnapshots(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, "vm:read")
+	v, ok := h.vmFromPath(w, r, "compute.instances.get")
 	if !ok {
 		return
 	}
@@ -97,7 +97,7 @@ func (h *api) listSnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) createSnapshot(w http.ResponseWriter, r *http.Request) {
-	v, ok := h.vmFromPath(w, r, store.ActionVMSnapshot)
+	v, ok := h.vmFromPath(w, r, "compute.instances.snapshot")
 	if !ok {
 		return
 	}
@@ -142,7 +142,7 @@ func (h *api) createSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
-	v, sn, ok := h.snapshotFromPath(w, r, store.ActionVMSnapshot)
+	v, sn, ok := h.snapshotFromPath(w, r, "compute.instances.snapshot")
 	if !ok {
 		return
 	}
@@ -161,7 +161,7 @@ func (h *api) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
-	v, sn, ok := h.snapshotFromPath(w, r, store.ActionVMRestore)
+	v, sn, ok := h.snapshotFromPath(w, r, "compute.instances.restore")
 	if !ok {
 		return
 	}
@@ -187,7 +187,7 @@ func (h *api) restoreSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) forkSnapshot(w http.ResponseWriter, r *http.Request) {
-	src, sn, ok := h.snapshotFromPath(w, r, store.ActionVMFork)
+	src, sn, ok := h.snapshotFromPath(w, r, "compute.instances.fork")
 	if !ok {
 		return
 	}
@@ -207,7 +207,7 @@ func (h *api) forkSnapshot(w http.ResponseWriter, r *http.Request) {
 	if src.TeamID != nil {
 		scope = authz.TeamVMsObject(*src.TeamID)
 	}
-	if !h.authorize(w, r, src.OrgID, scope, store.ActionVMCreate) || !h.authorize(w, r, src.OrgID, authz.NodeObject(src.NodeID), "node:use") {
+	if !h.authorize(w, r, src.OrgID, scope, "compute.instances.create") || !h.authorize(w, r, src.OrgID, authz.NodeObject(src.NodeID), "compute.nodes.use") {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())

@@ -79,7 +79,7 @@ watch(
     groups.value = []
     loaded.value = false
     error.value = ''
-    if (!id || !can('logs:read')) return
+    if (!id || !can('telemetry.logEntries.list')) return
     try {
       const list = await api<LogGroupList>(`/api/orgs/${id}/logs/groups`)
       if (id === org.value?.id) {
@@ -97,7 +97,7 @@ watch(
 
 <template>
   <Page v-if="org" :icon="ScrollText" :title="t('nav.logs')" :subtitle="t('logs.subtitle')">
-    <EmptyState v-if="!can('logs:read')" :label="t('nav.logs')" :title="t('logs.forbidden')" :text="t('logs.forbiddenText')" />
+    <EmptyState v-if="!can('telemetry.logEntries.list')" :label="t('nav.logs')" :title="t('logs.forbidden')" :text="t('logs.forbiddenText')" />
     <template v-else>
       <Tabs v-model="tab" :tabs="tabs" variant="underline" />
       <p v-if="error" role="alert">{{ error }}</p>

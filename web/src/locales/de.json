@@ -1022,7 +1022,7 @@
     "empty": "Noch keine Logs",
     "emptyText": "Logs von VMs, Nodes und Image-Builds erscheinen hier, sobald sie gemeldet werden.",
     "forbidden": "Kein Zugriff",
-    "forbiddenText": "Für die Logs der Organisation brauchst du die Berechtigung logs:read.",
+    "forbiddenText": "Für die Logs der Organisation brauchst du die Berechtigung telemetry.logEntries.list.",
     "streamCount": "keine Streams | {n} Stream | {n} Streams",
     "lastEntry": "letzter Eintrag {at}",
     "lastEntryLabel": "Letzter Eintrag",

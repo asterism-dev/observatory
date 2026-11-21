@@ -19,7 +19,7 @@ Permissions are in [permissions.md](permissions.md#disks); the network path in [
 
 - **Create:** name (`^[a-z][a-z0-9-]{0,30}$`, unique per org), owner (me, or a team I may create disks for), size
   1–4 096 GB. Counts against the disk GB limits of the user, team and org, together with root disks.
-- **Copy:** a new disk with the source's size, a new name and owner. Needs `disk:use` on the source. Copying an attached
+- **Copy:** a new disk with the source's size, a new name and owner. Needs `compute.disks.use` on the source. Copying an attached
   or releasing disk is allowed; the copy is then only crash-consistent (the API returns a warning).
 - **Grow:** larger only. The new size reaches the VM on its next start: an attached running VM is restarted, so the
   request needs `restartAllowed`. The guest's filesystem is grown on boot. The restart waits until the storage server
@@ -58,7 +58,7 @@ that the VM is gone and its NBD device closed (the node reports the disks in use
 desired list it applied; a report from before the detach never counts). Then the export is deleted and the disk can be
 attached again, normally within a few seconds.
 
-If the node stays offline (or was deleted), a user with `disk:update` can **force release** a `releasing` disk. This
+If the node stays offline (or was deleted), a user with `compute.disks.update` can **force release** a `releasing` disk. This
 deletes the export at once: the storage server kills the disk's NBD server, and the old node can never reconnect,
 because a later attach gets a new key (the port may repeat). Writes the old VM had not flushed to storage are lost. Use it
 only when the node will not come back soon or the VM no longer matters. Deleting a node force-releases its disks.

@@ -84,7 +84,7 @@ func TestNetworkCreate(t *testing.T) {
 	if rec := e.send("POST", networksPath(org), tok, `{"name":"web","subnet":"172.21.0.0/24"}`); rec.Code != 409 {
 		t.Fatalf("dup: %d", rec.Code)
 	}
-	if es := e.audit("network:create"); len(es) != 2 || es[1].Details["name"] != "web" || es[1].Details["subnet"] != "10.210.0.0/24" {
+	if es := e.audit("network.networks.create"); len(es) != 2 || es[1].Details["name"] != "web" || es[1].Details["subnet"] != "10.210.0.0/24" {
 		t.Fatalf("audit: %+v", es)
 	}
 	if _, err := netip.ParsePrefix(n.Subnet); err != nil {
@@ -132,11 +132,11 @@ func TestVMNetworksRestart(t *testing.T) {
 		got.Networks[0].DNSName != "dev.web.internal" || got.Networks[0].Name != "web" {
 		t.Fatalf("after: gen %d %+v", e.generation(v.ID), got)
 	}
-	es := e.audit("vm:network")
+	es := e.audit("compute.instances.setNetworks")
 	if len(es) != 1 || es[0].Details["name"] != "dev" || len(es[0].Details["networks"].([]any)) != 1 {
 		t.Fatalf("audit: %+v", es)
 	}
-	if code := e.setVMNetworks(tok, org, v.ID, false, n.ID); code != 200 || len(e.audit("vm:network")) != 1 || e.generation(v.ID) != gen+1 {
+	if code := e.setVMNetworks(tok, org, v.ID, false, n.ID); code != 200 || len(e.audit("compute.instances.setNetworks")) != 1 || e.generation(v.ID) != gen+1 {
 		t.Fatalf("same list: %d", code)
 	}
 	if code := e.setVMNetworks(tok, org, v.ID, true); code != 200 {
@@ -185,14 +185,14 @@ func TestVMNetworksPermissions(t *testing.T) {
 		}
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"no-use","rules":[{"effect":"deny","object":"org/networks/*","action":"network:use"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"no-use","rules":[{"effect":"deny","object":"org/networks/*","action":"network.networks.use"}]}`)
 	e.bind(ownerTok, org, "user:"+bob.ID.String(), role)
 	mine := e.createVM(bobTok, org, vmBody("b1", userOwner(), node))
 	if code := e.setVMNetworks(bobTok, org, mine.ID, true, n.ID); code != 403 {
-		t.Fatalf("no network:use: %d", code)
+		t.Fatalf("no network.networks.use: %d", code)
 	}
 	if code := e.setVMNetworks(bobTok, org, mine.ID, true); code != 200 {
-		t.Fatalf("detach-only needs no network:use: %d", code)
+		t.Fatalf("detach-only needs no network.networks.use: %d", code)
 	}
 }
 
@@ -218,7 +218,7 @@ func TestNetworkDeleteAttached(t *testing.T) {
 	if rec := e.do("DELETE", networksPath(org)+"/"+n.ID, tok); rec.Code != 204 {
 		t.Fatalf("delete: %d", rec.Code)
 	}
-	if es := e.audit("network:delete"); len(es) != 1 || es[0].Details["name"] != "web" {
+	if es := e.audit("network.networks.delete"); len(es) != 1 || es[0].Details["name"] != "web" {
 		t.Fatalf("audit: %+v", es)
 	}
 }

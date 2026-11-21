@@ -232,9 +232,9 @@ func TestUserVMAdmitsOnlyOwner(t *testing.T) {
 	f := newFixture(t)
 	d2 := f.device(f.orgA, f.a2, "laptop")
 	v1 := f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil)
-	f.bindRole(authz.Rule{Effect: authz.Allow, Object: authz.VMObject(v1.ID), Action: "vm:connect"}, authz.UserSubject(f.a2))
+	f.bindRole(authz.Rule{Effect: authz.Allow, Object: authz.VMObject(v1.ID), Action: "compute.instances.connect"}, authz.UserSubject(f.a2))
 	st := f.state()
-	if !f.z.Allowed(authz.UserSubject(f.a2), f.orgA, authz.VMObject(v1.ID), "vm:connect") {
+	if !f.z.Allowed(authz.UserSubject(f.a2), f.orgA, authz.VMObject(v1.ID), "compute.instances.connect") {
 		t.Fatal("custom grant not effective")
 	}
 	if allowed(t, st, v1, d2) {
@@ -282,7 +282,7 @@ func TestDenyConnectEmptiesList(t *testing.T) {
 	if !allowed(t, f.state(), v1, d1) {
 		t.Fatal("a1's device not admitted to v1 before the deny")
 	}
-	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.ObjVMs + "/*", Action: "vm:connect"},
+	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.ObjVMs + "/*", Action: "compute.instances.connect"},
 		authz.UserSubject(f.a1), authz.UserSubject(f.a2), authz.TeamSubject(team))
 	for _, p := range orgOf(t, f.state(), f.orgA).Ports {
 		if len(p.AllowFrom) != 0 {
@@ -430,7 +430,7 @@ func TestAllowListMatchesCanConnect(t *testing.T) {
 		devices = append(devices, f.device(f.orgA, u, "laptop"))
 	}
 	vms := []store.VM{f.vm(f.orgA, f.nodeA, "v1", &f.a1, nil), f.vm(f.orgA, f.nodeA, "v2", &f.a2, nil), f.vm(f.orgA, f.nodeA, "tv", nil, &team)}
-	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.VMObject(vms[1].ID), Action: "vm:connect"}, authz.UserSubject(f.a2))
+	f.bindRole(authz.Rule{Effect: authz.Deny, Object: authz.VMObject(vms[1].ID), Action: "compute.instances.connect"}, authz.UserSubject(f.a2))
 	st := f.state()
 	e := f.z.Enforcer()
 	hits := 0

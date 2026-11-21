@@ -61,8 +61,8 @@ func (h *api) diskJSON(r *http.Request, d store.Disk, names ownerNames) diskJSON
 	info := h.disks.Info(d)
 	j := diskJSON{ID: d.ID, Name: d.Name, SizeGB: d.SizeGB, AllocatedBytes: info.AllocatedBytes, State: info.State,
 		ExportError: info.ExportError, CreatedAt: d.CreatedAt,
-		CanUpdate: e.Allowed(sub, d.OrgID, obj, "disk:update"), CanDelete: e.Allowed(sub, d.OrgID, obj, store.ActionDiskDelete),
-		CanUse: e.Allowed(sub, d.OrgID, obj, "disk:use")}
+		CanUpdate: e.Allowed(sub, d.OrgID, obj, "compute.disks.update"), CanDelete: e.Allowed(sub, d.OrgID, obj, "compute.disks.delete"),
+		CanUse: e.Allowed(sub, d.OrgID, obj, "compute.disks.use")}
 	if d.UserID != nil {
 		j.Owner = ownerJSON{"user", *d.UserID, names.users[*d.UserID]}
 	} else if d.TeamID != nil {
@@ -118,7 +118,7 @@ type diskOwnerBody struct {
 	TeamID *uuid.UUID
 }
 
-// diskOwner authorizes disk:create for the owner scope and fills the disk's owner.
+// diskOwner authorizes compute.disks.create for the owner scope and fills the disk's owner.
 func (h *api) diskOwner(w http.ResponseWriter, r *http.Request, org uuid.UUID, o diskOwnerBody, d *store.Disk) bool {
 	p, _ := auth.PrincipalFrom(r.Context())
 	var obj string
@@ -131,7 +131,7 @@ func (h *api) diskOwner(w http.ResponseWriter, r *http.Request, org uuid.UUID, o
 		writeError(w, http.StatusBadRequest, "invalid owner")
 		return false
 	}
-	return h.authorize(w, r, org, obj, store.ActionDiskCreate)
+	return h.authorize(w, r, org, obj, "compute.disks.create")
 }
 
 // diskFromPath loads {id} within the caller's org and authorizes act on it.
@@ -175,7 +175,7 @@ func (h *api) listDisks(w http.ResponseWriter, r *http.Request) {
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	out := []diskJSON{}
 	for _, d := range ds {
-		if e.Allowed(sub, m.Org.ID, authz.DiskObject(d.ID), "disk:read") {
+		if e.Allowed(sub, m.Org.ID, authz.DiskObject(d.ID), "compute.disks.get") {
 			out = append(out, h.diskJSON(r, d, names))
 		}
 	}
@@ -183,7 +183,7 @@ func (h *api) listDisks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) getDisk(w http.ResponseWriter, r *http.Request) {
-	d, ok := h.diskFromPath(w, r, "disk:read")
+	d, ok := h.diskFromPath(w, r, "compute.disks.get")
 	if !ok {
 		return
 	}
@@ -221,7 +221,7 @@ func (h *api) createDisk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) copyDisk(w http.ResponseWriter, r *http.Request) {
-	src, ok := h.diskFromPath(w, r, "disk:use")
+	src, ok := h.diskFromPath(w, r, "compute.disks.use")
 	if !ok {
 		return
 	}
@@ -264,7 +264,7 @@ func (h *api) copyDisk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) growDisk(w http.ResponseWriter, r *http.Request) {
-	d, ok := h.diskFromPath(w, r, "disk:update")
+	d, ok := h.diskFromPath(w, r, "compute.disks.update")
 	if !ok {
 		return
 	}
@@ -289,7 +289,7 @@ func (h *api) growDisk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) releaseDisk(w http.ResponseWriter, r *http.Request) {
-	d, ok := h.diskFromPath(w, r, "disk:update")
+	d, ok := h.diskFromPath(w, r, "compute.disks.update")
 	if !ok {
 		return
 	}
@@ -306,7 +306,7 @@ func (h *api) releaseDisk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) deleteDisk(w http.ResponseWriter, r *http.Request) {
-	d, ok := h.diskFromPath(w, r, store.ActionDiskDelete)
+	d, ok := h.diskFromPath(w, r, "compute.disks.delete")
 	if !ok {
 		return
 	}

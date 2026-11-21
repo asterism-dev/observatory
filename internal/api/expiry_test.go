@@ -43,7 +43,7 @@ func TestVMExpiryDeletesExpired(t *testing.T) {
 	if len(h.VMs) != 1 || h.VMs[0].ID != old.ID || h.VMs[0].Reason != "expired" || h.VMs[0].DeletedBy != nil {
 		t.Fatalf("history: %+v", h)
 	}
-	es := e.audit("vm:delete")
+	es := e.audit("compute.instances.delete")
 	if len(es) != 1 || es[0].ActorKind != store.ActorSystem || es[0].Details["reason"] != "expired" || es[0].Resource != authz.VMObject(uuid.MustParse(old.ID)) {
 		t.Fatalf("audit: %+v", es)
 	}

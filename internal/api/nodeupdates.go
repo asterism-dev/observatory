@@ -87,7 +87,7 @@ func (h *api) startNodeUpdate(w http.ResponseWriter, r *http.Request) {
 			serverError(w, "node", err)
 			return
 		}
-		if !h.authorize(w, r, n.OrgID, authz.NodeObject(n.ID), store.ActionNodeUpdate) {
+		if !h.authorize(w, r, n.OrgID, authz.NodeObject(n.ID), "compute.nodes.update") {
 			return
 		}
 		nodes = append(nodes, n)
@@ -154,7 +154,7 @@ func (h *api) cancelNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, n := range run.Nodes {
-		if !h.authorize(w, r, m.Org.ID, authz.NodeObject(n.ID), store.ActionNodeUpdate) {
+		if !h.authorize(w, r, m.Org.ID, authz.NodeObject(n.ID), "compute.nodes.update") {
 			return
 		}
 	}

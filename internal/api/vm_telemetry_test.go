@@ -190,8 +190,8 @@ func TestVMJSONUsageFromStore(t *testing.T) {
 		}
 	}
 
-	// A custom role can grant vm:read without vm:metrics.
-	reader := te.createRole(te.adminTok, te.org, `{"name":"vm reader","rules":[{"effect":"allow","object":"org/vms/*","action":"vm:read"}]}`)
+	// A custom role can grant compute.instances.get without compute.instances.getMetrics.
+	reader := te.createRole(te.adminTok, te.org, `{"name":"vm reader","rules":[{"effect":"allow","object":"org/vms/*","action":"compute.instances.get"}]}`)
 	te.bind(te.adminTok, te.org, authz.UserSubject(te.other.ID), reader)
 	rec := te.do("GET", vmsPath(te.org), te.otherTok)
 	list.VMs = nil

@@ -65,7 +65,7 @@ watch(
   <template v-if="org">
     <p v-if="error" role="alert">{{ error }}</p>
     <Section :label="t('nav.teams')">
-      <Card v-if="can('team:create')">
+      <Card v-if="can('iam.teams.create')">
         <form class="row" @submit.prevent="create">
           <TextInput v-model="name" :placeholder="t('teams.name')" :aria-label="t('teams.name')" />
           <Button type="submit" variant="accent" :disabled="busy || !name.trim()">{{ t('teams.create') }}</Button>

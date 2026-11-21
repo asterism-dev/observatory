@@ -165,8 +165,8 @@ probes after 10 min.
 
 ## Isolation
 
-- A device reaches only the VMs its person may `vm:connect`: the owner of a user VM, the members of the owning team for
-  a team VM. Org admins and owners do not get `vm:connect`. A user VM admits only its owner's devices whatever the
+- A device reaches only the VMs its person may `compute.instances.connect`: the owner of a user VM, the members of the owning team for
+  a team VM. Org admins and owners do not get `compute.instances.connect`. A user VM admits only its owner's devices whatever the
   rules say (connect check). Changes to rules, teams or devices take effect on the next gateway poll.
 - VMs cannot reach each other on the management network, and cannot open connections to devices.
 - Each org has its own switch (`ls-mgmt-<org>`) and port group; ACLs allow traffic to a VM only from its allowed

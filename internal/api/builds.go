@@ -60,7 +60,7 @@ func buildAudit(r *http.Request, action string, img store.Image, b store.ImageBu
 }
 
 func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:build")
+	img, ok := h.imageFromPath(w, r, "build.builds.create")
 	if !ok {
 		return
 	}
@@ -138,14 +138,14 @@ func refsUsable(ctx context.Context, s *store.Store, org uuid.UUID, refs []store
 	for _, ref := range refs {
 		var found bool
 		if ref.Kind == "secret" {
-			if !allowed(envObject(ref.Scope, ref.OwnerID), "env:use") {
+			if !allowed(envObject(ref.Scope, ref.OwnerID), "secrets.variables.use") {
 				return "no right to use " + describeRef(ref), nil
 			}
 			for _, v := range envs {
 				found = found || v.Scope == ref.Scope && sameOwner(v.OwnerID, ref.OwnerID) && v.Name == ref.Name
 			}
 		} else {
-			if !allowed(integrationObject(ref.Scope, ref.OwnerID), "integration:use") {
+			if !allowed(integrationObject(ref.Scope, ref.OwnerID), "secrets.integrations.use") {
 				return "no right to use " + describeRef(ref), nil
 			}
 			for _, v := range igs {
@@ -160,7 +160,7 @@ func refsUsable(ctx context.Context, s *store.Store, org uuid.UUID, refs []store
 }
 
 func (h *api) listBuilds(w http.ResponseWriter, r *http.Request) {
-	img, ok := h.imageFromPath(w, r, "image:list")
+	img, ok := h.imageFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -197,13 +197,13 @@ func (h *api) buildFromPath(w http.ResponseWriter, r *http.Request, act string) 
 }
 
 func (h *api) getBuild(w http.ResponseWriter, r *http.Request) {
-	if _, b, ok := h.buildFromPath(w, r, "image:list"); ok {
+	if _, b, ok := h.buildFromPath(w, r, "artifacts.images.list"); ok {
 		writeJSON(w, http.StatusOK, toBuildJSON(b))
 	}
 }
 
 func (h *api) cancelBuild(w http.ResponseWriter, r *http.Request) {
-	img, b, ok := h.buildFromPath(w, r, "image:build")
+	img, b, ok := h.buildFromPath(w, r, "build.builds.create")
 	if !ok {
 		return
 	}
@@ -227,7 +227,7 @@ func (h *api) cancelBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *api) buildLog(w http.ResponseWriter, r *http.Request) {
-	_, b, ok := h.buildFromPath(w, r, "image:list")
+	_, b, ok := h.buildFromPath(w, r, "artifacts.images.list")
 	if !ok {
 		return
 	}
@@ -310,7 +310,7 @@ func (h *api) listBuilderVMs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !privileged(m.Role) {
-		h.auditDenied(r, m.Org.ID, authz.ObjVMs, "vm:builders")
+		h.auditDenied(r, m.Org.ID, authz.ObjVMs, "build.builders.list")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}

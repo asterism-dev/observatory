@@ -10,13 +10,13 @@ export interface NavTab {
 }
 
 const ORG_TABS = [
-  { segment: 'settings', action: 'org:update', label: 'nav.general' },
-  { segment: 'members', action: 'member:read', label: 'nav.members' },
-  { segment: 'teams', action: 'team:read', label: 'nav.teams' },
-  { segment: 'roles', action: 'role:read', label: 'nav.roles' },
-  { segment: 'limits', action: 'limit:read', label: 'nav.limits' },
-  { segment: 'audit', action: 'audit:read', label: 'nav.orgAudit' },
-  { segment: 'telemetry', action: 'telemetry:token', label: 'nav.telemetry' },
+  { segment: 'settings', action: 'iam.orgs.update', label: 'nav.general' },
+  { segment: 'members', action: 'iam.members.list', label: 'nav.members' },
+  { segment: 'teams', action: 'iam.teams.list', label: 'nav.teams' },
+  { segment: 'roles', action: 'iam.roles.list', label: 'nav.roles' },
+  { segment: 'limits', action: 'quota.limits.get', label: 'nav.limits' },
+  { segment: 'audit', action: 'audit.events.list', label: 'nav.orgAudit' },
+  { segment: 'telemetry', action: 'telemetry.tokens.create', label: 'nav.telemetry' },
   { segment: 'builders', action: null, label: 'nav.builders' },
 ] as const
 

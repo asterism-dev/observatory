@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
@@ -29,7 +28,7 @@ func (h *api) usageNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeMetrics)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.getMetrics")
 	if !ok {
 		return
 	}
@@ -52,7 +51,7 @@ func (h *api) nodeLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeMetrics)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.getMetrics")
 	if !ok {
 		return
 	}
@@ -100,7 +99,7 @@ func (h *api) tailNodeLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, ok := h.nodeFromPath(w, r, store.ActionNodeMetrics)
+	n, ok := h.nodeFromPath(w, r, "compute.nodes.getMetrics")
 	if !ok {
 		return
 	}

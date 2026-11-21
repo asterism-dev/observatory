@@ -254,7 +254,7 @@ func TestEnvTeamScope(t *testing.T) {
 		t.Fatalf("team admin writable scopes: %+v", list.WritableScopes)
 	}
 
-	// A team admin may not move into the org scope nor pull an org var into the team (no env:delete on org/env).
+	// A team admin may not move into the org scope nor pull an org var into the team (no secrets.variables.delete on org/env).
 	if rec := e.send("POST", envVarPath(org, id)+"/move", bobTok, `{"scope":"org"}`); rec.Code != 403 {
 		t.Fatalf("team admin moves to org: %d", rec.Code)
 	}
@@ -486,10 +486,10 @@ func TestEnvHostsPermission(t *testing.T) {
 		t.Fatalf("bind own: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.send("PATCH", envVarPath(org, teamVar), carolTok, `{"hosts":["github.com"]}`); rec.Code != 403 {
-		t.Fatalf("bind team var without env:set: %d", rec.Code)
+		t.Fatalf("bind team var without secrets.variables.set: %d", rec.Code)
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"nohosts","rules":[{"effect":"deny","object":"org/user-env/*","action":"env:set"}]}`)
+	role := e.createRole(ownerTok, org, `{"name":"nohosts","rules":[{"effect":"deny","object":"org/user-env/*","action":"secrets.variables.set"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(bob.ID), role)
 	for _, body := range []string{`{"hosts":["example.com"]}`, `{"hosts":[]}`} {
 		if rec := e.send("PATCH", envVarPath(org, mine), bobTok, body); rec.Code != 403 {
@@ -542,6 +542,6 @@ func TestVMEgressInfo(t *testing.T) {
 		t.Fatalf("after bind: %+v", got)
 	}
 	if rec := e.do("GET", path, bobTok); rec.Code != 403 {
-		t.Fatalf("no vm:read: %d", rec.Code)
+		t.Fatalf("no compute.instances.get: %d", rec.Code)
 	}
 }

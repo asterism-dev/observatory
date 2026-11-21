@@ -88,7 +88,7 @@ func TestCreateDisk(t *testing.T) {
 	if rec := e.send("POST", disksPath(org), bobTok, diskBody("data", userOwner(), 1)); rec.Code != 409 {
 		t.Fatalf("duplicate: %d", rec.Code)
 	}
-	if es := e.audit("disk:create"); len(es) != 2 || es[0].Result != store.ResultDenied || es[1].Details["name"] != "data" || es[1].Details["sizeGB"] != float64(10) {
+	if es := e.audit("compute.disks.create"); len(es) != 2 || es[0].Result != store.ResultDenied || es[1].Details["name"] != "data" || es[1].Details["sizeGB"] != float64(10) {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -120,7 +120,7 @@ func TestAdminCannotCopyOrAttachMemberDisk(t *testing.T) {
 	if rec.Code != 201 || got.Warning == "" || got.Name != "c2" {
 		t.Fatalf("attached copy: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("disk:copy"); len(es) != 2 || es[0].Details["source"] != d.ID {
+	if es := e.audit("compute.disks.copy"); len(es) != 2 || es[0].Details["source"] != d.ID {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -166,7 +166,7 @@ func TestGrowDiskAPI(t *testing.T) {
 	if rec.Code != 200 || got.SizeGB != 4 || got.State != "growing" {
 		t.Fatalf("grow: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("disk:grow"); len(es) != 1 || es[0].Details["sizeGB"] != float64(4) {
+	if es := e.audit("compute.disks.grow"); len(es) != 1 || es[0].Details["sizeGB"] != float64(4) {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -192,13 +192,13 @@ func TestForceReleaseAPI(t *testing.T) {
 	if rec := e.do("POST", path, tok); rec.Code != 204 {
 		t.Fatalf("releasing: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("disk:release"); len(es) != 1 {
+	if es := e.audit("compute.disks.release"); len(es) != 1 {
 		t.Fatalf("audit: %+v", es)
 	}
 	if rec := e.do("DELETE", disksPath(org)+"/"+d.ID, tok); rec.Code != 204 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("disk:delete"); len(es) != 1 {
+	if es := e.audit("compute.disks.delete"); len(es) != 1 {
 		t.Fatalf("audit: %+v", es)
 	}
 }
@@ -317,20 +317,20 @@ func TestDiskAuthorizationDenied(t *testing.T) {
 	if rec := e.send("POST", base+"/copy", adminTok, `{"name":"c","owner":{"kind":"user"}}`); rec.Code != 403 {
 		t.Fatalf("admin copy: %d", rec.Code)
 	}
-	if e.deniedRows("disk:use") != 1 {
+	if e.deniedRows("compute.disks.use") != 1 {
 		t.Fatal("no denied row for admin copy")
 	}
 	if rec := e.send("POST", base+"/copy", bobTok, `{"name":"c","owner":`+teamOwner(team)+`}`); rec.Code != 403 {
 		t.Fatalf("team copy without create: %d", rec.Code)
 	}
-	if e.deniedRows("disk:create") != 1 {
+	if e.deniedRows("compute.disks.create") != 1 {
 		t.Fatal("no denied row for team copy")
 	}
 
 	for _, c := range []struct{ method, path, body, action string }{
-		{"POST", base + "/grow", `{"sizeGB":2}`, "disk:update"},
-		{"POST", base + "/release", "", "disk:update"},
-		{"DELETE", base, "", "disk:delete"},
+		{"POST", base + "/grow", `{"sizeGB":2}`, "compute.disks.update"},
+		{"POST", base + "/release", "", "compute.disks.update"},
+		{"DELETE", base, "", "compute.disks.delete"},
 	} {
 		before := e.deniedRows(c.action)
 		if rec := e.send(c.method, c.path, carolTok, c.body); rec.Code != 403 {

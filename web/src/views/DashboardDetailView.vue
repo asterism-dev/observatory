@@ -45,7 +45,7 @@ const presetOptions = presets.map((p) => ({ value: p, label: p.replace(/(\d+)/, 
 const panels = computed(() => (editing.value ? draft.value.panels : (dash.value?.panels ?? [])))
 const scopes = computed(() => {
   if (!dash.value) return []
-  const list = dashboardScopes(ownTeams.value, can('dashboard:create'), dash.value.createdBy === me.value?.user.id)
+  const list = dashboardScopes(ownTeams.value, can('telemetry.dashboards.create'), dash.value.createdBy === me.value?.user.id)
   const current = dashboardScope(dash.value, teams.value)
   return list.some((s) => scopeKey(s) === scopeKey(current)) ? list : [current, ...list]
 })
@@ -86,7 +86,7 @@ async function startEdit() {
   saveError.value = ''
   conflict.value = false
   editing.value = true
-  ownTeams.value = await creatableTeams(api, org.value.id, me.value.user.id, can('dashboard:create'), teams.value)
+  ownTeams.value = await creatableTeams(api, org.value.id, me.value.user.id, can('telemetry.dashboards.create'), teams.value)
 }
 
 function stopEdit() {
