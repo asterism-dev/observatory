@@ -109,3 +109,11 @@ func (s *Store) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID) 
 	}
 	return nil
 }
+
+// SessionActive reports whether a session is neither revoked nor expired; a primary key lookup.
+func (s *Store) SessionActive(ctx context.Context, id uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM sessions WHERE id = $1 AND revoked_at IS NULL AND expires_at > now())`, id).Scan(&ok)
+	return ok, err
+}

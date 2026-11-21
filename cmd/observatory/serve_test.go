@@ -459,3 +459,77 @@ func bearer[T any](msg *T, token string) *connect.Request[T] {
 	req.Header().Set("Authorization", "Bearer "+token)
 	return req
 }
+
+// TestServeAllRefusesEndedSessionsAtOnce warms the edge's JWT cache, then ends the session: hub routes must refuse it on the next request.
+func TestServeAllRefusesEndedSessionsAtOnce(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env := serveAllEnv(t, pool, edgeLn)
+	ctx := t.Context()
+	s := store.New(pool)
+	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSession := func(kind store.SessionKind) (string, store.Session) {
+		tok, sess, err := s.CreateSession(ctx, alice.User.ID, kind, time.Hour, "test", "127.0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok, sess
+	}
+	web, _ := newSession(store.SessionBrowser)
+	cli, _ := newSession(store.SessionCLI)
+	other, otherSess := newSession(store.SessionCLI)
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	call := func(method, path, token string, cookie bool) int {
+		req, _ := http.NewRequest(method, "http://"+edgeLn.Addr().String()+path, nil)
+		if cookie {
+			req.AddCookie(&http.Cookie{Name: "obs_session", Value: token})
+		} else {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("X-Observatory", "1")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	for _, c := range []struct {
+		token  string
+		cookie bool
+	}{{web, true}, {other, false}} {
+		if code := call("GET", "/api/info", c.token, c.cookie); code != http.StatusOK {
+			t.Fatalf("/api/info before: %d", code)
+		}
+	}
+	if code := call("POST", "/auth/logout", web, true); code != http.StatusNoContent {
+		t.Fatalf("logout: %d", code)
+	}
+	if code := call("GET", "/api/info", web, true); code != http.StatusUnauthorized {
+		t.Fatalf("/api/info with the logged-out cookie: %d", code)
+	}
+	if code := call("DELETE", "/api/iam/v1/me/sessions/"+otherSess.ID.String(), cli, false); code != http.StatusOK {
+		t.Fatalf("revoke: %d", code)
+	}
+	if code := call("GET", "/api/info", other, false); code != http.StatusUnauthorized {
+		t.Fatalf("/api/info with the revoked session: %d", code)
+	}
+}

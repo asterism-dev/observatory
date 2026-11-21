@@ -351,3 +351,38 @@ func TestEdgeKeepsTrustedHeadersFromServices(t *testing.T) {
 		t.Fatalf("service saw edge %q, client ip %q", s.header.Values(HeaderEdge), s.header.Values(HeaderClientIP))
 	}
 }
+
+func TestEdgeForgetsJWTAfterLogoutOr401(t *testing.T) {
+	var calls atomic.Int32
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/iam/token":
+			calls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]string{"token": "jwt", "expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339)})
+		case "/auth/logout":
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/refused":
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	t.Cleanup(hub.Close)
+	edge := newEdge(t, hub.URL, nil)
+	for _, step := range []struct {
+		method, path string
+		calls        int32
+	}{
+		{"GET", "/api/me", 1},
+		{"GET", "/api/me", 1},
+		{"POST", "/auth/logout", 1},
+		{"GET", "/api/me", 2},
+		{"GET", "/api/refused", 2},
+		{"GET", "/api/me", 3},
+	} {
+		req, _ := http.NewRequest(step.method, edge.URL+step.path, nil)
+		req.Header.Set("Authorization", "Bearer "+validSession)
+		get(t, req)
+		if n := calls.Load(); n != step.calls {
+			t.Fatalf("after %s %s: issuer called %d times, want %d", step.method, step.path, n, step.calls)
+		}
+	}
+}

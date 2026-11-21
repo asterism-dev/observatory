@@ -366,23 +366,46 @@ func TestRequireRejects(t *testing.T) {
 func TestRequirePrincipalFromClaims(t *testing.T) {
 	e := newEnv(t)
 	user, sess, tok := e.minted(store.SessionCLI)
-	// The hub authenticates offline: a revoked session's JWT stays valid until it expires.
-	if err := e.store.RevokeSession(context.Background(), user.ID, sess.ID); err != nil {
-		t.Fatal(err)
-	}
 	var got Principal
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	e.a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got, _ = PrincipalFrom(r.Context()) })).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d", rec.Code)
+	h := e.a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got, _ = PrincipalFrom(r.Context()) }))
+	do := func() int {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := do(); code != http.StatusOK {
+		t.Fatalf("status %d", code)
 	}
 	if got.User.ID != user.ID || got.User.Name != "Alice" || !got.User.PlatformAdmin {
 		t.Fatalf("user %+v", got.User)
 	}
 	if got.Session.ID != sess.ID || got.Session.UserID != user.ID || got.Session.Kind != store.SessionCLI || got.Session.ExpiresAt.Unix() != sess.ExpiresAt.Unix() {
 		t.Fatalf("session %+v, want %+v", got.Session, sess)
+	}
+	// The JWT is still valid, but its session is not.
+	if err := e.store.RevokeSession(context.Background(), user.ID, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code := do(); code != http.StatusUnauthorized {
+		t.Fatalf("revoked session: %d", code)
+	}
+}
+
+func TestRequireFailsClosedOnSessionLookupError(t *testing.T) {
+	e := newEnv(t)
+	_, _, tok := e.minted(store.SessionCLI)
+	if _, err := e.pool.Exec(context.Background(), "ALTER TABLE sessions RENAME TO sessions_gone"); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	e.a.Require(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || called {
+		t.Fatalf("status %d, handler called %v", rec.Code, called)
 	}
 }
 

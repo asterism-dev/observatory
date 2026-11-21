@@ -288,8 +288,9 @@ revoked (failed precondition).
 
 Extracted services do not see sessions. The edge exchanges the user's session (cookie or bearer token) for a short-lived
 signed token (EdDSA, valid at most 5 minutes and never longer than the session) and sends it to the service in place of
-the client's `Authorization` header. The edge caches it for at most 60 seconds, so a logout or revoked session reaches
-the services within about a minute. The same goes for a removed platform admin role, which hub routes read from the
+the client's `Authorization` header. The edge caches it for at most 60 seconds, so a revoked session reaches the
+services within about a minute. A logout through the edge, or a 401 from the hub for that session, drops the cached
+token at once. A removed platform admin role also takes up to a minute, on hub routes too, which read it from the
 token. Services verify the token offline against the hub's published keys.
 
 - A leaked identity token stays valid at the services until it expires: at most 5 minutes plus 30 seconds of clock skew
@@ -301,7 +302,8 @@ token. Services verify the token offline against the hub's published keys.
   rotation, which comes later.
 - The hub's own `/api/` routes use the same token: the edge swaps a session (the `obs_session` cookie or an
   `obs_…` bearer) for it, removes the session cookie and the hub verifies the token offline. The hub never sees a
-  session there, so logout or a revoked session reaches hub routes within about a minute too. Other bearer tokens
+  session there, but it checks on every request that the token's session is neither revoked nor expired, so hub
+  routes refuse a logged-out or revoked session immediately. Other bearer tokens
   (node, gateway, storage, builder, registry events, telemetry) pass through unchanged. A stale session is dropped
   rather than refused, so public routes such as `/api/auth/config` keep working; protected ones answer 401. While the
   issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` keeps using the
