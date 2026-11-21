@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -37,12 +38,14 @@ type store struct {
 	pool *pgxpool.Pool
 }
 
-// insert stores e unless a row with its id exists, so redeliveries are harmless.
+// insert stores e unless a row with its id exists, so redeliveries are harmless; NUL, which Postgres text and jsonb reject, is dropped.
 func (s *store) insert(ctx context.Context, e *eventsv1.Event) error {
 	details := []byte("{}")
 	if e.GetDetails() != nil {
+		clean := proto.Clone(e.GetDetails()).(*structpb.Struct)
+		stripNULStruct(clean)
 		var err error
-		if details, err = protojson.Marshal(e.GetDetails()); err != nil {
+		if details, err = protojson.Marshal(clean); err != nil {
 			return fmt.Errorf("marshal details: %w", err)
 		}
 	}
@@ -52,12 +55,38 @@ func (s *store) insert(ctx context.Context, e *eventsv1.Event) error {
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO events (id, time, type, org, actor_kind, actor_id, resource, result, client_ip, user_agent, request_id, details)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (id) DO NOTHING`,
-		e.GetId(), e.GetTime().AsTime(), e.GetType(), org, enumName(e.GetActor().GetKind().String(), "ACTOR_KIND_"),
-		e.GetActor().GetId(), e.GetResource(), enumName(e.GetResult().String(), "RESULT_"), e.GetClientIp(), e.GetUserAgent(), e.GetRequestId(), details)
+		e.GetId(), e.GetTime().AsTime(), stripNUL(e.GetType()), org, enumName(e.GetActor().GetKind().String(), "ACTOR_KIND_"),
+		stripNUL(e.GetActor().GetId()), stripNUL(e.GetResource()), enumName(e.GetResult().String(), "RESULT_"),
+		stripNUL(e.GetClientIp()), stripNUL(e.GetUserAgent()), stripNUL(e.GetRequestId()), details)
 	if err != nil {
 		return fmt.Errorf("insert event %s: %w", e.GetId(), err)
 	}
 	return nil
+}
+
+func stripNUL(s string) string { return strings.ReplaceAll(s, "\x00", "") }
+
+func stripNULStruct(st *structpb.Struct) {
+	for k, v := range st.GetFields() {
+		stripNULValue(v)
+		if c := stripNUL(k); c != k {
+			delete(st.Fields, k)
+			st.Fields[c] = v
+		}
+	}
+}
+
+func stripNULValue(v *structpb.Value) {
+	switch k := v.GetKind().(type) {
+	case *structpb.Value_StringValue:
+		k.StringValue = stripNUL(k.StringValue)
+	case *structpb.Value_StructValue:
+		stripNULStruct(k.StructValue)
+	case *structpb.Value_ListValue:
+		for _, x := range k.ListValue.GetValues() {
+			stripNULValue(x)
+		}
+	}
 }
 
 // enumName stores enums as lower-case names (ACTOR_KIND_USER → user) so the table reads without the proto.

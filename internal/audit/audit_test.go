@@ -33,8 +33,8 @@ import (
 )
 
 const (
-	testIssuer = "https://obs.example"
-	testToken  = "audit-service-token-audit-service-token"
+	testIssuer   = "https://obs.example"
+	testToken    = "audit-service-token-audit-service-token"
 	computeToken = "compute-service-token-compute-service-token"
 )
 
@@ -210,22 +210,39 @@ func TestConsumerRetriesTransientErrors(t *testing.T) {
 	waitFor(t, "event stored after the failure cleared", func() bool { return count(t, s.pool, e.GetId()) == 1 })
 }
 
-func TestConsumerDropsUnstorableEvents(t *testing.T) {
+func TestConsumerStripsNUL(t *testing.T) {
 	s := openStore(t, dbtest.Empty(t))
 	_, _, js := startBus(t)
 	startConsumer(t, js, s)
-	bad := newEvent(uuid.NewString(), time.Now())
-	// Postgres text cannot hold NUL: a data exception no redelivery fixes.
-	bad.Resource = "org/\x00members"
-	publish(t, js, bad)
-	next := newEvent(bad.GetOrg(), time.Now())
-	publish(t, js, next)
+	e := newEvent(uuid.NewString(), time.Now())
+	// Postgres text and jsonb cannot hold NUL; the event is stored without it rather than dropped.
+	e.Resource = "org/\x00members"
+	e.UserAgent = "ua\x00"
+	e.Details.Fields["k\x00ey"] = structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{structpb.NewStringValue("v\x00al")}})
+	publish(t, js, e)
 
+	waitFor(t, "event stored", func() bool { return count(t, s.pool, e.GetId()) == 1 })
+	got, _, err := s.list(context.Background(), listQuery{org: e.GetOrg(), pageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].GetResource() != "org/members" || got[0].GetUserAgent() != "ua" ||
+		got[0].GetDetails().GetFields()["key"].GetListValue().GetValues()[0].GetStringValue() != "val" {
+		t.Fatalf("stored %v", got)
+	}
+}
+
+func TestConsumerDropsUndecodableEvents(t *testing.T) {
+	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	startConsumer(t, js, s)
+	if _, err := js.Publish(context.Background(), "events.platform.x", []byte{0xff, 0xff}); err != nil {
+		t.Fatal(err)
+	}
+	next := newEvent(uuid.NewString(), time.Now())
+	publish(t, js, next)
 	waitFor(t, "next event", func() bool { return count(t, s.pool, next.GetId()) == 1 })
 	ackedAll(t, js)
-	if n := count(t, s.pool, bad.GetId()); n != 0 {
-		t.Fatalf("unstorable event stored %d rows", n)
-	}
 }
 
 func TestConsumeFailsWhenConsumerCloses(t *testing.T) {

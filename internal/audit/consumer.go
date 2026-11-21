@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/protobuf/proto"
 
@@ -64,10 +62,6 @@ func handle(ctx context.Context, s *store, msg jetstream.Msg) {
 		return
 	}
 	if err := s.insert(ctx, &e); err != nil {
-		if permanent(err) {
-			terminate(msg, "unstorable audit event "+e.GetId(), err)
-			return
-		}
 		delay := retryDelay(msg)
 		slog.Warn("audit event not stored, retrying", "id", e.GetId(), "err", err, "retry_in", delay)
 		_ = msg.NakWithDelay(delay)
@@ -91,16 +85,10 @@ func validate(e *eventsv1.Event) error {
 			return fmt.Errorf("org: %w", err)
 		}
 	}
-	if e.GetTime() == nil || e.GetType() == "" {
+	if e.GetTime() == nil || !e.GetTime().IsValid() || e.GetType() == "" {
 		return fmt.Errorf("event %s lacks time or type", e.GetId())
 	}
 	return nil
-}
-
-// permanent reports data exceptions (SQLSTATE class 22), which the same event would hit on every redelivery.
-func permanent(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22")
 }
 
 // retryDelay backs off exponentially per delivery, capped at maxRetry.
