@@ -28,11 +28,12 @@ import (
 
 type fakeStore struct {
 	*httptest.Server
-	mu     sync.Mutex
-	status int
-	paths  []string
-	bodies [][]byte
-	header http.Header
+	mu      sync.Mutex
+	status  int
+	paths   []string
+	queries []string
+	bodies  [][]byte
+	header  http.Header
 }
 
 func newFakeStore(t *testing.T) *fakeStore {
@@ -41,7 +42,7 @@ func newFakeStore(t *testing.T) *fakeStore {
 		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.paths, f.bodies, f.header = append(f.paths, r.URL.Path), append(f.bodies, b), r.Header.Clone()
+		f.paths, f.queries, f.bodies, f.header = append(f.paths, r.URL.Path), append(f.queries, r.URL.RawQuery), append(f.bodies, b), r.Header.Clone()
 		w.WriteHeader(f.status)
 	}))
 	t.Cleanup(f.Close)

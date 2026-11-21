@@ -171,10 +171,19 @@ func run() error {
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	mux.Handle("/api/", api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc))
+	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc)
+	mux.Handle("/api/", apiHandler)
 	mux.Handle("/", spa(dist))
+	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/grafana/") {
+			apiHandler.ServeHTTP(w, r)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+	srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	go func() {
 		<-ctx.Done()

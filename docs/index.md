@@ -20,6 +20,7 @@ their own machine through WireGuard, with `ssh dev@<vm>.internal`.
 | work with VMs from the terminal | [CLI](cli.md) |
 | understand how VMs reach each other and you | [Network](network.md) |
 | see what nodes report | [Telemetry](telemetry.md) |
+| read telemetry from your own Grafana | [Grafana](grafana.md) |
 
 The first person to log in to a new hub becomes its platform admin. Releases, binaries and container images are on
 the [releases page](https://github.com/asterism-dev/observatory/releases).

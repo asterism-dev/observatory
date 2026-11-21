@@ -45,7 +45,8 @@
     "platformSettingsSubtitle": "Organisationen, Benutzer und Audit der gesamten Plattform.",
     "images": "Images",
     "builders": "Builder-VMs",
-    "adminRegistry": "Registry"
+    "adminRegistry": "Registry",
+    "telemetry": "Telemetrie"
   },
   "theme": {
     "system": "System",
@@ -905,5 +906,26 @@
     "empty": "Keine Prozesse.",
     "notRunning": "VM läuft nicht. Die Prozessliste erscheint, solange sie läuft.",
     "cpuHint": "CPU % gilt pro Kern: 100 % ist ein voll ausgelasteter Kern, ein Prozess auf mehreren Kernen kann also über 100 % liegen."
+  },
+  "grafana": {
+    "title": "Grafana-Zugriff",
+    "hint": "Mit Tokens kann ein eigenes Grafana alle Telemetrie dieser Organisation lesen. Ein Token funktioniert nicht mehr, wenn sein Ersteller den Zugriff auf Telemetrie verliert.",
+    "name": "Name",
+    "createdBy": "Erstellt von",
+    "created": "Erstellt",
+    "lastUsed": "Zuletzt benutzt",
+    "never": "nie",
+    "create": "Token erstellen",
+    "empty": "Keine Tokens",
+    "createTitle": "Grafana-Token erstellen",
+    "tokenName": "Token-Name",
+    "token": "Token",
+    "tokenOnce": "Kopiere dieses Token jetzt; es wird nur einmal angezeigt.",
+    "prometheusUrl": "URL der Prometheus-Datenquelle",
+    "logsUrl": "URL der VictoriaLogs-Datenquelle",
+    "header": "Benutzerdefinierter HTTP-Header",
+    "done": "Fertig",
+    "revokeTitle": "Token widerrufen?",
+    "revokeBody": "Grafana-Datenquellen mit {name} funktionieren sofort nicht mehr."
   }
 }

@@ -66,6 +66,8 @@ can exceed 100.
 custom role ([permissions.md](permissions.md)). `vm:metrics` gates a VM's usage, processes and logs: the owner, team
 members of a team VM, team admins and org admins and owners have it. Admins read VM telemetry but never connect. VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
 
+To read this data from your own Grafana, see [Grafana](grafana.md).
+
 ## Configuration
 
 Hub settings are listed in [deploy.md](deploy.md#configuration); the compose file runs the stores

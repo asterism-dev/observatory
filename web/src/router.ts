@@ -27,6 +27,7 @@ import LimitsView from '@/views/org/LimitsView.vue'
 import RoleEditorView from '@/views/org/RoleEditorView.vue'
 import RolesView from '@/views/org/RolesView.vue'
 import TeamDetailView from '@/views/org/TeamDetailView.vue'
+import TelemetryTokensView from '@/views/org/TelemetryTokensView.vue'
 import TeamsView from '@/views/org/TeamsView.vue'
 import MembersView from '@/views/org/MembersView.vue'
 import OrgSettingsLayout from '@/views/org/OrgSettingsLayout.vue'
@@ -73,6 +74,7 @@ export const router = createRouter({
         { path: 'limits', component: LimitsView },
         { path: 'audit', component: OrgAuditView },
         { path: 'builders', component: BuilderVMsView },
+        { path: 'telemetry', component: TelemetryTokensView },
       ],
     },
     { path: '/invite/:token', component: InviteView },

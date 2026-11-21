@@ -145,6 +145,16 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		if err := tx.RemoveMember(r.Context(), m.Org.ID, target); err != nil {
 			return err
 		}
+		// Revoked here, not on next use, so an idle token cannot revive when its creator is re-added.
+		toks, err := tx.RevokeTelemetryTokensBy(r.Context(), m.Org.ID, target)
+		if err != nil {
+			return err
+		}
+		for _, t := range toks {
+			if err := tx.Audit(r.Context(), lostTokenAudit(t, "creator left the organization")); err != nil {
+				return err
+			}
+		}
 		return tx.Audit(r.Context(), auditEntry(r, &m.Org.ID, action, "org/members/"+target.String(), store.ResultAllowed))
 	}) {
 		if removeErr != nil {

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 
@@ -43,5 +45,31 @@ func TestClientPathsAndErrors(t *testing.T) {
 	srv.Close()
 	if err := c.WriteMetrics(ctx, &colmetricspb.ExportMetricsServiceRequest{}); !errors.Is(err, telemetry.ErrStore) {
 		t.Fatalf("closed: %v", err)
+	}
+}
+
+func TestClientRefusesRedirects(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	}))
+	defer srv.Close()
+	custom := &http.Client{}
+	for _, c := range []*telemetry.Client{{MetricsURL: srv.URL, LogsURL: srv.URL}, {MetricsURL: srv.URL, LogsURL: srv.URL, HTTP: custom}} {
+		hits = 0
+		if err := c.WriteMetrics(context.Background(), &colmetricspb.ExportMetricsServiceRequest{}); err == nil || hits != 1 {
+			t.Fatalf("write: %v, %d hits", err, hits)
+		}
+		hits = 0
+		if _, err := c.Logs(context.Background(), telemetry.LogQuery{Node: uuid.New(), Limit: 1}); err == nil || hits != 1 {
+			t.Fatalf("query: %v, %d hits", err, hits)
+		}
+	}
+	if custom.CheckRedirect != nil {
+		t.Fatal("caller's client mutated")
+	}
+	if hc := (&telemetry.Client{HTTP: custom}).StoreClient(time.Second); hc.Timeout != time.Second {
+		t.Fatalf("custom client timeout: %s", hc.Timeout)
 	}
 }
