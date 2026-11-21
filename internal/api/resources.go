@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
 
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
@@ -38,18 +36,4 @@ func (s ResourceServer) CheckOwnership(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeInternal, errors.New("internal error"))
 	}
 	return connect.NewResponse(&hubv1.CheckOwnershipResponse{OwnsVms: vms, OwnsDisks: disks}), nil
-}
-
-// ownsNothing answers 409 while subject owns VMs or live disks in org; ponytail: checked before and not under the org lock, so a concurrent create can orphan a resource.
-func (h *api) ownsNothing(w http.ResponseWriter, r *http.Request, org uuid.UUID, subject string) bool {
-	res, err := h.resources.CheckOwnership(r.Context(), connect.NewRequest(&hubv1.CheckOwnershipRequest{OrgId: org.String(), Subject: subject}))
-	if err != nil {
-		serverError(w, "check ownership", err)
-		return false
-	}
-	if res.Msg.OwnsVms || res.Msg.OwnsDisks {
-		writeError(w, http.StatusConflict, store.ErrOwnsResources.Error())
-		return false
-	}
-	return true
 }

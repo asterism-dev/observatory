@@ -47,10 +47,6 @@ func TestPlatformAdminHasNoTenantAccess(t *testing.T) {
 			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
 		}
 	}
-	// The admin read is read-only: a platform admin gets no tenant action out of it.
-	if rec := e.send("PATCH", "/api/admin/orgs/"+org.String(), rootTok, `{"name":"x"}`); rec.Code == 200 || rec.Code == 204 {
-		t.Fatalf("admin org write: %d", rec.Code)
-	}
 }
 
 func TestAdminNetworkGuestMTU(t *testing.T) {

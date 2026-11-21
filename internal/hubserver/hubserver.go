@@ -201,7 +201,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
 	defer func() { stopBus(); <-busDone }()
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	apiHandler := api.New(s, iam, resources, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
+	apiHandler := api.New(s, iam, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
 	iamHandler, err := iamapi.Handler(iamapi.Deps{Store: s, Policy: z, Verifier: verifier, Resources: resources, Notify: f.NotifyOrg, Pool: pool, PublicURL: publicURL})
 	if err != nil {

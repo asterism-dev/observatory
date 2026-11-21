@@ -29,7 +29,7 @@ func pathID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, boo
 	return id, true
 }
 
-// privileged roles can only be granted or taken away by holders of iam.members.setRole (owners).
+// privileged roles may see the org's builder VMs.
 func privileged(role store.Role) bool { return role == store.RoleOwner || role == store.RoleAdmin }
 
 // orgMember is the caller's membership in an org as the policy has it.
@@ -81,24 +81,13 @@ var storeErrorStatus = []struct {
 }{
 	{store.ErrNotFound, http.StatusNotFound},
 	{store.ErrImageExists, http.StatusConflict},
-	{store.ErrLastOwner, http.StatusConflict},
-	{store.ErrPersonalOrg, http.StatusConflict},
 	{store.ErrConflict, http.StatusConflict},
 	{store.ErrStale, http.StatusConflict},
-	{store.ErrNotMember, http.StatusBadRequest},
-	{store.ErrInviteInvalid, http.StatusBadRequest},
-	{store.ErrAlreadyMember, http.StatusConflict},
 	{errForbidden, http.StatusForbidden},
 	{errSnapshotBusy, http.StatusConflict},
 	{errForkPending, http.StatusConflict},
-	{store.ErrInvalidParent, http.StatusBadRequest},
-	{authz.ErrDenyNotAllowed, http.StatusForbidden},
-	{authz.ErrEscalation, http.StatusForbidden},
-	{authz.ErrInvalidPattern, http.StatusBadRequest},
 	{store.ErrLimitExceedsOrg, http.StatusBadRequest},
-	{store.ErrLastPlatformAdmin, http.StatusConflict},
 	{store.ErrLimitExceeded, http.StatusConflict},
-	{store.ErrOwnsResources, http.StatusConflict},
 	{store.ErrNotEnrolled, http.StatusConflict},
 	{store.ErrInvalidKey, http.StatusBadRequest},
 	{store.ErrHostsNeedSecret, http.StatusBadRequest},
@@ -152,8 +141,8 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		for _, se := range storeErrorStatus {
 			if errors.Is(err, se.err) {
 				msg := se.err.Error()
-				// These name the caller's own missing permission or bad input, which they need to fix the request.
-				if se.err == authz.ErrEscalation || se.err == authz.ErrInvalidPattern || se.err == netaddr.ErrInvalidSubnet || se.err == egress.ErrInvalidHost {
+				// These name the caller's bad input, which they need to fix the request.
+				if se.err == netaddr.ErrInvalidSubnet || se.err == egress.ErrInvalidHost {
 					msg = err.Error()
 				}
 				if errors.Is(err, errDiskMissing) {
