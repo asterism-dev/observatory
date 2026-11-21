@@ -14,6 +14,8 @@ import (
 	// The hub image has no zoneinfo; TZ picks the zone OBSERVATORY_REGISTRY_GC_TIME is in.
 	_ "time/tzdata"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -52,18 +54,10 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	defer pool.Close()
-	js, closeBus, err := bus.Connect(ctx, cfg.NATSURL, cfg.NATSToken)
-	if err != nil {
-		return err
-	}
-	defer closeBus()
-	if err := bus.EnsureStream(ctx, js); err != nil {
-		return err
-	}
 	relayCtx, stopRelay := context.WithCancel(ctx)
 	relayDone := make(chan struct{})
-	go func() { outbox.NewRelay(pool, js).Run(relayCtx); close(relayDone) }()
-	// The relay must stop before the pool and the bus close under it, also when Run fails before ctx ends.
+	go func() { relayEvents(relayCtx, pool, cfg.NATSURL, cfg.NATSToken); close(relayDone) }()
+	// The relay must stop before the pool closes under it, also when Run fails before ctx ends.
 	defer func() { stopRelay(); <-relayDone }()
 
 	oidc, err := auth.NewOIDC(ctx, cfg.Issuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
@@ -205,6 +199,30 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	slog.Info("hub listening", "addr", ln.Addr().String())
 	return run.Serve(ctx, srv, ln)
+}
+
+// relayEvents publishes the outbox once the bus is reachable; until then the hub serves and the outbox buffers.
+func relayEvents(ctx context.Context, pool *pgxpool.Pool, url, token string) {
+	for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
+		js, closeBus, err := bus.Connect(ctx, url, token)
+		if err == nil {
+			if err = bus.EnsureStream(ctx, js); err == nil {
+				outbox.NewRelay(pool, js).Run(ctx)
+				closeBus()
+				return
+			}
+			closeBus()
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Warn("event bus unavailable, audit events wait in the outbox", "err", err, "retry_in", wait)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.

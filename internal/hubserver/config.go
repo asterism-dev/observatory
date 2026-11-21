@@ -85,6 +85,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if len(cfg.StorageToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_STORAGE_TOKEN must be at least %d characters", minTokenLen)
 	}
+	if len(cfg.NATSToken) < minTokenLen {
+		return config{}, fmt.Errorf("OBSERVATORY_NATS_TOKEN must be at least %d characters", minTokenLen)
+	}
 	if len(cfg.EdgeToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_EDGE_TOKEN must be at least %d characters", minTokenLen)
 	}

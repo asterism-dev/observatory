@@ -146,6 +146,14 @@ var (
 
 // Audit writes e as an audit event to the outbox, in s's transaction if it has one, so it is published only if that commits.
 func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
+	kind, ok := actorKinds[e.ActorKind]
+	if !ok {
+		return fmt.Errorf("audit %s: unknown actor kind %q", e.Action, e.ActorKind)
+	}
+	result, ok := results[e.Result]
+	if !ok {
+		return fmt.Errorf("audit %s: unknown result %q", e.Action, e.Result)
+	}
 	details := make(map[string]any, len(e.Details))
 	for k, v := range e.Details {
 		if str, ok := v.(string); ok {
@@ -166,8 +174,8 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	if err != nil {
 		return fmt.Errorf("audit details: %w", err)
 	}
-	ev := &eventsv1.Event{Type: e.Action, Actor: &eventsv1.Actor{Kind: actorKinds[e.ActorKind], Id: e.ActorID}, Resource: e.Resource,
-		Result: results[e.Result], ClientIp: e.IP, UserAgent: SanitizeText(e.UserAgent), Details: st, Audit: true}
+	ev := &eventsv1.Event{Type: e.Action, Actor: &eventsv1.Actor{Kind: kind, Id: e.ActorID}, Resource: e.Resource,
+		Result: result, ClientIp: e.IP, UserAgent: SanitizeText(e.UserAgent), Details: st, Audit: true}
 	if e.OrgID != nil {
 		ev.Org = e.OrgID.String()
 	}

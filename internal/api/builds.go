@@ -212,16 +212,15 @@ func (h *api) cancelBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	b, err := h.builds.Finish(r.Context(), b.ID, store.BuildCancelled, "", "cancelled by "+p.User.Name)
+	b, err := h.builds.Finish(r.Context(), b.ID, store.BuildCancelled, "", "cancelled by "+p.User.Name, func(tx *store.Store, b store.ImageBuild) error {
+		return tx.Audit(r.Context(), buildAudit(r, store.ActionImageBuildCancel, img, b))
+	})
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "the build already ended")
 		return
 	} else if err != nil {
 		serverError(w, "cancel build", err)
 		return
-	}
-	if err := h.store.Audit(r.Context(), buildAudit(r, store.ActionImageBuildCancel, img, b)); err != nil {
-		slog.Error("audit build cancel", "build", b.ID, "err", err)
 	}
 	writeJSON(w, http.StatusOK, toBuildJSON(b))
 }
@@ -453,7 +452,7 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if _, err := a.builds.Finish(r.Context(), b.ID, state, digest, msg); errors.Is(err, store.ErrConflict) {
+	if _, err := a.builds.Finish(r.Context(), b.ID, state, digest, msg, nil); errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "the build already ended")
 		return
 	} else if err != nil {

@@ -148,7 +148,7 @@ func (s *Scheduler) step(ctx context.Context, b store.ImageBuild) error {
 }
 
 func (s *Scheduler) fail(ctx context.Context, id uuid.UUID, msg string) error {
-	_, err := s.Finish(ctx, id, store.BuildFailed, "", msg)
+	_, err := s.Finish(ctx, id, store.BuildFailed, "", msg, nil)
 	if errors.Is(err, store.ErrConflict) {
 		return nil
 	}
@@ -244,8 +244,8 @@ func (s *Scheduler) pickNode(ctx context.Context, org uuid.UUID) (uuid.UUID, boo
 	return best, best != uuid.Nil, nil
 }
 
-// Finish ends a queued or running build, moves latest to digest on success and deletes its builder VM; ErrConflict when it already ended.
-func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg string) (store.ImageBuild, error) {
+// Finish ends a queued or running build, moves latest to digest on success, runs then (if set) in the same transaction and deletes its builder VM; ErrConflict when it already ended.
+func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg string, then func(tx *store.Store, b store.ImageBuild) error) (store.ImageBuild, error) {
 	var b store.ImageBuild
 	var org uuid.UUID
 	err := s.store.InTx(ctx, func(tx *store.Store) error {
@@ -265,6 +265,11 @@ func (s *Scheduler) Finish(ctx context.Context, id uuid.UUID, state, digest, msg
 		}
 		if err := tx.FinishBuildLog(ctx, id); err != nil {
 			return err
+		}
+		if then != nil {
+			if err := then(tx, b); err != nil {
+				return err
+			}
 		}
 		if b.VMID == nil {
 			return nil

@@ -114,3 +114,22 @@ func TestAuditSanitizesFreeText(t *testing.T) {
 		t.Fatalf("not sanitized: ua %d bytes, reason %d bytes", len(got[0].UserAgent), len(reason))
 	}
 }
+
+func TestAuditRejectsUnknownActorKindOrResult(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool)
+	for _, e := range []store.AuditEntry{
+		{ActorKind: "", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
+		{ActorKind: "vm", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
+		{ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: ""},
+		{ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: "maybe"},
+	} {
+		if err := s.Audit(ctx, e); err == nil {
+			t.Errorf("%+v accepted", e)
+		}
+	}
+	if got := storetest.Audit(t, pool, ""); len(got) != 0 {
+		t.Fatalf("stored %v", got)
+	}
+}

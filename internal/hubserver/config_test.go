@@ -28,7 +28,7 @@ func TestLoadConfig(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -134,7 +134,7 @@ func TestConfigGatewayToken(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
 	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
@@ -161,7 +161,7 @@ func TestConfigStorageToken(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 	}
 	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
@@ -184,7 +184,7 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -214,7 +214,7 @@ func TestConfigTelemetryBothOrNeither(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -255,7 +255,7 @@ func TestConfigLogsRetention(t *testing.T) {
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
-		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -282,7 +282,7 @@ func TestHubConfigRequiresEdgeToken(t *testing.T) {
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
-		"OBSERVATORY_NATS_URL":      "nats://n", "OBSERVATORY_NATS_TOKEN": "nt",
+		"OBSERVATORY_NATS_URL":      "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
 	}
 	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
 	if _, err := load(); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_EDGE_TOKEN") {

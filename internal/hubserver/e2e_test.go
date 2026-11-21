@@ -53,7 +53,7 @@ func TestIdentityEndToEnd(t *testing.T) {
 		"OBSERVATORY_STORAGE_TOKEN":      strings.Repeat("s", 32),
 		"OBSERVATORY_EDGE_TOKEN":         edgeTok,
 		"OBSERVATORY_NATS_URL":           "nats://unused",
-		"OBSERVATORY_NATS_TOKEN":         "unused",
+		"OBSERVATORY_NATS_TOKEN":         strings.Repeat("n", 32),
 		"OBSERVATORY_SERVICE_TOKENS":     "edge=" + edgeSvcTok + ",echo=" + echoTok,
 	}
 	cfg, err := loadConfig(func(k string) string { return env[k] })
