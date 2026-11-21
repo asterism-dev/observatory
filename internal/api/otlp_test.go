@@ -222,6 +222,10 @@ func TestIngestStoreDown(t *testing.T) {
 	if rec := o.post(metricsPath, o.credential, protobuf, "", metricsBody(t)); rec.Code != 503 {
 		t.Fatalf("500: %d", rec.Code)
 	}
+	o.vm.status = 302
+	if rec := o.post(metricsPath, o.credential, protobuf, "", metricsBody(t)); rec.Code != 503 {
+		t.Fatalf("302: %d", rec.Code)
+	}
 	o.vm.Close()
 	if rec := o.post(metricsPath, o.credential, protobuf, "", metricsBody(t)); rec.Code != 503 {
 		t.Fatalf("closed: %d", rec.Code)
