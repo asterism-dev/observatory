@@ -421,7 +421,7 @@ func TestDashboardUpdateValidation(t *testing.T) {
 	d := e.createDashboard(ownerTok, org, `{"name":"A","scope":"org","panels":[]}`)
 	for body, field := range map[string]string{
 		`{"name":"A","scope":"org","panels":[{"title":"T","type":"pie","query":"up","unit":"none","width":"full"}],"updatedAt":"` + d.UpdatedAt + `"}`: "panels[0].type",
-		`{"name":"A","scope":"org","panels":[]}`: "updatedAt",
+		`{"name":"A","scope":"org","panels":[]}`:                                         "updatedAt",
 		`{"name":"a\u0007","scope":"org","panels":[],"updatedAt":"` + d.UpdatedAt + `"}`: "name",
 	} {
 		rec := e.send("PUT", dashboardPath(org, d.ID), ownerTok, body)
