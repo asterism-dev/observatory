@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -41,7 +42,7 @@ func RequestMeta(r *http.Request) (ip, userAgent string) {
 	if !ok {
 		ip = clientip.From(r, "")
 	}
-	return ip, store.SanitizeText(r.UserAgent())
+	return ip, textx.Sanitize(r.UserAgent())
 }
 
 func (h *Handler) Require(next http.Handler) http.Handler {

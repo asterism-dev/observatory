@@ -17,6 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 )
 
@@ -95,7 +96,7 @@ func (i *interceptor) record(ctx context.Context, req connect.AnyRequest, caller
 	e := &eventsv1.Event{
 		Type: perm.Name, Org: org, Resource: resource, Result: res, Audit: true,
 		Actor:    &eventsv1.Actor{Kind: eventsv1.ActorKind_ACTOR_KIND_USER, Id: caller.Principal.User.String()},
-		ClientIp: caller.ClientIP, UserAgent: req.Header().Get("User-Agent"),
+		ClientIp: caller.ClientIP, UserAgent: textx.Sanitize(req.Header().Get("User-Agent")),
 	}
 	// The call already happened, so the event is written even if the client went away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)

@@ -16,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/netaddr"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -190,7 +191,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func validName(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	n := utf8.RuneCountInString(s)
-	return s, n >= 1 && n <= 64 && store.SanitizeText(s) == s
+	return s, n >= 1 && n <= 64 && textx.Sanitize(s) == s
 }
 
 func readName(w http.ResponseWriter, r *http.Request) (string, bool) {

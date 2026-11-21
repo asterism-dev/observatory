@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +11,7 @@ import (
 
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 )
 
 type ActorKind string
@@ -123,22 +122,6 @@ type AuditEntry struct {
 	Details   map[string]any
 }
 
-const maxTextBytes = 512
-
-// SanitizeText makes client-controlled text storable: valid UTF-8, no control characters (Postgres rejects NUL), at most 512 bytes.
-func SanitizeText(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, strings.ToValidUTF8(s, ""))
-	if len(s) > maxTextBytes {
-		s = strings.ToValidUTF8(s[:maxTextBytes], "")
-	}
-	return s
-}
-
 var (
 	actorKinds = map[ActorKind]eventsv1.ActorKind{ActorUser: eventsv1.ActorKind_ACTOR_KIND_USER, ActorNode: eventsv1.ActorKind_ACTOR_KIND_NODE, ActorSystem: eventsv1.ActorKind_ACTOR_KIND_SYSTEM}
 	results    = map[Result]eventsv1.Result{ResultAllowed: eventsv1.Result_RESULT_ALLOWED, ResultDenied: eventsv1.Result_RESULT_DENIED, ResultFailed: eventsv1.Result_RESULT_FAILED}
@@ -157,7 +140,7 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	details := make(map[string]any, len(e.Details))
 	for k, v := range e.Details {
 		if str, ok := v.(string); ok {
-			v = SanitizeText(str)
+			v = textx.Sanitize(str)
 		}
 		details[k] = v
 	}
@@ -175,7 +158,7 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 		return fmt.Errorf("audit details: %w", err)
 	}
 	ev := &eventsv1.Event{Type: e.Action, Actor: &eventsv1.Actor{Kind: kind, Id: e.ActorID}, Resource: e.Resource,
-		Result: result, ClientIp: e.IP, UserAgent: SanitizeText(e.UserAgent), Details: st, Audit: true}
+		Result: result, ClientIp: e.IP, UserAgent: textx.Sanitize(e.UserAgent), Details: st, Audit: true}
 	if e.OrgID != nil {
 		ev.Org = e.OrgID.String()
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/integrations"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -94,7 +95,7 @@ func imageAudit(r *http.Request, action string, img store.Image) store.AuditEntr
 }
 
 func validDescription(s string) bool {
-	return utf8.RuneCountInString(s) <= 1000 && store.SanitizeText(s) == s
+	return utf8.RuneCountInString(s) <= 1000 && textx.Sanitize(s) == s
 }
 
 // imageFromPath loads {id}; another member's private image is 404, and the platform image only allows reads.
@@ -683,7 +684,7 @@ func currentRevision(img store.Image) int {
 
 func validRecipePath(p string) bool {
 	return p != "" && p != "." && p != ".." && !strings.HasPrefix(p, "../") && !path.IsAbs(p) && path.Clean(p) == p &&
-		utf8.ValidString(p) && store.SanitizeText(p) == p
+		utf8.ValidString(p) && textx.Sanitize(p) == p
 }
 
 func checkRecipe(files []store.RecipeFile) *httpError {

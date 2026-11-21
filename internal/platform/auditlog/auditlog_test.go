@@ -200,6 +200,19 @@ func TestInterceptorRecords(t *testing.T) {
 	}
 }
 
+func TestInterceptorSanitizesUserAgent(t *testing.T) {
+	e := newEnv(t)
+	req := call(t, &testv1.EchoRequest{Text: "hi"})
+	req.Header().Set("User-Agent", "x\xff")
+	if _, err := e.echo.Echo(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := e.events(t)
+	if len(got) != 1 || got[0].GetUserAgent() != "x" {
+		t.Fatalf("recorded %v, want one event with user agent \"x\"", got)
+	}
+}
+
 func startNATS(t *testing.T, dir string, port int) *server.Server {
 	t.Helper()
 	s, err := server.NewServer(&server.Options{Host: "127.0.0.1", Port: port, JetStream: true, StoreDir: dir, Authorization: natsToken, NoSigs: true, NoLog: true})
