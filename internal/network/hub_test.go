@@ -141,3 +141,25 @@ func TestTokenOK(t *testing.T) {
 		}
 	}
 }
+
+func TestUnderlayLocalEndpointForGatewayNode(t *testing.T) {
+	s := newStore(t)
+	n := underlayNode(t, s)
+	c := cfg
+	c.GatewayNode = n.ID
+	h, err := network.Load(context.Background(), s, nil, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pub, _ := wgkey.Generate()
+	u, err := h.Underlay(context.Background(), n, pub, csrPEM(csrDER(t, "x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Endpoint != "127.0.0.1:51820" {
+		t.Fatalf("endpoint %q", u.Endpoint)
+	}
+	if other := underlay(t, s, h); other.Endpoint != "gw.test:51820" {
+		t.Fatalf("other node endpoint %q", other.Endpoint)
+	}
+}

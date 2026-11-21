@@ -585,3 +585,31 @@ func TestGatewayStateUsesGuestMTU(t *testing.T) {
 		t.Fatalf("got %d", got)
 	}
 }
+
+func TestStateGatewayChassisDefault(t *testing.T) {
+	f := newFixture(t)
+	if got := f.state().GatewayChassis; got != (proto.GatewayChassisRef{Name: "hub-gw", IP: "10.198.0.1"}) {
+		t.Fatalf("gateway chassis %+v", got)
+	}
+}
+
+func TestStateGatewayChassisNode(t *testing.T) {
+	f := newFixture(t)
+	c := cfg
+	c.GatewayNode = f.nodeA
+	h, err := network.Load(context.Background(), f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := h.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(st.Chassis, func(c proto.GatewayChassis) bool { return c.NodeID == f.nodeA.String() })
+	if i < 0 {
+		t.Fatal("node chassis missing")
+	}
+	if want := (proto.GatewayChassisRef{Name: f.nodeA.String(), IP: st.Chassis[i].IP}); st.GatewayChassis != want {
+		t.Fatalf("gateway chassis %+v, want %+v", st.GatewayChassis, want)
+	}
+}

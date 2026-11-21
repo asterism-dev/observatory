@@ -9,8 +9,10 @@ type GatewayState struct {
 	SB          GatewaySB        `json:"sb"`
 	GuestMTU    int              `json:"guestMTU"`
 	Chassis     []GatewayChassis `json:"chassis"`
-	Devices     []GatewayDevice  `json:"devices"`
-	Orgs        []GatewayOrg     `json:"orgs"`
+	// GatewayChassis is the chassis that binds the gateway ports: hub-gw, or a node sharing the hub host.
+	GatewayChassis GatewayChassisRef `json:"gatewayChassis"`
+	Devices        []GatewayDevice   `json:"devices"`
+	Orgs           []GatewayOrg      `json:"orgs"`
 }
 
 // GatewaySB is the southbound DB's CA and server certificate with its key.
@@ -26,6 +28,11 @@ type GatewayChassis struct {
 	PublicKey   string `json:"publicKey"`
 	IP          string `json:"ip"`
 	Quarantined bool   `json:"quarantined,omitempty"`
+}
+
+type GatewayChassisRef struct {
+	Name string `json:"name"`
+	IP   string `json:"ip"`
 }
 
 type GatewayDevice struct {

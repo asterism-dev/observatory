@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -27,6 +29,8 @@ type config struct {
 	BuilderSize                 builds.Size
 	// NodeURL is the hub URL nodes pull images from, the public URL by default.
 	NodeURL *url.URL
+	// GatewayNode is the node on the hub host that shares its chassis with the gateway; zero means the gateway has its own.
+	GatewayNode uuid.UUID
 	// MetricsURL and LogsURL are the telemetry stores; both empty turns telemetry off.
 	MetricsURL, LogsURL string
 	// LogsRetention mirrors the log store's retention and bounds the logs explorer's time range.
@@ -86,6 +90,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 			return config{}, errors.New("OBSERVATORY_PUBLIC_URL must be an absolute URL")
 		}
 		cfg.GatewayHost = u.Hostname()
+	}
+	if v := getenv("OBSERVATORY_GATEWAY_NODE"); v != "" {
+		if cfg.GatewayNode, err = uuid.Parse(v); err != nil || cfg.GatewayNode == uuid.Nil || cfg.GatewayNode.String() != v {
+			return config{}, errors.New("OBSERVATORY_GATEWAY_NODE must be a canonical node UUID")
+		}
 	}
 	cfg.RegistryURL, cfg.RegistryKeyDir, cfg.RegistryCertDir = getenv("OBSERVATORY_REGISTRY_URL"), getenv("OBSERVATORY_REGISTRY_KEY_DIR"), getenv("OBSERVATORY_REGISTRY_CERT_DIR")
 	if cfg.RegistryURL != "" {

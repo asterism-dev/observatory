@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/builds"
 )
 
@@ -254,6 +256,32 @@ func TestConfigLogsRetention(t *testing.T) {
 	for _, v := range []string{"14", "d", "0d", "-1d", "1.5d", "3m", "1y", "14 d", "9999999999w", "9223372036854775807h"} {
 		if _, err := load(v); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_LOGS_RETENTION") {
 			t.Errorf("%q: error %v", v, err)
+		}
+	}
+}
+
+func TestConfigGatewayNodeInvalid(t *testing.T) {
+	env := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	load := func(v string) (config, error) {
+		env["OBSERVATORY_GATEWAY_NODE"] = v
+		return loadConfig(func(k string) string { return env[k] })
+	}
+	if cfg, err := load(""); err != nil || cfg.GatewayNode != uuid.Nil {
+		t.Fatalf("empty: %v, %v", cfg.GatewayNode, err)
+	}
+	id := uuid.New()
+	if cfg, err := load(id.String()); err != nil || cfg.GatewayNode != id {
+		t.Fatalf("valid: %v, %v", cfg.GatewayNode, err)
+	}
+	for _, v := range []string{"nope", strings.ToUpper(id.String()), "{" + id.String() + "}", "urn:uuid:" + id.String(), uuid.Nil.String()} {
+		if _, err := load(v); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_GATEWAY_NODE") {
+			t.Errorf("%q accepted: %v", v, err)
 		}
 	}
 }

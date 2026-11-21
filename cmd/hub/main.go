@@ -74,7 +74,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	nh, err := network.Load(ctx, s, z, network.Config{GatewayHost: cfg.GatewayHost, GatewayToken: cfg.GatewayToken})
+	nh, err := network.Load(ctx, s, z, network.Config{GatewayHost: cfg.GatewayHost, GatewayToken: cfg.GatewayToken, GatewayNode: cfg.GatewayNode})
 	if err != nil {
 		return err
 	}
