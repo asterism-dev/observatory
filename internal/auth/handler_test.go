@@ -393,6 +393,22 @@ func TestRequirePrincipalFromClaims(t *testing.T) {
 	}
 }
 
+func TestRequireFailsClosedOnSessionLookupError(t *testing.T) {
+	e := newEnv(t)
+	_, _, tok := e.minted(store.SessionCLI)
+	if _, err := e.pool.Exec(context.Background(), "ALTER TABLE sessions RENAME TO sessions_gone"); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	e.a.Require(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || called {
+		t.Fatalf("status %d, handler called %v", rec.Code, called)
+	}
+}
+
 func TestLogoutRevokesSession(t *testing.T) {
 	e := newEnv(t)
 	sc := e.sessionCookie()
