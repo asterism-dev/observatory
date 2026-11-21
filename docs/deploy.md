@@ -39,6 +39,16 @@ together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL
 `http://<ZITADEL_DOMAIN>:8080` and becomes the hub's issuer. `bootstrap.sh` needs `curl` and `jq`, reads the admin
 token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
 
+Gateway and storage join the network namespace of the `netns` service. When Docker itself restarts (a reboot, a
+Docker upgrade) it starts containers in no particular order, and one that comes up before `netns` fails with
+`cannot join network namespace of a non running container` and is not retried. Install the unit that starts the
+stack's containers in order once Docker is up:
+
+```sh
+sudo cp deploy/observatory-hub.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable observatory-hub.service
+```
+
 After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub restarts,
 `docker compose -f deploy/compose.yaml logs hub` (a short token or a malformed key stops it there).
 

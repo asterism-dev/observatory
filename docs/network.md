@@ -57,10 +57,16 @@ make gateway-up      # builds the gateway and storage images and starts them wit
 make gateway-down
 ```
 
-The storage server runs as compose service `storage` in the gateway's network namespace, so its NBD exports
+The storage server runs as compose service `storage` in the gateway's network namespace, which the service `netns`
+owns so that both keep it across restarts and crashes of either. Its NBD exports
 (TCP 10810–11809) listen on `10.198.0.1` and are reachable from the underlay only; nothing is published on the host.
 Disk files live in the `disks` volume. Put it on XFS (`mkfs.xfs -m reflink=1`) or btrfs for instant copies; other
 filesystems fall back to a sparse copy. Operation and security of disks: [disks.md](disks.md).
+
+Stopping the gateway does not cut the underlay: its WireGuard interfaces, peers and filter rules live in the `netns`
+service's namespace and keep forwarding with the last state applied. To cut nodes and devices off, stop `netns`
+(`docker compose stop netns`, which takes gateway and storage along). If Docker restarts `netns` on its own, run
+`docker compose restart netns` so gateway and storage join its new namespace.
 
 The container reads `OBSERVATORY_GATEWAY_TOKEN` and `HUB_URL` (default `http://host.docker.internal:8090`). For a
 hub on another port, set `HUB_URL` in the shell or in `hub.env`. The gateway needs the `openvswitch` and `wireguard`
@@ -225,7 +231,8 @@ probes after 10 min.
 - A device reaches only its own org's router address (`<slice>.1`); ACLs on `ls-transit` drop the other orgs'.
 - DNS picks the view by source address: a device or a VM management address sees only its own org's names
   (`<vm>.internal`, `<vm>.<network>.internal`); any other source gets REFUSED for `*.internal`. Other names are
-  forwarded upstream.
+  forwarded upstream, except for queries from the gateway's own addresses: when the hub host resolves through a
+  device, Docker's DNS (the gateway's upstream) gets REFUSED and moves on to its next server instead of looping back.
 
 ## Networks
 
