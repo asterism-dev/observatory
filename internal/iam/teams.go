@@ -173,7 +173,10 @@ func (s *server) SetTeamMember(ctx context.Context, req *connect.Request[iamv1.S
 	if err != nil {
 		return nil, err
 	}
-	admin := req.Msg.Admin
+	if req.Msg.Admin == nil {
+		return nil, errAdminRequired
+	}
+	admin := *req.Msg.Admin
 	actor, obj := authz.UserSubject(caller(ctx).User), authz.TeamObject(id)+"/members/"+user.String()
 	var (
 		needsUpdate bool

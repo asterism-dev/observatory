@@ -12,7 +12,7 @@ import (
 )
 
 func (e *env) setPlatformAdmin(jwt string, user uuid.UUID, admin bool) error {
-	_, err := e.client.SetPlatformAdmin(context.Background(), req(jwt, &iamv1.SetPlatformAdminRequest{UserId: user.String(), Admin: admin}))
+	_, err := e.client.SetPlatformAdmin(context.Background(), req(jwt, &iamv1.SetPlatformAdminRequest{UserId: user.String(), Admin: &admin}))
 	return err
 }
 
@@ -117,6 +117,29 @@ func TestSetPlatformAdminAudits(t *testing.T) {
 	wantCode(t, e.setPlatformAdmin(rootTok, root.ID, false), connect.CodeFailedPrecondition)
 	if es := e.audit(store.ActionPlatformRevokeAdmin); len(es) != 1 {
 		t.Fatalf("failed revoke must not audit as allowed: %+v", es)
+	}
+}
+
+func TestSetPlatformAdminRequired(t *testing.T) {
+	e := newEnv(t)
+	_, rootTok := e.user("root")
+	alice, _ := e.user("alice")
+	if err := e.setPlatformAdmin(rootTok, alice.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := len(e.audit(""))
+
+	_, err := e.client.SetPlatformAdmin(context.Background(), req(rootTok, &iamv1.SetPlatformAdminRequest{UserId: alice.ID.String()}))
+	wantCode(t, err, connect.CodeInvalidArgument)
+	if err.(*connect.Error).Message() != "admin is required" {
+		t.Fatalf("message: %v", err)
+	}
+	code, msg := e.restSend("POST", "/api/iam/v1/admin/users/"+alice.ID.String()+":setPlatformAdmin", rootTok, `{}`)
+	if code != 400 || msg != "admin is required" {
+		t.Fatalf("rest: %d %q", code, msg)
+	}
+	if u, _ := e.store.User(context.Background(), alice.ID); !u.PlatformAdmin || len(e.audit("")) != before {
+		t.Fatal("admin flag or audit changed")
 	}
 }
 

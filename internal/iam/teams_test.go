@@ -42,7 +42,7 @@ func (e *env) deleteTeam(jwt string, org, team uuid.UUID) error {
 }
 
 func (e *env) setTeamMember(jwt string, org, team uuid.UUID, u store.User, admin bool) error {
-	_, err := e.client.SetTeamMember(context.Background(), req(jwt, &iamv1.SetTeamMemberRequest{Org: org.String(), Team: team.String(), User: u.ID.String(), Admin: admin}))
+	_, err := e.client.SetTeamMember(context.Background(), req(jwt, &iamv1.SetTeamMemberRequest{Org: org.String(), Team: team.String(), User: u.ID.String(), Admin: &admin}))
 	return err
 }
 
@@ -195,6 +195,29 @@ func TestSetTeamMemberTeamAdmin(t *testing.T) {
 	}
 }
 
+func TestSetTeamMemberAdminRequired(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	member, _ := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, member, store.RoleMember)
+	team := e.createTeam(ownerTok, org, "core")
+	before := len(e.audit(store.ActionTeamMemberSet))
+
+	_, err := e.client.SetTeamMember(context.Background(), req(ownerTok, &iamv1.SetTeamMemberRequest{Org: org.String(), Team: team.String(), User: member.ID.String()}))
+	wantCode(t, err, connect.CodeInvalidArgument)
+	if err.(*connect.Error).Message() != "admin is required" {
+		t.Fatalf("message: %v", err)
+	}
+	code, msg := e.restSend("PUT", "/api/iam/v1/orgs/"+org.String()+"/teams/"+team.String()+"/members/"+member.ID.String(), ownerTok, `{}`)
+	if code != 400 || msg != "admin is required" {
+		t.Fatalf("rest: %d %q", code, msg)
+	}
+	if ms, _ := e.store.TeamMembers(t.Context(), org, team); len(ms) != 0 || len(e.audit(store.ActionTeamMemberSet)) != before {
+		t.Fatalf("changed: %+v", ms)
+	}
+}
+
 func TestSetTeamMemberNotOrgMember(t *testing.T) {
 	e := newEnv(t)
 	_, ownerTok := e.user("alice")
@@ -202,7 +225,7 @@ func TestSetTeamMemberNotOrgMember(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	team := e.createTeam(ownerTok, org, "core")
 	wantCode(t, e.setTeamMember(ownerTok, org, team, stranger, false), connect.CodeInvalidArgument)
-	_, err := e.client.SetTeamMember(context.Background(), req(ownerTok, &iamv1.SetTeamMemberRequest{Org: org.String(), Team: team.String(), User: stranger.ID.String() + "x"}))
+	_, err := e.client.SetTeamMember(context.Background(), req(ownerTok, &iamv1.SetTeamMemberRequest{Org: org.String(), Team: team.String(), User: stranger.ID.String() + "x", Admin: new(bool)}))
 	wantCode(t, err, connect.CodeInvalidArgument)
 	if got, _ := e.store.Team(t.Context(), org, team); got.MemberCount != 0 {
 		t.Fatalf("members: %+v", got)
@@ -338,7 +361,7 @@ func TestDeleteTeamOwningDisk(t *testing.T) {
 	_, ownerTok := e.user("alice")
 	org := e.createOrg(ownerTok, "Acme")
 	team := e.createTeam(ownerTok, org, "core")
-	e.resources.setOwner(authz.TeamSubject(team), true)
+	e.resources.setDiskOwner(authz.TeamSubject(team), true)
 
 	before := len(e.audit(""))
 	e.takeNotified()
@@ -347,7 +370,7 @@ func TestDeleteTeamOwningDisk(t *testing.T) {
 	if err.(*connect.Error).Message() != store.ErrOwnsResources.Error() || len(e.audit("")) != before || len(e.takeNotified()) != 0 {
 		t.Fatalf("refusal: %v", err)
 	}
-	e.resources.setOwner(authz.TeamSubject(team), false)
+	e.resources.setDiskOwner(authz.TeamSubject(team), false)
 	if err := e.deleteTeam(ownerTok, org, team); err != nil {
 		t.Fatalf("delete after disk deleted: %v", err)
 	}

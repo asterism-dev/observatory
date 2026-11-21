@@ -3014,7 +3014,7 @@ type SetTeamMemberRequest struct {
 	Org           string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
 	Team          string                 `protobuf:"bytes,2,opt,name=team,proto3" json:"team,omitempty"`
 	User          string                 `protobuf:"bytes,3,opt,name=user,proto3" json:"user,omitempty"`
-	Admin         bool                   `protobuf:"varint,4,opt,name=admin,proto3" json:"admin,omitempty"`
+	Admin         *bool                  `protobuf:"varint,4,opt,name=admin,proto3,oneof" json:"admin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3071,8 +3071,8 @@ func (x *SetTeamMemberRequest) GetUser() string {
 }
 
 func (x *SetTeamMemberRequest) GetAdmin() bool {
-	if x != nil {
-		return x.Admin
+	if x != nil && x.Admin != nil {
+		return *x.Admin
 	}
 	return false
 }
@@ -4348,7 +4348,7 @@ func (x *ListUsersResponse) GetUsers() []*UserInfo {
 type SetPlatformAdminRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Admin         bool                   `protobuf:"varint,2,opt,name=admin,proto3" json:"admin,omitempty"`
+	Admin         *bool                  `protobuf:"varint,2,opt,name=admin,proto3,oneof" json:"admin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4391,8 +4391,8 @@ func (x *SetPlatformAdminRequest) GetUserId() string {
 }
 
 func (x *SetPlatformAdminRequest) GetAdmin() bool {
-	if x != nil {
-		return x.Admin
+	if x != nil && x.Admin != nil {
+		return *x.Admin
 	}
 	return false
 }
@@ -4627,12 +4627,13 @@ const file_observatory_iam_v1_iam_proto_rawDesc = "" +
 	"\x11DeleteTeamRequest\x12\x10\n" +
 	"\x03org\x18\x01 \x01(\tR\x03org\x12\x12\n" +
 	"\x04team\x18\x02 \x01(\tR\x04team\"\x14\n" +
-	"\x12DeleteTeamResponse\"f\n" +
+	"\x12DeleteTeamResponse\"u\n" +
 	"\x14SetTeamMemberRequest\x12\x10\n" +
 	"\x03org\x18\x01 \x01(\tR\x03org\x12\x12\n" +
 	"\x04team\x18\x02 \x01(\tR\x04team\x12\x12\n" +
-	"\x04user\x18\x03 \x01(\tR\x04user\x12\x14\n" +
-	"\x05admin\x18\x04 \x01(\bR\x05admin\"\x17\n" +
+	"\x04user\x18\x03 \x01(\tR\x04user\x12\x19\n" +
+	"\x05admin\x18\x04 \x01(\bH\x00R\x05admin\x88\x01\x01B\b\n" +
+	"\x06_admin\"\x17\n" +
 	"\x15SetTeamMemberResponse\"S\n" +
 	"\x17RemoveTeamMemberRequest\x12\x10\n" +
 	"\x03org\x18\x01 \x01(\tR\x03org\x12\x12\n" +
@@ -4696,10 +4697,11 @@ const file_observatory_iam_v1_iam_proto_rawDesc = "" +
 	"\amembers\x18\x02 \x03(\v2\x1a.observatory.iam.v1.MemberR\amembers\"\x12\n" +
 	"\x10ListUsersRequest\"G\n" +
 	"\x11ListUsersResponse\x122\n" +
-	"\x05users\x18\x01 \x03(\v2\x1c.observatory.iam.v1.UserInfoR\x05users\"H\n" +
+	"\x05users\x18\x01 \x03(\v2\x1c.observatory.iam.v1.UserInfoR\x05users\"W\n" +
 	"\x17SetPlatformAdminRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x14\n" +
-	"\x05admin\x18\x02 \x01(\bR\x05admin\"\x1a\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x19\n" +
+	"\x05admin\x18\x02 \x01(\bH\x00R\x05admin\x88\x01\x01B\b\n" +
+	"\x06_admin\"\x1a\n" +
 	"\x18SetPlatformAdminResponse2\x9c1\n" +
 	"\n" +
 	"IAMService\x12{\n" +
@@ -5016,6 +5018,8 @@ func file_observatory_iam_v1_iam_proto_init() {
 	if File_observatory_iam_v1_iam_proto != nil {
 		return
 	}
+	file_observatory_iam_v1_iam_proto_msgTypes[57].OneofWrappers = []any{}
+	file_observatory_iam_v1_iam_proto_msgTypes[85].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

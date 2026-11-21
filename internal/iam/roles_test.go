@@ -271,6 +271,9 @@ func TestUpdateRoleCarriesDeny(t *testing.T) {
 	before := e.denied()
 	err = e.updateRole(memberTok, org, denying, &iamv1.UpdateRoleRequest{Name: "denying"})
 	wantCode(t, err, connect.CodePermissionDenied)
+	if err.(*connect.Error).Message() != authz.ErrDenyNotAllowed.Error() {
+		t.Fatalf("message: %v", err)
+	}
 	if es := e.audit(store.ActionRoleUpdate); e.denied() != before+1 || es[0].Result != store.ResultDenied || !strings.Contains(errorDetail(t, es[0]), "deny audit.events.list@org/audit") {
 		t.Fatalf("update audit: %+v", es)
 	}
@@ -394,7 +397,11 @@ func TestDeleteRoleBindingOwnDenyGuard(t *testing.T) {
 	wantCode(t, e.deleteTeam(adminTok, org, team), connect.CodePermissionDenied)
 	// The admin may not lift a deny that binds them, by any route.
 	before, deniedBefore := len(e.audit(store.ActionRoleUnbind)), e.denied()
-	wantCode(t, e.unbind(adminTok, org, binding), connect.CodePermissionDenied)
+	err := e.unbind(adminTok, org, binding)
+	wantCode(t, err, connect.CodePermissionDenied)
+	if err.(*connect.Error).Message() != errLiftsOwnDeny.Error() {
+		t.Fatalf("message: %v", err)
+	}
 	if es := e.audit(store.ActionRoleUnbind); len(es) != before+1 || e.denied() != deniedBefore+1 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() ||
 		!strings.Contains(errorDetail(t, es[0]), "deny iam.teams.delete@org/teams/*") {
 		t.Fatalf("unbind denied audit: %+v", es)

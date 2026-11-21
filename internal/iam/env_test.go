@@ -39,23 +39,29 @@ type env struct {
 	notified []uuid.UUID
 }
 
-// fakeResources reports the subjects in owners as owning VMs in any org.
+// fakeResources reports the subjects in owners as owning VMs, and those in diskOwners as owning disks, in any org.
 type fakeResources struct {
 	hubv1connect.ResourceServiceClient
-	mu     sync.Mutex
-	owners map[string]bool
+	mu                 sync.Mutex
+	owners, diskOwners map[string]bool
 }
 
 func (f *fakeResources) CheckOwnership(_ context.Context, req *connect.Request[hubv1.CheckOwnershipRequest]) (*connect.Response[hubv1.CheckOwnershipResponse], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return connect.NewResponse(&hubv1.CheckOwnershipResponse{OwnsVms: f.owners[req.Msg.Subject]}), nil
+	return connect.NewResponse(&hubv1.CheckOwnershipResponse{OwnsVms: f.owners[req.Msg.Subject], OwnsDisks: f.diskOwners[req.Msg.Subject]}), nil
 }
 
 func (f *fakeResources) setOwner(subject string, owns bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.owners[subject] = owns
+}
+
+func (f *fakeResources) setDiskOwner(subject string, owns bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.diskOwners[subject] = owns
 }
 
 func newEnv(t *testing.T) *env {
@@ -77,7 +83,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}}}
+	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,
 		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify})
 	if err != nil {

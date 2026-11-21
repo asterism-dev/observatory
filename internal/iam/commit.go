@@ -162,6 +162,9 @@ func validRole(r string) (store.Role, error) {
 	return "", connect.NewError(connect.CodeInvalidArgument, errors.New("invalid role"))
 }
 
+// errAdminRequired refuses a request without its admin flag, whose zero value would demote or revoke.
+var errAdminRequired = connect.NewError(connect.CodeInvalidArgument, errors.New("admin is required"))
+
 // privileged roles can only be granted or taken away by holders of iam.members.setRole (owners).
 func privileged(role store.Role) bool { return role == store.RoleOwner || role == store.RoleAdmin }
 

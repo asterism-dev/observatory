@@ -60,12 +60,16 @@ func (s *server) SetPlatformAdmin(ctx context.Context, req *connect.Request[iamv
 	if err != nil {
 		return nil, err
 	}
+	if req.Msg.Admin == nil {
+		return nil, errAdminRequired
+	}
+	admin := *req.Msg.Admin
 	action := store.ActionPlatformRevokeAdmin
-	if req.Msg.Admin {
+	if admin {
 		action = store.ActionPlatformGrantAdmin
 	}
 	if err := s.commit(ctx, func(tx *store.Store) error {
-		if err := tx.SetPlatformAdmin(ctx, id, req.Msg.Admin); err != nil {
+		if err := tx.SetPlatformAdmin(ctx, id, admin); err != nil {
 			return err
 		}
 		return tx.Audit(ctx, auditEntry(ctx, req.Header(), nil, action, "user/"+id.String(), store.ResultAllowed))

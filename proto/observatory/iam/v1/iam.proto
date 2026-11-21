@@ -643,7 +643,7 @@ message SetTeamMemberRequest {
   string org = 1;
   string team = 2;
   string user = 3;
-  bool admin = 4;
+  optional bool admin = 4;
 }
 
 message SetTeamMemberResponse {}
@@ -759,7 +759,7 @@ message ListUsersResponse {
 
 message SetPlatformAdminRequest {
   string user_id = 1;
-  bool admin = 2;
+  optional bool admin = 2;
 }
 
 message SetPlatformAdminResponse {}

@@ -227,6 +227,25 @@ func (e *env) restDo(method, path, jwt string) (int, map[string]any) {
 	return res.StatusCode, body
 }
 
+// restSend sends a REST request with a JSON body and returns the status and error message.
+func (e *env) restSend(method, path, jwt, body string) (int, string) {
+	e.t.Helper()
+	r, err := http.NewRequest(method, e.srv.URL+path, strings.NewReader(body))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	r.Header.Set("Authorization", "Bearer "+jwt)
+	r.Header.Set("Content-Type", "application/json")
+	res, err := e.srv.Client().Do(r)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out struct{ Message string }
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res.StatusCode, out.Message
+}
+
 func TestRESTPathOrgWinsOverQuery(t *testing.T) {
 	e := newEnv(t)
 	_, aliceTok := e.user("alice")
