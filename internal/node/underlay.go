@@ -47,7 +47,9 @@ func (a *Agent) refreshUnderlay(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
 		return fmt.Errorf("underlay response: %w", err)
 	}
+	a.mu.Lock()
 	a.underlayCert = u.Cert
+	a.mu.Unlock()
 	go a.startChassis(ctx, u)
 	return nil
 }
@@ -61,7 +63,10 @@ func (a *Agent) renewUnderlay(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		if !certExpiresSoon(a.underlayCert, time.Now()) {
+		a.mu.Lock()
+		cert := a.underlayCert
+		a.mu.Unlock()
+		if !certExpiresSoon(cert, time.Now()) {
 			continue
 		}
 		if err := a.refreshUnderlay(ctx); err != nil {

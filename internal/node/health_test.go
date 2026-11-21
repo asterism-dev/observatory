@@ -172,3 +172,40 @@ func TestControlCarriesLargeMessages(t *testing.T) {
 		t.Fatalf("reconnected: %d registers", n)
 	}
 }
+
+func TestEnteringEmergencyRefreshesUnderlayOnce(t *testing.T) {
+	prev := healthInterval
+	healthInterval = time.Millisecond
+	t.Cleanup(func() { healthInterval = prev })
+	h := newFakeHub(t)
+	h.setHealthy(false)
+	p := newFakeProvider()
+	a := &Agent{HubURL: h.url(), controlBase: h.url(), Credential: "tok", ChassisKey: "pub-key", ChassisCSR: "CSR PEM", Provider: p}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.newHealthMonitor().run(ctx); close(done) }()
+	eventually(t, "emergency polls", func() bool { return len(h.gotEmergencies()) >= 3 })
+	cancel()
+	<-done
+	if n := h.underlayRequests(); n != 1 {
+		t.Fatalf("underlay requests = %d, want 1", n)
+	}
+	eventually(t, "chassis restarted", func() bool { return len(p.gotChassis()) == 1 })
+	a.chassisWG.Wait()
+}
+
+func TestEmergencyPollDropsRejectedUpdateError(t *testing.T) {
+	h := newFakeHub(t)
+	h.setEmergencyMax(512)
+	// Quotes double when JSON-escaped, so this clipped error still overflows the hub's limit.
+	a := &Agent{HubURL: h.url(), Credential: "tok", emergencyUpdErr: strings.Repeat(`"`, 1024)}
+	if err := a.emergencyPoll(context.Background()); err == nil {
+		t.Fatal("oversized report accepted")
+	}
+	if err := a.emergencyPoll(context.Background()); err != nil {
+		t.Fatalf("next poll still rejected: %v", err)
+	}
+	if r := h.gotEmergencies(); len(r) != 1 || r[0].UpdateError != "" {
+		t.Fatalf("reports = %+v", r)
+	}
+}

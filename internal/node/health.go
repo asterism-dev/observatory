@@ -25,8 +25,22 @@ var (
 // healthMonitor checks the underlay control path and falls back to the emergency channel over the public URL while it stays down.
 type healthMonitor struct {
 	check     func(context.Context) error
+	enter     func(context.Context) // runs once per switch into emergency mode; may be nil
 	emergency func(context.Context) error
 	emerg     atomic.Bool
+}
+
+func (a *Agent) newHealthMonitor() *healthMonitor {
+	h := &healthMonitor{check: a.checkHealth, emergency: a.emergencyPoll}
+	if a.ChassisKey != "" {
+		// A re-signed cert restarts the WireGuard link, which re-resolves the gateway endpoint.
+		h.enter = func(ctx context.Context) {
+			if err := a.refreshUnderlay(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("underlay refresh failed", "err", err)
+			}
+		}
+	}
+	return h
 }
 
 func (h *healthMonitor) inEmergency() bool { return h.emerg.Load() }
@@ -59,6 +73,9 @@ func (h *healthMonitor) run(ctx context.Context) {
 		}
 		if !h.emerg.Swap(true) {
 			slog.Warn("entering emergency mode")
+			if h.enter != nil {
+				h.enter(ctx)
+			}
 		}
 		if err := h.emergency(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("emergency poll failed", "err", err)
@@ -120,6 +137,14 @@ func (a *Agent) emergencyPoll(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// A report the hub refuses would be refused on every poll; dropping the update error unwedges the channel.
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusBadRequest {
+		a.mu.Lock()
+		if a.emergencyUpdErr == updErr {
+			a.emergencyUpdErr = ""
+		}
+		a.mu.Unlock()
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return fmt.Errorf("emergency poll: %s: %s", resp.Status, bytes.TrimSpace(msg))
@@ -128,11 +153,6 @@ func (a *Agent) emergencyPoll(ctx context.Context) error {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&reply); err != nil {
 		return fmt.Errorf("emergency reply: %w", err)
 	}
-	a.mu.Lock()
-	if a.emergencyUpdErr == updErr {
-		a.emergencyUpdErr = ""
-	}
-	a.mu.Unlock()
 	if reply.Update {
 		a.runUpdate(ctx, func(m proto.Message) error {
 			a.mu.Lock()

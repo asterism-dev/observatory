@@ -48,6 +48,7 @@ type fakeHub struct {
 	unhealthy    bool
 	emergUpdate  bool
 	emergencies  []proto.EmergencyReport
+	emergMax     int64 // emergency body limit; zero means none
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -75,9 +76,20 @@ func (h *fakeHub) serveHealth(w http.ResponseWriter, req *http.Request) {
 }
 
 func (h *fakeHub) serveEmergency(w http.ResponseWriter, req *http.Request) {
-	var body proto.EmergencyReport
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil || req.Header.Get("Authorization") != "Bearer tok" {
+	if req.Header.Get("Authorization") != "Bearer tok" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.mu.Lock()
+	limit := h.emergMax
+	h.mu.Unlock()
+	body := proto.EmergencyReport{}
+	r := req.Body
+	if limit > 0 {
+		r = http.MaxBytesReader(w, r, limit)
+	}
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 	h.mu.Lock()
@@ -340,4 +352,16 @@ func (h *fakeHub) gotEmergencies() []proto.EmergencyReport {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.emergencies)
+}
+
+func (h *fakeHub) setEmergencyMax(n int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.emergMax = n
+}
+
+func (h *fakeHub) underlayRequests() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.underlayReqs)
 }

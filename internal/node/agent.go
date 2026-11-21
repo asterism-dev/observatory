@@ -73,13 +73,13 @@ type Agent struct {
 
 	healthErr       atomic.Value // string: the last failed health check, sent as the emergency reason
 	emergencyUpdErr string       // guarded by mu; a failed emergency update, sent with the next poll
+	underlayCert    string       // guarded by mu
 
 	chassisMu       sync.Mutex
 	chassisPending  *chassisconf.Config // newest config not yet applied; older ones are superseded
 	chassisRunning  bool
 	chassisStopping bool
 	chassisWG       sync.WaitGroup
-	underlayCert    string // only touched by Run, then renewUnderlay
 
 	reconcileMu sync.Mutex
 
@@ -163,7 +163,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		go a.renewUnderlay(ctx)
 	}
-	go (&healthMonitor{check: a.checkHealth, emergency: a.emergencyPoll}).run(ctx)
+	go a.newHealthMonitor().run(ctx)
 	for {
 		if err := a.connect(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("hub connection failed", "err", err)
