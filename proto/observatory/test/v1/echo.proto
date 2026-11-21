@@ -16,6 +16,17 @@ message PeekRequest {}
 
 message PeekResponse {}
 
+message GetEchoRequest {
+  string org = 1;
+  string echo = 2;
+}
+
+message GetEchoResponse {}
+
+message PingRequest {}
+
+message PingResponse {}
+
 service EchoService {
   rpc Echo(EchoRequest) returns (EchoResponse) {
     option (observatory.v1.permission) = {
@@ -31,4 +42,13 @@ service EchoService {
       object: "org/echoes"
     };
   }
+  rpc GetEcho(GetEchoRequest) returns (GetEchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.get"
+      object: "org/echoes/{echo}"
+      kind: KIND_READ
+    };
+  }
+  // No annotation: the interceptor must deny it.
+  rpc Ping(PingRequest) returns (PingResponse);
 }

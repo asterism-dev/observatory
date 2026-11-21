@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 )
@@ -22,7 +23,9 @@ const minTokenLen = 32
 
 type Config struct {
 	HubURL, Token string
-	Services      map[string]string // service name → base URL
+	// ServiceToken authenticates the edge to the hub's /internal/iam/ endpoints.
+	ServiceToken string
+	Services     map[string]string // service name → base URL
 }
 
 var hubPrefixes = []string{"/api/", "/auth/", "/v2/", "/otlp/", "/node/", "/grafana/"}
@@ -31,18 +34,27 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 	if len(cfg.Token) < minTokenLen {
 		return nil, fmt.Errorf("edge token must be at least %d characters", minTokenLen)
 	}
+	if len(cfg.ServiceToken) < minTokenLen {
+		return nil, fmt.Errorf("service token must be at least %d characters", minTokenLen)
+	}
 	hubURL, err := parseUpstream(cfg.HubURL)
 	if err != nil {
 		return nil, fmt.Errorf("hub url: %w", err)
 	}
-	hub := proxy(hubURL, cfg.Token)
+	hub := proxy(hubURL, cfg.Token, false)
+	id := &identity{
+		tokenURL:     hubURL.JoinPath("internal/iam/token").String(),
+		serviceToken: cfg.ServiceToken,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		cache:        newJWTCache(jwtCacheSize),
+	}
 	services := make(map[string]http.Handler, len(cfg.Services))
 	for name, raw := range cfg.Services {
 		u, err := parseUpstream(raw)
 		if err != nil {
 			return nil, fmt.Errorf("service %s url: %w", name, err)
 		}
-		services[name] = proxy(u, cfg.Token)
+		services[name] = id.middleware(proxy(u, "", true))
 	}
 	app := spa(assets)
 

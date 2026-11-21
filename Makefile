@@ -1,4 +1,4 @@
-.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap observatory cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token service-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap observatory cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -14,6 +14,9 @@ storage-token:
 
 edge-token:
 	grep -q '^OBSERVATORY_EDGE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_EDGE_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
+
+service-token:
+	grep -q '^OBSERVATORY_SERVICE_TOKENS\{0,1\}=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; t=$$(openssl rand -hex 32); echo "OBSERVATORY_SERVICE_TOKEN=$$t"; echo "OBSERVATORY_SERVICE_TOKENS=edge=$$t"; } >> deploy/dev/hub.env
 
 gateway-up: gateway-token storage-token
 	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway storage

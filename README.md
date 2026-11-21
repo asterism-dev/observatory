@@ -32,7 +32,8 @@ storage-token` appends whichever is missing).
 gateway, the storage server and the registry; the edge answers `/internal/*` with 404. `make edge-token` appends
 `OBSERVATORY_EDGE_TOKEN` to `deploy/dev/hub.env` if missing (`make run` does it): the token the edge proves itself
 with to the hub when the two run as separate processes (`observatory serve edge` and `observatory serve hub`); `serve all`
-generates its own per start.
+generates its own per start. `make service-token` likewise appends `OBSERVATORY_SERVICE_TOKEN` (edge) and the matching
+`OBSERVATORY_SERVICE_TOKENS=edge=…` (hub) for separate processes.
 `OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.
 
 Nodes need the WireGuard/OVN gateway: they reach the hub's control endpoint only through it, over the underlay.

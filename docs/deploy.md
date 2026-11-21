@@ -58,10 +58,22 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
 - `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by both: the edge sends it with
   each request, and the hub takes the client IP from the edge's header only when the token matches, otherwise the
   connection's address. Changing it needs both services restarted.
+- `OBSERVATORY_EDGE_SERVICE_TOKEN` (`openssl rand -hex 32`, at least 32 characters, different from the edge token) is the
+  edge's service token: the hub gets it as `OBSERVATORY_SERVICE_TOKENS=edge=<token>`, the edge as
+  `OBSERVATORY_SERVICE_TOKEN`, and the edge uses it to exchange the user's session for a short-lived signed identity token
+  on requests to extracted services (`/api/<service>/v1/`).
+- `OBSERVATORY_SERVICE_TOKENS` (hub) is a comma-separated list of `name=token` pairs, one per calling service. Each token
+  needs at least 32 characters and no two pairs may share a token or a name. For development `make service-token`
+  appends a pair for the edge (`OBSERVATORY_SERVICE_TOKEN` and `OBSERVATORY_SERVICE_TOKENS`) to `deploy/dev/hub.env`.
+- `/internal/iam/*` on the hub (token exchange, signing keys, policy stream) is never public: the edge answers 404, and
+  the hub requires a service token, answers 403 for a missing or wrong one and logs the attempt. Without
+  `OBSERVATORY_SERVICE_TOKENS` the hub refuses every call there.
+- To rotate a service token, set the new value for both sides (in compose: `OBSERVATORY_EDGE_SERVICE_TOKEN` in
+  `deploy/.env`) and restart the hub and the edge. Until both run the new value, requests to extracted services fail.
 
 The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
 `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
-when other containers must call the hub, and keep that port off public networks) in one process, with an edge token generated
+when other containers must call the hub, and keep that port off public networks) in one process, with the edge and service tokens generated
 per start.
 
 ## Serving modes
@@ -167,6 +179,9 @@ docker compose -f deploy/compose.yaml up -d
 The hub checks GitHub for a newer release every 6 hours and shows platform admins a banner when one exists; nodes on
 an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDATE_CHECK=1` in `deploy/.env` turns the
 check off (air-gapped hosts). Builds that are not a release tag never check.
+
+Upgrading to the release with identity at the edge: `OBSERVATORY_EDGE_SERVICE_TOKEN` in `deploy/.env` is required from
+this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); `docker compose` refuses to start without it.
 
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
 `registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data` and, with TLS, `caddy-data`.

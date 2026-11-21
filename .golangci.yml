@@ -33,7 +33,8 @@ linters:
             - github.com/asterism-dev/observatory/web
             - github.com/coder/websocket
         hubserver:
-          files: ["**/internal/hubserver/**"]
+          # Tests may import the edge: the identity end-to-end test runs the real edge in front of the hub.
+          files: ["**/internal/hubserver/**", "!$test"]
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/edge
               desc: the hub must not depend on the edge; shared code belongs in internal/platform
@@ -44,7 +45,11 @@ linters:
             - $gostd
             - github.com/asterism-dev/observatory/internal/platform
             - github.com/asterism-dev/observatory/gen
+            - github.com/asterism-dev/observatory/internal/authz
+            - connectrpc.com/connect
             - google.golang.org/protobuf
+            - github.com/golang-jwt/jwt/v5
+            - github.com/google/uuid
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/api
               desc: platform code must not import a service
@@ -57,8 +62,6 @@ linters:
             - pkg: github.com/asterism-dev/observatory/internal/db
               desc: platform code must not import a service
             - pkg: github.com/asterism-dev/observatory/internal/auth
-              desc: platform code must not import a service
-            - pkg: github.com/asterism-dev/observatory/internal/authz
               desc: platform code must not import a service
             - pkg: github.com/asterism-dev/observatory/internal/registry
               desc: platform code must not import a service

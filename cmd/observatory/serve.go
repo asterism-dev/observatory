@@ -44,7 +44,7 @@ func cmdServe(c *cli, args []string) error {
 		return hubserver.Run(ctx, c.getenv, ln)
 	case "edge":
 		var missing []string
-		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL"} {
+		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_SERVICE_TOKEN"} {
 			if c.getenv(k) == "" {
 				missing = append(missing, k)
 			}
@@ -56,7 +56,7 @@ func cmdServe(c *cli, args []string) error {
 		if err != nil {
 			return err
 		}
-		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN")}, ln)
+		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN"), ServiceToken: c.getenv("OBSERVATORY_SERVICE_TOKEN")}, ln)
 	default:
 		ln, err := listenEdge(c.getenv)
 		if err != nil {
@@ -66,19 +66,23 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
-// serveAll runs the hub on a loopback port behind the edge on edgeLn, sharing an edge token that lives only in this process.
+// serveAll runs the hub on a loopback port behind the edge on edgeLn, sharing edge and service tokens that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
 	token := rand.Text() + rand.Text()
+	serviceToken := rand.Text() + rand.Text()
 	hubEnv := func(k string) string {
-		if k == "OBSERVATORY_EDGE_TOKEN" {
+		switch k {
+		case "OBSERVATORY_EDGE_TOKEN":
 			return token
+		case "OBSERVATORY_SERVICE_TOKENS":
+			return "edge=" + serviceToken
 		}
 		return getenv(k)
 	}
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
-			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, Services: services}, ln)
+			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, ServiceToken: serviceToken, Services: services}, ln)
 		}}
 	}, []svcrun.Service{hub})
 }

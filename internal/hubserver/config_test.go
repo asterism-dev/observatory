@@ -78,6 +78,15 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("bad gc time: %v", err)
 	}
 	delete(env, "OBSERVATORY_REGISTRY_GC_TIME")
+	env["OBSERVATORY_SERVICE_TOKENS"] = "edge=short"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_SERVICE_TOKENS") {
+		t.Fatalf("bad service tokens: %v", err)
+	}
+	env["OBSERVATORY_SERVICE_TOKENS"] = "edge=" + strings.Repeat("e", 32)
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.ServiceTokens["edge"] != strings.Repeat("e", 32) {
+		t.Fatalf("service tokens: %v, %v", cfg.ServiceTokens, err)
+	}
+	delete(env, "OBSERVATORY_SERVICE_TOKENS")
 	delete(env, "OBSERVATORY_BUILDER_CPUS")
 	delete(env, "OBSERVATORY_BUILDER_MEMORY_MB")
 	delete(env, "OBSERVATORY_BUILDER_DISK_GB")

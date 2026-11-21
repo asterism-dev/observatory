@@ -11,7 +11,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/test/v1/echo.proto.
  */
 export const file_observatory_test_v1_echo: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCSINCgtQZWVrUmVxdWVzdCIOCgxQZWVrUmVzcG9uc2Uy8gEKC0VjaG9TZXJ2aWNlEnMKBEVjaG8SIC5vYnNlcnZhdG9yeS50ZXN0LnYxLkVjaG9SZXF1ZXN0GiEub2JzZXJ2YXRvcnkudGVzdC52MS5FY2hvUmVzcG9uc2UiJoq1GCIKEnRlc3QuZWNob2VzLmNyZWF0ZRIKb3JnL2VjaG9lcxgBEm4KBFBlZWsSIC5vYnNlcnZhdG9yeS50ZXN0LnYxLlBlZWtSZXF1ZXN0GiEub2JzZXJ2YXRvcnkudGVzdC52MS5QZWVrUmVzcG9uc2UiIYq1GB0KD3Rlc3QuZWNob2VzLmdldBIKb3JnL2VjaG9lc0LZAQoXY29tLm9ic2VydmF0b3J5LnRlc3QudjFCCUVjaG9Qcm90b1ABWkVnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvdGVzdC92MTt0ZXN0djGiAgNPVFiqAhNPYnNlcnZhdG9yeS5UZXN0LlYxygITT2JzZXJ2YXRvcnlcVGVzdFxWMeICH09ic2VydmF0b3J5XFRlc3RcVjFcR1BCTWV0YWRhdGHqAhVPYnNlcnZhdG9yeTo6VGVzdDo6VjFiBnByb3RvMw", [file_observatory_v1_annotations]);
+  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCSINCgtQZWVrUmVxdWVzdCIOCgxQZWVrUmVzcG9uc2UiKwoOR2V0RWNob1JlcXVlc3QSCwoDb3JnGAEgASgJEgwKBGVjaG8YAiABKAkiEQoPR2V0RWNob1Jlc3BvbnNlIg0KC1BpbmdSZXF1ZXN0Ig4KDFBpbmdSZXNwb25zZTLCAwoLRWNob1NlcnZpY2UScwoERWNobxIgLm9ic2VydmF0b3J5LnRlc3QudjEuRWNob1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLkVjaG9SZXNwb25zZSImirUYIgoSdGVzdC5lY2hvZXMuY3JlYXRlEgpvcmcvZWNob2VzGAESbgoEUGVlaxIgLm9ic2VydmF0b3J5LnRlc3QudjEuUGVla1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLlBlZWtSZXNwb25zZSIhirUYHQoPdGVzdC5lY2hvZXMuZ2V0EgpvcmcvZWNob2VzEoABCgdHZXRFY2hvEiMub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRFY2hvUmVxdWVzdBokLm9ic2VydmF0b3J5LnRlc3QudjEuR2V0RWNob1Jlc3BvbnNlIiqKtRgmCg90ZXN0LmVjaG9lcy5nZXQSEW9yZy9lY2hvZXMve2VjaG99GAISSwoEUGluZxIgLm9ic2VydmF0b3J5LnRlc3QudjEuUGluZ1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLlBpbmdSZXNwb25zZULZAQoXY29tLm9ic2VydmF0b3J5LnRlc3QudjFCCUVjaG9Qcm90b1ABWkVnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvdGVzdC92MTt0ZXN0djGiAgNPVFiqAhNPYnNlcnZhdG9yeS5UZXN0LlYxygITT2JzZXJ2YXRvcnlcVGVzdFxWMeICH09ic2VydmF0b3J5XFRlc3RcVjFcR1BCTWV0YWRhdGHqAhVPYnNlcnZhdG9yeTo6VGVzdDo6VjFiBnByb3RvMw", [file_observatory_v1_annotations]);
 
 /**
  * @generated from message observatory.test.v1.EchoRequest
@@ -74,6 +74,67 @@ export const PeekResponseSchema: GenMessage<PeekResponse> = /*@__PURE__*/
   messageDesc(file_observatory_test_v1_echo, 3);
 
 /**
+ * @generated from message observatory.test.v1.GetEchoRequest
+ */
+export type GetEchoRequest = Message<"observatory.test.v1.GetEchoRequest"> & {
+  /**
+   * @generated from field: string org = 1;
+   */
+  org: string;
+
+  /**
+   * @generated from field: string echo = 2;
+   */
+  echo: string;
+};
+
+/**
+ * Describes the message observatory.test.v1.GetEchoRequest.
+ * Use `create(GetEchoRequestSchema)` to create a new message.
+ */
+export const GetEchoRequestSchema: GenMessage<GetEchoRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 4);
+
+/**
+ * @generated from message observatory.test.v1.GetEchoResponse
+ */
+export type GetEchoResponse = Message<"observatory.test.v1.GetEchoResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.GetEchoResponse.
+ * Use `create(GetEchoResponseSchema)` to create a new message.
+ */
+export const GetEchoResponseSchema: GenMessage<GetEchoResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 5);
+
+/**
+ * @generated from message observatory.test.v1.PingRequest
+ */
+export type PingRequest = Message<"observatory.test.v1.PingRequest"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.PingRequest.
+ * Use `create(PingRequestSchema)` to create a new message.
+ */
+export const PingRequestSchema: GenMessage<PingRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 6);
+
+/**
+ * @generated from message observatory.test.v1.PingResponse
+ */
+export type PingResponse = Message<"observatory.test.v1.PingResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.PingResponse.
+ * Use `create(PingResponseSchema)` to create a new message.
+ */
+export const PingResponseSchema: GenMessage<PingResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 7);
+
+/**
  * @generated from service observatory.test.v1.EchoService
  */
 export const EchoService: GenService<{
@@ -94,6 +155,24 @@ export const EchoService: GenService<{
     methodKind: "unary";
     input: typeof PeekRequestSchema;
     output: typeof PeekResponseSchema;
+  },
+  /**
+   * @generated from rpc observatory.test.v1.EchoService.GetEcho
+   */
+  getEcho: {
+    methodKind: "unary";
+    input: typeof GetEchoRequestSchema;
+    output: typeof GetEchoResponseSchema;
+  },
+  /**
+   * No annotation: the interceptor must deny it.
+   *
+   * @generated from rpc observatory.test.v1.EchoService.Ping
+   */
+  ping: {
+    methodKind: "unary";
+    input: typeof PingRequestSchema;
+    output: typeof PingResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_test_v1_echo, 0);

@@ -76,6 +76,9 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 
 	mux := http.NewServeMux()
 	a.Routes(mux)
+	if err := mountIdentity(ctx, mux, s, z, cfg); err != nil {
+		return err
+	}
 	f, err := fleet.New(ctx, s, z, nh)
 	if err != nil {
 		return err
