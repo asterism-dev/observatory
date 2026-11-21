@@ -51,6 +51,14 @@ func TestServeAuditRequiresConfig(t *testing.T) {
 	}
 }
 
+func TestServeAllRequiresPersistentBus(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k] }
+	if code := run(c, []string{"serve", "all"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_DATA_DIR") || !strings.Contains(stderr.String(), "OBSERVATORY_NATS_URL") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
 func TestServeEdgeRejectsBadServices(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string {
@@ -130,6 +138,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
 		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
 		"OBSERVATORY_HUB_LISTEN":         "127.0.0.1:0",
+		"OBSERVATORY_DATA_DIR":           t.TempDir(),
 		// Invalid on purpose: serve all must replace it with the tokens it generates, or the hub would refuse to start.
 		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}

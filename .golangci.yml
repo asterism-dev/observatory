@@ -46,7 +46,6 @@ linters:
             - github.com/asterism-dev/observatory/internal/audit
             - github.com/asterism-dev/observatory/internal/platform
             - github.com/asterism-dev/observatory/gen
-            - github.com/asterism-dev/observatory/internal/authz
             - connectrpc.com/connect
             - google.golang.org/protobuf
             - github.com/google/uuid

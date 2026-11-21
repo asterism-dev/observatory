@@ -138,23 +138,18 @@ func auditConfig(getenv func(string) string) audit.Config {
 	}
 }
 
-// embeddedNATS starts an in-process bus for a single-process install, under OBSERVATORY_DATA_DIR or else a temporary directory removed on stop.
+// embeddedNATS starts an in-process bus for a single-process install under OBSERVATORY_DATA_DIR/nats; without a persistent directory, unconsumed events would be lost on restart.
 func embeddedNATS(ctx context.Context, getenv func(string) string, cfg *audit.Config) (func(), error) {
-	dir, cleanup := filepath.Join(getenv("OBSERVATORY_DATA_DIR"), "nats"), func() {}
-	if getenv("OBSERVATORY_DATA_DIR") == "" {
-		tmp, err := os.MkdirTemp("", "observatory-nats-")
-		if err != nil {
-			return nil, err
-		}
-		dir, cleanup = tmp, func() { _ = os.RemoveAll(tmp) }
+	dataDir := getenv("OBSERVATORY_DATA_DIR")
+	if dataDir == "" {
+		return nil, errors.New("set OBSERVATORY_DATA_DIR for the embedded event bus, or OBSERVATORY_NATS_URL and OBSERVATORY_NATS_TOKEN for an external one")
 	}
-	url, natsToken, stop, err := bus.Embedded(ctx, dir)
+	url, natsToken, stop, err := bus.Embedded(ctx, filepath.Join(dataDir, "nats"))
 	if err != nil {
-		cleanup()
 		return nil, err
 	}
 	cfg.NATSURL, cfg.NATSToken = url, natsToken
-	return func() { stop(); cleanup() }, nil
+	return stop, nil
 }
 
 func hubListen(getenv func(string) string, svc string) string {

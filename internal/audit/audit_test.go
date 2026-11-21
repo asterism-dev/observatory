@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -36,13 +37,13 @@ const (
 	testToken  = "audit-service-token-audit-service-token"
 )
 
-func openStore(t *testing.T, url string) *store {
+func openStore(t *testing.T, dbURL string) *store {
 	t.Helper()
 	m, err := migrations()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgsvc.Open(context.Background(), url, "audit", m)
+	pool, err := pgsvc.Open(context.Background(), dbURL, "audit", m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +116,8 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func TestConsumerStoresAuditEventsOnce(t *testing.T) {
-	s := openStore(t, dbtest.Empty(t))
-	_, _, js := startBus(t)
+func startConsumer(t *testing.T, js jetstream.JetStream, s *store) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- consume(ctx, js, s) }()
@@ -127,6 +127,26 @@ func TestConsumerStoresAuditEventsOnce(t *testing.T) {
 			t.Error(err)
 		}
 	})
+}
+
+func ackedAll(t *testing.T, js jetstream.JetStream) {
+	t.Helper()
+	ctx := context.Background()
+	waitFor(t, "consumer", func() bool { _, err := js.Consumer(ctx, bus.Stream, consumerName); return err == nil })
+	cons, err := js.Consumer(ctx, bus.Stream, consumerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "every delivery acked", func() bool {
+		info, err := cons.Info(ctx)
+		return err == nil && info.NumAckPending == 0 && info.NumPending == 0
+	})
+}
+
+func TestConsumerStoresAuditEventsOnce(t *testing.T) {
+	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	startConsumer(t, js, s)
 
 	org := uuid.NewString()
 	dup := newEvent(org, time.Now())
@@ -140,15 +160,8 @@ func TestConsumerStoresAuditEventsOnce(t *testing.T) {
 
 	// Delivery is in stream order, so the last event stored means every earlier one was handled.
 	waitFor(t, "platform event", func() bool { return count(t, s.pool, platform.GetId()) == 1 })
-	cons, err := js.Consumer(ctx, bus.Stream, consumerName)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// A redelivery must be acked, not retried forever against the primary key.
-	waitFor(t, "every delivery acked", func() bool {
-		info, err := cons.Info(ctx)
-		return err == nil && info.NumAckPending == 0 && info.NumPending == 0
-	})
+	ackedAll(t, js)
 	if n := count(t, s.pool, dup.GetId()); n != 1 {
 		t.Fatalf("duplicate delivery stored %d rows, want 1", n)
 	}
@@ -165,9 +178,87 @@ func TestConsumerStoresAuditEventsOnce(t *testing.T) {
 	}
 }
 
-func TestEventsAreAppendOnly(t *testing.T) {
+func TestConsumerRetriesTransientErrors(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	for _, stmt := range []string{
+		"CREATE FUNCTION fail_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'database down'; END $$",
+		"CREATE TRIGGER fail_insert BEFORE INSERT ON events FOR EACH ROW EXECUTE FUNCTION fail_insert()",
+	} {
+		if _, err := s.pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startConsumer(t, js, s)
+	e := newEvent(uuid.NewString(), time.Now())
+	publish(t, js, e)
+
+	waitFor(t, "consumer", func() bool { _, err := js.Consumer(ctx, bus.Stream, consumerName); return err == nil })
+	cons, err := js.Consumer(ctx, bus.Stream, consumerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a redelivery", func() bool {
+		info, err := cons.Info(ctx)
+		return err == nil && info.NumRedelivered > 0
+	})
+	if _, err := s.pool.Exec(ctx, "DROP TRIGGER fail_insert ON events"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "event stored after the failure cleared", func() bool { return count(t, s.pool, e.GetId()) == 1 })
+}
+
+func TestConsumerDropsUnstorableEvents(t *testing.T) {
+	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	startConsumer(t, js, s)
+	bad := newEvent(uuid.NewString(), time.Now())
+	// Postgres text cannot hold NUL: a data exception no redelivery fixes.
+	bad.Resource = "org/\x00members"
+	publish(t, js, bad)
+	next := newEvent(bad.GetOrg(), time.Now())
+	publish(t, js, next)
+
+	waitFor(t, "next event", func() bool { return count(t, s.pool, next.GetId()) == 1 })
+	ackedAll(t, js)
+	if n := count(t, s.pool, bad.GetId()); n != 0 {
+		t.Fatalf("unstorable event stored %d rows", n)
+	}
+}
+
+func TestConsumeFailsWhenConsumerCloses(t *testing.T) {
+	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- consume(ctx, js, s) }()
+	waitFor(t, "consumer", func() bool { _, err := js.Consumer(ctx, bus.Stream, consumerName); return err == nil })
+	if err := js.DeleteConsumer(ctx, bus.Stream, consumerName); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("consume returned nil after its consumer was deleted")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("consume kept running after its consumer was deleted")
+	}
+}
+
+func TestEventsAreAppendOnly(t *testing.T) {
+	ctx := context.Background()
+	u, err := url.Parse(dbtest.Empty(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	// One connection, so the DELETE after retention runs on the connection that had the setting.
+	q.Set("pool_max_conns", "1")
+	u.RawQuery = q.Encode()
+	s := openStore(t, u.String())
 	old := newEvent(uuid.NewString(), time.Now().Add(-400*24*time.Hour))
 	fresh := newEvent(old.GetOrg(), time.Now())
 	for _, e := range []*eventsv1.Event{old, fresh} {

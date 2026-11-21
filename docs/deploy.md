@@ -92,9 +92,8 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
   deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than 365 days are
   removed. The setting guards against mistakes in application code, not against a database user who sets it too.
 
-`serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it also
-runs an embedded event bus, storing it under `OBSERVATORY_DATA_DIR/nats` or, when that is unset, in a temporary directory
-removed on exit (events not yet stored by the audit service are then lost on restart).
+`serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it runs an
+embedded event bus stored in `OBSERVATORY_DATA_DIR/nats` (the image sets `/var/lib/observatory`, a volume) and refuses to start when neither is set.
 
 ## Serving modes
 
