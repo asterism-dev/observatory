@@ -71,16 +71,21 @@ until [ -S "$db" ] && vsctl --timeout=5 br-exists br-int; do
   sleep 1
 done
 if [ -z "$chassis" ]; then
+  # shared mode's veth, left by a crash before switching back; vswitchd cannot create its internal gw0 next to it
+  if ip -d link show gw0 2>/dev/null | grep -qw veth; then ip link del gw0; vsctl --if-exists del-port gw0; fi
   vsctl --may-exist add-port br-int gw0 -- set interface gw0 type=internal \
     mac='"02:00:00:c7:00:02"' external_ids:iface-id=gw0
 else
   id=$(vsctl --timeout=5 get open . external_ids:system-id 2>/dev/null | tr -d '"')
   [ "$id" = "$chassis" ] || { echo "the host OVS is chassis '$id', not OBSERVATORY_GATEWAY_CHASSIS $chassis" >&2; exit 1; }
-  # ports of earlier containers; their links may outlive them in a netns that storage still holds
+  # ports of earlier containers; their links may outlive them in the netns service's namespace
   for old in $(vsctl --timeout=5 --bare --columns=name find interface external_ids:iface-id=gw0); do
     vsctl --timeout=5 --if-exists del-port "$old"
   done
-  ip link del gw0 2>/dev/null || true
+  # a self-contained gateway's kernel datapath outlives it there too, with gw0 as an internal port ip cannot delete
+  for dp in $(ovs-dpctl dump-dps); do ovs-dpctl del-dp "$dp"; done
+  ! ip link show genev_sys_6081 >/dev/null 2>&1 || ip link del genev_sys_6081
+  ! ip link show gw0 >/dev/null 2>&1 || ip link del gw0
   # a crashed gateway leaves its host end behind while its old netns lives on; a leftover is harmless, so no exit
   gateway -remove-host-veths /hostns/net || true
   # a unique host end, so a surviving earlier one cannot block the move; a veth, as vswitchd loses moved internal ports

@@ -103,6 +103,10 @@ for the node's `br-int` and removes its veth from `br-int` when it stops. If hub
 example `OBSERVATORY_GATEWAY_NODE` set without the override), the gateway logs a warning and device traffic stays down.
 The hub host has two underlay addresses: `10.198.0.1` for the gateway and the node's own.
 
+Switching modes in either direction keeps the `netns` service and its namespace. The gateway removes what the other
+mode left there at start: the self-contained OVS datapath (`br-int` and `gw0` as an internal port), or the shared
+mode's `gw0` veth after a crash.
+
 To switch back to self-contained, remove the node from the host first ([nodes.md](nodes.md#remove)), then unset
 `OBSERVATORY_GATEWAY_NODE` and run `docker compose -f deploy/compose.yaml up -d` without the override. The gateway
 moves its ports back to `hub-gw` and deletes the node's gateway chassis.
