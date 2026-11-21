@@ -40,6 +40,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `role:read`, `role:write`, `role:bind` | `org/roles` |
 | `limit:read`, `limit:set` | `org/limits` |
 | `audit:read` | `org/audit` |
+| `logs:read` | `org/logs` |
 | `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
 | `integration:list`, `integration:set`, `integration:delete`, `integration:use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
 | `dashboard:read`, `dashboard:edit`, `dashboard:create` | `org/dashboards`, `org/team-dashboards/*`, `org/user-dashboards/*` |
@@ -63,6 +64,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `org:update`, `telemetry:token`, `member:invite`, `member:remove` | | yes | yes |
 | `team:*` (create, update, delete, manage members, leave) | | yes | yes |
 | `role:write`, `role:bind`, `limit:set`, `audit:read` | | yes | yes |
+| `logs:read` (the org's logs explorer, all of the org's logs) | | yes | yes |
 | `member:set-role` | | | yes |
 | `env:list`, `env:use` on `org/env` | yes | yes | yes |
 | `env:*` on `org/env` and `org/team-env/*` | | yes | yes |

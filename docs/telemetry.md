@@ -82,8 +82,9 @@ for example `{observatory.stream="build"} observatory.image:"<image id>"`.
 custom role ([permissions.md](permissions.md)). `vm:metrics` gates a VM's usage, processes and logs: the owner, team
 members of a team VM, team admins and org admins and owners have it. Admins read VM telemetry but never connect. VictoriaMetrics leaves out the newest 30 seconds by default (its latency offset), so the charts end slightly before now.
 
-To chart this data in the hub, including your apps' metrics, see [Dashboards](dashboards.md). To read it from your own
-Grafana, see [Grafana](grafana.md).
+To browse and search logs across all VMs, nodes and builds, including deleted ones, see [Logs](logs.md). To chart this
+data in the hub, including your apps' metrics, see [Dashboards](dashboards.md). To read it from your own Grafana, see
+[Grafana](grafana.md).
 
 ## Configuration
 

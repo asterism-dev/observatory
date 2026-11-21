@@ -54,21 +54,28 @@ type api struct {
 	grafanaInflight, grafanaTails *tokenSlots
 	// grafanaTailMax caps a Grafana logs tail; grafanaTailRecheck is how often the tail re-checks its token.
 	grafanaTailMax, grafanaTailRecheck time.Duration
+	// logsLimit, logsQueries and logsTails are keyed by user ID; logsHub caps explorer queries hub-wide.
+	logsLimit              *rateLimiter
+	logsQueries, logsTails *tokenSlots
+	logsHub                chan struct{}
+	logGroups              logGroupCache
+	logsRetention          time.Duration
 
 	diskErrors func(vm uuid.UUID) map[string]string
 }
 
 // New takes a nil builds when the hub has no registry; builds are refused then.
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, gc, docsURL, newer, firecracker, tc)
+func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) http.Handler {
+	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, gc, docsURL, newer, firecracker, tc, logsRetention)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client) (*api, http.Handler) {
+func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
 		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100), dashboardLimit: newRateLimiter(10, 40),
 		grafanaInflight: newTokenSlots(20), grafanaTails: newTokenSlots(5),
-		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second}
+		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second,
+		logsLimit: newRateLimiter(10, 40), logsQueries: newTokenSlots(3), logsTails: newTokenSlots(5), logsHub: make(chan struct{}, 4), logsRetention: logsRetention}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/me", h.me)
 	mux.HandleFunc("GET /api/me/sessions", h.sessions)
@@ -164,6 +171,11 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("DELETE /api/orgs/{org}/dashboards/{id}", h.deleteDashboard)
 	mux.HandleFunc("POST /api/orgs/{org}/dashboards/query", h.dashboardQuery)
 	mux.HandleFunc("GET /api/orgs/{org}/dashboards/metric-names", h.dashboardMetricNames)
+	mux.HandleFunc("GET /api/orgs/{org}/logs/groups", h.listLogGroups)
+	mux.HandleFunc("GET /api/orgs/{org}/logs/groups/{kind}/{id}/streams", h.listLogStreams)
+	mux.HandleFunc("GET /api/orgs/{org}/logs/groups/{kind}/{id}/entries", h.listLogEntries)
+	mux.HandleFunc("GET /api/orgs/{org}/logs/groups/{kind}/{id}/entries/tail", h.tailLogEntries)
+	mux.HandleFunc("POST /api/orgs/{org}/logs/query", h.queryLogs)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes", h.listNodes)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes", h.createNode)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes/{id}", h.getNode)

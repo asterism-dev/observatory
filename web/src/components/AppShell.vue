@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Button, List, ListItem } from '@asterism-dev/lumen'
-import { Box, Building2, ChartLine, HardDrive, KeyRound, Laptop, Layers, LayoutDashboard, Network, Plug, Server } from '@lucide/vue'
+import { Box, Building2, ChartLine, HardDrive, KeyRound, Laptop, Layers, LayoutDashboard, Network, Plug, ScrollText, Server } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -18,7 +18,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { me, activeOrg, selectOrg, load: loadMe } = useMe()
-const { org, load: loadOrg } = useOrg()
+const { org, can, load: loadOrg } = useOrg()
 const { orgTabs, platformTabs } = useSettingsNav()
 const { extra } = useCrumbs()
 const creating = ref(false)
@@ -93,6 +93,7 @@ const navGroups = computed(() => {
       { path: `/orgs/${id}/env`, label: t('nav.env'), icon: KeyRound },
       { path: `/orgs/${id}/integrations`, label: t('nav.integrations'), icon: Plug },
       { path: `/orgs/${id}/dashboards`, label: t('nav.dashboards'), icon: ChartLine },
+      ...(can('logs:read') ? [{ path: `/orgs/${id}/logs`, label: t('nav.logs'), icon: ScrollText }] : []),
     ],
   ]
   const settings = orgTabs.value[0]

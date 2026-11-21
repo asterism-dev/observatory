@@ -30,6 +30,7 @@ nav = [
     { "Egress proxy" = "egress.md" },
     { "Telemetry" = "telemetry.md" },
     { "Dashboards" = "dashboards.md" },
+    { "Logs" = "logs.md" },
     { "Grafana" = "grafana.md" },
   ] },
   { "Operating" = [

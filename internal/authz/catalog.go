@@ -17,6 +17,7 @@ const (
 	ObjRoles            = "org/roles"
 	ObjLimits           = "org/limits"
 	ObjAudit            = "org/audit"
+	ObjLogs             = "org/logs"
 	ObjEnv              = "org/env"
 	ObjTeamEnv          = "org/team-env"
 	ObjUserEnv          = "org/user-env"
@@ -122,6 +123,7 @@ var Catalog = []Permission{
 	{"limit:read", ObjLimits},
 	{"limit:set", ObjLimits},
 	{"audit:read", ObjAudit},
+	{"logs:read", ObjLogs},
 	{"env:list", ObjEnv},
 	{"env:set", ObjEnv},
 	{"env:delete", ObjEnv},
@@ -238,6 +240,7 @@ func BuiltinRules(key string) []Rule {
 		Rule{Allow, ObjRoles, "role:bind"},
 		Rule{Allow, ObjLimits, "limit:set"},
 		Rule{Allow, ObjAudit, "audit:read"},
+		Rule{Allow, ObjLogs, "logs:read"},
 		Rule{Allow, ObjEnv, "env:*"},
 		Rule{Allow, ObjTeamEnv + "/*", "env:*"},
 		Rule{Allow, ObjIntegrations, "integration:*"},

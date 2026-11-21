@@ -186,7 +186,7 @@ func run() error {
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc)
+	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
 	mux.Handle("/", spa(dist))
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.

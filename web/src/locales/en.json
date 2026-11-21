@@ -47,7 +47,8 @@
     "builders": "Builder VMs",
     "adminRegistry": "Registry",
     "telemetry": "Telemetry",
-    "dashboards": "Dashboards"
+    "dashboards": "Dashboards",
+    "logs": "Logs"
   },
   "theme": {
     "system": "System",
@@ -985,5 +986,45 @@
     "exampleTitle": "CPU cores by VM",
     "conflict": "This dashboard was changed elsewhere. Reload to see the latest version; your unsaved edits are lost.",
     "reload": "Reload"
+  },
+  "logs": {
+    "subtitle": "Browse and search all logs of your organization, including those of deleted VMs, nodes and images.",
+    "tab": {
+      "groups": "Groups",
+      "query": "Query"
+    },
+    "kind": {
+      "all": "All",
+      "vm": "VMs",
+      "node": "Nodes",
+      "image": "Builds"
+    },
+    "search": "Filter by name",
+    "deleted": "deleted",
+    "noMatch": "No log groups match.",
+    "empty": "No logs yet",
+    "emptyText": "Logs of VMs, nodes and image builds appear here once they are reported.",
+    "forbidden": "No access",
+    "forbiddenText": "You need the logs:read permission to see the organization's logs.",
+    "streamCount": "no streams | {n} stream | {n} streams",
+    "lastEntry": "last entry {at}",
+    "lastEntryLabel": "Last entry",
+    "stream": "Stream",
+    "streams": "Streams",
+    "build": "Build",
+    "noStreams": "No streams.",
+    "groupGone": "No logs found for this group; they may be past retention.",
+    "range": "Time range",
+    "groupsPick": "Groups",
+    "picked": "{n} selected",
+    "pickedNone": "None selected: the whole organization is searched.",
+    "query": "Query (LogsQL)",
+    "run": "Run",
+    "result": "Result ({n})",
+    "noRows": "No rows.",
+    "retention": "Logs are kept for {for}.",
+    "openIn": "Open in Logs",
+    "days": "{n} day | {n} days",
+    "hours": "{n} hour | {n} hours"
   }
 }

@@ -21,6 +21,8 @@ import AdminOrgView from '@/views/admin/AdminOrgView.vue'
 import PlatformSettingsLayout from '@/views/admin/PlatformSettingsLayout.vue'
 import AdminRegistryView from '@/views/admin/AdminRegistryView.vue'
 import AdminUsersView from '@/views/admin/AdminUsersView.vue'
+import LogGroupView from '@/views/LogGroupView.vue'
+import LogsView from '@/views/LogsView.vue'
 import LoginView from '@/views/LoginView.vue'
 import InviteView from '@/views/InviteView.vue'
 import BuilderVMsView from '@/views/org/BuilderVMsView.vue'
@@ -65,6 +67,8 @@ export const router = createRouter({
     { path: '/orgs/:orgId/integrations/:id', component: IntegrationDetailView },
     { path: '/orgs/:orgId/dashboards', component: DashboardsView, meta: { title: 'nav.dashboards' } },
     { path: '/orgs/:orgId/dashboards/:dashboardId', component: DashboardDetailView },
+    { path: '/orgs/:orgId/logs', component: LogsView, meta: { title: 'nav.logs' } },
+    { path: '/orgs/:orgId/logs/:kind/:id', component: LogGroupView },
     {
       path: '/orgs/:orgId',
       component: OrgSettingsLayout,

@@ -21,7 +21,7 @@ import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@
 const { t, d, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { org } = useOrg()
+const { org, can } = useOrg()
 const { me } = useMe()
 
 const nodeId = computed(() => String(route.params.nodeId))
@@ -192,6 +192,7 @@ watch(
 
         <template v-if="tab === 'metrics'">
           <TelemetryUsage :url="`${base()}/usage`" :no-data="t('telemetry.noData')" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+          <RouterLink v-if="can('logs:read')" class="muted" :to="`/orgs/${org.id}/logs/node/${nodeId}`">{{ t('logs.openIn') }}</RouterLink>
           <TelemetryLogs v-if="usageRange" :url="`${base()}/logs`" :range="usageRange" :hover-at="hoverAt" :filter="nodeLogFilter" />
         </template>
 

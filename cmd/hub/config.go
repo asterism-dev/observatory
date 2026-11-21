@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/registry"
@@ -27,6 +29,8 @@ type config struct {
 	NodeURL *url.URL
 	// MetricsURL and LogsURL are the telemetry stores; both empty turns telemetry off.
 	MetricsURL, LogsURL string
+	// LogsRetention mirrors the log store's retention and bounds the logs explorer's time range.
+	LogsRetention time.Duration
 }
 
 const minTokenLen = 32
@@ -144,6 +148,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 			return config{}, fmt.Errorf("%s must be an absolute http(s) URL", key)
 		}
 	}
+	if cfg.LogsRetention, err = parseRetention(getenv("OBSERVATORY_LOGS_RETENTION")); err != nil {
+		return config{}, err
+	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")
 	cfg.DevSkipVerify, cfg.DevClaudeTokenURL = skip == "1", getenv("OBSERVATORY_DEV_CLAUDE_TOKEN_URL")
@@ -152,4 +159,17 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, errors.New("OBSERVATORY_DEV_* requires OBSERVATORY_DEV=1")
 	}
 	return cfg, nil
+}
+
+// parseRetention reads the store's <n>h|d|w retention syntax, which time.ParseDuration cannot parse; empty is 14 days.
+func parseRetention(v string) (time.Duration, error) {
+	if v == "" {
+		return 14 * 24 * time.Hour, nil
+	}
+	unit := map[byte]time.Duration{'h': time.Hour, 'd': 24 * time.Hour, 'w': 7 * 24 * time.Hour}[v[len(v)-1]]
+	n, err := strconv.Atoi(v[:len(v)-1])
+	if unit == 0 || err != nil || n < 1 || n > math.MaxInt64/int(unit) || strings.ContainsAny(v, "+-") {
+		return 0, errors.New("OBSERVATORY_LOGS_RETENTION must be <n>h, <n>d or <n>w")
+	}
+	return time.Duration(n) * unit, nil
 }
