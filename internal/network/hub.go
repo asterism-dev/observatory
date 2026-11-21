@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -45,6 +46,8 @@ type Hub struct {
 	sbKey    string
 	status   gatewayStatus
 	onChange func(org uuid.UUID)
+	// gatewayNodeWarned keeps a not-yet-enrolled gateway node from logging on every state poll.
+	gatewayNodeWarned sync.Once
 }
 
 // OnChange sets fn to run when an org's peer sets may have changed; call it before the hub serves.

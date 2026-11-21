@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/version"
@@ -89,10 +91,20 @@ func main() {
 	rebound := map[string]bool{}
 	// caught holds offending chassis names until the hub has stored them; it then sends them back as quarantined.
 	caught := map[string]bool{}
+	// gatewayChassis is empty until the first valid state, so the guard never judges bindings against a guessed chassis.
+	var gatewayChassis string
 	go func() {
 		var lastClaims map[claim]bool
 		for range time.Tick(2 * time.Second) {
-			ports, claims, err := guardBindings(run)
+			reboundMu.Lock()
+			gateway := gatewayChassis
+			reboundMu.Unlock()
+			var ports []string
+			var claims []claim
+			var err error
+			if gateway != "" {
+				ports, claims, err = guardBindings(run, gateway)
+			}
 			var offenders []string
 			lastClaims, offenders = confirmClaims(lastClaims, claims)
 			if err != nil {
@@ -164,6 +176,7 @@ func main() {
 		dns.setViews(st.Orgs, st.Devices)
 
 		reboundMu.Lock()
+		gatewayChassis = st.GatewayChassis.Name
 		st = withQuarantine(st, caught)
 		reboundMu.Unlock()
 		chassis, _ := json.Marshal(st.Chassis)
@@ -212,10 +225,12 @@ func cleanChassis(run runner, st proto.GatewayState) error {
 	if err != nil {
 		return fmt.Errorf("ovn-sbctl list chassis: %w", err)
 	}
-	keep := map[string]bool{"hub-gw": true}
+	keep := map[string]bool{}
 	for _, c := range st.Chassis {
 		keep[c.NodeID] = !c.Quarantined
 	}
+	// Set last so a quarantine never deletes the gateway's own chassis; a stale hub-gw goes once a node takes over.
+	keep[st.GatewayChassis.Name] = true
 	var errs []error
 	for _, name := range strings.Fields(out) {
 		if keep[name] {
@@ -339,7 +354,7 @@ func parseCSV(out string, fields int) ([][]string, error) {
 	return r.ReadAll()
 }
 
-// guardBindings checks chassis names against the NB requested-chassis option (hub-gw when unset); SB copies are chassis-writable or resolved by a chassis-set hostname.
+// guardBindings checks chassis names against the NB requested-chassis option (the gateway chassis when unset); SB copies are chassis-writable or resolved by a chassis-set hostname.
 // claim is a node bound to a port that NB explicitly requests for another chassis.
 type claim struct{ Port, Chassis string }
 
@@ -356,7 +371,7 @@ func confirmClaims(last map[claim]bool, claims []claim) (map[claim]bool, []strin
 	return next, offenders
 }
 
-func guardBindings(run runner) (rebound []string, claims []claim, err error) {
+func guardBindings(run runner, gateway string) (rebound []string, claims []claim, err error) {
 	out, err := run("ovn-nbctl", "--format=csv", "--data=bare", "--no-headings", "--columns=name,options", "list", "logical_switch_port")
 	if err != nil {
 		return nil, nil, fmt.Errorf("ovn-nbctl list logical_switch_port: %w", err)
@@ -390,7 +405,7 @@ func guardBindings(run runner) (rebound []string, claims []claim, err error) {
 		uuid, port, ch, add := f[0], f[1], f[2], f[3]
 		req, explicit := requested[port]
 		if !explicit {
-			req = []string{"hub-gw"}
+			req = []string{gateway}
 		}
 		// A port missing from NB may just be deleted or not yet created, so only explicit requests and gateway ports count as claims.
 		suspect := explicit || strings.HasPrefix(port, "cr-lrp-")
@@ -407,7 +422,8 @@ func guardBindings(run runner) (rebound []string, claims []claim, err error) {
 			cols = append(cols, "additional_chassis")
 		}
 		for _, w := range wrong {
-			if suspect && w != "" && w != "hub-gw" {
+			// hub-gw is the gateway's own chassis in either mode, never a node to quarantine.
+			if suspect && w != "" && w != gateway && w != "hub-gw" {
 				claims = append(claims, claim{port, w})
 			}
 		}
@@ -501,6 +517,14 @@ func validateState(st proto.GatewayState) error {
 	}
 	if st.SB.CACert == "" || st.SB.Cert == "" || st.SB.Key == "" {
 		return errors.New("incomplete gateway state (missing southbound certificate)")
+	}
+	// The name and IP end up in ovn-nbctl arguments and nft rules.
+	gc := st.GatewayChassis
+	if id, err := uuid.Parse(gc.Name); gc.Name != "hub-gw" && (err != nil || id.String() != gc.Name) {
+		return errors.New("invalid gateway state (gateway chassis name)")
+	}
+	if ip, err := netip.ParseAddr(gc.IP); err != nil || !ip.Is4() || !netaddr.UnderlayPool.Contains(ip) {
+		return errors.New("invalid gateway state (gateway chassis IP)")
 	}
 	return nil
 }

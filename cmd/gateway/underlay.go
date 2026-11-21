@@ -9,6 +9,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
+const geneveUDPPort = 6081
+
 // underlayRules lets Geneve between nodes pass only within one org; traffic to the gateway itself is INPUT, not forward.
 func underlayRules(s proto.GatewayState) string {
 	byOrg := map[string][]string{}
@@ -35,6 +37,12 @@ func underlayRules(s proto.GatewayState) string {
 		fmt.Fprintf(&sets, "\tset org_%d {\n\t\ttype ipv4_addr\n\t\telements = { %s }\n\t}\n", n, strings.Join(ips, ", "))
 		fmt.Fprintf(&rules, "\t\tiifname \"wg-underlay\" oifname \"wg-underlay\" ip saddr @org_%d ip daddr @org_%d accept\n", n, n)
 		n++
+	}
+	// Shared mode: the hub-host node relays Geneve for every org's devices, so it may reach nodes of other orgs.
+	if gc := s.GatewayChassis; gc.Name != "hub-gw" {
+		for _, r := range []string{"ip saddr " + gc.IP + " udp dport", "ip daddr " + gc.IP + " udp dport", "ip saddr " + gc.IP + " udp sport", "ip daddr " + gc.IP + " udp sport"} {
+			fmt.Fprintf(&rules, "\t\tiifname \"wg-underlay\" oifname \"wg-underlay\" %s %d accept\n", r, geneveUDPPort)
+		}
 	}
 	return "table inet obs_underlay\ndelete table inet obs_underlay\ntable inet obs_underlay {\n" + sets.String() +
 		// A quarantined node gets nothing over the underlay except the control proxy, so it can still receive its update.

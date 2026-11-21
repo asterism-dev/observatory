@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -611,5 +613,31 @@ func TestStateGatewayChassisNode(t *testing.T) {
 	}
 	if want := (proto.GatewayChassisRef{Name: f.nodeA.String(), IP: st.Chassis[i].IP}); st.GatewayChassis != want {
 		t.Fatalf("gateway chassis %+v, want %+v", st.GatewayChassis, want)
+	}
+}
+
+func TestStateWarnsOnceWhileGatewayNodeHasNoChassis(t *testing.T) {
+	f := newFixture(t)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	c := cfg
+	c.GatewayNode = uuid.New()
+	h, err := network.Load(context.Background(), f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		st, err := h.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.GatewayChassis.Name != "hub-gw" {
+			t.Fatalf("gateway chassis %+v", st.GatewayChassis)
+		}
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 || !strings.Contains(logs.String(), c.GatewayNode.String()) {
+		t.Fatalf("%d warnings:\n%s", n, logs.String())
 	}
 }

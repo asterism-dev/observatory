@@ -187,9 +187,18 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		{"lsp-set-options", "transit-lr", "router-port=lrp-transit"},
 		{m, "lsp-add", "ls-transit", "gw0"},
 		{"lsp-set-addresses", "gw0", gw0MAC + " " + gw0IP},
-		{"lsp-set-options", "gw0", "requested-chassis=hub-gw"},
-		{"lrp-set-gateway-chassis", "lrp-transit", "hub-gw", "1"},
+		{"lsp-set-options", "gw0", "requested-chassis=" + s.GatewayChassis.Name},
+		{"lrp-set-gateway-chassis", "lrp-transit", s.GatewayChassis.Name, "1"},
 		{m, "lr-route-add", "lr-gw", devicePool, gw0IP},
+	}
+	if s.GatewayChassis.Name != "hub-gw" {
+		gcs, err := names("gateway_chassis")
+		if err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if gcs["lrp-transit-hub-gw"] {
+			hub = append(hub, []string{"lrp-del-gateway-chassis", "lrp-transit", "hub-gw"})
+		}
 	}
 	if err := tx(append(hub, transitACLs(s)...)); err != nil {
 		return errors.Join(append(errs, err)...)

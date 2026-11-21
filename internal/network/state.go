@@ -60,6 +60,11 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 		}
 		st.Chassis = append(st.Chassis, proto.GatewayChassis{NodeID: c.NodeID.String(), OrgID: c.OrgID.String(), PublicKey: c.PublicKey, IP: c.IP.String(), Quarantined: c.Quarantined})
 	}
+	if h.cfg.GatewayNode != uuid.Nil && st.GatewayChassis.Name == "hub-gw" {
+		h.gatewayNodeWarned.Do(func() {
+			slog.Warn("gateway node has no chassis yet; the gateway keeps its own chassis until the node enrolls", "node", h.cfg.GatewayNode)
+		})
+	}
 	devices := map[uuid.UUID]map[uuid.UUID][]store.Device{}
 	for _, d := range snap.Devices {
 		st.Devices = append(st.Devices, proto.GatewayDevice{PublicKey: d.PublicKey, IP: d.IP.String(), OrgID: d.OrgID.String()})

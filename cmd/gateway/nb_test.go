@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,12 +67,14 @@ const (
 	netA  = "eeeeeeee-0000-0000-0000-00000000000e"
 )
 
+var hubGW = proto.GatewayChassisRef{Name: "hub-gw", IP: "10.198.0.1"}
+
 func dhcpFind(tag string) string {
 	return "ovn-nbctl --bare --columns=_uuid find dhcp_options external_ids:" + tag
 }
 
 func twoOrgs() (proto.GatewayState, map[string]string) {
-	st := proto.GatewayState{GuestMTU: 1300, Orgs: []proto.GatewayOrg{
+	st := proto.GatewayState{GuestMTU: 1300, GatewayChassis: hubGW, Orgs: []proto.GatewayOrg{
 		{ID: orgA, Slice: "10.64.0.0/20",
 			Ports: []proto.GatewayPort{
 				{Name: "vma-mgmt", MAC: "02:0a:40:00:00:0a", IP: "10.64.0.10", Chassis: nodeA, AllowFrom: []string{"10.192.0.10", "10.192.0.11"}},
@@ -308,5 +311,58 @@ func TestReconcileNBRouterAddressOnlyForOwnOrg(t *testing.T) {
 	}
 	if strings.Join(acls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("transit ACLs:\n%s", strings.Join(acls, "\n"))
+	}
+}
+
+func TestReconcileNBDefaultHubGW(t *testing.T) {
+	st, out := twoOrgs()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-hub-gw\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	hub := f.txWith(t, "--may-exist lr-add lr-gw")
+	if !has(hub, "lsp-set-options gw0 requested-chassis=hub-gw") || !has(hub, "lrp-set-gateway-chassis lrp-transit hub-gw 1") {
+		t.Fatalf("hub-gw not requested: %v", hub)
+	}
+	for _, c := range f.cmds {
+		if strings.Contains(c, "gateway_chassis") || strings.Contains(c, "lrp-del-gateway-chassis") {
+			t.Errorf("self-contained mode ran %s", c)
+		}
+	}
+}
+
+func TestReconcileNBUsesGatewayChassis(t *testing.T) {
+	st, out := twoOrgs()
+	st.GatewayChassis = proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}
+	list := "ovn-nbctl --bare --columns=name list gateway_chassis"
+	out[list] = "lrp-transit-hub-gw\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	hub := f.txWith(t, "--may-exist lr-add lr-gw")
+	for _, want := range []string{
+		"lsp-set-options gw0 requested-chassis=" + nodeA,
+		"lrp-set-gateway-chassis lrp-transit " + nodeA + " 1",
+		"lrp-del-gateway-chassis lrp-transit hub-gw",
+	} {
+		if !has(hub, want) {
+			t.Errorf("hub transaction missing %q", want)
+		}
+	}
+	if slices.IndexFunc(hub, func(c string) bool {
+		return strings.Contains(c, "hub-gw") && !strings.HasPrefix(c, "lrp-del-gateway-chassis")
+	}) >= 0 {
+		t.Errorf("still requests hub-gw: %v", hub)
+	}
+
+	out[list] = "lrp-transit-" + nodeA + "\n"
+	f = &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	if hub := f.txWith(t, "--may-exist lr-add lr-gw"); has(hub, "lrp-del-gateway-chassis lrp-transit hub-gw") {
+		t.Errorf("deletes an absent hub-gw gateway chassis: %v", hub)
 	}
 }
