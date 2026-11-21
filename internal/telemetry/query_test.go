@@ -373,7 +373,7 @@ func TestVMDrops(t *testing.T) {
 	if got["logs"] != 42 || got["body"] != 2 || len(got) != 2 {
 		t.Fatalf("got %v", got)
 	}
-	if q := form["query"][0]; !strings.Contains(q, `{vm="`+testVM.String()+`",observatory_vm="",observatory_node!=""}[3600s]`) || form["extra_label"][0] != "observatory_org="+testOrg.String() {
+	if q := form["query"][0]; !strings.Contains(q, `increase_pure(observatory_vm_telemetry_dropped_total{vm="`+testVM.String()+`",observatory_vm="",observatory_node!=""}[3600s])`) || form["extra_label"][0] != "observatory_org="+testOrg.String() {
 		t.Fatalf("form %v", form)
 	}
 }

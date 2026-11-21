@@ -62,11 +62,16 @@ type logEmitter func(vmID uuid.UUID, stream string, records []*logspb.LogRecord)
 // tailConsole emits the lines the guest console gets from offset on.
 func tailConsole(ctx context.Context, path string, offset int64, vmID uuid.UUID, emit logEmitter) {
 	err := tailLines(ctx, path, offset, func(lines []string) {
-		recs := make([]*logspb.LogRecord, len(lines))
-		for i, line := range lines {
-			recs[i] = vmtelemetry.LineRecord(strings.TrimSuffix(line, "\r"))
+		var recs []*logspb.LogRecord
+		for _, line := range lines {
+			// VictoriaLogs stores a record without a message as a placeholder text.
+			if strings.TrimSpace(line) != "" {
+				recs = append(recs, vmtelemetry.LineRecord(strings.TrimSuffix(line, "\r")))
+			}
 		}
-		emit(vmID, "console", recs)
+		if len(recs) > 0 {
+			emit(vmID, "console", recs)
+		}
 	})
 	if err != nil {
 		slog.Warn("console log", "vm", vmID, "err", err)

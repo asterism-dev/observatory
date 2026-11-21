@@ -75,11 +75,16 @@ func stringValue(s string) *commonpb.AnyValue {
 func followServiceLog(ctx context.Context, sink *Sink, systemd bool, startInImage func(*exec.Cmd) error, cmdLogStart int64) {
 	emit := func(lines []string) {
 		now := time.Now()
-		recs := make([]*logspb.LogRecord, len(lines))
-		for i, l := range lines {
-			recs[i] = logRecord(now, l, infoLevel)
+		var recs []*logspb.LogRecord
+		for _, l := range lines {
+			// VictoriaLogs stores a record without a message as a placeholder text.
+			if strings.TrimSpace(l) != "" {
+				recs = append(recs, logRecord(now, l, infoLevel))
+			}
 		}
-		sink.Logs("service", recs)
+		if len(recs) > 0 {
+			sink.Logs("service", recs)
+		}
 	}
 	if !systemd {
 		followFile(ctx, serviceLog, cmdLogStart, time.Second, emit)
@@ -274,6 +279,9 @@ func journalRecord(line []byte) (rec *logspb.LogRecord, cursor string, ok bool) 
 	var raw []byte
 	if msg == "" && json.Unmarshal(e["MESSAGE"], &raw) == nil {
 		msg = string(raw)
+	}
+	if strings.TrimSpace(msg) == "" {
+		return nil, cursor, false
 	}
 	t := time.Now()
 	if us, err := strconv.ParseInt(field("__REALTIME_TIMESTAMP"), 10, 64); err == nil {
