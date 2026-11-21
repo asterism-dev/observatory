@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/coder/websocket"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -35,7 +33,7 @@ type fakeHub struct {
 	regs         []proto.Register
 	auth         []string
 	conn         *json.Encoder
-	sess         *yamux.Session // guarded by connMu
+	ws           *websocket.Conn // guarded by connMu
 	connMu       sync.Mutex
 	seq          uint64
 	nextID       int
@@ -46,6 +44,10 @@ type fakeHub struct {
 	images       []proto.ImageStatus
 	updates      []proto.UpdateReport
 	replies      []proto.Message // type "processes"
+	paths        []string        // connect request paths
+	unhealthy    bool
+	emergUpdate  bool
+	emergencies  []proto.EmergencyReport
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -55,8 +57,34 @@ func newFakeHub(t *testing.T) *fakeHub {
 	return h
 }
 
-func (h *fakeHub) url() string {
-	return "ws" + strings.TrimPrefix(h.srv.URL, "http") + "/api/nodes/connect"
+// url is both the hub's public base URL and, in tests, the agent's controlBase.
+func (h *fakeHub) url() string { return h.srv.URL }
+
+func (h *fakeHub) serveHealth(w http.ResponseWriter, req *http.Request) {
+	h.mu.Lock()
+	unhealthy := h.unhealthy
+	h.mu.Unlock()
+	switch {
+	case req.Header.Get("Authorization") != "Bearer tok":
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	case unhealthy:
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (h *fakeHub) serveEmergency(w http.ResponseWriter, req *http.Request) {
+	var body proto.EmergencyReport
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil || req.Header.Get("Authorization") != "Bearer tok" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.mu.Lock()
+	h.emergencies = append(h.emergencies, body)
+	reply := proto.EmergencyReply{Update: h.emergUpdate}
+	h.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(reply)
 }
 
 func (h *fakeHub) serveUnderlay(w http.ResponseWriter, req *http.Request) {
@@ -73,11 +101,19 @@ func (h *fakeHub) serveUnderlay(w http.ResponseWriter, req *http.Request) {
 }
 
 func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path == "/api/nodes/underlay" {
+	switch req.URL.Path {
+	case "/api/nodes/underlay":
 		h.serveUnderlay(w, req)
+		return
+	case "/api/nodes/health":
+		h.serveHealth(w, req)
+		return
+	case "/api/nodes/emergency":
+		h.serveEmergency(w, req)
 		return
 	}
 	h.mu.Lock()
+	h.paths = append(h.paths, req.URL.Path)
 	h.auth = append(h.auth, req.Header.Get("Authorization"))
 	h.events = append(h.events, "connect")
 	h.mu.Unlock()
@@ -89,19 +125,11 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		return
 	}
+	defer c.CloseNow()
+	c.SetReadLimit(proto.MaxMessageBytes)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Server(websocket.NetConn(ctx, c, websocket.MessageBinary), cfg)
-	if err != nil {
-		return
-	}
-	defer sess.Close()
-	ctrl, err := sess.Accept()
-	if err != nil {
-		return
-	}
+	ctrl := websocket.NetConn(ctx, c, websocket.MessageBinary)
 	dec := json.NewDecoder(ctrl)
 	var m proto.Message
 	if err := dec.Decode(&m); err != nil || m.Type != "register" || m.Register == nil {
@@ -123,7 +151,7 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 	}
 	h.mu.Unlock()
 	h.connMu.Lock()
-	h.conn, h.sess = enc, sess
+	h.conn, h.ws = enc, c
 	h.connMu.Unlock()
 	h.push()
 	for {
@@ -279,7 +307,7 @@ func (h *fakeHub) gotImages() []proto.ImageStatus {
 func (h *fakeHub) drop() {
 	h.connMu.Lock()
 	defer h.connMu.Unlock()
-	h.sess.Close()
+	h.ws.CloseNow()
 }
 
 func (h *fakeHub) sendUpdate() { h.send(proto.Message{Type: "update"}) }
@@ -288,4 +316,28 @@ func (h *fakeHub) gotUpdates() []proto.UpdateReport {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.updates)
+}
+
+func (h *fakeHub) connectPaths() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.paths)
+}
+
+func (h *fakeHub) setHealthy(ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.unhealthy = !ok
+}
+
+func (h *fakeHub) setEmergencyUpdate(update bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.emergUpdate = update
+}
+
+func (h *fakeHub) gotEmergencies() []proto.EmergencyReport {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.emergencies)
 }

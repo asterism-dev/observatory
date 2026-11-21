@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
@@ -49,6 +47,7 @@ var (
 )
 
 type Agent struct {
+	// HubURL is the hub's public base URL for HTTPS calls; control traffic goes over the underlay instead.
 	HubURL, Credential, NodeID, VMsDir string
 	CPUs, MemoryMB                     int
 	Provider                           Provider
@@ -70,6 +69,10 @@ type Agent struct {
 	unsentUpdate *proto.UpdateReport // guarded by mu
 
 	diskRefresh time.Duration // zero means defaultDiskRefresh
+	controlBase string        // empty means the gateway's control proxy on the underlay
+
+	healthErr       atomic.Value // string: the last failed health check, sent as the emergency reason
+	emergencyUpdErr string       // guarded by mu; a failed emergency update, sent with the next poll
 
 	chassisMu       sync.Mutex
 	chassisPending  *chassisconf.Config // newest config not yet applied; older ones are superseded
@@ -160,6 +163,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		go a.renewUnderlay(ctx)
 	}
+	go (&healthMonitor{check: a.checkHealth, emergency: a.emergencyPoll}).run(ctx)
 	for {
 		if err := a.connect(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("hub connection failed", "err", err)
@@ -191,23 +195,16 @@ func (a *Agent) restoreAll(ctx context.Context) error {
 }
 
 func (a *Agent) connect(ctx context.Context) error {
-	c, _, err := websocket.Dial(ctx, a.HubURL, &websocket.DialOptions{
+	u := a.controlURL("/api/nodes/connect")
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(u, "http"), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + a.Credential}},
 	})
 	if err != nil {
 		return err
 	}
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Client(websocket.NetConn(ctx, c, websocket.MessageBinary), cfg)
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
-	ctrl, err := sess.Open()
-	if err != nil {
-		return err
-	}
+	defer c.CloseNow()
+	c.SetReadLimit(proto.MaxMessageBytes)
+	ctrl := websocket.NetConn(ctx, c, websocket.MessageBinary)
 
 	var encMu sync.Mutex
 	enc := proto.NewEncoder(ctrl)
@@ -229,7 +226,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("connected to hub", "hub", a.HubURL)
+	slog.Info("connected to hub", "hub", u)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
 	defer func() {

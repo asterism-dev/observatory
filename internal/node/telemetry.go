@@ -38,12 +38,12 @@ type Telemetry struct {
 	shutdown func(context.Context) error
 }
 
-func StartTelemetry(ctx context.Context, connectURL, credential, version string) (*Telemetry, error) {
-	return startTelemetry(ctx, connectURL, credential, version, nil)
+func StartTelemetry(ctx context.Context, hubURL, credential, version string) (*Telemetry, error) {
+	return startTelemetry(ctx, hubURL, credential, version, nil)
 }
 
-func startTelemetry(ctx context.Context, connectURL, credential, version string, client *http.Client) (*Telemetry, error) {
-	base := hubBase(connectURL) + "/otlp"
+func startTelemetry(ctx context.Context, hubURL, credential, version string, client *http.Client) (*Telemetry, error) {
+	base := hubURL + "/otlp"
 	headers := map[string]string{"Authorization": "Bearer " + credential}
 	res := resource.NewSchemaless(semconv.ServiceName("observatory-node"), semconv.ServiceVersion(version))
 
@@ -111,9 +111,9 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 
 func (t *Telemetry) Shutdown(ctx context.Context) error { return t.shutdown(ctx) }
 
-// NewVMTelemetry forwards VM telemetry to the hub of connectURL and counts its drops on tel's meter; tel may be nil.
-func NewVMTelemetry(connectURL, credential string, tel *Telemetry) (*vmtelemetry.Sink, *vmtelemetry.Forwarder, error) {
-	fw := vmtelemetry.NewForwarder(hubBase(connectURL), credential, &http.Client{})
+// NewVMTelemetry forwards VM telemetry to the hub at hubURL and counts its drops on tel's meter; tel may be nil.
+func NewVMTelemetry(hubURL, credential string, tel *Telemetry) (*vmtelemetry.Sink, *vmtelemetry.Forwarder, error) {
+	fw := vmtelemetry.NewForwarder(hubURL, credential, &http.Client{})
 	if tel == nil {
 		return vmtelemetry.NewSink(fw, nil), fw, nil
 	}

@@ -81,11 +81,11 @@ func attrMap(kvs []*commonpb.KeyValue) map[string]string {
 	return m
 }
 
-func startTestTelemetry(t *testing.T, connectURL string, client *http.Client) *Telemetry {
+func startTestTelemetry(t *testing.T, hubURL string, client *http.Client) *Telemetry {
 	t.Helper()
 	prev := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(prev) })
-	tel, err := startTelemetry(context.Background(), connectURL, "cred", "1.2.3", client)
+	tel, err := startTelemetry(context.Background(), hubURL, "cred", "1.2.3", client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestTelemetrySendsLogs(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Info("vm started", "vm", "vm01")
 	shutdownTelemetry(t, tel)
@@ -134,7 +134,7 @@ func TestTelemetryKeepsExplicitSource(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Info("boot", "source", "firecracker")
 	shutdownTelemetry(t, tel)
@@ -158,7 +158,7 @@ func TestTelemetryLoggerSourceAndGroups(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Default().With("source", "firecracker").Info("with")
 	slog.Default().WithGroup("g").Info("grouped", "k", "v")
@@ -191,7 +191,7 @@ func TestTelemetryLegacyLogBridged(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	log.Printf("x %d", 1)
 	shutdownTelemetry(t, tel)
@@ -239,9 +239,9 @@ func (s *stubTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestTelemetryEndpointFromConnectURL(t *testing.T) {
+func TestTelemetryEndpointFromHubURL(t *testing.T) {
 	stub := &stubTransport{}
-	tel := startTestTelemetry(t, "wss://hub.example/api/nodes/connect", &http.Client{Transport: stub})
+	tel := startTestTelemetry(t, "https://hub.example", &http.Client{Transport: stub})
 
 	slog.Info("hello")
 	shutdownTelemetry(t, tel)
@@ -262,7 +262,7 @@ func TestTelemetryRejectedExportNoFeedbackLoop(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Info("once")
 	time.Sleep(4500 * time.Millisecond)
@@ -299,7 +299,7 @@ func TestTelemetryKeepsLogsWhileHubDown(t *testing.T) {
 		c.ServeHTTP(w, r)
 	}))
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Warn("a")
 	slog.Warn("b")
@@ -392,7 +392,7 @@ func TestTelemetryRejectedBatchDoesNotBlockLaterLogs(t *testing.T) {
 	}}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Info("big")
 	for deadline := time.Now().Add(5 * time.Second); posts.Load() == 0; time.Sleep(50 * time.Millisecond) {
@@ -427,7 +427,7 @@ func TestTelemetryShutdownSendsPendingLogs(t *testing.T) {
 		c.ServeHTTP(w, r)
 	}))
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Warn("held")
 	for deadline := time.Now().Add(5 * time.Second); refused.Load() == 0; time.Sleep(50 * time.Millisecond) {
@@ -462,7 +462,7 @@ func TestTelemetryDurationsAsStrings(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Default().With("wait", 5*time.Second).Info("built", "took", 79*time.Second)
 	shutdownTelemetry(t, tel)
@@ -481,7 +481,7 @@ func TestTelemetryDurationInGroupAsString(t *testing.T) {
 	c := &logCollector{}
 	hub := httptest.NewServer(c)
 	defer hub.Close()
-	tel := startTestTelemetry(t, hub.URL+"/api/nodes/connect", nil)
+	tel := startTestTelemetry(t, hub.URL, nil)
 
 	slog.Info("pulled", slog.Group("pull", "took", 2*time.Second))
 	shutdownTelemetry(t, tel)

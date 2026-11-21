@@ -216,6 +216,16 @@ type ImageStatus struct {
 	RetryAt   *time.Time  `json:"retryAt,omitempty"`
 }
 
+type EmergencyReport struct {
+	Version     string `json:"version"`
+	Reason      string `json:"reason"`
+	UpdateError string `json:"updateError,omitempty"` // the previous poll's update failed
+}
+
+type EmergencyReply struct {
+	Update bool `json:"update"`
+}
+
 type UnderlayRequest struct {
 	ChassisKey string `json:"chassisKey"`
 	ChassisCSR string `json:"chassisCSR"`
@@ -241,6 +251,9 @@ type Machine struct {
 }
 
 const ErrVMNotRunning = "vm not running"
+
+// MaxMessageBytes is the read limit for one control WebSocket message on both ends; the library default of 32 KiB is too small for full desired lists.
+const MaxMessageBytes = 1 << 20
 
 const (
 	MaxGuestProcesses = 500

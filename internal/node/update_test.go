@@ -45,18 +45,6 @@ func (u *fakeUpdater) gotStarts() []string {
 	return append([]string(nil), u.starts...)
 }
 
-func TestHubBase(t *testing.T) {
-	for in, want := range map[string]string{
-		"ws://10.0.0.1:8080/api/nodes/connect":    "http://10.0.0.1:8080",
-		"wss://hub.example.com/api/nodes/connect": "https://hub.example.com",
-		"wss://h/obs/api/nodes/connect":           "https://h/obs",
-	} {
-		if got := hubBase(in); got != want {
-			t.Errorf("hubBase(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func startUpdateEnv(t *testing.T, u *fakeUpdater) *testEnv {
 	t.Helper()
 	return startEnv(t, func(a *Agent, _ *fakeProvider) {
@@ -80,7 +68,7 @@ func TestUpdateRunsUpdater(t *testing.T) {
 	env := startUpdateEnv(t, u)
 	env.hub.sendUpdate()
 	eventually(t, "started", func() bool { return len(u.gotStarts()) == 1 })
-	if got, want := u.gotStarts()[0], hubBase(env.hub.url()); got != want {
+	if got, want := u.gotStarts()[0], env.hub.url(); got != want {
 		t.Fatalf("hub base = %q, want %q", got, want)
 	}
 }
@@ -191,7 +179,7 @@ func TestRestoreAfterShutdownKeepsPower(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := newFakeProvider()
-	a := &Agent{HubURL: env.hub.url(), Credential: "tok", NodeID: "n1", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p, ShutdownMarker: marker}
+	a := &Agent{HubURL: env.hub.url(), controlBase: env.hub.url(), Credential: "tok", NodeID: "n1", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p, ShutdownMarker: marker}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()

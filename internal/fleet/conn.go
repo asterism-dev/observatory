@@ -106,6 +106,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.CloseNow()
+	ws.SetReadLimit(proto.MaxMessageBytes)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ctrl := websocket.NetConn(ctx, ws, websocket.MessageBinary)

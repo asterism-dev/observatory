@@ -20,7 +20,7 @@ type InitOptions struct {
 
 // InitConfig creates node.json or updates only the given fields, keeping every other key (paths, provider sections) as written.
 func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
-	connect, err := connectURL(o.HubURL)
+	hub, err := parseHubURL(o.HubURL)
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func InitConfig(o InitOptions, vmsDir, imagesDir string) error {
 	for _, set := range []func() error{
 		func() error { return setJSON(doc, "nodeId", o.NodeID) },
 		func() error { return setJSON(doc, "provider", "firecracker") },
-		func() error { return setNested(doc, "hub", map[string]any{"url": connect, "credential": o.Credential}) },
+		func() error { return setNested(doc, "hub", map[string]any{"url": hub, "credential": o.Credential}) },
 		func() error {
 			if o.MemoryMB == 0 {
 				return nil
@@ -79,17 +79,13 @@ func CheckEnrollMemory(path string, memoryMB int) error {
 	return err
 }
 
-// connectURL turns the hub's http(s)://host:port[/path] into the node's websocket URL.
-func connectURL(hub string) (string, error) {
+// parseHubURL checks the hub's public base URL http(s)://host[:port][/path] and drops a trailing slash.
+func parseHubURL(hub string) (string, error) {
 	u, err := url.Parse(hub)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", fmt.Errorf("hub %q: want http(s)://host[:port][/path]", hub)
 	}
-	scheme := "ws"
-	if u.Scheme == "https" {
-		scheme = "wss"
-	}
-	return scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/") + "/api/nodes/connect", nil
+	return u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/"), nil
 }
 
 func setJSON(doc map[string]json.RawMessage, key string, v any) error {

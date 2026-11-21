@@ -28,7 +28,7 @@ func (a *Agent) refreshUnderlay(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hubBase(a.HubURL)+"/api/nodes/underlay", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.HubURL+"/api/nodes/underlay", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

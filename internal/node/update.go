@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -14,12 +13,6 @@ import (
 type Updater interface {
 	Start(ctx context.Context, hubBase string) error
 	Wait(ctx context.Context) error
-}
-
-func hubBase(connectURL string) string {
-	scheme, rest, _ := strings.Cut(connectURL, "://")
-	base, _, _ := strings.Cut(rest, "/api/nodes/connect")
-	return strings.Replace(scheme, "ws", "http", 1) + "://" + base
 }
 
 func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
@@ -38,7 +31,7 @@ func (a *Agent) runUpdate(ctx context.Context, send func(proto.Message) error) {
 	}
 	go func() {
 		defer a.updating.Store(false)
-		err := a.Updater.Start(ctx, hubBase(a.HubURL))
+		err := a.Updater.Start(ctx, a.HubURL)
 		if err == nil {
 			err = a.Updater.Wait(ctx)
 		}

@@ -331,7 +331,7 @@ func TestShutdownCancelsBackoff(t *testing.T) {
 func TestStopAllDoesNotRestart(t *testing.T) {
 	fastRestarts(t, 10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond)
 	p := newFakeProvider()
-	a := &Agent{HubURL: "ws://127.0.0.1:1", NodeID: "n1", VMsDir: t.TempDir(), Provider: p}
+	a := &Agent{HubURL: "http://127.0.0.1:1", controlBase: "http://127.0.0.1:1", NodeID: "n1", VMsDir: t.TempDir(), Provider: p}
 	SaveVM(a.VMsDir, VMFile{Spec: dv("a", "a", "", 1).Spec, MAC: "02:00:00:00:00:01", Power: proto.PowerRunning, Generation: 1})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

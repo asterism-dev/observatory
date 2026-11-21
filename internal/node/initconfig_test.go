@@ -33,7 +33,7 @@ func TestInitConfigCreates(t *testing.T) {
 	m := readJSON(t, path)
 	hub := m["hub"].(map[string]any)
 	paths := m["paths"].(map[string]any)
-	if m["nodeId"] != "n1" || m["provider"] != "firecracker" || hub["url"] != "ws://h:8080/api/nodes/connect" || hub["credential"] != "secret-token" ||
+	if m["nodeId"] != "n1" || m["provider"] != "firecracker" || hub["url"] != "http://h:8080" || hub["credential"] != "secret-token" ||
 		paths["vms"] != "/var/lib/observatory-node/vms" || paths["images"] != "/var/lib/observatory-node/images" ||
 		m["capacity"].(map[string]any)["memoryMB"] != float64(1500) {
 		t.Fatalf("config = %v", m)
@@ -56,7 +56,7 @@ func TestInitConfigUpdatesOnlyGivenFields(t *testing.T) {
 	}
 	m := readJSON(t, path)
 	hub := m["hub"].(map[string]any)
-	if m["nodeId"] != "n1" || hub["url"] != "wss://hub.example:8443/api/nodes/connect" || hub["credential"] != "new" || hub["extra"] != float64(1) {
+	if m["nodeId"] != "n1" || hub["url"] != "https://hub.example:8443" || hub["credential"] != "new" || hub["extra"] != float64(1) {
 		t.Fatalf("hub = %v", m)
 	}
 	if p := m["paths"].(map[string]any); p["vms"] != "/data/vms" || p["images"] != "/data/img" {
@@ -82,26 +82,15 @@ func TestInitConfigRejectsBadHub(t *testing.T) {
 	}
 }
 
-func TestConnectURLDefaultPorts(t *testing.T) {
+func TestParseHubURLNormalizes(t *testing.T) {
 	for hub, want := range map[string]string{
-		"https://hub.test":  "wss://hub.test/api/nodes/connect",
-		"https://hub.test/": "wss://hub.test/api/nodes/connect",
-		"http://h:8090":     "ws://h:8090/api/nodes/connect",
-		"http://10.0.0.1":   "ws://10.0.0.1/api/nodes/connect",
-		"https://h/obs":     "wss://h/obs/api/nodes/connect",
-		"https://h/a/obs/":  "wss://h/a/obs/api/nodes/connect",
+		"https://hub.test":  "https://hub.test",
+		"https://hub.test/": "https://hub.test",
+		"http://h:8090":     "http://h:8090",
+		"https://h/a/obs/":  "https://h/a/obs",
 	} {
-		if got, err := connectURL(hub); err != nil || got != want {
+		if got, err := parseHubURL(hub); err != nil || got != want {
 			t.Errorf("%s → %q, %v; want %q", hub, got, err, want)
-		}
-	}
-}
-
-func TestConnectURLRoundTripsHubBase(t *testing.T) {
-	for _, hub := range []string{"https://hub.test", "http://h:8090", "https://h/obs", "https://h/a/obs"} {
-		c, err := connectURL(hub)
-		if err != nil || hubBase(c) != hub {
-			t.Errorf("%s → %q → %q, %v", hub, c, hubBase(c), err)
 		}
 	}
 }
@@ -134,7 +123,7 @@ func TestInitConfigKeepsPaths(t *testing.T) {
 	}
 	m = readJSON(t, path)
 	hub := m["hub"].(map[string]any)
-	if m["nodeId"] != "n2" || hub["url"] != "wss://h2:2/api/nodes/connect" || hub["credential"] != "c2" {
+	if m["nodeId"] != "n2" || hub["url"] != "https://h2:2" || hub["credential"] != "c2" {
 		t.Fatalf("hub not replaced: %v", m)
 	}
 	if m["paths"].(map[string]any)["vms"] != "/a/vms" || m["firecracker"].(map[string]any)["kernel"] != "/k" {
