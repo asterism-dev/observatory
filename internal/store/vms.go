@@ -105,7 +105,7 @@ func (u Limits) plus(a Limits) Limits {
 		SnapshotCount: add(u.SnapshotCount, a.SnapshotCount)}
 }
 
-// checkLimits checks that adding add stays within the org and owner limits; callers check the owner against the policy.
+// checkLimits checks add against the org and owner limits; ponytail: callers check the owner against the policy without a lock, so a create can race a member removal or team delete (a cross-service lock would close it).
 func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID *uuid.UUID, add Limits) error {
 	ownerScope, ownerCol, owner := "", "team_id", teamID
 	switch {

@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/registry"
@@ -42,6 +43,7 @@ type Scheduler struct {
 	builderErr error
 	notify     func(org uuid.UUID)
 	online     func(node uuid.UUID) bool
+	ownerKnown func(org uuid.UUID, scope string) bool
 	kick       chan struct{}
 
 	Size Size
@@ -51,10 +53,10 @@ type Scheduler struct {
 	heldAt   time.Time
 }
 
-// New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it.
-func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool) *Scheduler {
+// New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it. ownerKnown checks the builder VM's owner scope against the policy.
+func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool, ownerKnown func(org uuid.UUID, scope string) bool) *Scheduler {
 	return &Scheduler{store: s, hubURL: strings.TrimRight(hubURL, "/"), builder: builder, builderErr: builderErr,
-		notify: notify, online: online, kick: make(chan struct{}, 1), Size: DefaultSize, Now: time.Now}
+		notify: notify, online: online, ownerKnown: ownerKnown, kick: make(chan struct{}, 1), Size: DefaultSize, Now: time.Now}
 }
 
 // BuilderTag is the builder image tag released with this hub.
@@ -178,6 +180,15 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 		v.UserID = img.OwnerID
 	default:
 		v.UserID = &b.StartedBy
+	}
+	owner := authz.UserSubject(b.StartedBy)
+	if v.TeamID != nil {
+		owner = authz.TeamSubject(*v.TeamID)
+	} else if v.UserID != nil {
+		owner = authz.UserSubject(*v.UserID)
+	}
+	if !s.ownerKnown(img.OrgID, owner) {
+		return s.fail(ctx, b.ID, "the builder VM could not be created: its owner "+owner+" is no longer in the org")
 	}
 	secret, err := s.store.BuildSecret(ctx, img.OrgID, b.ID)
 	if err != nil {

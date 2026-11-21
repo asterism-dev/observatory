@@ -250,6 +250,22 @@ func (e *Enforcer) HasTeam(org, team uuid.UUID) bool {
 	return ok
 }
 
+// HasSubject reports whether sub, user:<id> or team:<id>, is a member or team of org.
+func (e *Enforcer) HasSubject(org uuid.UUID, sub string) bool {
+	kind, raw, _ := strings.Cut(sub, ":")
+	id, err := uuid.Parse(raw)
+	switch {
+	case err != nil:
+		return false
+	case kind == "team":
+		return e.HasTeam(org, id)
+	case kind == "user":
+		_, ok := e.Role(org, id)
+		return ok
+	}
+	return false
+}
+
 func (e *Enforcer) Allowed(sub string, org uuid.UUID, obj, act string) bool {
 	ok, err := e.ce.Enforce(sub, org.String(), obj, act)
 	if err != nil {

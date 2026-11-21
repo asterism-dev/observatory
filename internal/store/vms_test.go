@@ -353,3 +353,18 @@ func TestLockHubOrgSerializesVMCreate(t *testing.T) {
 		t.Fatalf("want exactly one success, got %d (%v)", ok, errs)
 	}
 }
+
+func TestLockHubOrgCreatesRowForUnknownOrg(t *testing.T) {
+	ctx := context.Background()
+	e := newVMEnv(t)
+	org := uuid.New()
+	for range 2 {
+		if err := e.s.LockHubOrg(ctx, org); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var n int
+	if err := e.pool.QueryRow(ctx, "SELECT count(*) FROM hub_orgs WHERE org_id = $1 AND mgmt_slice IS NULL", org).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("hub_orgs rows: %d %v", n, err)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	// The hub image has no zoneinfo; TZ picks the zone OBSERVATORY_REGISTRY_GC_TIME is in.
 	_ "time/tzdata"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/api"
@@ -172,7 +173,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		}
 		client := registry.Client{URL: cfg.RegistryURL, Issuer: iss}
 		tags = api.NewTagSync(s, client)
-		sched = newScheduler(ctx, s, f, cfg)
+		sched = newScheduler(ctx, s, f, z, cfg)
 		if cfg.RegistryConfig != "" {
 			gc = registry.NewGC([]string{"registry", "garbage-collect", cfg.RegistryConfig}, cfg.RegistryGCTime, func(ctx context.Context) (int, error) {
 				active, err := s.ActiveBuilds(ctx)
@@ -252,7 +253,7 @@ func relayEvents(ctx context.Context, pool *pgxpool.Pool, url, token string) {
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.
-func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg config) *builds.Scheduler {
+func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, z *authz.Service, cfg config) *builds.Scheduler {
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	builder, err := builds.ResolveBuilder(rctx, cfg.BuilderImage)
@@ -261,7 +262,7 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg confi
 	} else {
 		slog.Info("builder image", "ref", builder)
 	}
-	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online)
+	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, func(org uuid.UUID, scope string) bool { return z.Enforcer().HasSubject(org, scope) })
 	sched.Size = cfg.BuilderSize
 	return sched
 }

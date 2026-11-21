@@ -330,7 +330,6 @@ func (h *api) createVM(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(w, r, m.OrgID, obj, "compute.instances.create") || !h.authorize(w, r, m.OrgID, authz.NodeObject(v.NodeID), "compute.nodes.use") {
 		return
 	}
-	// ponytail: owner checked against the policy without a lock, so a create can race a member removal or team delete; close it with a cross-service lock if orphans show up.
 	if v.TeamID != nil && !h.z.Enforcer().HasTeam(m.OrgID, *v.TeamID) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

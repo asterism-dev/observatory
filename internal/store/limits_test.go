@@ -3,7 +3,6 @@ package store_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 
@@ -27,18 +26,7 @@ func policyKnown(t *testing.T, s *store.Store, org uuid.UUID) func(string) bool 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func(scope string) bool {
-		kind, raw, _ := strings.Cut(scope, ":")
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			return false
-		}
-		if kind == "team" {
-			return e.HasTeam(org, id)
-		}
-		_, ok := e.Role(org, id)
-		return ok
-	}
+	return func(scope string) bool { return e.HasSubject(org, scope) }
 }
 
 func TestLimitsStack(t *testing.T) {

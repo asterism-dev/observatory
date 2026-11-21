@@ -3,7 +3,6 @@ package api
 import (
 	"math"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -98,26 +97,9 @@ func (h *api) setScopeLimits(w http.ResponseWriter, r *http.Request) {
 	h.commitLimits(w, r, m.OrgID, scope, l)
 }
 
-// scopeKnown reports whether a checked team:<id> or user:<id> scope names a team or member of org in the policy.
-func (h *api) scopeKnown(org uuid.UUID) func(string) bool {
-	e := h.z.Enforcer()
-	return func(scope string) bool {
-		kind, raw, _ := strings.Cut(scope, ":")
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			return false
-		}
-		if kind == "team" {
-			return e.HasTeam(org, id)
-		}
-		_, ok := e.Role(org, id)
-		return ok
-	}
-}
-
 func (h *api) commitLimits(w http.ResponseWriter, r *http.Request, org uuid.UUID, scope string, l store.Limits) {
 	if !h.commit(w, r, func(tx *store.Store) error {
-		if err := tx.SetLimits(r.Context(), org, scope, l, h.scopeKnown(org)); err != nil {
+		if err := tx.SetLimits(r.Context(), org, scope, l, func(scope string) bool { return h.z.Enforcer().HasSubject(org, scope) }); err != nil {
 			return err
 		}
 		e := auditEntry(r, &org, store.ActionLimitSet, authz.ObjLimits+"/"+scope, store.ResultAllowed)

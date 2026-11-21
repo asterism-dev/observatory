@@ -755,3 +755,23 @@ func TestForkKeepsImage(t *testing.T) {
 		t.Fatalf("fork %+v stored %+v", fork, v)
 	}
 }
+
+func TestCreateForTeamNotInPolicy404(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	var team uuid.UUID
+	if err := e.pool.QueryRow(context.Background(), `INSERT INTO teams (org_id, name) VALUES ($1, 't') RETURNING id`, org).Scan(&team); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.send("POST", vmsPath(org), tok, vmBody("vm1", teamOwner(team), node)); rec.Code != 404 {
+		t.Fatalf("vm for unknown team: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.send("POST", disksPath(org), tok, diskBody("d1", teamOwner(team), 1)); rec.Code != 404 {
+		t.Fatalf("disk for unknown team: %d %s", rec.Code, rec.Body.String())
+	}
+	e.reload()
+	e.createVM(tok, org, vmBody("vm1", teamOwner(team), node))
+	e.createDisk(tok, org, diskBody("d1", teamOwner(team), 1))
+}

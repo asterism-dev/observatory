@@ -42,7 +42,8 @@ func (e *env) withBuildLogs(logs *telemetry.LogWriter) *buildEnv {
 	m := e.withManifests()
 	m.manifests = map[string]registry.Manifest{}
 	be := &buildEnv{env: e, manifests: m}
-	sched := builds.New(e.store, "http://hub.internal:8090/", builderRef, nil, e.api.fleet.NotifyOrg, func(uuid.UUID) bool { return true })
+	sched := builds.New(e.store, "http://hub.internal:8090/", builderRef, nil, e.api.fleet.NotifyOrg, func(uuid.UUID) bool { return true },
+		func(org uuid.UUID, scope string) bool { return e.z.Enforcer().HasSubject(org, scope) })
 	e.api.builds = sched
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {
@@ -384,6 +385,26 @@ func TestBuildFailsNamingTheLimit(t *testing.T) {
 	e.tick()
 	if b := e.build(id); b.State != store.BuildFailed || !strings.Contains(b.Error, "the org's disk limit of 30 GB would be exceeded (40 GB)") {
 		t.Fatalf("build: %+v", b)
+	}
+}
+
+func TestBuildFailsWhenOwnerLeftPolicy(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.node(org)
+	id := e.startBuild(bobTok, org, e.recipeImage(bobTok, org, "tools", ""))
+	e.exec(`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org, bob.ID)
+	e.reload()
+	e.tick()
+	if b := e.build(id); b.State != store.BuildFailed || b.VMID != nil || !strings.Contains(b.Error, "user:"+bob.ID.String()) {
+		t.Fatalf("build: %+v", b)
+	}
+	var n int
+	if err := e.pool.QueryRow(context.Background(), "SELECT count(*) FROM vms WHERE org_id = $1", org).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("builder VMs: %d %v", n, err)
 	}
 }
 
