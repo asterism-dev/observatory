@@ -37,7 +37,7 @@ func cmdServe(c *cli, args []string) error {
 	}
 	switch args[0] {
 	case "hub":
-		ln, err := net.Listen("tcp", hubListen(c.getenv))
+		ln, err := net.Listen("tcp", hubListen(c.getenv, "hub"))
 		if err != nil {
 			return err
 		}
@@ -75,7 +75,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		}
 		return getenv(k)
 	}
-	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
+	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
 			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, Services: services}, ln)
@@ -83,7 +83,11 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	}, []svcrun.Service{hub})
 }
 
-func hubListen(getenv func(string) string) string {
+func hubListen(getenv func(string) string, svc string) string {
+	if svc == "all" {
+		// Without its own edge in front, a single-process install must not expose the hub API.
+		return envOr(getenv, "OBSERVATORY_HUB_LISTEN", "127.0.0.1:8091")
+	}
 	return envOr(getenv, "OBSERVATORY_HUB_LISTEN", ":8091")
 }
 

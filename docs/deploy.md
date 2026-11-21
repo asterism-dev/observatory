@@ -60,7 +60,8 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
   connection's address. Changing it needs both services restarted.
 
 The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
-`OBSERVATORY_HUB_LISTEN` (default `:8091`, keep it off public networks) in one process, with an edge token generated
+`OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
+when other containers must call the hub, and keep that port off public networks) in one process, with an edge token generated
 per start.
 
 ## Serving modes

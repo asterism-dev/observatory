@@ -47,6 +47,19 @@ func TestServeRejectsOldListenVariable(t *testing.T) {
 	}
 }
 
+func TestHubListenDefaults(t *testing.T) {
+	unset := func(string) string { return "" }
+	set := func(string) string { return "10.0.0.1:9000" }
+	for _, tc := range []struct{ svc, want string }{{"hub", ":8091"}, {"all", "127.0.0.1:8091"}} {
+		if got := hubListen(unset, tc.svc); got != tc.want {
+			t.Errorf("serve %s default %q, want %q", tc.svc, got, tc.want)
+		}
+		if got := hubListen(set, tc.svc); got != "10.0.0.1:9000" {
+			t.Errorf("serve %s ignores OBSERVATORY_HUB_LISTEN: %q", tc.svc, got)
+		}
+	}
+}
+
 func TestServeHubListensOnHubListen(t *testing.T) {
 	taken, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

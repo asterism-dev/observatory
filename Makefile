@@ -64,7 +64,7 @@ test:
 	node --test web/src/composables/*.test.ts
 
 run: edge-token
-	set -a; . deploy/dev/hub.env; set +a; go run ./cmd/observatory serve all
+	set -a; . deploy/dev/hub.env; set +a; OBSERVATORY_HUB_LISTEN=$${OBSERVATORY_HUB_LISTEN:-:8091} go run ./cmd/observatory serve all
 
 node:
 	GOOS=linux GOARCH=amd64 go build -o bin/observatory-node-linux-amd64 ./cmd/node
