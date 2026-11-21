@@ -14,15 +14,23 @@ const maxCandidates = 8
 
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
-// validCandidates keeps the usable, distinct ip:port entries of a node-reported list, at most maxCandidates.
+func validEndpoint(s string) (netip.AddrPort, bool) {
+	ap, err := netip.ParseAddrPort(s)
+	if err != nil || ap.Port() == 0 || !netaddr.DirectEndpointAddr(ap.Addr()) {
+		return netip.AddrPort{}, false
+	}
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), true
+}
+
+// validCandidates keeps the usable, distinct entries of a node-reported list on the node port, at most maxCandidates.
 func validCandidates(in []string) []string {
 	out := make([]string, 0, min(len(in), maxCandidates))
 	for _, s := range in {
-		ap, err := netip.ParseAddrPort(s)
-		if err != nil || ap.Port() == 0 || !netaddr.DirectEndpointAddr(ap.Addr()) {
+		ap, ok := validEndpoint(s)
+		if !ok || ap.Port() != netaddr.NodeUnderlayPort {
 			continue
 		}
-		s = netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()).String()
+		s = ap.String()
 		if slices.Contains(out, s) {
 			continue
 		}
@@ -46,8 +54,10 @@ func (f *Fleet) Candidates(node uuid.UUID) []string {
 	if !ok {
 		return list
 	}
-	observed := validCandidates([]string{cs.Endpoint})
-	if len(observed) == 0 || slices.Contains(list, observed[0]) {
+	// NAT may map the node port to any port, so the observed endpoint keeps its own.
+	ap, ok := validEndpoint(cs.Endpoint)
+	observed := ap.String()
+	if !ok || slices.Contains(list, observed) {
 		return list
 	}
 	list = list[:min(len(list), maxCandidates-1)] // room for the observed endpoint, which is never the one dropped
@@ -58,5 +68,5 @@ func (f *Fleet) Candidates(node uuid.UUID) []string {
 	if at < 0 {
 		at = len(list)
 	}
-	return slices.Insert(list, at, observed[0])
+	return slices.Insert(list, at, observed)
 }
