@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -583,5 +585,84 @@ func TestGatewayStateUsesGuestMTU(t *testing.T) {
 	}
 	if got := f.state().GuestMTU; got != 1200 {
 		t.Fatalf("got %d", got)
+	}
+}
+
+func TestStateGatewayChassisDefault(t *testing.T) {
+	f := newFixture(t)
+	if got := f.state().GatewayChassis; got != (proto.GatewayChassisRef{Name: "hub-gw", IP: "10.198.0.1"}) {
+		t.Fatalf("gateway chassis %+v", got)
+	}
+}
+
+func TestStateGatewayChassisNode(t *testing.T) {
+	f := newFixture(t)
+	c := cfg
+	c.GatewayNode = f.nodeA
+	h, err := network.Load(context.Background(), f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := h.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(st.Chassis, func(c proto.GatewayChassis) bool { return c.NodeID == f.nodeA.String() })
+	if i < 0 {
+		t.Fatal("node chassis missing")
+	}
+	if want := (proto.GatewayChassisRef{Name: f.nodeA.String(), IP: st.Chassis[i].IP}); st.GatewayChassis != want {
+		t.Fatalf("gateway chassis %+v, want %+v", st.GatewayChassis, want)
+	}
+}
+
+func TestStateQuarantinedGatewayNode(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{f.nodeA.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg
+	c.GatewayNode = f.nodeA
+	h, err := network.Load(ctx, f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := h.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(st.Chassis, func(c proto.GatewayChassis) bool { return c.NodeID == f.nodeA.String() })
+	if i < 0 || !st.Chassis[i].Quarantined {
+		t.Fatalf("quarantined gateway node not in chassis: %+v", st.Chassis)
+	}
+	if want := (proto.GatewayChassisRef{Name: f.nodeA.String(), IP: st.Chassis[i].IP}); st.GatewayChassis != want {
+		t.Fatalf("gateway chassis %+v, want %+v", st.GatewayChassis, want)
+	}
+}
+
+func TestStateWarnsOnceWhileGatewayNodeHasNoChassis(t *testing.T) {
+	f := newFixture(t)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	c := cfg
+	c.GatewayNode = uuid.New()
+	h, err := network.Load(context.Background(), f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		st, err := h.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.GatewayChassis.Name != "hub-gw" {
+			t.Fatalf("gateway chassis %+v", st.GatewayChassis)
+		}
+	}
+	if n := strings.Count(logs.String(), "level=WARN"); n != 1 || !strings.Contains(logs.String(), c.GatewayNode.String()) {
+		t.Fatalf("%d warnings:\n%s", n, logs.String())
 	}
 }

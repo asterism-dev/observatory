@@ -66,3 +66,54 @@ func TestUnderlayRulesQuarantineControlException(t *testing.T) {
 		t.Errorf("empty quarantine set:\n%s", r)
 	}
 }
+
+func TestUnderlayRulesGatewayExemption(t *testing.T) {
+	st := proto.GatewayState{
+		Orgs:           []proto.GatewayOrg{{ID: orgA}, {ID: orgB}},
+		GatewayChassis: proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"},
+		Chassis: []proto.GatewayChassis{
+			{NodeID: nodeA, OrgID: orgA, IP: "10.198.0.11"},
+			{NodeID: nodeB, OrgID: orgB, IP: "10.198.0.21"},
+		},
+	}
+	want := []string{
+		`iifname "wg-underlay" oifname "wg-underlay" ip saddr 10.198.0.11 udp dport 6081 accept`,
+		`iifname "wg-underlay" oifname "wg-underlay" ip daddr 10.198.0.11 udp dport 6081 accept`,
+	}
+	r := underlayRules(st)
+	quarantine := strings.Index(r, "oifname \"wg-underlay\" ip daddr @quarantine drop\n\t\t"+`iifname "wg-underlay" oifname`)
+	final := strings.LastIndex(r, "iifname \"wg-underlay\" drop")
+	for _, w := range want {
+		if i := strings.Index(r, "\t\t"+w+"\n"); i < 0 || i < quarantine || quarantine < 0 || i > final {
+			t.Errorf("missing %q after the quarantine drops and before the final drop in:\n%s", w, r)
+		}
+	}
+	if strings.Count(r, "6081") != len(want) || strings.Contains(r, "sport 6081") {
+		t.Errorf("exemption beyond the gateway chassis IP:\n%s", r)
+	}
+	st.GatewayChassis = hubGW
+	if r := underlayRules(st); strings.Contains(r, "6081") {
+		t.Errorf("exemption in self-contained mode:\n%s", r)
+	}
+}
+
+func TestQuarantinedGatewayNodeKeepsUnderlay(t *testing.T) {
+	st := proto.GatewayState{
+		Orgs:           []proto.GatewayOrg{{ID: orgA}, {ID: orgB}},
+		GatewayChassis: proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"},
+		Chassis: []proto.GatewayChassis{
+			{NodeID: nodeA, OrgID: orgA, IP: "10.198.0.11", Quarantined: true},
+			{NodeID: nodeB, OrgID: orgB, IP: "10.198.0.21", Quarantined: true},
+		},
+	}
+	r := underlayRules(st)
+	for _, want := range []string{
+		"set quarantine {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.21 }\n\t}",
+		"set org_0 {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.11 }\n\t}",
+		`ip saddr 10.198.0.11 udp dport 6081 accept`,
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("missing %q in:\n%s", want, r)
+		}
+	}
+}

@@ -49,6 +49,15 @@ underlay config and the emergency channel, never for the control connection.
 
 1.0 is a fresh install: there is no upgrade path for nodes from 0.x. Install them again with a new enrollment token.
 
+### On the hub host
+
+The hub host can also be a node. Install it as above, set `OBSERVATORY_GATEWAY_NODE` in `deploy/.env` to the node id
+(`ovs-vsctl get open . external_ids:system-id`), run
+`docker compose -f deploy/compose.yaml -f deploy/compose.shared.yaml up -d` and then
+`sudo systemctl restart observatory-node`. The gateway then uses this node's OVS, and this node's chassis carries every
+org's device traffic; a node update briefly interrupts all devices. Details, switching back and trade-offs:
+[network.md](network.md#hub-and-node-on-one-host).
+
 ## What the installer changes on the host
 
 - **Packages** (apt): `openvswitch-switch`, `ovn-host`, `wireguard-tools`, `qemu-utils`, `nftables`;

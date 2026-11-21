@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -27,6 +28,8 @@ const (
 type Config struct {
 	GatewayHost  string
 	GatewayToken string
+	// GatewayNode is the node on the hub host whose chassis serves the gateway; zero keeps the gateway's own chassis.
+	GatewayNode uuid.UUID
 }
 
 type wgKeys struct{ priv, pub string }
@@ -43,6 +46,8 @@ type Hub struct {
 	sbKey    string
 	status   gatewayStatus
 	onChange func(org uuid.UUID)
+	// gatewayNodeWarned keeps a not-yet-enrolled gateway node from logging on every state poll.
+	gatewayNodeWarned sync.Once
 }
 
 // OnChange sets fn to run when an org's peer sets may have changed; call it before the hub serves.
@@ -124,10 +129,14 @@ func (h *Hub) Underlay(ctx context.Context, n store.Node, chassisKey, csrPEM str
 		return nil, err
 	}
 	h.changed(n.OrgID) // the key may be new, and a re-enrolled node is no longer quarantined
+	endpoint := h.endpoint(netaddr.UnderlayPort)
+	if n.ID == h.cfg.GatewayNode {
+		endpoint = net.JoinHostPort("127.0.0.1", strconv.Itoa(netaddr.UnderlayPort)) // same host: skip the public address
+	}
 	return &proto.Underlay{
 		Address:  netip.PrefixFrom(ip, netaddr.UnderlayPool.Bits()).String(),
 		HubKey:   h.underlay.pub,
-		Endpoint: h.endpoint(netaddr.UnderlayPort),
+		Endpoint: endpoint,
 		SBRemote: "ssl:" + net.JoinHostPort(netaddr.GatewayUnderlay.String(), strconv.Itoa(sbPort)),
 		CACert:   h.ca.CertPEM(),
 		Cert:     cert,

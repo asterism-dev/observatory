@@ -17,7 +17,7 @@ import (
 var goodSB = proto.GatewaySB{CACert: "ca", Cert: "cert", Key: "key"}
 
 func TestValidateState(t *testing.T) {
-	good := proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB}
+	good := proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB, GatewayChassis: hubGW}
 	if err := validateState(good); err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +28,37 @@ func TestValidateState(t *testing.T) {
 	for _, bad := range []proto.GatewayState{{}, noCA, noCert, noKey, noUnderlay, noClients, noMTU} {
 		if validateState(bad) == nil {
 			t.Errorf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestValidateStateGatewayChassis(t *testing.T) {
+	good := proto.GatewayState{UnderlayKey: "a", ClientsKey: "b", GuestMTU: 1300, SB: goodSB}
+	for _, gc := range []proto.GatewayChassisRef{hubGW, {Name: nodeA, IP: "10.198.0.11"}} {
+		st := good
+		st.GatewayChassis = gc
+		if err := validateState(st); err != nil {
+			t.Errorf("%+v: %v", gc, err)
+		}
+	}
+	for _, gc := range []proto.GatewayChassisRef{
+		{},
+		{Name: "hub-gw"},
+		{IP: "10.198.0.1"},
+		{Name: "node-a", IP: "10.198.0.11"},
+		{Name: "x -- lsp-del gw0", IP: "10.198.0.11"},
+		{Name: strings.ToUpper(orgA), IP: "10.198.0.11"},
+		{Name: "{" + nodeA + "}", IP: "10.198.0.11"},
+		{Name: "urn:uuid:" + nodeA, IP: "10.198.0.11"},
+		{Name: nodeA, IP: "10.199.0.1"},
+		{Name: nodeA, IP: "10.198.0.11/16"},
+		{Name: nodeA, IP: "10.198.0.11, 10.0.0.1"},
+		{Name: nodeA, IP: "::ffff:10.198.0.11"},
+	} {
+		st := good
+		st.GatewayChassis = gc
+		if validateState(st) == nil {
+			t.Errorf("accepted %+v", gc)
 		}
 	}
 }
@@ -161,7 +192,7 @@ func TestGuardBindings(t *testing.T) {
 		}
 		return "", nil
 	}
-	got, claims, err := guardBindings(run)
+	got, claims, err := guardBindings(run, "hub-gw", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +350,7 @@ func TestCleanChassis(t *testing.T) {
 		}
 		return "", nil
 	}
-	st := proto.GatewayState{Chassis: []proto.GatewayChassis{{NodeID: nodeA}, {NodeID: nodeB, Quarantined: true}, {NodeID: "offline-node"}}}
+	st := proto.GatewayState{GatewayChassis: hubGW, Chassis: []proto.GatewayChassis{{NodeID: nodeA}, {NodeID: nodeB, Quarantined: true}, {NodeID: "offline-node"}}}
 	if err := cleanChassis(run, st); err != nil {
 		t.Fatal(err)
 	}
@@ -331,6 +362,28 @@ func TestCleanChassis(t *testing.T) {
 	}
 	want := "ovn-sbctl chassis-del " + nodeB + "\novn-sbctl chassis-del stranger\novn-sbctl chassis-del " + orgC
 	if strings.Join(del, "\n") != want {
+		t.Fatalf("deleted %v", del)
+	}
+}
+
+func TestCleanChassisKeepsGatewayNode(t *testing.T) {
+	var del []string
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		if c == "ovn-sbctl --bare --columns=name list chassis" {
+			return nodeA + "\n" + nodeB + "\nhub-gw\n", nil
+		}
+		if strings.Contains(c, "chassis-del") {
+			del = append(del, c)
+		}
+		return "", nil
+	}
+	st := proto.GatewayState{GatewayChassis: proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"},
+		Chassis: []proto.GatewayChassis{{NodeID: nodeA, Quarantined: true}, {NodeID: nodeB}}}
+	if err := cleanChassis(run, st); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(del, "\n") != "ovn-sbctl chassis-del hub-gw" {
 		t.Fatalf("deleted %v", del)
 	}
 }
@@ -355,7 +408,7 @@ func TestApplyCleansChassisAfterQuarantineRules(t *testing.T) {
 }
 
 // guardPolls runs the guard on successive SB snapshots, as the gateway loop does, and returns the confirmed offenders of each poll.
-func guardPolls(t *testing.T, nb string, polls ...string) [][]string {
+func guardPolls(t *testing.T, gateway, nb string, polls ...string) [][]string {
 	t.Helper()
 	var last map[claim]bool
 	var out [][]string
@@ -372,7 +425,7 @@ func guardPolls(t *testing.T, nb string, polls ...string) [][]string {
 			}
 			return "", nil
 		}
-		_, claims, err := guardBindings(run)
+		_, claims, err := guardBindings(run, gateway, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -402,12 +455,92 @@ func TestGuardQuarantineRaces(t *testing.T) {
 		{"gw0 claimed twice", nb, []string{"u4,gw0,ch-b,\n", "u4,gw0,ch-b,\n"}, "node-b"},
 	} {
 		var got []string
-		for _, o := range guardPolls(t, c.nb, c.polls...) {
+		for _, o := range guardPolls(t, "hub-gw", c.nb, c.polls...) {
 			got = append(got, o...)
 		}
 		if strings.Join(got, ",") != c.want {
 			t.Errorf("%s: quarantined %v", c.name, got)
 		}
+	}
+}
+
+func TestGuardDoesNotClaimGatewayChassis(t *testing.T) {
+	nb := "vm1-mgmt,requested-chassis=node-b\ngw0,requested-chassis=node-a\n"
+	bound := "u3,cr-lrp-transit,ch-a,\nu4,gw0,ch-a,\nu1,vm1-mgmt,ch-b,\n"
+	for _, o := range guardPolls(t, "node-a", nb, bound, bound, bound) {
+		if len(o) > 0 {
+			t.Fatalf("quarantined %v", o)
+		}
+	}
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		switch {
+		case strings.Contains(c, "list logical_switch_port"):
+			return nb, nil
+		case strings.Contains(c, "list chassis"):
+			return "ch-a,node-a\nch-b,node-b\nch-gw,hub-gw\n", nil
+		case strings.Contains(c, "list port_binding"):
+			return bound + "u5,cr-lrp-transit2,ch-gw,\n", nil
+		}
+		return "", nil
+	}
+	rebound, claims, err := guardBindings(run, "node-a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stale hub-gw binding is released, but hub-gw is the gateway itself and never a quarantine candidate.
+	if strings.Join(rebound, ",") != "cr-lrp-transit2" || len(claims) != 0 {
+		t.Fatalf("rebound %v claims %v", rebound, claims)
+	}
+	if got := guardPolls(t, "node-a", nb, "u4,gw0,ch-b,\n", "u4,gw0,ch-b,\n"); strings.Join(got[1], ",") != "node-b" {
+		t.Fatalf("other node holding gw0 not caught: %v", got)
+	}
+}
+
+func TestGuardExemptsFormerGatewayChassis(t *testing.T) {
+	run := func(args ...string) (string, error) {
+		c := strings.Join(args, " ")
+		switch {
+		case strings.Contains(c, "list logical_switch_port"):
+			return "gw0,requested-chassis=node-a\nvm1-mgmt,requested-chassis=node-a\n", nil
+		case strings.Contains(c, "list chassis"):
+			return "ch-a,node-a\nch-b,node-b\n", nil
+		case strings.Contains(c, "list port_binding"):
+			return "u3,cr-lrp-transit,ch-b,\nu4,gw0,ch-b,\n", nil
+		}
+		return "", nil
+	}
+	rebound, claims, err := guardBindings(run, "node-a", "node-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rebound, ",") != "cr-lrp-transit,gw0" || len(claims) != 0 {
+		t.Fatalf("rebound %v claims %v", rebound, claims)
+	}
+	if _, claims, _ := guardBindings(run, "node-a", ""); len(claims) != 2 {
+		t.Fatalf("claims without a former gateway %v", claims)
+	}
+}
+
+func TestGatewayNamesFormerUntilSecondApply(t *testing.T) {
+	var g gatewayNames
+	g.set("hub-gw")
+	g.applied()
+	if g.former != "" {
+		t.Fatalf("former %q at start", g.former)
+	}
+	g.set(nodeA)
+	if g.current != nodeA || g.former != "hub-gw" {
+		t.Fatalf("after switch %+v", g)
+	}
+	g.applied()
+	g.set(nodeA)
+	if g.former != "hub-gw" {
+		t.Fatal("former released by the switching apply")
+	}
+	g.applied()
+	if g.former != "" {
+		t.Fatalf("former %q kept after the next apply", g.former)
 	}
 }
 
@@ -421,5 +554,21 @@ func TestEndpointsParse(t *testing.T) {
 	got, err := endpoints(run, "wg-underlay")
 	if err != nil || len(got) != 1 || got["keyB="] != "203.0.113.5:40001" {
 		t.Fatalf("got %v %v", got, err)
+	}
+}
+
+func TestChassisMismatch(t *testing.T) {
+	for _, c := range []struct {
+		local, name string
+		want        bool
+	}{
+		{"", "hub-gw", false},
+		{"", nodeA, true},
+		{nodeA, nodeA, false},
+		{nodeA, "hub-gw", true},
+	} {
+		if got := chassisMismatch(c.local, c.name); got != c.want {
+			t.Errorf("chassisMismatch(%q, %q) = %v, want %v", c.local, c.name, got, c.want)
+		}
 	}
 }

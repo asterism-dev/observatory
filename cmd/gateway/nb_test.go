@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,12 +67,14 @@ const (
 	netA  = "eeeeeeee-0000-0000-0000-00000000000e"
 )
 
+var hubGW = proto.GatewayChassisRef{Name: "hub-gw", IP: "10.198.0.1"}
+
 func dhcpFind(tag string) string {
 	return "ovn-nbctl --bare --columns=_uuid find dhcp_options external_ids:" + tag
 }
 
 func twoOrgs() (proto.GatewayState, map[string]string) {
-	st := proto.GatewayState{GuestMTU: 1300, Orgs: []proto.GatewayOrg{
+	st := proto.GatewayState{GuestMTU: 1300, GatewayChassis: hubGW, Orgs: []proto.GatewayOrg{
 		{ID: orgA, Slice: "10.64.0.0/20",
 			Ports: []proto.GatewayPort{
 				{Name: "vma-mgmt", MAC: "02:0a:40:00:00:0a", IP: "10.64.0.10", Chassis: nodeA, AllowFrom: []string{"10.192.0.10", "10.192.0.11"}},
@@ -308,5 +311,237 @@ func TestReconcileNBRouterAddressOnlyForOwnOrg(t *testing.T) {
 	}
 	if strings.Join(acls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("transit ACLs:\n%s", strings.Join(acls, "\n"))
+	}
+}
+
+func TestReconcileNBDefaultHubGW(t *testing.T) {
+	st, out := twoOrgs()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-hub-gw\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	hub := f.txWith(t, "--may-exist lr-add lr-gw")
+	if !has(hub, "lsp-set-options gw0 requested-chassis=hub-gw") || !has(hub, "lrp-set-gateway-chassis lrp-transit hub-gw 1") {
+		t.Fatalf("hub-gw not requested: %v", hub)
+	}
+	if !has(f.cmds, "ovn-nbctl --bare --columns=name list gateway_chassis") {
+		t.Error("gateway chassis rows not read")
+	}
+	for _, c := range f.cmds {
+		if strings.Contains(c, "lrp-del-gateway-chassis") {
+			t.Errorf("steady state deletes: %s", c)
+		}
+	}
+}
+
+func TestReconcileNBRemovesStaleGatewayChassis(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		gateway proto.GatewayChassisRef
+		rows    string
+		del     []string
+	}{
+		{"hub-gw to node", proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}, "lrp-transit-hub-gw\n", []string{"hub-gw"}},
+		{"node to hub-gw", hubGW, "lrp-transit-hub-gw\nlrp-transit-" + nodeA + "\n", []string{nodeA}},
+		{"node to node", proto.GatewayChassisRef{Name: nodeB, IP: "10.198.0.21"}, "lrp-transit-" + nodeA + "\n", []string{nodeA}},
+		{"node steady", proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}, "lrp-transit-" + nodeA + "\n", nil},
+	} {
+		st, out := twoOrgs()
+		st.GatewayChassis = c.gateway
+		out["ovn-nbctl --bare --columns=name list gateway_chassis"] = c.rows
+		f := &fakeRun{out: out}
+		if err := reconcileNB(f.run, st); err != nil {
+			t.Fatal(err)
+		}
+		hub := f.txWith(t, "--may-exist lr-add lr-gw")
+		if !has(hub, "lsp-set-options gw0 requested-chassis="+c.gateway.Name) || !has(hub, "lrp-set-gateway-chassis lrp-transit "+c.gateway.Name+" 1") {
+			t.Errorf("%s: gateway chassis not requested: %v", c.name, hub)
+		}
+		var del []string
+		for _, cmd := range f.tx(t) {
+			if d, ok := strings.CutPrefix(cmd, "lrp-del-gateway-chassis lrp-transit "); ok {
+				del = append(del, d)
+			}
+		}
+		if !slices.Equal(del, c.del) {
+			t.Errorf("%s: deleted %v, want %v", c.name, del, c.del)
+		}
+	}
+}
+
+func quarantinedGatewayNode() (proto.GatewayState, map[string]string) {
+	st, out := twoOrgs()
+	st.GatewayChassis = proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}
+	st.Chassis = []proto.GatewayChassis{
+		{NodeID: nodeA, OrgID: orgA, IP: "10.198.0.11", Quarantined: true},
+		{NodeID: nodeB, OrgID: orgB, IP: "10.198.0.21"},
+	}
+	return st, out
+}
+
+func dropACLs(tx []string) []string {
+	var acls []string
+	for _, c := range tx {
+		if strings.HasPrefix(c, "acl-add ") && strings.Contains(c, " 1003 ") {
+			acls = append(acls, c)
+		}
+	}
+	return acls
+}
+
+func TestQuarantinedGatewayNodeVMPortsDropped(t *testing.T) {
+	st, out := quarantinedGatewayNode()
+	st.Orgs[1].Ports = append(st.Orgs[1].Ports, proto.GatewayPort{Name: "vmb2-mgmt", MAC: "02:0a:40:10:00:0b", IP: "10.64.16.11", Chassis: nodeA})
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	mgmtA, mgmtB, net := "ls-mgmt-"+orgA, "ls-mgmt-"+orgB, "ls-net-"+netA
+	want := []string{
+		"acl-add " + mgmtA + ` from-lport 1003 inport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + mgmtA + ` to-lport 1003 outport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + mgmtA + ` from-lport 1003 ip4.dst == {10.64.0.10, 10.64.0.11} drop`,
+		"acl-add " + mgmtA + ` to-lport 1003 ip4.src == {10.64.0.10, 10.64.0.11} || inport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + net + ` from-lport 1003 inport == {"vma-net"} drop`,
+		"acl-add " + net + ` to-lport 1003 outport == {"vma-net"} drop`,
+		"acl-add " + net + ` from-lport 1003 ip4.dst == {10.210.0.10} drop`,
+		"acl-add " + net + ` to-lport 1003 ip4.src == {10.210.0.10} || inport == {"vma-net"} drop`,
+		"acl-add " + mgmtB + ` from-lport 1003 inport == {"vmb2-mgmt"} drop`,
+		"acl-add " + mgmtB + ` to-lport 1003 outport == {"vmb2-mgmt"} drop`,
+		"acl-add " + mgmtB + ` from-lport 1003 ip4.dst == {10.64.16.11} drop`,
+		"acl-add " + mgmtB + ` to-lport 1003 ip4.src == {10.64.16.11} || inport == {"vmb2-mgmt"} drop`,
+	}
+	if got := dropACLs(f.tx(t)); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("drop ACLs:\n%s", strings.Join(got, "\n"))
+	}
+	a := f.txWith(t, "--may-exist ls-add "+mgmtA)
+	for _, c := range []string{"acl-del " + mgmtA, "acl-del " + net, want[0], want[2], want[4], want[7]} {
+		if !has(a, c) {
+			t.Errorf("org A transaction missing %q", c)
+		}
+	}
+
+	st.Chassis[0].Quarantined = false
+	f = &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	tx := f.tx(t)
+	if got := dropACLs(tx); len(got) != 0 {
+		t.Errorf("drop ACLs after quarantine lifted: %v", got)
+	}
+	for _, sw := range []string{mgmtA, mgmtB, net} {
+		if !has(tx, "acl-del "+sw) {
+			t.Errorf("drop ACLs of %s not cleared", sw)
+		}
+	}
+}
+
+func TestQuarantinedGatewayNodeGatewayPortsUntouched(t *testing.T) {
+	st, out := quarantinedGatewayNode()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-" + nodeA + "\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	quarantined := f.txWith(t, "--may-exist lr-add lr-gw")
+	st.Chassis[0].Quarantined = false
+	f2 := &fakeRun{out: out}
+	if err := reconcileNB(f2.run, st); err != nil {
+		t.Fatal(err)
+	}
+	if healthy := f2.txWith(t, "--may-exist lr-add lr-gw"); !slices.Equal(quarantined, healthy) {
+		t.Errorf("hub transaction changed by quarantine:\n%s\nvs\n%s", strings.Join(quarantined, "\n"), strings.Join(healthy, "\n"))
+	}
+	for _, c := range f.tx(t) {
+		if strings.Contains(c, " 1003 ") && (strings.Contains(c, "gw0") || strings.Contains(c, "transit")) || strings.Contains(c, "lrp-del-gateway-chassis") {
+			t.Errorf("gateway port touched: %s", c)
+		}
+	}
+	run := func(args ...string) (string, error) {
+		if strings.Join(args, " ") == "ovn-sbctl --bare --columns=name list chassis" {
+			return nodeA + "\n" + nodeB + "\n", nil
+		}
+		if args[1] == "chassis-del" {
+			t.Errorf("deleted chassis %s", args[2])
+		}
+		return "", nil
+	}
+	st.Chassis[0].Quarantined = true
+	if err := cleanChassis(run, st); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuarantinedOtherNodeUnchanged(t *testing.T) {
+	for _, gateway := range []proto.GatewayChassisRef{hubGW, {Name: nodeA, IP: "10.198.0.11"}} {
+		st, out := quarantinedGatewayNode()
+		st.GatewayChassis = gateway
+		st.Chassis[0].Quarantined, st.Chassis[1].Quarantined = false, true
+		f := &fakeRun{out: out}
+		if err := reconcileNB(f.run, st); err != nil {
+			t.Fatal(err)
+		}
+		if got := dropACLs(f.tx(t)); len(got) != 0 {
+			t.Errorf("%s: drop ACLs for a quarantined non-gateway node: %v", gateway.Name, got)
+		}
+		if r := underlayRules(st); !strings.Contains(r, "set quarantine {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.21 }\n\t}") {
+			t.Errorf("%s: node B not in the quarantine set:\n%s", gateway.Name, r)
+		}
+		var deleted []string
+		run := func(args ...string) (string, error) {
+			if strings.Join(args, " ") == "ovn-sbctl --bare --columns=name list chassis" {
+				return nodeA + "\n" + nodeB + "\n", nil
+			}
+			deleted = append(deleted, strings.Join(args, " "))
+			return "", nil
+		}
+		if err := cleanChassis(run, st); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(deleted, []string{"ovn-sbctl chassis-del " + nodeB}) {
+			t.Errorf("%s: chassis deletes %v", gateway.Name, deleted)
+		}
+	}
+}
+
+func TestReconcileNBKeepsForeignGatewayChassisRows(t *testing.T) {
+	st, out := twoOrgs()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-garbage\nlrp-transit-" + strings.ToUpper(nodeA) + "\nlrp-transit-{" + nodeB + "}\nlrp-transit-" + nodeA + "\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	var del []string
+	for _, cmd := range f.tx(t) {
+		if d, ok := strings.CutPrefix(cmd, "lrp-del-gateway-chassis lrp-transit "); ok {
+			del = append(del, d)
+		}
+	}
+	if !slices.Equal(del, []string{nodeA}) {
+		t.Errorf("deleted %v, want only the canonical %s", del, nodeA)
+	}
+}
+
+func TestCutPortACLsSkipsInvalidIP(t *testing.T) {
+	acls := cutPortACLs("sw", nodeA, []proto.GatewayPort{{Name: "p1", IP: "10.64.0.10", Chassis: nodeA}, {Name: "p2", IP: "nope}", Chassis: nodeA}, {Name: "p3", IP: "fd00::1", Chassis: nodeA}})
+	var got []string
+	for _, a := range acls {
+		got = append(got, strings.Join(a, " "))
+	}
+	want := []string{
+		"acl-del sw",
+		`acl-add sw from-lport 1003 inport == {"p1", "p2", "p3"} drop`,
+		`acl-add sw to-lport 1003 outport == {"p1", "p2", "p3"} drop`,
+		`acl-add sw from-lport 1003 ip4.dst == {10.64.0.10} drop`,
+		`acl-add sw to-lport 1003 ip4.src == {10.64.0.10} || inport == {"p1", "p2", "p3"} drop`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("ACLs:\n%s", strings.Join(got, "\n"))
+	}
+	acls = cutPortACLs("sw", nodeA, []proto.GatewayPort{{Name: "p2", IP: "nope", Chassis: nodeA}})
+	if last := strings.Join(acls[len(acls)-1], " "); last != `acl-add sw to-lport 1003 inport == {"p2"} drop` {
+		t.Fatalf("without IPs: %s", last)
 	}
 }

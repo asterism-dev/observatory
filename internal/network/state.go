@@ -44,16 +44,26 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 	}
 	connect := h.authz.Enforcer().ConnectChecker()
 	st := proto.GatewayState{
-		UnderlayKey: h.underlay.priv,
-		ClientsKey:  h.clients.priv,
-		SB:          proto.GatewaySB{CACert: h.ca.CertPEM(), Cert: h.sbCert, Key: h.sbKey},
-		GuestMTU:    guestMTU,
-		Chassis:     []proto.GatewayChassis{},
-		Devices:     []proto.GatewayDevice{},
-		Orgs:        []proto.GatewayOrg{},
+		UnderlayKey:    h.underlay.priv,
+		ClientsKey:     h.clients.priv,
+		SB:             proto.GatewaySB{CACert: h.ca.CertPEM(), Cert: h.sbCert, Key: h.sbKey},
+		GuestMTU:       guestMTU,
+		Chassis:        []proto.GatewayChassis{},
+		Devices:        []proto.GatewayDevice{},
+		Orgs:           []proto.GatewayOrg{},
+		GatewayChassis: proto.GatewayChassisRef{Name: "hub-gw", IP: netaddr.GatewayUnderlay.String()},
 	}
 	for _, c := range snap.Chassis {
+		if c.NodeID == h.cfg.GatewayNode {
+			// Until the node enrolls its chassis there is no IP, so the gateway keeps its own.
+			st.GatewayChassis = proto.GatewayChassisRef{Name: c.NodeID.String(), IP: c.IP.String()}
+		}
 		st.Chassis = append(st.Chassis, proto.GatewayChassis{NodeID: c.NodeID.String(), OrgID: c.OrgID.String(), PublicKey: c.PublicKey, IP: c.IP.String(), Quarantined: c.Quarantined})
+	}
+	if h.cfg.GatewayNode != uuid.Nil && st.GatewayChassis.Name == "hub-gw" {
+		h.gatewayNodeWarned.Do(func() {
+			slog.Warn("gateway node has no chassis yet; the gateway keeps its own chassis until the node enrolls", "node", h.cfg.GatewayNode)
+		})
 	}
 	devices := map[uuid.UUID]map[uuid.UUID][]store.Device{}
 	for _, d := range snap.Devices {
