@@ -5,7 +5,21 @@ import (
 	"slices"
 	"syscall"
 	"testing"
+	"time"
 )
+
+func TestWaitImageMounts(t *testing.T) {
+	if !waitImageMounts("/proc", "/sys", 0) {
+		t.Fatal("procfs and sysfs not recognized")
+	}
+	// A detached /sys leaves the plain directory of the root filesystem.
+	if waitImageMounts("/proc", t.TempDir(), 50*time.Millisecond) {
+		t.Fatal("a plain directory passed as sysfs")
+	}
+	if waitImageMounts(t.TempDir(), "/sys", 50*time.Millisecond) {
+		t.Fatal("a plain directory passed as procfs")
+	}
+}
 
 func TestShutdownFor(t *testing.T) {
 	if got := shutdownFor(syscall.SIGINT); got != syscall.LINUX_REBOOT_CMD_POWER_OFF {
