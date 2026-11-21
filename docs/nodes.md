@@ -168,9 +168,10 @@ The node calls `GET /api/nodes/health` over the underlay every 60 seconds. After
 the emergency channel and polls `POST /api/nodes/emergency` over HTTPS (the public URL) every minute. One passing
 health check switches back. VMs keep running throughout.
 
-The emergency channel carries only a status report, an update and a new underlay config, nothing else. The node reports
-its version and the result of the last update, and stores the version the hub asked for. An update failure is reported in
-the next poll. The hub can only trigger an update of the node that polls.
+The emergency poll carries only a status report and an update. The node reports its version and the result of the last
+update, and the hub stores the version the node reports. An update failure is reported in the next poll. The hub can only
+trigger an update of the node that polls. A new underlay config is fetched separately with HTTPS
+`POST /api/nodes/underlay`, which does not depend on the underlay either.
 
 | State | Meaning |
 | --- | --- |

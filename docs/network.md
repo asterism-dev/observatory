@@ -130,10 +130,10 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
   The chassis hostname, which a node sets itself, is never trusted.
 - A node caught holding the same port on two consecutive polls, where NB explicitly requests another chassis (or the
   port is a gateway port), is quarantined. Ports missing from NB (VM just deleted or created, network detached) are only
-  cleared. Quarantine means the gateway drops all its `wg-underlay` traffic
-  (in, out and forwarded, including Geneve and the southbound session from the gateway) except TCP to `10.198.0.1:8091`,
-  so the hub can still stop and delete its VMs, the hub logs
-  `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub and lifted only when
+  cleared. Quarantine means the gateway drops all its `wg-underlay` traffic (in, out and forwarded, including Geneve
+  and the southbound session from the gateway) except TCP to `10.198.0.1:8091`, so the hub can still stop and delete its
+  VMs. The hub logs `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub
+  and lifted only when
   the node is re-enrolled (regenerate its credential, then re-install).
 - The gateway deletes southbound chassis rows of unknown and quarantined nodes, so a re-enrolled node registers afresh.
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
