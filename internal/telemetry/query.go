@@ -550,8 +550,11 @@ func (c *Client) MetricNames(ctx context.Context, org uuid.UUID, s Scope, match 
 	return body.Data, nil
 }
 
-// queryStore bounds a dashboard request by ctx alone, so the caller sets its timeout.
+// queryStore bounds a dashboard request by ctx alone, so the caller sets its timeout; the store gets it too and stops working on it.
 func (c *Client) queryStore(ctx context.Context, path string, form url.Values, v any) error {
+	if dl, ok := ctx.Deadline(); ok {
+		form.Set("timeout", strconv.FormatFloat(math.Ceil(time.Until(dl).Seconds()), 'f', 0, 64)+"s")
+	}
 	resp, err := c.postForm(ctx, c.StoreClient(0), c.MetricsURL+path, form)
 	if err != nil {
 		return err

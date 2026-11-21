@@ -167,6 +167,9 @@ func TestDashboardQueryMemberFilters(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 	_, forms := d.upstream()
+	if forms[0].Get("timeout") != "30s" {
+		t.Fatalf("timeout: %v", forms[0])
+	}
 	vmFilter := `{observatory_vm=~"` + d.vmA + `"}`
 	checkScope(t, forms[0], d.org, vmFilter)
 	if strings.Contains(rec.Body.String(), d.vmB) {
@@ -336,6 +339,9 @@ func TestMetricNamesScoped(t *testing.T) {
 		t.Fatalf("upstream %v %v", paths, forms)
 	}
 	checkScope(t, forms[0], d.org, `{observatory_vm=~"`+d.vmA+`"}`)
+	if forms[0].Get("timeout") != "30s" {
+		t.Fatalf("timeout: %v", forms[0])
+	}
 
 	if rec := d.do("GET", dashboardsPath(d.org)+"/metric-names", d.aliceTok); rec.Code != 200 {
 		t.Fatalf("admin: %d", rec.Code)
