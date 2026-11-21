@@ -15,7 +15,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -62,11 +61,11 @@ type Verifier struct {
 	now                           func() time.Time
 	fetchTimeout                  time.Duration
 
-	set    atomic.Pointer[keySet]
-	flight singleflight.Group
+	set atomic.Pointer[keySet]
 
 	mu          sync.Mutex
 	lastAttempt time.Time
+	inflight    chan struct{}
 }
 
 func NewVerifier(jwksURL, issuer, serviceToken string, client *http.Client) (*Verifier, error) {
@@ -143,27 +142,35 @@ func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, erro
 	return nil, errors.New("unknown kid")
 }
 
-// refresh starts a shared fetch unless one ran within the last 30 s; the channel is nil when it was skipped.
-func (v *Verifier) refresh(ctx context.Context) <-chan singleflight.Result {
+// refresh joins the fetch in flight, or starts one unless the last attempt was under 30 s ago (nil channel).
+func (v *Verifier) refresh(ctx context.Context) <-chan struct{} {
 	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.inflight != nil {
+		return v.inflight
+	}
 	now := v.now()
 	if now.Sub(v.lastAttempt) < minRefreshGap {
-		v.mu.Unlock()
 		return nil
 	}
 	v.lastAttempt = now
-	v.mu.Unlock()
-	return v.flight.DoChan("jwks", func() (any, error) {
-		// Detached so one caller giving up does not fail the fetch the others share.
-		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), v.fetchTimeout)
+	done := make(chan struct{})
+	v.inflight = done
+	// Detached so one caller giving up does not fail the fetch the others share.
+	base := context.WithoutCancel(ctx)
+	go func() {
+		fctx, cancel := context.WithTimeout(base, v.fetchTimeout)
 		defer cancel()
 		keys, err := v.fetch(fctx)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			v.set.Store(&keySet{keys: keys, fetchedAt: v.now()})
 		}
-		v.set.Store(&keySet{keys: keys, fetchedAt: v.now()})
-		return nil, nil
-	})
+		v.mu.Lock()
+		v.inflight = nil
+		v.mu.Unlock()
+		close(done)
+	}()
+	return done
 }
 
 func (v *Verifier) fetch(ctx context.Context) (map[string]ed25519.PublicKey, error) {

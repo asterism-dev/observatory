@@ -334,3 +334,38 @@ func TestEmptyJWKSKeepsCache(t *testing.T) {
 		t.Fatalf("cache dropped after empty JWKS: %v", err)
 	}
 }
+
+func TestConcurrentUnknownKidJoinsInFlightFetch(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatal(err)
+	}
+	k2 := f.jwks.addKey("k2")
+	f.now = f.now.Add(31 * time.Second)
+	blk := make(chan struct{})
+	f.jwks.mu.Lock()
+	f.jwks.block = blk
+	f.jwks.mu.Unlock()
+	base := f.jwks.hits.Load()
+	tok := sign(t, jwt.SigningMethodEdDSA, "k2", f.claims(), k2)
+
+	const n = 10
+	errs := make(chan error, n)
+	for range n {
+		go func() { _, err := f.v.Verify(ctx, tok); errs <- err }()
+	}
+	for f.jwks.hits.Load() == base {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(blk)
+	for range n {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := f.jwks.hits.Load() - base; got != 1 {
+		t.Fatalf("jwks requests = %d, want 1", got)
+	}
+}
