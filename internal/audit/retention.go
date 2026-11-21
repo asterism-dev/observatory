@@ -6,20 +6,15 @@ import (
 	"time"
 )
 
-const (
-	// ponytail: fixed until the platform-wide retention setting exists; it replaces this constant.
-	defaultRetentionDays = 365
-	retentionInterval    = 24 * time.Hour
-)
+const retentionInterval = 24 * time.Hour
 
-// runRetention deletes events older than days at start and then daily; concurrent instances only repeat the same delete.
-func runRetention(ctx context.Context, s *store, days int) {
+// runRetention expires events at start and then daily; concurrent instances only repeat the same delete.
+func runRetention(ctx context.Context, s *store) {
 	for {
-		n, err := s.deleteBefore(ctx, time.Now().AddDate(0, 0, -days))
-		if err != nil && ctx.Err() == nil {
+		if n, err := expire(ctx, s); err != nil && ctx.Err() == nil {
 			slog.Error("audit retention failed", "err", err)
 		} else if n > 0 {
-			slog.Info("audit retention", "deleted", n, "days", days)
+			slog.Info("audit retention", "deleted", n)
 		}
 		select {
 		case <-ctx.Done():
@@ -27,4 +22,12 @@ func runRetention(ctx context.Context, s *store, days int) {
 		case <-time.After(retentionInterval):
 		}
 	}
+}
+
+func expire(ctx context.Context, s *store) (int64, error) {
+	days, err := s.retentionDays(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return s.deleteBefore(ctx, time.Now().AddDate(0, 0, -days))
 }

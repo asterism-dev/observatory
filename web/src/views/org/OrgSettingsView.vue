@@ -4,6 +4,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import AuditDataEventsSection from '@/components/AuditDataEventsSection.vue'
 import DefaultImageSection from '@/components/DefaultImageSection.vue'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
@@ -55,6 +56,7 @@ async function save() {
     </Card>
   </Section>
   <DefaultImageSection v-if="org" :org-id="org.id" level="org" :editable="can('artifacts.images.setDefault')" :description="t('images.orgDefaultHint')" />
+  <AuditDataEventsSection v-if="org && can('audit.settings.get')" :key="org.id" :org="org.id" :editable="can('audit.settings.update')" />
 </template>
 
 <style scoped>

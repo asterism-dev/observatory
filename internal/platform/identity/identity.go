@@ -57,6 +57,28 @@ func ClientIP(ctx context.Context) string {
 	return ip
 }
 
+type Caller struct {
+	Principal Principal
+	ClientIP  string
+	Verified  bool
+}
+
+type callerKey struct{}
+
+// WithCallerSlot lets an outer interceptor learn whom authz verified, also when authz then refuses the call.
+func WithCallerSlot(ctx context.Context) (context.Context, *Caller) {
+	c := &Caller{}
+	return context.WithValue(ctx, callerKey{}, c), c
+}
+
+// WithVerified stores p and the edge's client IP for handlers and fills an outer caller slot, if any.
+func WithVerified(ctx context.Context, p Principal, ip string) context.Context {
+	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
+		*c = Caller{Principal: p, ClientIP: ip, Verified: true}
+	}
+	return WithClientIP(WithPrincipal(ctx, p), ip)
+}
+
 type claims struct {
 	jwt.RegisteredClaims
 	Session       string `json:"sid"`

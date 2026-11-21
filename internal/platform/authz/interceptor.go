@@ -78,7 +78,7 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 	}
 	m := msg.ProtoReflect()
 	// Only now: the header is the edge's, and a verified JWT means the call came through it (or holds a leaked token).
-	ctx = identity.WithClientIP(identity.WithPrincipal(ctx, p), req.Header().Get(clientip.HeaderClientIP))
+	ctx = identity.WithVerified(ctx, p, req.Header().Get(clientip.HeaderClientIP))
 	orgField := m.Descriptor().Fields().ByName("org")
 	if orgField == nil {
 		return ctx, platformScope(p, perm, m)
@@ -94,7 +94,7 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 	if !snap.members[orgUser{org, p.User}] {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("not found"))
 	}
-	obj, err := resolveObject(perm.Object, m)
+	obj, err := ResolveObject(perm.Object, m)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func platformScope(p identity.Principal, perm permission.Permission, m protorefl
 		return nil
 	}
 	if strings.HasPrefix(perm.Object, "user:") {
-		obj, err := resolveObject(perm.Object, m)
+		obj, err := ResolveObject(perm.Object, m)
 		if err != nil {
 			return err
 		}

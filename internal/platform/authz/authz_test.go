@@ -340,8 +340,8 @@ func TestPlatformScopeUserObject(t *testing.T) {
 func TestResolveObjectRejectsBadAnnotations(t *testing.T) {
 	m := (&testv1.GetEchoRequest{Echo: uuid.NewString()}).ProtoReflect()
 	for _, pattern := range []string{"org/echoes/{missing}", "org/echoes/{echo", "org/echoes/echo}", "org/{{echo}}"} {
-		if _, err := resolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
-			t.Errorf("resolveObject(%q) err = %v, want Unimplemented", pattern, err)
+		if _, err := ResolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
+			t.Errorf("ResolveObject(%q) err = %v, want Unimplemented", pattern, err)
 		}
 	}
 }

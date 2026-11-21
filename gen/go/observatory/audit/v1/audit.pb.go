@@ -347,6 +347,493 @@ func (x *ListAllEventsResponse) GetNextPageToken() string {
 	return ""
 }
 
+type GetSettingsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Org           string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSettingsRequest) Reset() {
+	*x = GetSettingsRequest{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSettingsRequest) ProtoMessage() {}
+
+func (x *GetSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSettingsRequest.ProtoReflect.Descriptor instead.
+func (*GetSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetSettingsRequest) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+type GetSettingsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// data_events holds every service: true records its read calls too, not only writes and denials.
+	DataEvents    map[string]bool `protobuf:"bytes,1,rep,name=data_events,json=dataEvents,proto3" json:"data_events,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSettingsResponse) Reset() {
+	*x = GetSettingsResponse{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSettingsResponse) ProtoMessage() {}
+
+func (x *GetSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSettingsResponse.ProtoReflect.Descriptor instead.
+func (*GetSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetSettingsResponse) GetDataEvents() map[string]bool {
+	if x != nil {
+		return x.DataEvents
+	}
+	return nil
+}
+
+type UpdateSettingsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Org   string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
+	// data_events keys must be service names (iam, quota, compute, network, artifacts, build, secrets, telemetry, audit).
+	DataEvents    map[string]bool `protobuf:"bytes,2,rep,name=data_events,json=dataEvents,proto3" json:"data_events,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateSettingsRequest) Reset() {
+	*x = UpdateSettingsRequest{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateSettingsRequest) ProtoMessage() {}
+
+func (x *UpdateSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateSettingsRequest.ProtoReflect.Descriptor instead.
+func (*UpdateSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *UpdateSettingsRequest) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+func (x *UpdateSettingsRequest) GetDataEvents() map[string]bool {
+	if x != nil {
+		return x.DataEvents
+	}
+	return nil
+}
+
+type UpdateSettingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DataEvents    map[string]bool        `protobuf:"bytes,1,rep,name=data_events,json=dataEvents,proto3" json:"data_events,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateSettingsResponse) Reset() {
+	*x = UpdateSettingsResponse{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateSettingsResponse) ProtoMessage() {}
+
+func (x *UpdateSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateSettingsResponse.ProtoReflect.Descriptor instead.
+func (*UpdateSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *UpdateSettingsResponse) GetDataEvents() map[string]bool {
+	if x != nil {
+		return x.DataEvents
+	}
+	return nil
+}
+
+type GetPlatformSettingsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPlatformSettingsRequest) Reset() {
+	*x = GetPlatformSettingsRequest{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPlatformSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPlatformSettingsRequest) ProtoMessage() {}
+
+func (x *GetPlatformSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPlatformSettingsRequest.ProtoReflect.Descriptor instead.
+func (*GetPlatformSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{9}
+}
+
+type GetPlatformSettingsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// retention_days is how long audit events are kept, 30 to 3650 (default 365).
+	RetentionDays int32 `protobuf:"varint,1,opt,name=retention_days,json=retentionDays,proto3" json:"retention_days,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPlatformSettingsResponse) Reset() {
+	*x = GetPlatformSettingsResponse{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPlatformSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPlatformSettingsResponse) ProtoMessage() {}
+
+func (x *GetPlatformSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPlatformSettingsResponse.ProtoReflect.Descriptor instead.
+func (*GetPlatformSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetPlatformSettingsResponse) GetRetentionDays() int32 {
+	if x != nil {
+		return x.RetentionDays
+	}
+	return 0
+}
+
+type UpdatePlatformSettingsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RetentionDays int32                  `protobuf:"varint,1,opt,name=retention_days,json=retentionDays,proto3" json:"retention_days,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdatePlatformSettingsRequest) Reset() {
+	*x = UpdatePlatformSettingsRequest{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdatePlatformSettingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdatePlatformSettingsRequest) ProtoMessage() {}
+
+func (x *UpdatePlatformSettingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdatePlatformSettingsRequest.ProtoReflect.Descriptor instead.
+func (*UpdatePlatformSettingsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *UpdatePlatformSettingsRequest) GetRetentionDays() int32 {
+	if x != nil {
+		return x.RetentionDays
+	}
+	return 0
+}
+
+type UpdatePlatformSettingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RetentionDays int32                  `protobuf:"varint,1,opt,name=retention_days,json=retentionDays,proto3" json:"retention_days,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdatePlatformSettingsResponse) Reset() {
+	*x = UpdatePlatformSettingsResponse{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdatePlatformSettingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdatePlatformSettingsResponse) ProtoMessage() {}
+
+func (x *UpdatePlatformSettingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdatePlatformSettingsResponse.ProtoReflect.Descriptor instead.
+func (*UpdatePlatformSettingsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *UpdatePlatformSettingsResponse) GetRetentionDays() int32 {
+	if x != nil {
+		return x.RetentionDays
+	}
+	return 0
+}
+
+type GetDataEventsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDataEventsRequest) Reset() {
+	*x = GetDataEventsRequest{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataEventsRequest) ProtoMessage() {}
+
+func (x *GetDataEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataEventsRequest.ProtoReflect.Descriptor instead.
+func (*GetDataEventsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{13}
+}
+
+type GetDataEventsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Enabled       []*DataEvents          `protobuf:"bytes,1,rep,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDataEventsResponse) Reset() {
+	*x = GetDataEventsResponse{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDataEventsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDataEventsResponse) ProtoMessage() {}
+
+func (x *GetDataEventsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDataEventsResponse.ProtoReflect.Descriptor instead.
+func (*GetDataEventsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *GetDataEventsResponse) GetEnabled() []*DataEvents {
+	if x != nil {
+		return x.Enabled
+	}
+	return nil
+}
+
+type DataEvents struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Org           string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
+	Service       string                 `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DataEvents) Reset() {
+	*x = DataEvents{}
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DataEvents) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DataEvents) ProtoMessage() {}
+
+func (x *DataEvents) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_audit_v1_audit_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DataEvents.ProtoReflect.Descriptor instead.
+func (*DataEvents) Descriptor() ([]byte, []int) {
+	return file_observatory_audit_v1_audit_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *DataEvents) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+func (x *DataEvents) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
 var File_observatory_audit_v1_audit_proto protoreflect.FileDescriptor
 
 const file_observatory_audit_v1_audit_proto_rawDesc = "" +
@@ -376,13 +863,58 @@ const file_observatory_audit_v1_audit_proto_rawDesc = "" +
 	"filter_org\x18\x04 \x01(\tR\tfilterOrg\"u\n" +
 	"\x15ListAllEventsResponse\x124\n" +
 	"\x06events\x18\x01 \x03(\v2\x1c.observatory.events.v1.EventR\x06events\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken2\xac\x02\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"&\n" +
+	"\x12GetSettingsRequest\x12\x10\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\"\xb0\x01\n" +
+	"\x13GetSettingsResponse\x12Z\n" +
+	"\vdata_events\x18\x01 \x03(\v29.observatory.audit.v1.GetSettingsResponse.DataEventsEntryR\n" +
+	"dataEvents\x1a=\n" +
+	"\x0fDataEventsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\xc6\x01\n" +
+	"\x15UpdateSettingsRequest\x12\x10\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\x12\\\n" +
+	"\vdata_events\x18\x02 \x03(\v2;.observatory.audit.v1.UpdateSettingsRequest.DataEventsEntryR\n" +
+	"dataEvents\x1a=\n" +
+	"\x0fDataEventsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\xb6\x01\n" +
+	"\x16UpdateSettingsResponse\x12]\n" +
+	"\vdata_events\x18\x01 \x03(\v2<.observatory.audit.v1.UpdateSettingsResponse.DataEventsEntryR\n" +
+	"dataEvents\x1a=\n" +
+	"\x0fDataEventsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\bR\x05value:\x028\x01\"\x1c\n" +
+	"\x1aGetPlatformSettingsRequest\"D\n" +
+	"\x1bGetPlatformSettingsResponse\x12%\n" +
+	"\x0eretention_days\x18\x01 \x01(\x05R\rretentionDays\"F\n" +
+	"\x1dUpdatePlatformSettingsRequest\x12%\n" +
+	"\x0eretention_days\x18\x01 \x01(\x05R\rretentionDays\"G\n" +
+	"\x1eUpdatePlatformSettingsResponse\x12%\n" +
+	"\x0eretention_days\x18\x01 \x01(\x05R\rretentionDays\"\x16\n" +
+	"\x14GetDataEventsRequest\"S\n" +
+	"\x15GetDataEventsResponse\x12:\n" +
+	"\aenabled\x18\x01 \x03(\v2 .observatory.audit.v1.DataEventsR\aenabled\"8\n" +
+	"\n" +
+	"DataEvents\x12\x10\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\x12\x18\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice2\xae\a\n" +
 	"\fAuditService\x12\x85\x01\n" +
 	"\n" +
 	"ListEvents\x12'.observatory.audit.v1.ListEventsRequest\x1a(.observatory.audit.v1.ListEventsResponse\"$\x8a\xb5\x18 \n" +
 	"\x11audit.events.list\x12\torg/audit\x18\x02\x12\x93\x01\n" +
 	"\rListAllEvents\x12*.observatory.audit.v1.ListAllEventsRequest\x1a+.observatory.audit.v1.ListAllEventsResponse\")\x8a\xb5\x18%\n" +
-	"\x11audit.events.list\x12\x0eplatform/audit\x18\x02B\xe1\x01\n" +
+	"\x11audit.events.list\x12\x0eplatform/audit\x18\x02\x12\x89\x01\n" +
+	"\vGetSettings\x12(.observatory.audit.v1.GetSettingsRequest\x1a).observatory.audit.v1.GetSettingsResponse\"%\x8a\xb5\x18!\n" +
+	"\x12audit.settings.get\x12\torg/audit\x18\x02\x12\x95\x01\n" +
+	"\x0eUpdateSettings\x12+.observatory.audit.v1.UpdateSettingsRequest\x1a,.observatory.audit.v1.UpdateSettingsResponse\"(\x8a\xb5\x18$\n" +
+	"\x15audit.settings.update\x12\torg/audit\x18\x01\x12\xa6\x01\n" +
+	"\x13GetPlatformSettings\x120.observatory.audit.v1.GetPlatformSettingsRequest\x1a1.observatory.audit.v1.GetPlatformSettingsResponse\"*\x8a\xb5\x18&\n" +
+	"\x12audit.settings.get\x12\x0eplatform/audit\x18\x02\x12\xb2\x01\n" +
+	"\x16UpdatePlatformSettings\x123.observatory.audit.v1.UpdatePlatformSettingsRequest\x1a4.observatory.audit.v1.UpdatePlatformSettingsResponse\"-\x8a\xb5\x18)\n" +
+	"\x15audit.settings.update\x12\x0eplatform/audit\x18\x012\x80\x01\n" +
+	"\x14AuditInternalService\x12h\n" +
+	"\rGetDataEvents\x12*.observatory.audit.v1.GetDataEventsRequest\x1a+.observatory.audit.v1.GetDataEventsResponseB\xe1\x01\n" +
 	"\x18com.observatory.audit.v1B\n" +
 	"AuditProtoP\x01ZGgithub.com/asterism-dev/observatory/gen/go/observatory/audit/v1;auditv1\xa2\x02\x03OAX\xaa\x02\x14Observatory.Audit.V1\xca\x02\x14Observatory\\Audit\\V1\xe2\x02 Observatory\\Audit\\V1\\GPBMetadata\xea\x02\x16Observatory::Audit::V1b\x06proto3"
 
@@ -398,34 +930,62 @@ func file_observatory_audit_v1_audit_proto_rawDescGZIP() []byte {
 	return file_observatory_audit_v1_audit_proto_rawDescData
 }
 
-var file_observatory_audit_v1_audit_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_observatory_audit_v1_audit_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_observatory_audit_v1_audit_proto_goTypes = []any{
-	(*EventFilter)(nil),           // 0: observatory.audit.v1.EventFilter
-	(*ListEventsRequest)(nil),     // 1: observatory.audit.v1.ListEventsRequest
-	(*ListEventsResponse)(nil),    // 2: observatory.audit.v1.ListEventsResponse
-	(*ListAllEventsRequest)(nil),  // 3: observatory.audit.v1.ListAllEventsRequest
-	(*ListAllEventsResponse)(nil), // 4: observatory.audit.v1.ListAllEventsResponse
-	(v1.Result)(0),                // 5: observatory.events.v1.Result
-	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
-	(*v1.Event)(nil),              // 7: observatory.events.v1.Event
+	(*EventFilter)(nil),                    // 0: observatory.audit.v1.EventFilter
+	(*ListEventsRequest)(nil),              // 1: observatory.audit.v1.ListEventsRequest
+	(*ListEventsResponse)(nil),             // 2: observatory.audit.v1.ListEventsResponse
+	(*ListAllEventsRequest)(nil),           // 3: observatory.audit.v1.ListAllEventsRequest
+	(*ListAllEventsResponse)(nil),          // 4: observatory.audit.v1.ListAllEventsResponse
+	(*GetSettingsRequest)(nil),             // 5: observatory.audit.v1.GetSettingsRequest
+	(*GetSettingsResponse)(nil),            // 6: observatory.audit.v1.GetSettingsResponse
+	(*UpdateSettingsRequest)(nil),          // 7: observatory.audit.v1.UpdateSettingsRequest
+	(*UpdateSettingsResponse)(nil),         // 8: observatory.audit.v1.UpdateSettingsResponse
+	(*GetPlatformSettingsRequest)(nil),     // 9: observatory.audit.v1.GetPlatformSettingsRequest
+	(*GetPlatformSettingsResponse)(nil),    // 10: observatory.audit.v1.GetPlatformSettingsResponse
+	(*UpdatePlatformSettingsRequest)(nil),  // 11: observatory.audit.v1.UpdatePlatformSettingsRequest
+	(*UpdatePlatformSettingsResponse)(nil), // 12: observatory.audit.v1.UpdatePlatformSettingsResponse
+	(*GetDataEventsRequest)(nil),           // 13: observatory.audit.v1.GetDataEventsRequest
+	(*GetDataEventsResponse)(nil),          // 14: observatory.audit.v1.GetDataEventsResponse
+	(*DataEvents)(nil),                     // 15: observatory.audit.v1.DataEvents
+	nil,                                    // 16: observatory.audit.v1.GetSettingsResponse.DataEventsEntry
+	nil,                                    // 17: observatory.audit.v1.UpdateSettingsRequest.DataEventsEntry
+	nil,                                    // 18: observatory.audit.v1.UpdateSettingsResponse.DataEventsEntry
+	(v1.Result)(0),                         // 19: observatory.events.v1.Result
+	(*timestamppb.Timestamp)(nil),          // 20: google.protobuf.Timestamp
+	(*v1.Event)(nil),                       // 21: observatory.events.v1.Event
 }
 var file_observatory_audit_v1_audit_proto_depIdxs = []int32{
-	5, // 0: observatory.audit.v1.EventFilter.result:type_name -> observatory.events.v1.Result
-	6, // 1: observatory.audit.v1.EventFilter.from:type_name -> google.protobuf.Timestamp
-	6, // 2: observatory.audit.v1.EventFilter.to:type_name -> google.protobuf.Timestamp
-	0, // 3: observatory.audit.v1.ListEventsRequest.filter:type_name -> observatory.audit.v1.EventFilter
-	7, // 4: observatory.audit.v1.ListEventsResponse.events:type_name -> observatory.events.v1.Event
-	0, // 5: observatory.audit.v1.ListAllEventsRequest.filter:type_name -> observatory.audit.v1.EventFilter
-	7, // 6: observatory.audit.v1.ListAllEventsResponse.events:type_name -> observatory.events.v1.Event
-	1, // 7: observatory.audit.v1.AuditService.ListEvents:input_type -> observatory.audit.v1.ListEventsRequest
-	3, // 8: observatory.audit.v1.AuditService.ListAllEvents:input_type -> observatory.audit.v1.ListAllEventsRequest
-	2, // 9: observatory.audit.v1.AuditService.ListEvents:output_type -> observatory.audit.v1.ListEventsResponse
-	4, // 10: observatory.audit.v1.AuditService.ListAllEvents:output_type -> observatory.audit.v1.ListAllEventsResponse
-	9, // [9:11] is the sub-list for method output_type
-	7, // [7:9] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	19, // 0: observatory.audit.v1.EventFilter.result:type_name -> observatory.events.v1.Result
+	20, // 1: observatory.audit.v1.EventFilter.from:type_name -> google.protobuf.Timestamp
+	20, // 2: observatory.audit.v1.EventFilter.to:type_name -> google.protobuf.Timestamp
+	0,  // 3: observatory.audit.v1.ListEventsRequest.filter:type_name -> observatory.audit.v1.EventFilter
+	21, // 4: observatory.audit.v1.ListEventsResponse.events:type_name -> observatory.events.v1.Event
+	0,  // 5: observatory.audit.v1.ListAllEventsRequest.filter:type_name -> observatory.audit.v1.EventFilter
+	21, // 6: observatory.audit.v1.ListAllEventsResponse.events:type_name -> observatory.events.v1.Event
+	16, // 7: observatory.audit.v1.GetSettingsResponse.data_events:type_name -> observatory.audit.v1.GetSettingsResponse.DataEventsEntry
+	17, // 8: observatory.audit.v1.UpdateSettingsRequest.data_events:type_name -> observatory.audit.v1.UpdateSettingsRequest.DataEventsEntry
+	18, // 9: observatory.audit.v1.UpdateSettingsResponse.data_events:type_name -> observatory.audit.v1.UpdateSettingsResponse.DataEventsEntry
+	15, // 10: observatory.audit.v1.GetDataEventsResponse.enabled:type_name -> observatory.audit.v1.DataEvents
+	1,  // 11: observatory.audit.v1.AuditService.ListEvents:input_type -> observatory.audit.v1.ListEventsRequest
+	3,  // 12: observatory.audit.v1.AuditService.ListAllEvents:input_type -> observatory.audit.v1.ListAllEventsRequest
+	5,  // 13: observatory.audit.v1.AuditService.GetSettings:input_type -> observatory.audit.v1.GetSettingsRequest
+	7,  // 14: observatory.audit.v1.AuditService.UpdateSettings:input_type -> observatory.audit.v1.UpdateSettingsRequest
+	9,  // 15: observatory.audit.v1.AuditService.GetPlatformSettings:input_type -> observatory.audit.v1.GetPlatformSettingsRequest
+	11, // 16: observatory.audit.v1.AuditService.UpdatePlatformSettings:input_type -> observatory.audit.v1.UpdatePlatformSettingsRequest
+	13, // 17: observatory.audit.v1.AuditInternalService.GetDataEvents:input_type -> observatory.audit.v1.GetDataEventsRequest
+	2,  // 18: observatory.audit.v1.AuditService.ListEvents:output_type -> observatory.audit.v1.ListEventsResponse
+	4,  // 19: observatory.audit.v1.AuditService.ListAllEvents:output_type -> observatory.audit.v1.ListAllEventsResponse
+	6,  // 20: observatory.audit.v1.AuditService.GetSettings:output_type -> observatory.audit.v1.GetSettingsResponse
+	8,  // 21: observatory.audit.v1.AuditService.UpdateSettings:output_type -> observatory.audit.v1.UpdateSettingsResponse
+	10, // 22: observatory.audit.v1.AuditService.GetPlatformSettings:output_type -> observatory.audit.v1.GetPlatformSettingsResponse
+	12, // 23: observatory.audit.v1.AuditService.UpdatePlatformSettings:output_type -> observatory.audit.v1.UpdatePlatformSettingsResponse
+	14, // 24: observatory.audit.v1.AuditInternalService.GetDataEvents:output_type -> observatory.audit.v1.GetDataEventsResponse
+	18, // [18:25] is the sub-list for method output_type
+	11, // [11:18] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_observatory_audit_v1_audit_proto_init() }
@@ -439,9 +999,9 @@ func file_observatory_audit_v1_audit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_audit_v1_audit_proto_rawDesc), len(file_observatory_audit_v1_audit_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   19,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_observatory_audit_v1_audit_proto_goTypes,
 		DependencyIndexes: file_observatory_audit_v1_audit_proto_depIdxs,

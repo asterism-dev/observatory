@@ -53,6 +53,17 @@ func TestServeAuditRequiresConfig(t *testing.T) {
 	}
 }
 
+func TestServeAuditRejectsBadServiceTokens(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	env := map[string]string{"OBSERVATORY_AUDIT_LISTEN": "127.0.0.1:0", "OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_HUB_URL": "http://hub",
+		"OBSERVATORY_PUBLIC_URL": "https://obs", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_NATS_URL": "nats://x",
+		"OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32), "OBSERVATORY_SERVICE_TOKENS": "compute=short"}
+	c.getenv = func(k string) string { return env[k] }
+	if code := run(c, []string{"serve", "audit"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_SERVICE_TOKENS") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
 func TestServeAllRequiresPersistentBus(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k] }

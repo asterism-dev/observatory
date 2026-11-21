@@ -2,14 +2,14 @@
 import { Button, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import type { MessageInitShape } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
-import { Code, ConnectError, createClient } from '@connectrpc/connect'
-import { createConnectTransport } from '@connectrpc/connect-web'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { auditClient as client } from '@/composables/auditClient'
 import { toAuditRow, type AuditRow } from '@/composables/useAudit'
 import { useMe } from '@/composables/useMe'
-import { AuditService, type EventFilterSchema } from '@/gen/observatory/audit/v1/audit_pb'
+import type { EventFilterSchema } from '@/gen/observatory/audit/v1/audit_pb'
 import { DataTable, FilterBar, Tag } from '@/ui'
 
 // Without org the table shows the platform-wide trail.
@@ -17,20 +17,6 @@ const props = defineProps<{ org?: string }>()
 const { t, d } = useI18n()
 const { expire } = useMe()
 
-const client = createClient(
-  AuditService,
-  createConnectTransport({
-    baseUrl: '/api/audit/v1',
-    fetch: (input, init) => fetch(input, { ...init, credentials: 'include' }),
-    // Connect unary calls are POSTs, which the edge refuses without the CSRF header.
-    interceptors: [
-      (next) => (req) => {
-        req.header.set('X-Observatory', '1')
-        return next(req)
-      },
-    ],
-  }),
-)
 
 const entries = ref<AuditRow[]>([])
 const next = ref('')

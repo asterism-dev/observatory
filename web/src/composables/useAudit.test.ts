@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import type { Event } from '../gen/observatory/events/v1/event_pb.ts'
-import { toAuditRow } from './useAudit.ts'
+import { dataEventRows, toAuditRow, validRetention } from './useAudit.ts'
 
 const event = (over: Partial<Event>): Event =>
   ({
@@ -45,4 +45,17 @@ test('toAuditRow handles platform events and missing fields', () => {
 test('toAuditRow names every actor kind and result', () => {
   assert.deepEqual([2, 3, 4].map((kind) => toAuditRow(event({ actor: { kind, id: '' } as Event['actor'] })).actorKind), ['service', 'node', 'system'])
   assert.equal(toAuditRow(event({ result: 1 })).result, 'allowed')
+})
+
+test('dataEventRows lists services by name', () => {
+  assert.deepEqual(dataEventRows({ network: false, audit: true, compute: true }), [
+    { service: 'audit', enabled: true },
+    { service: 'compute', enabled: true },
+    { service: 'network', enabled: false },
+  ])
+})
+
+test('validRetention accepts whole days from 30 to 3650', () => {
+  assert.deepEqual(['30', '365', '3650'].map(validRetention), [true, true, true])
+  assert.deepEqual(['29', '3651', '', '36.5', '-40', 'x'].map(validRetention), [false, false, false, false, false, false])
 })

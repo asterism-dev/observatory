@@ -101,7 +101,12 @@
     "result": "Result",
     "loadMore": "Load more",
     "empty": "No entries",
-    "filter": "Filter"
+    "filter": "Filter",
+    "settings": "Audit",
+    "dataEvents": "Data events",
+    "dataEventsHint": "Record read access for this service.",
+    "retention": "Audit retention",
+    "retentionHint": "Days to keep audit events (30–3650)."
   },
   "role": {
     "owner": "Owner",

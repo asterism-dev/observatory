@@ -15,7 +15,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/audit/v1/audit.proto.
  */
 export const file_observatory_audit_v1_audit: GenFile = /*@__PURE__*/
-  fileDesc("CiBvYnNlcnZhdG9yeS9hdWRpdC92MS9hdWRpdC5wcm90bxIUb2JzZXJ2YXRvcnkuYXVkaXQudjEirgEKC0V2ZW50RmlsdGVyEhAKCGFjdG9yX2lkGAEgASgJEgwKBHR5cGUYAiABKAkSLQoGcmVzdWx0GAMgASgOMh0ub2JzZXJ2YXRvcnkuZXZlbnRzLnYxLlJlc3VsdBIoCgRmcm9tGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBImCgJ0bxgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiegoRTGlzdEV2ZW50c1JlcXVlc3QSCwoDb3JnGAEgASgJEjEKBmZpbHRlchgCIAEoCzIhLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkV2ZW50RmlsdGVyEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJIlsKEkxpc3RFdmVudHNSZXNwb25zZRIsCgZldmVudHMYASADKAsyHC5vYnNlcnZhdG9yeS5ldmVudHMudjEuRXZlbnQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIoQBChRMaXN0QWxsRXZlbnRzUmVxdWVzdBIxCgZmaWx0ZXIYASABKAsyIS5vYnNlcnZhdG9yeS5hdWRpdC52MS5FdmVudEZpbHRlchIRCglwYWdlX3NpemUYAiABKAUSEgoKcGFnZV90b2tlbhgDIAEoCRISCgpmaWx0ZXJfb3JnGAQgASgJIl4KFUxpc3RBbGxFdmVudHNSZXNwb25zZRIsCgZldmVudHMYASADKAsyHC5vYnNlcnZhdG9yeS5ldmVudHMudjEuRXZlbnQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJMqwCCgxBdWRpdFNlcnZpY2UShQEKCkxpc3RFdmVudHMSJy5vYnNlcnZhdG9yeS5hdWRpdC52MS5MaXN0RXZlbnRzUmVxdWVzdBooLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkxpc3RFdmVudHNSZXNwb25zZSIkirUYIAoRYXVkaXQuZXZlbnRzLmxpc3QSCW9yZy9hdWRpdBgCEpMBCg1MaXN0QWxsRXZlbnRzEioub2JzZXJ2YXRvcnkuYXVkaXQudjEuTGlzdEFsbEV2ZW50c1JlcXVlc3QaKy5vYnNlcnZhdG9yeS5hdWRpdC52MS5MaXN0QWxsRXZlbnRzUmVzcG9uc2UiKYq1GCUKEWF1ZGl0LmV2ZW50cy5saXN0Eg5wbGF0Zm9ybS9hdWRpdBgCQuEBChhjb20ub2JzZXJ2YXRvcnkuYXVkaXQudjFCCkF1ZGl0UHJvdG9QAVpHZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L2F1ZGl0L3YxO2F1ZGl0djGiAgNPQViqAhRPYnNlcnZhdG9yeS5BdWRpdC5WMcoCFE9ic2VydmF0b3J5XEF1ZGl0XFYx4gIgT2JzZXJ2YXRvcnlcQXVkaXRcVjFcR1BCTWV0YWRhdGHqAhZPYnNlcnZhdG9yeTo6QXVkaXQ6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_observatory_events_v1_event, file_observatory_v1_annotations]);
+  fileDesc("CiBvYnNlcnZhdG9yeS9hdWRpdC92MS9hdWRpdC5wcm90bxIUb2JzZXJ2YXRvcnkuYXVkaXQudjEirgEKC0V2ZW50RmlsdGVyEhAKCGFjdG9yX2lkGAEgASgJEgwKBHR5cGUYAiABKAkSLQoGcmVzdWx0GAMgASgOMh0ub2JzZXJ2YXRvcnkuZXZlbnRzLnYxLlJlc3VsdBIoCgRmcm9tGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBImCgJ0bxgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiegoRTGlzdEV2ZW50c1JlcXVlc3QSCwoDb3JnGAEgASgJEjEKBmZpbHRlchgCIAEoCzIhLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkV2ZW50RmlsdGVyEhEKCXBhZ2Vfc2l6ZRgDIAEoBRISCgpwYWdlX3Rva2VuGAQgASgJIlsKEkxpc3RFdmVudHNSZXNwb25zZRIsCgZldmVudHMYASADKAsyHC5vYnNlcnZhdG9yeS5ldmVudHMudjEuRXZlbnQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIoQBChRMaXN0QWxsRXZlbnRzUmVxdWVzdBIxCgZmaWx0ZXIYASABKAsyIS5vYnNlcnZhdG9yeS5hdWRpdC52MS5FdmVudEZpbHRlchIRCglwYWdlX3NpemUYAiABKAUSEgoKcGFnZV90b2tlbhgDIAEoCRISCgpmaWx0ZXJfb3JnGAQgASgJIl4KFUxpc3RBbGxFdmVudHNSZXNwb25zZRIsCgZldmVudHMYASADKAsyHC5vYnNlcnZhdG9yeS5ldmVudHMudjEuRXZlbnQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJIiEKEkdldFNldHRpbmdzUmVxdWVzdBILCgNvcmcYASABKAkimAEKE0dldFNldHRpbmdzUmVzcG9uc2USTgoLZGF0YV9ldmVudHMYASADKAsyOS5vYnNlcnZhdG9yeS5hdWRpdC52MS5HZXRTZXR0aW5nc1Jlc3BvbnNlLkRhdGFFdmVudHNFbnRyeRoxCg9EYXRhRXZlbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgIOgI4ASKpAQoVVXBkYXRlU2V0dGluZ3NSZXF1ZXN0EgsKA29yZxgBIAEoCRJQCgtkYXRhX2V2ZW50cxgCIAMoCzI7Lm9ic2VydmF0b3J5LmF1ZGl0LnYxLlVwZGF0ZVNldHRpbmdzUmVxdWVzdC5EYXRhRXZlbnRzRW50cnkaMQoPRGF0YUV2ZW50c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCDoCOAEingEKFlVwZGF0ZVNldHRpbmdzUmVzcG9uc2USUQoLZGF0YV9ldmVudHMYASADKAsyPC5vYnNlcnZhdG9yeS5hdWRpdC52MS5VcGRhdGVTZXR0aW5nc1Jlc3BvbnNlLkRhdGFFdmVudHNFbnRyeRoxCg9EYXRhRXZlbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgIOgI4ASIcChpHZXRQbGF0Zm9ybVNldHRpbmdzUmVxdWVzdCI1ChtHZXRQbGF0Zm9ybVNldHRpbmdzUmVzcG9uc2USFgoOcmV0ZW50aW9uX2RheXMYASABKAUiNwodVXBkYXRlUGxhdGZvcm1TZXR0aW5nc1JlcXVlc3QSFgoOcmV0ZW50aW9uX2RheXMYASABKAUiOAoeVXBkYXRlUGxhdGZvcm1TZXR0aW5nc1Jlc3BvbnNlEhYKDnJldGVudGlvbl9kYXlzGAEgASgFIhYKFEdldERhdGFFdmVudHNSZXF1ZXN0IkoKFUdldERhdGFFdmVudHNSZXNwb25zZRIxCgdlbmFibGVkGAEgAygLMiAub2JzZXJ2YXRvcnkuYXVkaXQudjEuRGF0YUV2ZW50cyIqCgpEYXRhRXZlbnRzEgsKA29yZxgBIAEoCRIPCgdzZXJ2aWNlGAIgASgJMq4HCgxBdWRpdFNlcnZpY2UShQEKCkxpc3RFdmVudHMSJy5vYnNlcnZhdG9yeS5hdWRpdC52MS5MaXN0RXZlbnRzUmVxdWVzdBooLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkxpc3RFdmVudHNSZXNwb25zZSIkirUYIAoRYXVkaXQuZXZlbnRzLmxpc3QSCW9yZy9hdWRpdBgCEpMBCg1MaXN0QWxsRXZlbnRzEioub2JzZXJ2YXRvcnkuYXVkaXQudjEuTGlzdEFsbEV2ZW50c1JlcXVlc3QaKy5vYnNlcnZhdG9yeS5hdWRpdC52MS5MaXN0QWxsRXZlbnRzUmVzcG9uc2UiKYq1GCUKEWF1ZGl0LmV2ZW50cy5saXN0Eg5wbGF0Zm9ybS9hdWRpdBgCEokBCgtHZXRTZXR0aW5ncxIoLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkdldFNldHRpbmdzUmVxdWVzdBopLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkdldFNldHRpbmdzUmVzcG9uc2UiJYq1GCEKEmF1ZGl0LnNldHRpbmdzLmdldBIJb3JnL2F1ZGl0GAISlQEKDlVwZGF0ZVNldHRpbmdzEisub2JzZXJ2YXRvcnkuYXVkaXQudjEuVXBkYXRlU2V0dGluZ3NSZXF1ZXN0Giwub2JzZXJ2YXRvcnkuYXVkaXQudjEuVXBkYXRlU2V0dGluZ3NSZXNwb25zZSIoirUYJAoVYXVkaXQuc2V0dGluZ3MudXBkYXRlEglvcmcvYXVkaXQYARKmAQoTR2V0UGxhdGZvcm1TZXR0aW5ncxIwLm9ic2VydmF0b3J5LmF1ZGl0LnYxLkdldFBsYXRmb3JtU2V0dGluZ3NSZXF1ZXN0GjEub2JzZXJ2YXRvcnkuYXVkaXQudjEuR2V0UGxhdGZvcm1TZXR0aW5nc1Jlc3BvbnNlIiqKtRgmChJhdWRpdC5zZXR0aW5ncy5nZXQSDnBsYXRmb3JtL2F1ZGl0GAISsgEKFlVwZGF0ZVBsYXRmb3JtU2V0dGluZ3MSMy5vYnNlcnZhdG9yeS5hdWRpdC52MS5VcGRhdGVQbGF0Zm9ybVNldHRpbmdzUmVxdWVzdBo0Lm9ic2VydmF0b3J5LmF1ZGl0LnYxLlVwZGF0ZVBsYXRmb3JtU2V0dGluZ3NSZXNwb25zZSItirUYKQoVYXVkaXQuc2V0dGluZ3MudXBkYXRlEg5wbGF0Zm9ybS9hdWRpdBgBMoABChRBdWRpdEludGVybmFsU2VydmljZRJoCg1HZXREYXRhRXZlbnRzEioub2JzZXJ2YXRvcnkuYXVkaXQudjEuR2V0RGF0YUV2ZW50c1JlcXVlc3QaKy5vYnNlcnZhdG9yeS5hdWRpdC52MS5HZXREYXRhRXZlbnRzUmVzcG9uc2VC4QEKGGNvbS5vYnNlcnZhdG9yeS5hdWRpdC52MUIKQXVkaXRQcm90b1ABWkdnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvYXVkaXQvdjE7YXVkaXR2MaICA09BWKoCFE9ic2VydmF0b3J5LkF1ZGl0LlYxygIUT2JzZXJ2YXRvcnlcQXVkaXRcVjHiAiBPYnNlcnZhdG9yeVxBdWRpdFxWMVxHUEJNZXRhZGF0YeoCFk9ic2VydmF0b3J5OjpBdWRpdDo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_observatory_events_v1_event, file_observatory_v1_annotations]);
 
 /**
  * EventFilter fields are combined with AND; empty fields match everything.
@@ -177,6 +177,201 @@ export const ListAllEventsResponseSchema: GenMessage<ListAllEventsResponse> = /*
   messageDesc(file_observatory_audit_v1_audit, 4);
 
 /**
+ * @generated from message observatory.audit.v1.GetSettingsRequest
+ */
+export type GetSettingsRequest = Message<"observatory.audit.v1.GetSettingsRequest"> & {
+  /**
+   * @generated from field: string org = 1;
+   */
+  org: string;
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetSettingsRequest.
+ * Use `create(GetSettingsRequestSchema)` to create a new message.
+ */
+export const GetSettingsRequestSchema: GenMessage<GetSettingsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 5);
+
+/**
+ * @generated from message observatory.audit.v1.GetSettingsResponse
+ */
+export type GetSettingsResponse = Message<"observatory.audit.v1.GetSettingsResponse"> & {
+  /**
+   * data_events holds every service: true records its read calls too, not only writes and denials.
+   *
+   * @generated from field: map<string, bool> data_events = 1;
+   */
+  dataEvents: { [key: string]: boolean };
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetSettingsResponse.
+ * Use `create(GetSettingsResponseSchema)` to create a new message.
+ */
+export const GetSettingsResponseSchema: GenMessage<GetSettingsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 6);
+
+/**
+ * @generated from message observatory.audit.v1.UpdateSettingsRequest
+ */
+export type UpdateSettingsRequest = Message<"observatory.audit.v1.UpdateSettingsRequest"> & {
+  /**
+   * @generated from field: string org = 1;
+   */
+  org: string;
+
+  /**
+   * data_events keys must be service names (iam, quota, compute, network, artifacts, build, secrets, telemetry, audit).
+   *
+   * @generated from field: map<string, bool> data_events = 2;
+   */
+  dataEvents: { [key: string]: boolean };
+};
+
+/**
+ * Describes the message observatory.audit.v1.UpdateSettingsRequest.
+ * Use `create(UpdateSettingsRequestSchema)` to create a new message.
+ */
+export const UpdateSettingsRequestSchema: GenMessage<UpdateSettingsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 7);
+
+/**
+ * @generated from message observatory.audit.v1.UpdateSettingsResponse
+ */
+export type UpdateSettingsResponse = Message<"observatory.audit.v1.UpdateSettingsResponse"> & {
+  /**
+   * @generated from field: map<string, bool> data_events = 1;
+   */
+  dataEvents: { [key: string]: boolean };
+};
+
+/**
+ * Describes the message observatory.audit.v1.UpdateSettingsResponse.
+ * Use `create(UpdateSettingsResponseSchema)` to create a new message.
+ */
+export const UpdateSettingsResponseSchema: GenMessage<UpdateSettingsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 8);
+
+/**
+ * @generated from message observatory.audit.v1.GetPlatformSettingsRequest
+ */
+export type GetPlatformSettingsRequest = Message<"observatory.audit.v1.GetPlatformSettingsRequest"> & {
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetPlatformSettingsRequest.
+ * Use `create(GetPlatformSettingsRequestSchema)` to create a new message.
+ */
+export const GetPlatformSettingsRequestSchema: GenMessage<GetPlatformSettingsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 9);
+
+/**
+ * @generated from message observatory.audit.v1.GetPlatformSettingsResponse
+ */
+export type GetPlatformSettingsResponse = Message<"observatory.audit.v1.GetPlatformSettingsResponse"> & {
+  /**
+   * retention_days is how long audit events are kept, 30 to 3650 (default 365).
+   *
+   * @generated from field: int32 retention_days = 1;
+   */
+  retentionDays: number;
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetPlatformSettingsResponse.
+ * Use `create(GetPlatformSettingsResponseSchema)` to create a new message.
+ */
+export const GetPlatformSettingsResponseSchema: GenMessage<GetPlatformSettingsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 10);
+
+/**
+ * @generated from message observatory.audit.v1.UpdatePlatformSettingsRequest
+ */
+export type UpdatePlatformSettingsRequest = Message<"observatory.audit.v1.UpdatePlatformSettingsRequest"> & {
+  /**
+   * @generated from field: int32 retention_days = 1;
+   */
+  retentionDays: number;
+};
+
+/**
+ * Describes the message observatory.audit.v1.UpdatePlatformSettingsRequest.
+ * Use `create(UpdatePlatformSettingsRequestSchema)` to create a new message.
+ */
+export const UpdatePlatformSettingsRequestSchema: GenMessage<UpdatePlatformSettingsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 11);
+
+/**
+ * @generated from message observatory.audit.v1.UpdatePlatformSettingsResponse
+ */
+export type UpdatePlatformSettingsResponse = Message<"observatory.audit.v1.UpdatePlatformSettingsResponse"> & {
+  /**
+   * @generated from field: int32 retention_days = 1;
+   */
+  retentionDays: number;
+};
+
+/**
+ * Describes the message observatory.audit.v1.UpdatePlatformSettingsResponse.
+ * Use `create(UpdatePlatformSettingsResponseSchema)` to create a new message.
+ */
+export const UpdatePlatformSettingsResponseSchema: GenMessage<UpdatePlatformSettingsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 12);
+
+/**
+ * @generated from message observatory.audit.v1.GetDataEventsRequest
+ */
+export type GetDataEventsRequest = Message<"observatory.audit.v1.GetDataEventsRequest"> & {
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetDataEventsRequest.
+ * Use `create(GetDataEventsRequestSchema)` to create a new message.
+ */
+export const GetDataEventsRequestSchema: GenMessage<GetDataEventsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 13);
+
+/**
+ * @generated from message observatory.audit.v1.GetDataEventsResponse
+ */
+export type GetDataEventsResponse = Message<"observatory.audit.v1.GetDataEventsResponse"> & {
+  /**
+   * @generated from field: repeated observatory.audit.v1.DataEvents enabled = 1;
+   */
+  enabled: DataEvents[];
+};
+
+/**
+ * Describes the message observatory.audit.v1.GetDataEventsResponse.
+ * Use `create(GetDataEventsResponseSchema)` to create a new message.
+ */
+export const GetDataEventsResponseSchema: GenMessage<GetDataEventsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 14);
+
+/**
+ * @generated from message observatory.audit.v1.DataEvents
+ */
+export type DataEvents = Message<"observatory.audit.v1.DataEvents"> & {
+  /**
+   * @generated from field: string org = 1;
+   */
+  org: string;
+
+  /**
+   * @generated from field: string service = 2;
+   */
+  service: string;
+};
+
+/**
+ * Describes the message observatory.audit.v1.DataEvents.
+ * Use `create(DataEventsSchema)` to create a new message.
+ */
+export const DataEventsSchema: GenMessage<DataEvents> = /*@__PURE__*/
+  messageDesc(file_observatory_audit_v1_audit, 15);
+
+/**
  * AuditService reads the audit trail, newest first.
  *
  * @generated from service observatory.audit.v1.AuditService
@@ -200,6 +395,61 @@ export const AuditService: GenService<{
     input: typeof ListAllEventsRequestSchema;
     output: typeof ListAllEventsResponseSchema;
   },
+  /**
+   * @generated from rpc observatory.audit.v1.AuditService.GetSettings
+   */
+  getSettings: {
+    methodKind: "unary";
+    input: typeof GetSettingsRequestSchema;
+    output: typeof GetSettingsResponseSchema;
+  },
+  /**
+   * UpdateSettings changes only the services listed; the others keep their setting.
+   *
+   * @generated from rpc observatory.audit.v1.AuditService.UpdateSettings
+   */
+  updateSettings: {
+    methodKind: "unary";
+    input: typeof UpdateSettingsRequestSchema;
+    output: typeof UpdateSettingsResponseSchema;
+  },
+  /**
+   * GetPlatformSettings and UpdatePlatformSettings are for platform admins only.
+   *
+   * @generated from rpc observatory.audit.v1.AuditService.GetPlatformSettings
+   */
+  getPlatformSettings: {
+    methodKind: "unary";
+    input: typeof GetPlatformSettingsRequestSchema;
+    output: typeof GetPlatformSettingsResponseSchema;
+  },
+  /**
+   * @generated from rpc observatory.audit.v1.AuditService.UpdatePlatformSettings
+   */
+  updatePlatformSettings: {
+    methodKind: "unary";
+    input: typeof UpdatePlatformSettingsRequestSchema;
+    output: typeof UpdatePlatformSettingsResponseSchema;
+  },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_audit_v1_audit, 0);
+
+/**
+ * AuditInternalService serves other services under /internal/audit/; callers authenticate with a service token.
+ *
+ * @generated from service observatory.audit.v1.AuditInternalService
+ */
+export const AuditInternalService: GenService<{
+  /**
+   * GetDataEvents lists every org and service with data events on.
+   *
+   * @generated from rpc observatory.audit.v1.AuditInternalService.GetDataEvents
+   */
+  getDataEvents: {
+    methodKind: "unary";
+    input: typeof GetDataEventsRequestSchema;
+    output: typeof GetDataEventsResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_observatory_audit_v1_audit, 1);
 

@@ -39,7 +39,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `iam.teams.update`, `iam.teams.delete`, `iam.teams.manageMembers`, `iam.teams.leave` | `org/teams/*` |
 | `iam.roles.list`, `iam.roles.manage`, `iam.roleBindings.manage` | `org/roles` |
 | `quota.limits.get`, `quota.limits.update` | `org/limits` |
-| `audit.events.list` | `org/audit` |
+| `audit.events.list`, `audit.settings.get`, `audit.settings.update` | `org/audit` |
 | `telemetry.logEntries.list` | `org/logs` |
 | `secrets.variables.list`, `secrets.variables.set`, `secrets.variables.delete`, `secrets.variables.use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
 | `secrets.integrations.list`, `secrets.integrations.set`, `secrets.integrations.delete`, `secrets.integrations.use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
@@ -65,6 +65,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `iam.orgs.update`, `telemetry.tokens.create`, `iam.invites.create`, `iam.members.delete` | | yes | yes |
 | `iam.teams.*` (create, update, delete, manage members, leave) | | yes | yes |
 | `iam.roles.manage`, `iam.roleBindings.manage`, `quota.limits.update`, `audit.events.list` | | yes | yes |
+| `audit.settings.get`, `audit.settings.update` (data events per service) | | yes | yes |
 | `telemetry.logEntries.list` (the org's logs explorer, all of the org's logs) | | yes | yes |
 | `iam.members.setRole` | | | yes |
 | `secrets.variables.list`, `secrets.variables.use` on `org/env` | yes | yes | yes |
@@ -318,6 +319,13 @@ Every state change writes an audit event to the hub's outbox in the same transac
 change commits; the relay delivers it over the event bus to the audit service, which serves the trail at
 `/api/audit/v1/`. Every denied authorization writes an event with result `denied`, actor, org, action and object. A denied row carries the same action name as the allowed one,
 so consumers must filter on `result` when they count what happened.
+
+Services other than the hub record their calls with a shared interceptor (`internal/platform/auditlog`): every write
+and every denial of a verified caller, and reads only where the org turned on data events for that service (org
+settings → Audit; `audit.settings.update`). The interceptor sits before authz in the chain, because authz ends a denied
+call before any inner interceptor runs; authz reports the verified caller back through the context. Calls without a
+verified identity are not recorded. A settings change publishes `audit.settings.changed`, and services reload without a
+restart.
 
 ## Not yet built
 

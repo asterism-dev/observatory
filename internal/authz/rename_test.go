@@ -77,6 +77,9 @@ var renamed = map[string]string{
 	"image:build":         "build.builds.create",
 }
 
+// addedSince are the actions added after the rename, granted to admin and owner on ObjAudit.
+var addedSince = []string{"audit.settings.get", "audit.settings.update"}
+
 // The 0.x built-in roles, captured verbatim before the rename.
 var (
 	oldMember = []Rule{
@@ -157,6 +160,7 @@ func TestCatalogNamesValid(t *testing.T) {
 	for _, n := range renamed {
 		want = append(want, n)
 	}
+	want = append(want, addedSince...)
 	slices.Sort(got)
 	slices.Sort(want)
 	if !reflect.DeepEqual(got, want) {
@@ -191,6 +195,12 @@ func TestBuiltinRolesUnchangedByRename(t *testing.T) {
 	admin := slices.Concat(oldMember, oldAdminExtra)
 	for key, old := range map[string][]Rule{"member": oldMember, "admin": admin, "owner": slices.Concat(admin, oldOwnerExtra)} {
 		got, want := grants(BuiltinRules(key), ExpandActions), grants(old, expandOld)
+		if key != "member" {
+			for _, a := range addedSince {
+				want = append(want, "allow "+ObjAudit+" "+a)
+			}
+			slices.Sort(want)
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s grants\n got %v\nwant %v", key, got, want)
 		}
@@ -218,8 +228,8 @@ func TestWildcardPatterns(t *testing.T) {
 	if !reflect.DeepEqual(got, compute) {
 		t.Errorf("compute.* = %v, want %v", got, compute)
 	}
-	if got := ExpandActions("*"); len(got) != len(renamed) {
-		t.Errorf("* expands to %d actions, want %d", len(got), len(renamed))
+	if got := ExpandActions("*"); len(got) != len(renamed)+len(addedSince) {
+		t.Errorf("* expands to %d actions, want %d", len(got), len(renamed)+len(addedSince))
 	}
 	// A wildcard must cover whole segments, or compute* would also grant a future computex service.
 	for _, p := range []string{"compute*", "compute.inst*", "compute.instances.set*", "*.instances.get", "compute.*.get", "compute.instances.get*"} {

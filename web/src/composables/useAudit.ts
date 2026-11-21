@@ -27,3 +27,18 @@ export function toAuditRow(e: Event): AuditRow {
     result: results[e.result] ?? '',
   }
 }
+
+export interface DataEventRow {
+  service: string
+  enabled: boolean
+}
+
+export function dataEventRows(on: Record<string, boolean>): DataEventRow[] {
+  return Object.entries(on)
+    .map(([service, enabled]) => ({ service, enabled }))
+    .sort((a, b) => a.service.localeCompare(b.service))
+}
+
+export function validRetention(days: string): boolean {
+  return /^\d+$/.test(days) && +days >= 30 && +days <= 3650
+}

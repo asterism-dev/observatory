@@ -89,9 +89,11 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
 - Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`, which the hub needs too: it writes its audit events to its
   `outbox` table and relays them to the bus, retrying while the bus is down. The durable consumer `audit` acknowledges an event only once
   it is stored; a redelivered event is stored once (by event id).
+- `OBSERVATORY_SERVICE_TOKENS` (optional, `name=token` pairs) admits other services to `/internal/audit/`, where they
+  load which orgs have data events on; without it every call there is refused.
 - `audit.events` is append-only: a trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Only the daily retention job
-  deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than 365 days are
-  removed. The setting guards against mistakes in application code, not against a database user who sets it too.
+  deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than the platform
+  setting "Audit retention" (30–3650 days, default 365) are removed. The setting guards against mistakes in application code, not against a database user who sets it too.
 
 `serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it runs an
 embedded event bus stored in `OBSERVATORY_DATA_DIR/nats` (the image sets `/var/lib/observatory`, a volume) and refuses to start when neither is set.

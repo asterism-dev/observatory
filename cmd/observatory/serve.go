@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/hubserver"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	svcrun "github.com/asterism-dev/observatory/internal/platform/run"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/web"
 )
 
@@ -58,6 +59,10 @@ func cmdServe(c *cli, args []string) error {
 		if len(missing) > 0 {
 			slices.Sort(missing)
 			return fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
+		}
+		var err error
+		if cfg.ServiceTokens, err = servicetoken.Parse(c.getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
+			return fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
 		}
 		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_AUDIT_LISTEN", ":8092"))
 		if err != nil {

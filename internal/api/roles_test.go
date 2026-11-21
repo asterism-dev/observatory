@@ -419,7 +419,7 @@ func TestWildcardDenyKeptAsWritten(t *testing.T) {
 	rec := e.send("POST", rolesPath(org), ownerTok, `{"name":"no teams","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.*"},{"effect":"allow","object":"org/audit","action":"audit.*"}]}`)
 	var created roleJSONT
 	decode(t, rec, &created)
-	if rec.Code != 201 || len(created.Rules) != 2 || created.Rules[0].Action != "iam.teams.*" || created.Rules[1].Action != "audit.events.list" {
+	if rec.Code != 201 || len(created.Rules) != 4 || created.Rules[0].Action != "iam.teams.*" || created.Rules[1].Action != "audit.events.list" || created.Rules[3].Action != "audit.settings.update" {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	e.bind(ownerTok, org, authz.UserSubject(admin.ID), created.ID)

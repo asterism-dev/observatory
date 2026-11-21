@@ -23,6 +23,8 @@ const _ = connect.IsAtLeastVersion1_13_0
 const (
 	// AuditServiceName is the fully-qualified name of the AuditService service.
 	AuditServiceName = "observatory.audit.v1.AuditService"
+	// AuditInternalServiceName is the fully-qualified name of the AuditInternalService service.
+	AuditInternalServiceName = "observatory.audit.v1.AuditInternalService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -38,6 +40,21 @@ const (
 	// AuditServiceListAllEventsProcedure is the fully-qualified name of the AuditService's
 	// ListAllEvents RPC.
 	AuditServiceListAllEventsProcedure = "/observatory.audit.v1.AuditService/ListAllEvents"
+	// AuditServiceGetSettingsProcedure is the fully-qualified name of the AuditService's GetSettings
+	// RPC.
+	AuditServiceGetSettingsProcedure = "/observatory.audit.v1.AuditService/GetSettings"
+	// AuditServiceUpdateSettingsProcedure is the fully-qualified name of the AuditService's
+	// UpdateSettings RPC.
+	AuditServiceUpdateSettingsProcedure = "/observatory.audit.v1.AuditService/UpdateSettings"
+	// AuditServiceGetPlatformSettingsProcedure is the fully-qualified name of the AuditService's
+	// GetPlatformSettings RPC.
+	AuditServiceGetPlatformSettingsProcedure = "/observatory.audit.v1.AuditService/GetPlatformSettings"
+	// AuditServiceUpdatePlatformSettingsProcedure is the fully-qualified name of the AuditService's
+	// UpdatePlatformSettings RPC.
+	AuditServiceUpdatePlatformSettingsProcedure = "/observatory.audit.v1.AuditService/UpdatePlatformSettings"
+	// AuditInternalServiceGetDataEventsProcedure is the fully-qualified name of the
+	// AuditInternalService's GetDataEvents RPC.
+	AuditInternalServiceGetDataEventsProcedure = "/observatory.audit.v1.AuditInternalService/GetDataEvents"
 )
 
 // AuditServiceClient is a client for the observatory.audit.v1.AuditService service.
@@ -45,6 +62,12 @@ type AuditServiceClient interface {
 	ListEvents(context.Context, *connect.Request[v1.ListEventsRequest]) (*connect.Response[v1.ListEventsResponse], error)
 	// ListAllEvents covers every org and platform events; platform admins only.
 	ListAllEvents(context.Context, *connect.Request[v1.ListAllEventsRequest]) (*connect.Response[v1.ListAllEventsResponse], error)
+	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// UpdateSettings changes only the services listed; the others keep their setting.
+	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// GetPlatformSettings and UpdatePlatformSettings are for platform admins only.
+	GetPlatformSettings(context.Context, *connect.Request[v1.GetPlatformSettingsRequest]) (*connect.Response[v1.GetPlatformSettingsResponse], error)
+	UpdatePlatformSettings(context.Context, *connect.Request[v1.UpdatePlatformSettingsRequest]) (*connect.Response[v1.UpdatePlatformSettingsResponse], error)
 }
 
 // NewAuditServiceClient constructs a client for the observatory.audit.v1.AuditService service. By
@@ -70,13 +93,41 @@ func NewAuditServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(auditServiceMethods.ByName("ListAllEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		getSettings: connect.NewClient[v1.GetSettingsRequest, v1.GetSettingsResponse](
+			httpClient,
+			baseURL+AuditServiceGetSettingsProcedure,
+			connect.WithSchema(auditServiceMethods.ByName("GetSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		updateSettings: connect.NewClient[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse](
+			httpClient,
+			baseURL+AuditServiceUpdateSettingsProcedure,
+			connect.WithSchema(auditServiceMethods.ByName("UpdateSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		getPlatformSettings: connect.NewClient[v1.GetPlatformSettingsRequest, v1.GetPlatformSettingsResponse](
+			httpClient,
+			baseURL+AuditServiceGetPlatformSettingsProcedure,
+			connect.WithSchema(auditServiceMethods.ByName("GetPlatformSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		updatePlatformSettings: connect.NewClient[v1.UpdatePlatformSettingsRequest, v1.UpdatePlatformSettingsResponse](
+			httpClient,
+			baseURL+AuditServiceUpdatePlatformSettingsProcedure,
+			connect.WithSchema(auditServiceMethods.ByName("UpdatePlatformSettings")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // auditServiceClient implements AuditServiceClient.
 type auditServiceClient struct {
-	listEvents    *connect.Client[v1.ListEventsRequest, v1.ListEventsResponse]
-	listAllEvents *connect.Client[v1.ListAllEventsRequest, v1.ListAllEventsResponse]
+	listEvents             *connect.Client[v1.ListEventsRequest, v1.ListEventsResponse]
+	listAllEvents          *connect.Client[v1.ListAllEventsRequest, v1.ListAllEventsResponse]
+	getSettings            *connect.Client[v1.GetSettingsRequest, v1.GetSettingsResponse]
+	updateSettings         *connect.Client[v1.UpdateSettingsRequest, v1.UpdateSettingsResponse]
+	getPlatformSettings    *connect.Client[v1.GetPlatformSettingsRequest, v1.GetPlatformSettingsResponse]
+	updatePlatformSettings *connect.Client[v1.UpdatePlatformSettingsRequest, v1.UpdatePlatformSettingsResponse]
 }
 
 // ListEvents calls observatory.audit.v1.AuditService.ListEvents.
@@ -89,11 +140,37 @@ func (c *auditServiceClient) ListAllEvents(ctx context.Context, req *connect.Req
 	return c.listAllEvents.CallUnary(ctx, req)
 }
 
+// GetSettings calls observatory.audit.v1.AuditService.GetSettings.
+func (c *auditServiceClient) GetSettings(ctx context.Context, req *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
+	return c.getSettings.CallUnary(ctx, req)
+}
+
+// UpdateSettings calls observatory.audit.v1.AuditService.UpdateSettings.
+func (c *auditServiceClient) UpdateSettings(ctx context.Context, req *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
+	return c.updateSettings.CallUnary(ctx, req)
+}
+
+// GetPlatformSettings calls observatory.audit.v1.AuditService.GetPlatformSettings.
+func (c *auditServiceClient) GetPlatformSettings(ctx context.Context, req *connect.Request[v1.GetPlatformSettingsRequest]) (*connect.Response[v1.GetPlatformSettingsResponse], error) {
+	return c.getPlatformSettings.CallUnary(ctx, req)
+}
+
+// UpdatePlatformSettings calls observatory.audit.v1.AuditService.UpdatePlatformSettings.
+func (c *auditServiceClient) UpdatePlatformSettings(ctx context.Context, req *connect.Request[v1.UpdatePlatformSettingsRequest]) (*connect.Response[v1.UpdatePlatformSettingsResponse], error) {
+	return c.updatePlatformSettings.CallUnary(ctx, req)
+}
+
 // AuditServiceHandler is an implementation of the observatory.audit.v1.AuditService service.
 type AuditServiceHandler interface {
 	ListEvents(context.Context, *connect.Request[v1.ListEventsRequest]) (*connect.Response[v1.ListEventsResponse], error)
 	// ListAllEvents covers every org and platform events; platform admins only.
 	ListAllEvents(context.Context, *connect.Request[v1.ListAllEventsRequest]) (*connect.Response[v1.ListAllEventsResponse], error)
+	GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error)
+	// UpdateSettings changes only the services listed; the others keep their setting.
+	UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error)
+	// GetPlatformSettings and UpdatePlatformSettings are for platform admins only.
+	GetPlatformSettings(context.Context, *connect.Request[v1.GetPlatformSettingsRequest]) (*connect.Response[v1.GetPlatformSettingsResponse], error)
+	UpdatePlatformSettings(context.Context, *connect.Request[v1.UpdatePlatformSettingsRequest]) (*connect.Response[v1.UpdatePlatformSettingsResponse], error)
 }
 
 // NewAuditServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -115,12 +192,44 @@ func NewAuditServiceHandler(svc AuditServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(auditServiceMethods.ByName("ListAllEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	auditServiceGetSettingsHandler := connect.NewUnaryHandler(
+		AuditServiceGetSettingsProcedure,
+		svc.GetSettings,
+		connect.WithSchema(auditServiceMethods.ByName("GetSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	auditServiceUpdateSettingsHandler := connect.NewUnaryHandler(
+		AuditServiceUpdateSettingsProcedure,
+		svc.UpdateSettings,
+		connect.WithSchema(auditServiceMethods.ByName("UpdateSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	auditServiceGetPlatformSettingsHandler := connect.NewUnaryHandler(
+		AuditServiceGetPlatformSettingsProcedure,
+		svc.GetPlatformSettings,
+		connect.WithSchema(auditServiceMethods.ByName("GetPlatformSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	auditServiceUpdatePlatformSettingsHandler := connect.NewUnaryHandler(
+		AuditServiceUpdatePlatformSettingsProcedure,
+		svc.UpdatePlatformSettings,
+		connect.WithSchema(auditServiceMethods.ByName("UpdatePlatformSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/observatory.audit.v1.AuditService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AuditServiceListEventsProcedure:
 			auditServiceListEventsHandler.ServeHTTP(w, r)
 		case AuditServiceListAllEventsProcedure:
 			auditServiceListAllEventsHandler.ServeHTTP(w, r)
+		case AuditServiceGetSettingsProcedure:
+			auditServiceGetSettingsHandler.ServeHTTP(w, r)
+		case AuditServiceUpdateSettingsProcedure:
+			auditServiceUpdateSettingsHandler.ServeHTTP(w, r)
+		case AuditServiceGetPlatformSettingsProcedure:
+			auditServiceGetPlatformSettingsHandler.ServeHTTP(w, r)
+		case AuditServiceUpdatePlatformSettingsProcedure:
+			auditServiceUpdatePlatformSettingsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -136,4 +245,93 @@ func (UnimplementedAuditServiceHandler) ListEvents(context.Context, *connect.Req
 
 func (UnimplementedAuditServiceHandler) ListAllEvents(context.Context, *connect.Request[v1.ListAllEventsRequest]) (*connect.Response[v1.ListAllEventsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditService.ListAllEvents is not implemented"))
+}
+
+func (UnimplementedAuditServiceHandler) GetSettings(context.Context, *connect.Request[v1.GetSettingsRequest]) (*connect.Response[v1.GetSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditService.GetSettings is not implemented"))
+}
+
+func (UnimplementedAuditServiceHandler) UpdateSettings(context.Context, *connect.Request[v1.UpdateSettingsRequest]) (*connect.Response[v1.UpdateSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditService.UpdateSettings is not implemented"))
+}
+
+func (UnimplementedAuditServiceHandler) GetPlatformSettings(context.Context, *connect.Request[v1.GetPlatformSettingsRequest]) (*connect.Response[v1.GetPlatformSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditService.GetPlatformSettings is not implemented"))
+}
+
+func (UnimplementedAuditServiceHandler) UpdatePlatformSettings(context.Context, *connect.Request[v1.UpdatePlatformSettingsRequest]) (*connect.Response[v1.UpdatePlatformSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditService.UpdatePlatformSettings is not implemented"))
+}
+
+// AuditInternalServiceClient is a client for the observatory.audit.v1.AuditInternalService service.
+type AuditInternalServiceClient interface {
+	// GetDataEvents lists every org and service with data events on.
+	GetDataEvents(context.Context, *connect.Request[v1.GetDataEventsRequest]) (*connect.Response[v1.GetDataEventsResponse], error)
+}
+
+// NewAuditInternalServiceClient constructs a client for the
+// observatory.audit.v1.AuditInternalService service. By default, it uses the Connect protocol with
+// the binary Protobuf Codec, asks for gzipped responses, and sends uncompressed requests. To use
+// the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewAuditInternalServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AuditInternalServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	auditInternalServiceMethods := v1.File_observatory_audit_v1_audit_proto.Services().ByName("AuditInternalService").Methods()
+	return &auditInternalServiceClient{
+		getDataEvents: connect.NewClient[v1.GetDataEventsRequest, v1.GetDataEventsResponse](
+			httpClient,
+			baseURL+AuditInternalServiceGetDataEventsProcedure,
+			connect.WithSchema(auditInternalServiceMethods.ByName("GetDataEvents")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// auditInternalServiceClient implements AuditInternalServiceClient.
+type auditInternalServiceClient struct {
+	getDataEvents *connect.Client[v1.GetDataEventsRequest, v1.GetDataEventsResponse]
+}
+
+// GetDataEvents calls observatory.audit.v1.AuditInternalService.GetDataEvents.
+func (c *auditInternalServiceClient) GetDataEvents(ctx context.Context, req *connect.Request[v1.GetDataEventsRequest]) (*connect.Response[v1.GetDataEventsResponse], error) {
+	return c.getDataEvents.CallUnary(ctx, req)
+}
+
+// AuditInternalServiceHandler is an implementation of the observatory.audit.v1.AuditInternalService
+// service.
+type AuditInternalServiceHandler interface {
+	// GetDataEvents lists every org and service with data events on.
+	GetDataEvents(context.Context, *connect.Request[v1.GetDataEventsRequest]) (*connect.Response[v1.GetDataEventsResponse], error)
+}
+
+// NewAuditInternalServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewAuditInternalServiceHandler(svc AuditInternalServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	auditInternalServiceMethods := v1.File_observatory_audit_v1_audit_proto.Services().ByName("AuditInternalService").Methods()
+	auditInternalServiceGetDataEventsHandler := connect.NewUnaryHandler(
+		AuditInternalServiceGetDataEventsProcedure,
+		svc.GetDataEvents,
+		connect.WithSchema(auditInternalServiceMethods.ByName("GetDataEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/observatory.audit.v1.AuditInternalService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case AuditInternalServiceGetDataEventsProcedure:
+			auditInternalServiceGetDataEventsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedAuditInternalServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAuditInternalServiceHandler struct{}
+
+func (UnimplementedAuditInternalServiceHandler) GetDataEvents(context.Context, *connect.Request[v1.GetDataEventsRequest]) (*connect.Response[v1.GetDataEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.audit.v1.AuditInternalService.GetDataEvents is not implemented"))
 }

@@ -35,6 +35,7 @@ import (
 const (
 	testIssuer = "https://obs.example"
 	testToken  = "audit-service-token-audit-service-token"
+	computeToken = "compute-service-token-compute-service-token"
 )
 
 func openStore(t *testing.T, dbURL string) *store {
@@ -302,6 +303,8 @@ type fixture struct {
 	key                     ed25519.PrivateKey
 	client                  auditv1connect.AuditServiceClient
 	store                   *store
+	baseURL                 string
+	natsURL, natsToken      string
 	orgA, orgB              string
 	admin, member, adminB   uuid.UUID
 	platformAdmin, outsider uuid.UUID
@@ -329,13 +332,15 @@ func newFixture(t *testing.T) *fixture {
 	dbURL := dbtest.Empty(t)
 	f.store = openStore(t, dbURL)
 	natsURL, natsToken, _ := startBus(t)
+	f.natsURL, f.natsToken = natsURL, natsToken
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	cfg := Config{DatabaseURL: dbURL, HubURL: hub.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken}
+	cfg := Config{DatabaseURL: dbURL, HubURL: hub.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
+		ServiceTokens: map[string]string{"compute": computeToken}}
 	go func() { done <- Run(ctx, cfg, ln) }()
 	t.Cleanup(func() {
 		cancel()
@@ -343,7 +348,8 @@ func newFixture(t *testing.T) *fixture {
 			t.Error(err)
 		}
 	})
-	f.client = auditv1connect.NewAuditServiceClient(http.DefaultClient, "http://"+ln.Addr().String()+"/api/audit/v1")
+	f.baseURL = "http://" + ln.Addr().String()
+	f.client = auditv1connect.NewAuditServiceClient(http.DefaultClient, f.baseURL+"/api/audit/v1")
 	return f
 }
 
@@ -403,6 +409,8 @@ func (f *fixture) seed(t *testing.T, org string, n int, base time.Time) []*event
 	}
 	return es
 }
+
+var seededType = &auditv1.EventFilter{Type: "iam.members.delete"}
 
 func ids(es []*eventsv1.Event) []string {
 	var out []string
@@ -528,7 +536,8 @@ func TestListEventsAuthorization(t *testing.T) {
 		org  string
 		want []*eventsv1.Event
 	}{{f.admin, f.orgA, a}, {f.adminB, f.orgB, b}} {
-		resp, err := f.list(t, tc.user, &auditv1.ListEventsRequest{Org: tc.org})
+		// The denials above are audited too; the type filter keeps only the seeded events.
+		resp, err := f.list(t, tc.user, &auditv1.ListEventsRequest{Org: tc.org, Filter: seededType})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -550,7 +559,7 @@ func TestListAllEventsPlatformAdminOnly(t *testing.T) {
 	_, err := f.listAll(t, f.admin, false, &auditv1.ListAllEventsRequest{})
 	wantCode(t, err, connect.CodePermissionDenied)
 
-	resp, err := f.listAll(t, f.platformAdmin, true, &auditv1.ListAllEventsRequest{})
+	resp, err := f.listAll(t, f.platformAdmin, true, &auditv1.ListAllEventsRequest{Filter: seededType})
 	if err != nil {
 		t.Fatal(err)
 	}

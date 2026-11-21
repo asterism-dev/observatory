@@ -101,7 +101,12 @@
     "result": "Ergebnis",
     "loadMore": "Mehr laden",
     "empty": "Keine Einträge",
-    "filter": "Filtern"
+    "filter": "Filtern",
+    "settings": "Audit",
+    "dataEvents": "Datenereignisse",
+    "dataEventsHint": "Lesezugriffe für diesen Service aufzeichnen.",
+    "retention": "Aufbewahrung des Audit-Logs",
+    "retentionHint": "Tage, die Audit-Ereignisse aufbewahrt werden (30–3650)."
   },
   "role": {
     "owner": "Eigentümer",

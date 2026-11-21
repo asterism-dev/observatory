@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"connectrpc.com/connect"
 
@@ -14,7 +13,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 )
 
-// server relies on the authz interceptor: ListEvents reaches it only for members allowed on the request's org.
+// server relies on the authz interceptor: a method reaches it only for callers allowed on the request's org or the platform.
 type server struct {
 	auditv1connect.UnimplementedAuditServiceHandler
 	store *store
@@ -53,8 +52,7 @@ func (s *server) list(ctx context.Context, q listQuery) ([]*eventsv1.Event, stri
 		return nil, "", connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if err != nil {
-		slog.Error("audit: list events", "err", err)
-		return nil, "", connect.NewError(connect.CodeInternal, errors.New("list events failed"))
+		return nil, "", internalErr("list events", err)
 	}
 	return events, next, nil
 }
