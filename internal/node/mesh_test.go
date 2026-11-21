@@ -39,10 +39,14 @@ func (f *fakeWG) run(name string, args ...string) (string, error) {
 	}
 	call := name + " " + strings.Join(shown, " ")
 	f.calls = append(f.calls, call)
-	if call == "wg show wg-underlay latest-handshakes" {
+	if name == "wg" && len(args) == 3 && args[0] == "show" && args[1] == "wg-underlay" {
 		var out strings.Builder
 		for k, p := range f.peers {
-			fmt.Fprintf(&out, "%s\t%d\n", k, p.hs)
+			val := map[string]string{"latest-handshakes": fmt.Sprint(p.hs), "endpoints": p.endpoint, "allowed-ips": p.ips}[args[2]]
+			if val == "" {
+				val = "(none)"
+			}
+			fmt.Fprintf(&out, "%s\t%s\n", k, val)
 		}
 		return out.String(), nil
 	}
@@ -152,9 +156,10 @@ func TestMeshGoesDirectOnHandshake(t *testing.T) {
 		t.Fatalf("mode while trying = %q, want relay", s.Mode)
 	}
 	e.handshake(peerA.PublicKey)
+	e.wg.peers[peerA.PublicKey].endpoint = "203.0.113.77:6000" // roamed
 	e.advance(5 * time.Second)
 	s := e.path(t, "a")
-	if s.Mode != "direct" || s.Endpoint != "192.168.1.5:51822" || s.Handshake == nil {
+	if s.Mode != "direct" || s.Endpoint != "203.0.113.77:6000" || s.Handshake == nil {
 		t.Fatalf("path = %+v, want direct via first candidate", s)
 	}
 	if !e.wg.took(route(peerA)) || e.wg.peers[peerA.PublicKey].ips != "10.198.0.5/32" {
@@ -289,11 +294,67 @@ func TestMeshReappliesAfterWGRestart(t *testing.T) {
 }
 
 func TestMeshClearsLeftoverRoute(t *testing.T) {
+	for name, age := range map[string]time.Duration{"stale": 4 * time.Minute, "none": 0} {
+		t.Run(name, func(t *testing.T) {
+			e := newMeshEnv(t)
+			leftover := &wgPeer{ips: "10.198.0.5/32", endpoint: "192.168.1.5:51822"}
+			if age > 0 {
+				leftover.hs = e.now.Add(-age).Unix()
+			}
+			e.wg.peers[peerA.PublicKey] = leftover
+			e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+			if p := e.wg.peers[peerA.PublicKey]; p.ips != "" {
+				t.Fatalf("leftover /32 without a fresh handshake kept: %+v", p)
+			}
+		})
+	}
+}
+
+func TestMeshAdoptsLiveSessionAfterRestart(t *testing.T) {
 	e := newMeshEnv(t)
-	e.wg.peers[peerA.PublicKey] = &wgPeer{hs: e.now.Unix() - 10, ips: "10.198.0.5/32"}
+	e.wg.peers[peerA.PublicKey] = &wgPeer{hs: e.now.Unix() - 30, ips: "10.198.0.5/32", endpoint: "198.51.100.9:40000"}
 	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
-	if p := e.wg.peers[peerA.PublicKey]; p.ips != "" {
-		t.Fatalf("leftover /32 kept while trying: %+v", p)
+	e.advance(5 * time.Second)
+	if e.wg.took(unroute(peerA)) || slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.Contains(c, `allowed-ips ""`) }) {
+		t.Fatalf("live direct session cleared: %v", e.wg.calls)
+	}
+	if p := e.wg.peers[peerA.PublicKey]; p.ips != "10.198.0.5/32" {
+		t.Fatalf("peer = %+v, want its /32 kept", p)
+	}
+	if s := e.path(t, "a"); s.Mode != "direct" || s.Endpoint != "198.51.100.9:40000" {
+		t.Fatalf("path = %+v, want direct via the endpoint wg reports", s)
+	}
+}
+
+func TestMeshCandidateChangeKeepsDirect(t *testing.T) {
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.handshake(peerA.PublicKey)
+	e.advance(5 * time.Second)
+	e.wg.calls = nil
+	changed := peerA
+	changed.Candidates = []string{"192.0.2.7:51822"}
+	e.m.update(proto.Peers{Peers: []proto.Peer{changed}})
+	e.advance(5 * time.Second)
+	if slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.HasPrefix(c, "wg set") }) {
+		t.Fatalf("direct peer rebuilt on a candidate change: %v", e.wg.calls)
+	}
+	if s := e.path(t, "a"); s.Mode != "direct" || e.wg.peers[peerA.PublicKey].ips != "10.198.0.5/32" {
+		t.Fatalf("path = %+v, want direct with its /32", s)
+	}
+	e.advance(3 * time.Minute)
+	e.advance(2 * time.Minute)
+	if !e.wg.took(trySet(changed, "192.0.2.7:51822")) {
+		t.Fatalf("new candidates not used on the next retry: %v", e.wg.calls)
+	}
+}
+
+func TestMeshSweepSparesGatewayRoute(t *testing.T) {
+	e := newMeshEnv(t)
+	e.m.gateway = testKey(8) // the hub's key as the agent last saw it, not yet what wg-quick loaded
+	e.advance(5 * time.Second)
+	if _, ok := e.wg.peers[gwKey]; !ok || e.wg.took(removeCall(gwKey)) {
+		t.Fatalf("peer holding the underlay /16 removed: %v", e.wg.calls)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 const (
 	meshTick      = 5 * time.Second
+	wgTimeout     = 5 * time.Second
 	directTimeout = 15 * time.Second
 	directRetry   = 2 * time.Minute
 	directStale   = 3 * time.Minute
@@ -38,10 +39,11 @@ type meshPeer struct {
 	proto.Peer // validated, candidates in canonical form
 	mode       pathMode
 	cand       int       // index of the candidate tried or in use
-	since      time.Time // start of the current try or relay; only a newer handshake proves the path
+	since      time.Time // start of the current try
 	retryAt    time.Time
 	handshake  time.Time
-	cleared    bool // a previous run or an older version of this peer may have left allowed-ips until set
+	endpoint   string // what wg reports in use, which roaming may change
+	cleared    bool   // a previous run or an older version of this peer may have left allowed-ips until set
 }
 
 // mesh moves each peer node's /32 onto its own wg-underlay entry once a handshake proves the direct path; until then the gateway's /16 relays it.
@@ -57,7 +59,9 @@ type mesh struct {
 func newMesh() *mesh { return &mesh{cmd: runOutput, now: time.Now} }
 
 func runOutput(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), wgTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -89,11 +93,17 @@ func (m *mesh) update(p proto.Peers) {
 			continue
 		}
 		keys[v.PublicKey], addrs[v.Address] = true, true
-		if old := m.peers[v.NodeID]; old != nil && old.PublicKey == v.PublicKey && old.Address == v.Address && slices.Equal(old.Candidates, v.Candidates) {
+		if old := m.peers[v.NodeID]; old != nil && old.PublicKey == v.PublicKey && old.Address == v.Address {
+			// Rebuilding a working path would drop traffic until the next rekey.
+			old.Candidates = v.Candidates
+			if old.cand >= len(v.Candidates) {
+				old.cand = 0
+			}
 			next[v.NodeID] = old
 			continue
 		}
-		next[v.NodeID] = &meshPeer{Peer: v, since: m.now()} // relay with a zero retryAt: tried right away
+		// Relay with a zero retryAt: a live kernel session from an earlier run is adopted, otherwise tried right away.
+		next[v.NodeID] = &meshPeer{Peer: v}
 	}
 	m.peers = next
 	m.reconcileLocked()
@@ -142,23 +152,33 @@ func (m *mesh) reconcileLocked() {
 	if m.gateway == "" {
 		return
 	}
-	out, err := m.cmd("wg", "show", underlayIface, "latest-handshakes")
-	if err != nil {
-		slog.Warn("reading underlay peers", "err", err)
-		return
+	var tables [3]map[string]string
+	for i, what := range []string{"latest-handshakes", "endpoints", "allowed-ips"} {
+		out, err := m.cmd("wg", "show", underlayIface, what)
+		if err != nil {
+			slog.Warn("reading underlay peers", "err", err)
+			return
+		}
+		tables[i] = parsePeerTable(out)
 	}
-	kernel := parseHandshakes(out)
+	handshakes, endpoints, allowed := tables[0], tables[1], tables[2]
 	now := m.now()
 	want := map[string]bool{m.gateway: true}
 	for _, p := range m.peers {
-		hs, present := kernel[p.PublicKey]
+		hsText, present := handshakes[p.PublicKey]
+		hs := parseHandshake(hsText)
+		p.endpoint = ""
+		if ap, err := netip.ParseAddrPort(endpoints[p.PublicKey]); err == nil {
+			p.endpoint = ap.String()
+		}
 		m.step(p, hs, present, now)
 		if len(p.Candidates) > 0 {
 			want[p.PublicKey] = true
 		}
 	}
-	for key := range kernel {
-		if want[key] {
+	for key := range handshakes {
+		// The gateway is also recognised by its route, should its key ever change before wg-quick reloads it.
+		if want[key] || slices.Contains(strings.Fields(allowed[key]), netaddr.UnderlayPool.String()) {
 			continue
 		}
 		if _, err := m.cmd("wg", "set", underlayIface, "peer", key, "remove"); err != nil {
@@ -169,6 +189,8 @@ func (m *mesh) reconcileLocked() {
 
 func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
 	if len(p.Candidates) == 0 {
+		// The sweep removes the peer, which hands its /32 back to the gateway.
+		p.mode, p.handshake = pathRelay, time.Time{}
 		return
 	}
 	// A wg-quick restart (chassis cert renewal) drops runtime peers; a relay peer is re-added at its retry.
@@ -179,7 +201,8 @@ func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
 	if present {
 		p.handshake = hs
 	}
-	proven := present && !hs.Before(p.since.Truncate(time.Second))
+	// A stale handshake never proves a path, so relay fallback holds; a fresh one may predate this try (rebuild, restart).
+	proven := present && !hs.IsZero() && now.Sub(hs) <= directStale
 	switch p.mode {
 	case pathRelay:
 		// The other node's try handshakes with us too; routing at once keeps both sides symmetric.
@@ -236,7 +259,7 @@ func (m *mesh) relay(p *meshPeer, now time.Time) {
 			return
 		}
 	}
-	p.mode, p.since, p.retryAt, p.handshake = pathRelay, now, now.Add(directRetry), time.Time{}
+	p.mode, p.retryAt, p.handshake = pathRelay, now.Add(directRetry), time.Time{}
 }
 
 func (m *mesh) status() []proto.PathStatus {
@@ -246,7 +269,7 @@ func (m *mesh) status() []proto.PathStatus {
 	for _, p := range m.peers {
 		s := proto.PathStatus{NodeID: p.NodeID, Mode: "relay"}
 		if p.mode == pathDirect {
-			s.Mode, s.Endpoint = "direct", p.Candidates[p.cand]
+			s.Mode, s.Endpoint = "direct", p.endpoint
 		}
 		if !p.handshake.IsZero() {
 			hs := p.handshake
@@ -258,23 +281,23 @@ func (m *mesh) status() []proto.PathStatus {
 	return out
 }
 
-// parseHandshakes reads `wg show <iface> latest-handshakes`; a zero time means no handshake yet.
-func parseHandshakes(out string) map[string]time.Time {
-	hs := map[string]time.Time{}
+// parsePeerTable reads `wg show <iface> <field>` lines of a peer key, a tab and the field's value.
+func parsePeerTable(out string) map[string]string {
+	t := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) != 2 || !wgkey.Valid(f[0]) {
-			continue
+		key, val, ok := strings.Cut(line, "\t")
+		if ok && wgkey.Valid(key) {
+			t[key] = strings.TrimSpace(val)
 		}
-		sec, err := strconv.ParseInt(f[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		var t time.Time
-		if sec > 0 {
-			t = time.Unix(sec, 0)
-		}
-		hs[f[0]] = t
 	}
-	return hs
+	return t
+}
+
+// parseHandshake returns the zero time for no handshake yet or an unreadable value.
+func parseHandshake(s string) time.Time {
+	sec, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
