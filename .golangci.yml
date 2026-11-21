@@ -45,6 +45,8 @@ linters:
             - github.com/asterism-dev/observatory/internal/platform
             - github.com/asterism-dev/observatory/gen
             - google.golang.org/protobuf
+            - github.com/golang-jwt/jwt/v5
+            - github.com/google/uuid
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/api
               desc: platform code must not import a service
