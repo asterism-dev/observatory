@@ -76,6 +76,12 @@ The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LIST
 when other containers must call the hub, and keep that port off public networks) in one process, with the edge and service tokens generated
 per start.
 
+## Event bus
+
+`nats` (NATS with JetStream) carries events between services. It is not published; `OBSERVATORY_NATS_TOKEN` (at least
+32 characters, `openssl rand -hex 32`) is the shared secret, and the `nats-data` volume holds the streams. The hub starts
+without the bus and buffers its events in the outbox until it is reachable.
+
 ## Audit service
 
 `audit` (`serve audit`) stores every audit event from the event bus and serves the trail at `/api/audit/v1/` through
@@ -96,7 +102,8 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
   setting "Audit retention" (30–3650 days, default 365) are removed. The setting guards against mistakes in application code, not against a database user who sets it too.
 
 `serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it runs an
-embedded event bus stored in `OBSERVATORY_DATA_DIR/nats` (the image sets `/var/lib/observatory`, a volume) and refuses to start when neither is set.
+embedded event bus stored in `OBSERVATORY_DATA_DIR/nats` (the image sets `/var/lib/observatory`; mount a volume there, `-v observatory-data:/var/lib/observatory`, or the bus
+is lost with the container) and refuses to start when neither is set.
 
 ## Serving modes
 
