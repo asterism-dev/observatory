@@ -28,6 +28,7 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 
 type clientIPKey struct{}
 
+// TrustEdge stores the client IP for RequestMeta, taking the edge's header only when it carries h.EdgeToken.
 func (h *Handler) TrustEdge(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey{}, clientip.From(r, h.EdgeToken))))
