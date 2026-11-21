@@ -735,7 +735,7 @@ func limitedUntil(u integrations.Usage, now time.Time) *time.Time {
 	return until
 }
 
-// PollUsage polls Claude usage: active accounts every tick, others every inactiveEvery ticks; failures back off per account from 1 to 15 minutes. It returns when ctx ends.
+// PollUsage polls Claude usage: active accounts every tick, others every inactiveEvery ticks; failures back off per account from 1 to 15 minutes, longer when a 429 names a Retry-After (at most an hour). It returns when ctx ends.
 func (f *Fleet) PollUsage(ctx context.Context, u integrations.ClaudeUsage, every time.Duration) {
 	type backoff struct {
 		until time.Time
@@ -787,8 +787,13 @@ func (f *Fleet) PollUsage(ctx context.Context, u integrations.ClaudeUsage, every
 				}
 			case err != nil:
 				b.wait = min(max(2*b.wait, time.Minute), 15*time.Minute)
-				backoffs[a.AccountRef] = backoff{until: now.Add(b.wait), wait: b.wait}
-				slog.Error("usage poll failed", "id", a.ID, "err", err)
+				pause := b.wait
+				var ra *integrations.RetryAfterError
+				if errors.As(err, &ra) {
+					pause = min(max(pause, ra.After), time.Hour)
+				}
+				backoffs[a.AccountRef] = backoff{until: now.Add(pause), wait: b.wait}
+				slog.Error("usage poll failed", "id", a.ID, "err", err, "retryAt", now.Add(pause))
 				if err := f.store.MarkPollFailed(ctx, a.AccountRef, true); err != nil {
 					slog.Error("mark usage poll failed", "id", a.ID, "err", err)
 				}

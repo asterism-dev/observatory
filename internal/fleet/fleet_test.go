@@ -2405,6 +2405,35 @@ func TestPollUsageErrorShownThenCleared(t *testing.T) {
 	waitFor(t, func() bool { return lastError() == "" })
 }
 
+func TestPollUsageHonoursRetryAfter(t *testing.T) {
+	base := time.Now()
+	var offset atomic.Int64
+	prevClock := *fleet.Clock
+	*fleet.Clock = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+	t.Cleanup(func() { *fleet.Clock = prevClock })
+	e := newEnv(t)
+	e.claudeAccounts()
+	var after atomic.Int64
+	after.Store(int64(30 * time.Minute))
+	u := &fakeUsage{fn: func(string) (integrations.Usage, error) {
+		return integrations.Usage{}, &integrations.RetryAfterError{Err: integrations.ErrUnreachable, After: time.Duration(after.Load())}
+	}}
+	e.runPoll(u)
+	waitFor(t, func() bool { return u.n(claudeTok1) == 1 })
+	// The 1-minute backoff alone would poll again here.
+	offset.Store(int64(20 * time.Minute))
+	time.Sleep(30 * time.Millisecond)
+	if n := u.n(claudeTok1); n != 1 {
+		t.Fatalf("polled %d times before Retry-After passed", n)
+	}
+	after.Store(int64(24 * time.Hour))
+	offset.Store(int64(31 * time.Minute))
+	waitFor(t, func() bool { return u.n(claudeTok1) == 2 })
+	// An implausible Retry-After is capped at an hour.
+	offset.Store(int64(31*time.Minute + time.Hour + time.Second))
+	waitFor(t, func() bool { return u.n(claudeTok1) == 3 })
+}
+
 func TestUsageReportClampsNodeTimes(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)

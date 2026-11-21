@@ -424,6 +424,43 @@ func TestAccountFieldsTruncated(t *testing.T) {
 	}
 }
 
+func TestHTTPClaudeUsageRetryAfter(t *testing.T) {
+	var retry string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if retry != "" {
+			w.Header().Set("Retry-After", retry)
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	c := HTTPClaudeUsage{URL: srv.URL}
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"120", 2 * time.Minute},
+		{time.Now().Add(10 * time.Minute).UTC().Format(http.TimeFormat), 10 * time.Minute},
+		{"", 0},
+		{"soon", 0},
+		{"-5", 0},
+		{time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat), 0},
+	} {
+		retry = tc.header
+		_, err := c.Usage(context.Background(), dummyClaude)
+		if !errors.Is(err, ErrUnreachable) {
+			t.Fatalf("Retry-After %q: %v", tc.header, err)
+		}
+		var ra *RetryAfterError
+		got := time.Duration(0)
+		if errors.As(err, &ra) {
+			got = ra.After
+		}
+		if got < tc.want-2*time.Second || got > tc.want {
+			t.Errorf("Retry-After %q: got %s, want %s", tc.header, got, tc.want)
+		}
+	}
+}
+
 func TestHTTPClaudeUsageParses(t *testing.T) {
 	var status int
 	var body string
