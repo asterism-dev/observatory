@@ -53,7 +53,6 @@ func (s *server) UpdateMember(ctx context.Context, req *connect.Request[iamv1.Up
 	}); err != nil {
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.UpdateMemberResponse{}), nil
 }
 
@@ -151,7 +150,6 @@ func (s *server) removeMember(ctx context.Context, req connect.AnyRequest, org, 
 		}
 		return err
 	}
-	s.Notify(org)
 	return nil
 }
 

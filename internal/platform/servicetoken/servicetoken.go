@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"connectrpc.com/connect"
+
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 )
 
@@ -78,4 +80,26 @@ func match(tokens map[string]string, header string) (string, bool) {
 		}
 	}
 	return caller, caller != ""
+}
+
+// Bearer is a client interceptor that sends token on every call, unary and streaming.
+type Bearer string
+
+func (b Bearer) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set("Authorization", "Bearer "+string(b))
+		return next(ctx, req)
+	}
+}
+
+func (b Bearer) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set("Authorization", "Bearer "+string(b))
+		return conn
+	}
+}
+
+func (b Bearer) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }

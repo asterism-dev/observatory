@@ -135,7 +135,6 @@ func (s *server) CreateRole(ctx context.Context, req *connect.Request[iamv1.Crea
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionRoleCreate, authz.ObjRoles, denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.CreateRoleResponse{Role: toRole(role)}), nil
 }
 
@@ -182,7 +181,6 @@ func (s *server) UpdateRole(ctx context.Context, req *connect.Request[iamv1.Upda
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionRoleUpdate, obj, denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.UpdateRoleResponse{Role: toRole(role)}), nil
 }
 
@@ -215,7 +213,6 @@ func (s *server) DeleteRole(ctx context.Context, req *connect.Request[iamv1.Dele
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionRoleDelete, obj, denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.DeleteRoleResponse{}), nil
 }
 
@@ -273,7 +270,6 @@ func (s *server) CreateRoleBinding(ctx context.Context, req *connect.Request[iam
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionRoleBind, obj, denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.CreateRoleBindingResponse{Binding: toRoleBinding(b)}), nil
 }
 
@@ -316,7 +312,6 @@ func (s *server) DeleteRoleBinding(ctx context.Context, req *connect.Request[iam
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionRoleUnbind, authz.RoleObject(b.RoleID), denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.DeleteRoleBindingResponse{}), nil
 }
 

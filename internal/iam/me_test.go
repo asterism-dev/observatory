@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"slices"
 	"strings"
 	"testing"
 
@@ -121,7 +120,6 @@ func TestSSHKeys(t *testing.T) {
 	e := newEnv(t)
 	alice, tok := e.user("alice")
 	_, bobTok := e.user("bob")
-	org := e.createOrg(tok, "Acme")
 	key := newPublicKey(t)
 	ctx := context.Background()
 
@@ -129,13 +127,9 @@ func TestSSHKeys(t *testing.T) {
 	wantCode(t, err, connect.CodeInvalidArgument)
 	_, err = e.client.CreateSSHKey(ctx, req(tok, &iamv1.CreateSSHKeyRequest{Name: "", PublicKey: key}))
 	wantCode(t, err, connect.CodeInvalidArgument)
-	e.takeNotified()
 	added := must[iamv1.CreateSSHKeyResponse](t)(e.client.CreateSSHKey(ctx, req(tok, &iamv1.CreateSSHKeyRequest{Name: "laptop", PublicKey: key}))).Key
 	if added.Name != "laptop" || !strings.HasPrefix(added.Fingerprint, "SHA256:") || added.CreatedAt == nil {
 		t.Fatalf("%+v", added)
-	}
-	if n := e.takeNotified(); len(n) != 2 || !slices.Contains(n, org) || !slices.Contains(n, e.personalOrg(alice)) {
-		t.Fatalf("notified %v", n)
 	}
 	_, err = e.client.CreateSSHKey(ctx, req(tok, &iamv1.CreateSSHKeyRequest{Name: "laptop", PublicKey: key}))
 	wantCode(t, err, connect.CodeFailedPrecondition)

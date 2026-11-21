@@ -1,4 +1,4 @@
-// Package authz authorizes service requests locally against the policy the hub streams.
+// Package authz authorizes service requests locally against the policy iam streams.
 package authz
 
 import (
@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"github.com/google/uuid"
 )
@@ -21,10 +23,13 @@ import (
 const (
 	minBackoff = time.Second
 	maxBackoff = 30 * time.Second
+	// maxStale matches the JWT lifetime, so a lost stream opens no revocation window beyond it.
+	maxStale = 5 * time.Minute
 )
 
 type snapshot struct {
 	revision uint64
+	policy   coreauthz.Policy
 	enforcer *coreauthz.Enforcer
 }
 
@@ -32,6 +37,13 @@ type snapshot struct {
 type Watcher struct {
 	client iamv1connect.PolicyServiceClient
 	cur    atomic.Pointer[snapshot]
+	now    func() time.Time
+	// downSince is when the stream was lost, in Unix nanoseconds; 0 while it delivers.
+	downSince atomic.Int64
+
+	mu       sync.Mutex
+	changed  chan struct{} // closed and replaced on every applied snapshot
+	onChange func()
 }
 
 // NewWatcher streams from hubURL's /internal/iam/ with serviceToken; a nil client gets one without a timeout, which would cut the stream.
@@ -43,32 +55,21 @@ func NewWatcher(hubURL, serviceToken string, client *http.Client) (*Watcher, err
 		client = &http.Client{}
 	}
 	base := strings.TrimSuffix(hubURL, "/") + "/internal/iam"
-	return &Watcher{client: iamv1connect.NewPolicyServiceClient(client, base, connect.WithInterceptors(bearer(serviceToken)))}, nil
+	return &Watcher{
+		client:  iamv1connect.NewPolicyServiceClient(client, base, connect.WithInterceptors(servicetoken.Bearer(serviceToken))),
+		now:     time.Now,
+		changed: make(chan struct{}),
+	}, nil
 }
 
-// bearer sets the service token on outgoing calls; WatchPolicy is a server stream, so the streaming client path matters.
-type bearer string
-
-func (b bearer) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
-	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		req.Header().Set("Authorization", "Bearer "+string(b))
-		return next(ctx, req)
-	}
+// OnChange sets fn to run after every applied snapshot, on the watching goroutine.
+func (w *Watcher) OnChange(fn func()) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onChange = fn
 }
 
-func (b bearer) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
-	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
-		conn := next(ctx, spec)
-		conn.RequestHeader().Set("Authorization", "Bearer "+string(b))
-		return conn
-	}
-}
-
-func (b bearer) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
-	return next
-}
-
-// Run watches until ctx ends, reconnecting with backoff; a lost stream keeps the last snapshot.
+// Run watches until ctx ends, reconnecting with backoff; a lost stream keeps the last snapshot, which Current refuses after maxStale.
 func (w *Watcher) Run(ctx context.Context) {
 	backoff := minBackoff
 	for {
@@ -76,6 +77,7 @@ func (w *Watcher) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		w.downSince.CompareAndSwap(0, w.now().UnixNano())
 		if received {
 			backoff = minBackoff
 		}
@@ -98,6 +100,7 @@ func (w *Watcher) watch(ctx context.Context) (bool, error) {
 	received := false
 	for stream.Receive() {
 		received = true
+		w.downSince.Store(0)
 		w.apply(stream.Msg())
 	}
 	return received, stream.Err()
@@ -118,16 +121,53 @@ func (w *Watcher) apply(m *iamv1.Policy) {
 		// Still applied: the stream is the only source, and ignoring it could freeze a revoked grant.
 		slog.Warn("policy revision went backwards", "revision", m.GetRevision(), "previous", cur.revision)
 	}
-	w.cur.Store(&snapshot{revision: m.GetRevision(), enforcer: e})
+	w.cur.Store(&snapshot{revision: m.GetRevision(), policy: p, enforcer: e})
+	w.mu.Lock()
+	close(w.changed)
+	w.changed = make(chan struct{})
+	fn := w.onChange
+	w.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
-// Current returns false until the first snapshot arrived.
+// Current returns false until the first snapshot arrived, and once the stream has been down longer than maxStale.
 func (w *Watcher) Current() (*coreauthz.Enforcer, bool) {
 	s := w.cur.Load()
 	if s == nil {
 		return nil, false
 	}
+	if down := w.downSince.Load(); down != 0 && w.now().Sub(time.Unix(0, down)) > maxStale {
+		return nil, false
+	}
 	return s.enforcer, true
+}
+
+// Policy returns the latest snapshot and its revision, however old; false until the first arrived.
+func (w *Watcher) Policy() (coreauthz.Policy, uint64, bool) {
+	s := w.cur.Load()
+	if s == nil {
+		return coreauthz.Policy{}, 0, false
+	}
+	return s.policy, s.revision, true
+}
+
+// WaitRevision returns once a snapshot at rev or later is applied, or with ctx's error; rev 0 waits for the first snapshot.
+func (w *Watcher) WaitRevision(ctx context.Context, rev uint64) error {
+	for {
+		w.mu.Lock()
+		ch := w.changed
+		w.mu.Unlock()
+		if s := w.cur.Load(); s != nil && s.revision >= rev {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ch:
+		}
+	}
 }
 
 func policyFrom(m *iamv1.Policy) (coreauthz.Policy, error) {

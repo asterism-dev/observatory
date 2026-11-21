@@ -143,14 +143,10 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 		t.Fatal("invalid role stored")
 	}
 
-	e.takeNotified()
 	created, err := e.tryCreateRole(ownerTok, org, &iamv1.CreateRoleRequest{Name: " team lead ", Description: "leads",
 		Rules: []*iamv1.RoleRule{rule("allow", "org/teams/*", "iam.teams.*")}, Parents: []string{"member"}})
 	if err != nil || created.Name != "team lead" || created.Description != "leads" || !slices.Equal(created.Parents, []string{"member"}) || created.Builtin {
 		t.Fatalf("create: %+v %v", created, err)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	// Wildcard actions are stored expanded so future catalog actions aren't granted implicitly.
 	if len(created.Rules) != len(authz.ExpandActions("iam.teams.*")) || created.Rules[0].Action != "iam.teams.list" || created.Rules[0].Object != "org/teams/*" {
@@ -302,13 +298,9 @@ func TestCreateRoleBindingAppliesImmediately(t *testing.T) {
 	if e.canReadAudit(member.ID, org) {
 		t.Fatal("member reads the audit trail before the bind")
 	}
-	e.takeNotified()
 	binding := e.bind(ownerTok, org, authz.UserSubject(member.ID), auditor)
 	if !e.canReadAudit(member.ID, org) {
 		t.Fatal("bind not applied")
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	list := must[iamv1.ListRoleBindingsResponse](t)(e.client.ListRoleBindings(ctx, req(ownerTok, &iamv1.ListRoleBindingsRequest{Org: org.String()}))).Bindings
 	if len(list) != 1 || list[0].Id != binding.String() || list[0].Subject != authz.UserSubject(member.ID) || list[0].RoleId != auditor.String() || list[0].CreatedAt == nil {

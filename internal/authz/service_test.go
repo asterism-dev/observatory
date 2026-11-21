@@ -3,6 +3,7 @@ package authz
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -125,5 +126,44 @@ func TestServiceCurrent(t *testing.T) {
 	e, ok := svc.Current()
 	if !ok || e != svc.Enforcer() {
 		t.Fatalf("Current = %v, %v; want the current enforcer", e, ok)
+	}
+}
+
+func TestServiceCurrentFollowsFreshness(t *testing.T) {
+	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) { return Policy{}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fresh atomic.Bool
+	svc.WithFreshness(fresh.Load)
+	if _, ok := svc.Current(); ok {
+		t.Fatal("current while not fresh")
+	}
+	fresh.Store(true)
+	if e, ok := svc.Current(); !ok || e != svc.Enforcer() {
+		t.Fatal("not current while fresh")
+	}
+}
+
+func TestServiceOnReloadPassesOldAndNew(t *testing.T) {
+	org, user := uuid.New(), uuid.New()
+	var role atomic.Value
+	role.Store("member")
+	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) {
+		return memberPolicy(org, user, role.Load().(string)), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got [][2]string
+	svc.OnReload(func(old, new Policy) {
+		got = append(got, [2]string{old.Memberships[0].Role, new.Memberships[0].Role})
+	})
+	role.Store("owner")
+	if err := svc.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][2]string{{"member", "member"}, {"member", "owner"}}; !slices.Equal(got, want) {
+		t.Fatalf("OnReload calls %v, want %v", got, want)
 	}
 }

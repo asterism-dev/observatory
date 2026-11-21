@@ -131,7 +131,6 @@ func (s *server) CreateSSHKey(ctx context.Context, req *connect.Request[iamv1.Cr
 	}); err != nil {
 		return nil, err
 	}
-	s.notifyUserOrgs(user)
 	return connect.NewResponse(&iamv1.CreateSSHKeyResponse{Key: toSSHKeyInfo(k)}), nil
 }
 
@@ -158,6 +157,5 @@ func (s *server) DeleteSSHKey(ctx context.Context, req *connect.Request[iamv1.De
 	}); err != nil {
 		return nil, err
 	}
-	s.notifyUserOrgs(user)
 	return connect.NewResponse(&iamv1.DeleteSSHKeyResponse{}), nil
 }

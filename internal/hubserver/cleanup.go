@@ -30,8 +30,8 @@ const (
 
 var errUnparsable = errors.New("unparsable event")
 
-// consumeIAMEvents purges the hub's rows of removed members, deleted teams and ended sessions until ctx ends.
-func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(org uuid.UUID), manifests api.ManifestDeleter) error {
+// consumeIAMEvents purges the hub's rows of removed members, deleted teams and ended sessions, and re-pushes the orgs of users whose SSH keys changed, until ctx ends.
+func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(org uuid.UUID), policy func() *authz.Enforcer, manifests api.ManifestDeleter) error {
 	c, err := js.CreateOrUpdateConsumer(ctx, bus.Stream, jetstream.ConsumerConfig{
 		Durable: cleanupConsumer,
 		FilterSubjects: []string{
@@ -40,6 +40,8 @@ func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Stor
 			"events.*." + store.ActionTeamDelete,
 			"events.platform." + store.ActionAuthLogout,
 			"events.platform." + store.ActionSessionRevoke,
+			"events.platform." + store.ActionSSHKeyAdd,
+			"events.platform." + store.ActionSSHKeyDelete,
 		},
 		AckPolicy:  jetstream.AckExplicitPolicy,
 		AckWait:    cleanupAckWait,
@@ -48,7 +50,7 @@ func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Stor
 	if err != nil {
 		return fmt.Errorf("hub consumer: %w", err)
 	}
-	cc, err := c.Consume(func(msg jetstream.Msg) { handleIAMEvent(ctx, s, iam, notify, manifests, msg) })
+	cc, err := c.Consume(func(msg jetstream.Msg) { handleIAMEvent(ctx, s, iam, notify, policy, manifests, msg) })
 	if err != nil {
 		return fmt.Errorf("consume: %w", err)
 	}
@@ -62,7 +64,7 @@ func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Stor
 	}
 }
 
-func handleIAMEvent(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), manifests api.ManifestDeleter, msg jetstream.Msg) {
+func handleIAMEvent(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), policy func() *authz.Enforcer, manifests api.ManifestDeleter, msg jetstream.Msg) {
 	var e eventsv1.Event
 	if err := proto.Unmarshal(msg.Data(), &e); err != nil {
 		slog.Error("hub: dropping undecodable event", "subject", msg.Subject(), "err", err)
@@ -73,7 +75,7 @@ func handleIAMEvent(ctx context.Context, s *store.Store, iam iamv1connect.IAMInt
 		_ = msg.Ack()
 		return
 	}
-	err := purge(ctx, s, iam, notify, manifests, &e)
+	err := purge(ctx, s, iam, notify, policy, manifests, &e)
 	switch {
 	case errors.Is(err, errUnparsable):
 		slog.Error("hub: dropping iam event", "subject", msg.Subject(), "id", e.GetId(), "err", err)
@@ -90,7 +92,7 @@ func handleIAMEvent(ctx context.Context, s *store.Store, iam iamv1connect.IAMInt
 	_ = msg.Ack()
 }
 
-func purge(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), manifests api.ManifestDeleter, e *eventsv1.Event) error {
+func purge(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServiceClient, notify func(uuid.UUID), policy func() *authz.Enforcer, manifests api.ManifestDeleter, e *eventsv1.Event) error {
 	switch e.GetType() {
 	case store.ActionMemberRemove, store.ActionMemberLeave:
 		org, user, err := orgAndID(e, authz.ObjMembers+"/")
@@ -132,6 +134,15 @@ func purge(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServ
 			return err
 		}
 		return s.DeleteSessionCredentials(ctx, session)
+	case store.ActionSSHKeyAdd, store.ActionSSHKeyDelete:
+		user, err := uuidx.Canonical(e.GetActor().GetId())
+		if err != nil {
+			return fmt.Errorf("%w: actor: %w", errUnparsable, err)
+		}
+		// A user's keys reach the VMs they own or share through teams in every org they belong to.
+		for _, org := range policy().OrgsOf(user) {
+			notify(org)
+		}
 	default:
 		return fmt.Errorf("%w: type %q", errUnparsable, e.GetType())
 	}

@@ -2,7 +2,6 @@ package iam
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 
@@ -97,12 +96,8 @@ func TestTeamCRUD(t *testing.T) {
 	_, err = e.client.GetTeam(ctx, req(ownerTok, &iamv1.GetTeamRequest{Org: org.String(), Team: id.String() + "x"}))
 	wantCode(t, err, connect.CodeInvalidArgument)
 	wantCode(t, e.deleteTeam(memberTok, org, id), connect.CodePermissionDenied)
-	e.takeNotified()
 	if err := e.deleteTeam(ownerTok, org, id); err != nil {
 		t.Fatalf("delete: %v", err)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	if es := e.audit(store.ActionTeamDelete); len(es) != 2 || es[0].Result != store.ResultAllowed || es[0].Resource != "org/teams/"+id.String() {
 		t.Fatalf("delete audit: %+v", es)
@@ -166,12 +161,8 @@ func TestSetTeamMemberTeamAdmin(t *testing.T) {
 	if err := e.setTeamMember(ownerTok, org, mine, lead, true); err != nil {
 		t.Fatalf("owner makes admin: %v", err)
 	}
-	e.takeNotified()
 	if err := e.setTeamMember(leadTok, org, mine, peer, false); err != nil {
 		t.Fatalf("team admin adds: %v", err)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	if es := e.audit(store.ActionTeamMemberSet); len(es) != 2 || es[0].Resource != "org/teams/"+mine.String()+"/members/"+peer.ID.String() || es[0].Details["admin"] != false {
 		t.Fatalf("set audit: %+v", es)
@@ -322,12 +313,8 @@ func TestLeaveTeam(t *testing.T) {
 
 	wantCode(t, e.removeTeamMember(memberTok, org, team, lead), connect.CodePermissionDenied)
 	wantCode(t, e.removeTeamMember(leadTok, org, team, lead), connect.CodeInvalidArgument)
-	e.takeNotified()
 	if err := e.leaveTeam(memberTok, org, team); err != nil {
 		t.Fatalf("leave: %v", err)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	if es := e.audit(store.ActionTeamLeave); len(es) != 1 || es[0].Result != store.ResultAllowed || es[0].ActorID != member.ID.String() || es[0].Resource != "org/teams/"+team.String()+"/members/"+member.ID.String() {
 		t.Fatalf("leave audit: %+v", es)
@@ -364,10 +351,9 @@ func TestDeleteTeamOwningDisk(t *testing.T) {
 	e.resources.setDiskOwner(authz.TeamSubject(team), true)
 
 	before := len(e.audit(""))
-	e.takeNotified()
 	err := e.deleteTeam(ownerTok, org, team)
 	wantCode(t, err, connect.CodeFailedPrecondition)
-	if err.(*connect.Error).Message() != store.ErrOwnsResources.Error() || len(e.audit("")) != before || len(e.takeNotified()) != 0 {
+	if err.(*connect.Error).Message() != store.ErrOwnsResources.Error() || len(e.audit("")) != before {
 		t.Fatalf("refusal: %v", err)
 	}
 	e.resources.setDiskOwner(authz.TeamSubject(team), false)

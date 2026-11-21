@@ -13,7 +13,8 @@ type Service struct {
 	load     func(context.Context) (Policy, error)
 	mu       sync.Mutex
 	cur      atomic.Pointer[Enforcer]
-	onReload func(Policy)
+	onReload func(old, new Policy)
+	fresh    atomic.Pointer[func() bool]
 }
 
 func NewService(ctx context.Context, load func(context.Context) (Policy, error)) (*Service, error) {
@@ -37,25 +38,38 @@ func (s *Service) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	old := s.cur.Load()
 	s.cur.Store(e)
 	if s.onReload != nil {
-		s.onReload(p)
+		s.onReload(old.policy, p)
 	}
 	return nil
 }
 
-// OnReload calls fn with the current policy now and after every successful Reload, in reload order; fn runs under the reload lock and must not block.
-func (s *Service) OnReload(fn func(Policy)) {
+// OnReload calls fn with the previous and the new policy after every successful Reload, in reload order, and now with the current one as both; fn runs under the reload lock and must not block.
+func (s *Service) OnReload(fn func(old, new Policy)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onReload = fn
-	fn(s.cur.Load().policy)
+	cur := s.cur.Load().policy
+	fn(cur, cur)
+}
+
+// WithFreshness makes Current report false while fresh does.
+func (s *Service) WithFreshness(fresh func() bool) *Service {
+	s.fresh.Store(&fresh)
+	return s
 }
 
 func (s *Service) Enforcer() *Enforcer { return s.cur.Load() }
 
-// Current makes the hub's policy a platform authz source; it is loaded at construction, so always present.
-func (s *Service) Current() (*Enforcer, bool) { return s.cur.Load(), true }
+// Current makes the policy a platform authz source; it is loaded at construction, so only freshness can withhold it.
+func (s *Service) Current() (*Enforcer, bool) {
+	if fresh := s.fresh.Load(); fresh != nil && !(*fresh)() {
+		return nil, false
+	}
+	return s.cur.Load(), true
+}
 
 func (s *Service) Allowed(sub string, org uuid.UUID, obj, act string) bool {
 	return s.Enforcer().Allowed(sub, org, obj, act)

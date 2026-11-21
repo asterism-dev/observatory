@@ -41,9 +41,14 @@ type orgMember struct {
 // orgFromPath returns the caller's membership in {org} from the policy; anything else is 404 so org existence doesn't leak.
 func (h *api) orgFromPath(w http.ResponseWriter, r *http.Request) (orgMember, bool) {
 	p, _ := auth.PrincipalFrom(r.Context())
+	e, ok := h.z.Current()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "policy unavailable")
+		return orgMember{}, false
+	}
 	raw := r.PathValue("org")
 	if id, err := uuid.Parse(raw); err == nil && id.String() == raw {
-		if role, ok := h.z.Enforcer().Role(id, p.User.ID); ok {
+		if role, ok := e.Role(id, p.User.ID); ok {
 			return orgMember{id, store.Role(role)}, true
 		}
 	}

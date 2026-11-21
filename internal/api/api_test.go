@@ -78,7 +78,7 @@ func newEnv(t *testing.T) *env {
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
 	h, handler := newAPI(s, iaminternal.Server{Store: s}, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
 	e := &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, iss: iss, verifier: fv, oauth: fo, google: fg}
-	iamHandler, err := iam.Handler(iam.Deps{Store: s, Policy: z, Verifier: idv, Resources: ResourceServer{Store: s, Policy: currentPolicy{z}}, Notify: f.NotifyOrg, Pool: pool, PublicURL: a.PublicURL,
+	iamHandler, err := iam.Handler(iam.Deps{Store: s, Policy: z, Verifier: idv, Resources: ResourceServer{Store: s, Policy: currentPolicy{z}}, Pool: pool, PublicURL: a.PublicURL,
 		Revision: func() uint64 { return 0 }})
 	if err != nil {
 		t.Fatal(err)

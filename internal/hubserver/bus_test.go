@@ -3,12 +3,10 @@ package hubserver
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -54,26 +52,7 @@ func TestHubServesWithoutBusAndRelaysOnceItAppears(t *testing.T) {
 	late.Close()
 
 	pool := dbtest.New(t)
-	idp := httptest.NewServer(nil)
-	defer idp.Close()
-	idp.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"issuer":"`+idp.URL+`","authorization_endpoint":"`+idp.URL+`/auth","token_endpoint":"`+idp.URL+`/token","jwks_uri":"`+idp.URL+`/keys"}`)
-	})
-	env := map[string]string{
-		"OBSERVATORY_DATABASE_URL":       pool.Config().ConnString(),
-		"OBSERVATORY_PUBLIC_URL":         "http://obs.example",
-		"OBSERVATORY_OIDC_ISSUER":        idp.URL,
-		"OBSERVATORY_OIDC_WEB_CLIENT_ID": "web",
-		"OBSERVATORY_OIDC_CLI_CLIENT_ID": "cli",
-		"OBSERVATORY_GATEWAY_TOKEN":      strings.Repeat("g", 32),
-		"OBSERVATORY_STORAGE_TOKEN":      strings.Repeat("s", 32),
-		"OBSERVATORY_EDGE_TOKEN":         strings.Repeat("e", 32),
-		"OBSERVATORY_SECRETS_KEY":        base64.StdEncoding.EncodeToString(make([]byte, 32)),
-		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
-		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
-		"OBSERVATORY_NATS_URL":           "nats://" + lateAddr,
-		"OBSERVATORY_NATS_TOKEN":         natsToken,
-	}
+	env := testHubEnv(t, pool.Config().ConnString(), "nats://"+lateAddr, natsToken)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +129,7 @@ func TestRelayLogsAndRetriesWrongToken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
 	defer cancel()
 	wrong := token[:31] + "x"
-	runBus(ctx, nil, nil, nil, nil, nil, url, wrong)
+	runBus(ctx, nil, nil, nil, nil, nil, nil, url, wrong)
 	if n := strings.Count(logs.String(), "event bus unavailable"); n < 2 {
 		t.Fatalf("logged %d retries, want >= 2:\n%s", n, logs.String())
 	}

@@ -36,8 +36,6 @@ type env struct {
 	client    iamv1connect.IAMServiceClient
 	resources *fakeResources
 
-	mu       sync.Mutex
-	notified []uuid.UUID
 	// rev counts z's reloads, standing in for the published policy revision; byRev keeps the enforcer of each.
 	rev   atomic.Uint64
 	byRev sync.Map
@@ -110,9 +108,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
-	z.OnReload(func(authz.Policy) { e.byRev.Store(e.rev.Add(1), z.Enforcer()) })
+	z.OnReload(func(_, _ authz.Policy) { e.byRev.Store(e.rev.Add(1), z.Enforcer()) })
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,
-		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify, Revision: e.rev.Load})
+		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Revision: e.rev.Load})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,20 +120,6 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(e.srv.Close)
 	e.client = iamv1connect.NewIAMServiceClient(e.srv.Client(), e.srv.URL+"/api/iam/v1")
 	return e
-}
-
-func (e *env) notify(org uuid.UUID) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.notified = append(e.notified, org)
-}
-
-func (e *env) takeNotified() []uuid.UUID {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	n := e.notified
-	e.notified = nil
-	return n
 }
 
 // user logs an identity in and returns the user and a JWT for a fresh session, as the edge would attach it.

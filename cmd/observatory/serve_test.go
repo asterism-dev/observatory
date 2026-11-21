@@ -550,3 +550,86 @@ func TestServeAllRefusesEndedSessionsAtOnce(t *testing.T) {
 		t.Fatalf("/api/info with the revoked session: %d", code)
 	}
 }
+
+// TestHubPolicyFromStream removes a member through iam's API: the hub must refuse them once iam's stream reaches it, with no reload of its own.
+func TestHubPolicyFromStream(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env := serveAllEnv(t, pool, edgeLn)
+	ctx := t.Context()
+	s := store.New(pool)
+	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, _, err := s.CreateInvite(ctx, org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	call := func(method, path, token string) int {
+		req, _ := http.NewRequest(method, "http://"+edgeLn.Addr().String()+path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Observatory", "1")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	limits := "/api/orgs/" + org.ID.String() + "/limits"
+	if code := call("GET", limits, bobToken); code != http.StatusOK {
+		t.Fatalf("bob as a member: %d", code)
+	}
+	if code := call("DELETE", "/api/iam/v1/orgs/"+org.ID.String()+"/members/"+bob.User.ID.String(), aliceToken); code != http.StatusOK {
+		t.Fatalf("remove bob: %d", code)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		code := call("GET", limits, bobToken)
+		if code == http.StatusNotFound {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bob after the removal: %d, want 404", code)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if code := call("GET", limits, aliceToken); code != http.StatusOK {
+		t.Fatalf("alice after bob's removal: %d", code)
+	}
+}

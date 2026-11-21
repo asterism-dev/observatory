@@ -23,6 +23,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/iaminternal"
+	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -52,8 +53,8 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps := NewPolicyServer()
-	z.OnReload(ps.Publish)
+	ps := platformauthz.NewPublisher()
+	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
 	return &iamEnv{s: s, z: z, h: servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalIAM(iss, ps, iaminternal.Server{Store: s}))}
 }
 
@@ -305,7 +306,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed := servicetoken.Middleware(nil)(internalIAM(iss, NewPolicyServer(), iaminternal.Server{Store: e.s}))
+	closed := servicetoken.Middleware(nil)(internalIAM(iss, platformauthz.NewPublisher(), iaminternal.Server{Store: e.s}))
 	for _, p := range paths {
 		r := httptest.NewRequest(p.method, p.path, nil)
 		r.Header.Set("Authorization", "Bearer ")
@@ -434,66 +435,4 @@ func hasMember(p *iamv1.Policy, org, user uuid.UUID) bool {
 	return slices.ContainsFunc(p.Memberships, func(m *iamv1.MemberRole) bool {
 		return m.OrgId == org.String() && m.UserId == user.String() && m.Role == "member"
 	})
-}
-
-func TestPolicyPublishDoesNotBlock(t *testing.T) {
-	ps := NewPolicyServer()
-	// A subscriber that never drains must not stall Publish (which runs under authz's reload lock).
-	ch := ps.subscribe()
-	defer ps.unsubscribe(ch)
-	done := make(chan struct{})
-	go func() {
-		for range 1000 {
-			ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Publish blocked on a slow subscriber")
-	}
-	if got := ps.latest(); got == nil || got.Revision == 0 {
-		t.Fatalf("latest: %v", got)
-	}
-}
-
-func TestPolicyPublishSkipsUnchanged(t *testing.T) {
-	ps := NewPolicyServer()
-	ps.Publish(authz.Policy{})
-	rev := ps.latest().Revision
-	ps.Publish(authz.Policy{})
-	if got := ps.latest().Revision; got != rev {
-		t.Fatalf("unchanged snapshot bumped revision %d → %d", rev, got)
-	}
-	ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
-	if got := ps.latest().Revision; got <= rev {
-		t.Fatalf("changed snapshot kept revision %d", got)
-	}
-}
-
-func TestPolicyWaitRevision(t *testing.T) {
-	ps := NewPolicyServer()
-	ps.Publish(authz.Policy{})
-	rev := ps.Revision()
-	if err := ps.WaitRevision(t.Context(), rev); err != nil {
-		t.Fatalf("current revision: %v", err)
-	}
-	short, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	if err := ps.WaitRevision(short, rev+1); err == nil {
-		t.Fatal("returned before the revision was published")
-	}
-	done := make(chan error, 1)
-	go func() { done <- ps.WaitRevision(t.Context(), rev+1) }()
-	time.Sleep(20 * time.Millisecond)
-	ps.Publish(authz.Policy{Teams: []authz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("WaitRevision missed the publish")
-	}
 }

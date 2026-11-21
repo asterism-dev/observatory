@@ -2,7 +2,6 @@ package iam
 
 import (
 	"context"
-	"slices"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -61,12 +60,8 @@ func TestUpdateMemberOwnerPromotes(t *testing.T) {
 	for _, role := range []string{"boss", ""} {
 		wantCode(t, e.updateMember(ownerTok, org, member, role), connect.CodeInvalidArgument)
 	}
-	e.takeNotified()
 	if err := e.updateMember(ownerTok, org, member, "owner"); err != nil {
 		t.Fatalf("promote: %v", err)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	es := e.audit(store.ActionMemberSetRole)
 	if len(es) != 1 || es[0].Result != store.ResultAllowed || es[0].ActorID != owner.ID.String() || es[0].Resource != "org/members/"+member.ID.String() || es[0].Details["role"] != "owner" {
@@ -147,7 +142,6 @@ func TestMemberDeleteAuditEventOnce(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	before := len(e.audit(""))
-	e.takeNotified()
 
 	if err := e.deleteMember(ownerTok, org, bob); err != nil {
 		t.Fatal(err)
@@ -158,9 +152,6 @@ func TestMemberDeleteAuditEventOnce(t *testing.T) {
 		es[0].ActorID != owner.ID.String() || *es[0].OrgID != org {
 		t.Fatalf("events: %+v", all[:len(all)-before])
 	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
-	}
 }
 
 func TestLeaveOrgNoPermissionNeeded(t *testing.T) {
@@ -170,7 +161,6 @@ func TestLeaveOrgNoPermissionNeeded(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
 	e.bindRole(org, authz.UserSubject(member.ID), "deny", "*", "*")
-	e.takeNotified()
 
 	if err := e.leaveOrg(memberTok, org); err != nil {
 		t.Fatalf("leave: %v", err)
@@ -178,9 +168,6 @@ func TestLeaveOrgNoPermissionNeeded(t *testing.T) {
 	es := e.audit(store.ActionMemberLeave)
 	if len(es) != 1 || es[0].ActorID != member.ID.String() || *es[0].OrgID != org || es[0].Result != store.ResultAllowed || es[0].Resource != "org/members/"+member.ID.String() {
 		t.Fatalf("audit: %+v", es)
-	}
-	if n := e.takeNotified(); !slices.Equal(n, []uuid.UUID{org}) {
-		t.Fatalf("notified %v", n)
 	}
 	_, err := e.getOrg(memberTok, org)
 	wantCode(t, err, connect.CodeNotFound)
@@ -247,7 +234,6 @@ func TestDeleteMemberOwningVM(t *testing.T) {
 	e.resources.setOwner(authz.UserSubject(bob.ID), true)
 
 	before := len(e.audit(""))
-	e.takeNotified()
 	err := e.deleteMember(ownerTok, org, bob)
 	wantCode(t, err, connect.CodeFailedPrecondition)
 	if err.(*connect.Error).Message() != store.ErrOwnsResources.Error() {
@@ -256,9 +242,6 @@ func TestDeleteMemberOwningVM(t *testing.T) {
 	wantCode(t, e.leaveOrg(bobTok, org), connect.CodeFailedPrecondition)
 	if n := len(e.audit("")); n != before {
 		t.Fatalf("audit events written: %d -> %d", before, n)
-	}
-	if n := e.takeNotified(); len(n) != 0 {
-		t.Fatalf("notified %v", n)
 	}
 	e.resources.setOwner(authz.UserSubject(bob.ID), false)
 	if err := e.deleteMember(ownerTok, org, bob); err != nil {

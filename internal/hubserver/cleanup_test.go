@@ -97,7 +97,7 @@ func (e *cleanupEnv) start() {
 			e.mu.Lock()
 			e.notified = append(e.notified, org)
 			e.mu.Unlock()
-		}, &e.manifests)
+		}, e.policy, &e.manifests)
 	}()
 	e.t.Cleanup(func() {
 		cancel()
@@ -216,9 +216,28 @@ func total(rows map[string]int) int {
 	return n
 }
 
+// policy is the enforcer over the committed IAM tables, standing in for the hub's streamed one.
+func (e *cleanupEnv) policy() *authz.Enforcer {
+	p, err := e.s.PolicySnapshot(context.Background())
+	if err != nil {
+		e.t.Error(err)
+	}
+	en, err := authz.New(p)
+	if err != nil {
+		e.t.Error(err)
+	}
+	return en
+}
+
 func (e *cleanupEnv) publish(typ string, org *uuid.UUID, resource string, result eventsv1.Result) {
 	e.t.Helper()
-	ev := &eventsv1.Event{Id: uuid.Must(uuid.NewV7()).String(), Time: timestamppb.Now(), Type: typ, Resource: resource, Result: result}
+	e.publishBy(uuid.Nil, typ, org, resource, result)
+}
+
+func (e *cleanupEnv) publishBy(actor uuid.UUID, typ string, org *uuid.UUID, resource string, result eventsv1.Result) {
+	e.t.Helper()
+	ev := &eventsv1.Event{Id: uuid.Must(uuid.NewV7()).String(), Time: timestamppb.Now(), Type: typ, Resource: resource, Result: result,
+		Actor: &eventsv1.Actor{Kind: eventsv1.ActorKind_ACTOR_KIND_USER, Id: actor.String()}}
 	scope := "platform"
 	if org != nil {
 		ev.Org, scope = org.String(), org.String()
@@ -488,5 +507,29 @@ func TestSessionRevokeDropsRegistryCredentials(t *testing.T) {
 	e.waitFor("the credentials to go", func() bool { return creds(store.ActionSessionRevoke)+creds(store.ActionAuthLogout) == 0 })
 	if creds("keep") != 1 {
 		t.Fatal("another session's credential was dropped")
+	}
+}
+
+func TestSSHKeyEventNotifiesOrgs(t *testing.T) {
+	e := newCleanupEnv(t)
+	bob := e.member("bob")
+	carol := e.user("carol")
+	want := e.policy().OrgsOf(bob)
+	if !slices.Contains(want, e.org.ID) {
+		t.Fatalf("bob's orgs %v miss acme", want)
+	}
+	slices.SortFunc(want, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	for _, action := range []string{store.ActionSSHKeyAdd, store.ActionSSHKeyDelete} {
+		e.mu.Lock()
+		e.notified = nil
+		e.mu.Unlock()
+		e.publishBy(bob, action, nil, authz.UserSubject(bob)+"/ssh-keys/"+uuid.NewString(), eventsv1.Result_RESULT_ALLOWED)
+		e.publishBy(carol, action, nil, authz.UserSubject(carol)+"/ssh-keys/"+uuid.NewString(), eventsv1.Result_RESULT_DENIED)
+		e.settled()
+		got := e.notifications()
+		slices.SortFunc(got, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s notified %v, want bob's orgs %v", action, got, want)
+		}
 	}
 }

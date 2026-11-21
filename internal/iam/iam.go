@@ -33,14 +33,12 @@ type Deps struct {
 	Policy    *authz.Service
 	Verifier  *identity.Verifier
 	Resources hubv1connect.ResourceServiceClient
-	// Notify re-pushes an org's state to its nodes after a change that reaches them.
-	Notify func(org uuid.UUID)
-	Pool   *pgxpool.Pool
+	Pool      *pgxpool.Pool
 	// Settings nil means no data events.
 	Settings *auditlog.Settings
 	// PublicURL builds invite links.
 	PublicURL *url.URL
-	// Revision is the latest policy revision published to the hub; CanHold waits for the hub to reach it.
+	// Revision is the latest revision of Policy's stream; CanHold waits for the hub to reach it.
 	Revision func() uint64
 }
 
@@ -91,11 +89,4 @@ func caller(ctx context.Context) identity.Principal {
 func auditEntry(ctx context.Context, h http.Header, org *uuid.UUID, action, resource string, result store.Result) store.AuditEntry {
 	return store.AuditEntry{ActorKind: store.ActorUser, ActorID: caller(ctx).User.String(), OrgID: org,
 		Action: action, Resource: resource, Result: result, IP: identity.ClientIP(ctx), UserAgent: textx.Sanitize(h.Get("User-Agent"))}
-}
-
-// notifyUserOrgs re-pushes every org of user, since its keys reach the VMs it owns or shares through teams.
-func (s *server) notifyUserOrgs(user uuid.UUID) {
-	for _, org := range s.Policy.Enforcer().OrgsOf(user) {
-		s.Notify(org)
-	}
 }

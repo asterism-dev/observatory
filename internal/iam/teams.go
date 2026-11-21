@@ -160,7 +160,6 @@ func (s *server) DeleteTeam(ctx context.Context, req *connect.Request[iamv1.Dele
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionTeamDelete, obj, denied)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.DeleteTeamResponse{}), nil
 }
 
@@ -213,7 +212,6 @@ func (s *server) SetTeamMember(ctx context.Context, req *connect.Request[iamv1.S
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionTeamMemberSet, obj, guardErr)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.SetTeamMemberResponse{}), nil
 }
 
@@ -261,7 +259,6 @@ func (s *server) RemoveTeamMember(ctx context.Context, req *connect.Request[iamv
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionTeamMemberRemove, obj, guardErr)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.RemoveTeamMemberResponse{}), nil
 }
 
@@ -296,7 +293,6 @@ func (s *server) LeaveTeam(ctx context.Context, req *connect.Request[iamv1.Leave
 		s.auditGuardDenial(ctx, req.Header(), org, store.ActionTeamLeave, obj, guardErr)
 		return nil, err
 	}
-	s.Notify(org)
 	return connect.NewResponse(&iamv1.LeaveTeamResponse{}), nil
 }
 

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -166,5 +168,21 @@ func TestOrgFromPathUsesPolicy(t *testing.T) {
 	e.reload()
 	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 200 {
 		t.Fatalf("after reload: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOrgRouteUnavailableWhenStale(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	var fresh atomic.Bool
+	e.z.WithFreshness(fresh.Load)
+	rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", tok)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "policy unavailable") {
+		t.Fatalf("stale policy: %d %s", rec.Code, rec.Body.String())
+	}
+	fresh.Store(true)
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", tok); rec.Code != http.StatusOK {
+		t.Fatalf("fresh policy: %d %s", rec.Code, rec.Body.String())
 	}
 }

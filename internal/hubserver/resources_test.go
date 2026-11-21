@@ -42,7 +42,7 @@ func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(servicetoken.Middleware(map[string]string{"iam": svcToken})(internalHub(api.ResourceServer{Store: s, Policy: hubPolicy{z, NewPolicyServer()}})))
+	srv := httptest.NewServer(servicetoken.Middleware(map[string]string{"iam": svcToken})(internalHub(api.ResourceServer{Store: s, Policy: currentPolicy{z}})))
 	defer srv.Close()
 	c := hubv1connect.NewResourceServiceClient(srv.Client(), srv.URL+"/internal/hub")
 	check := func(subject, auth string) (*hubv1.CheckOwnershipResponse, error) {
@@ -81,3 +81,8 @@ func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 		}
 	}
 }
+
+// currentPolicy serves z at every revision, since this test never moves the policy.
+type currentPolicy struct{ *authz.Service }
+
+func (currentPolicy) WaitRevision(context.Context, uint64) error { return nil }
