@@ -52,7 +52,7 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
 - `edge` (`serve edge`) is the only service with a published HTTP port (`OBSERVATORY_HTTP_PORT`, container port
   8090). It serves the web app and forwards everything else to the hub at `OBSERVATORY_EDGE_HUB_URL`
   (`http://hub:8091`), and answers `/internal/*` with 404.
-- `hub` (`serve hub`) listens on port 8091 (`OBSERVATORY_LISTEN`) inside the compose network only. The edge and the
+- `hub` (`serve hub`) listens on port 8091 (`OBSERVATORY_HUB_LISTEN`, default `:8091`) inside the compose network only. The edge and the
   internal callers reach it there: the registry posts its push notifications to `http://hub:8091/internal/registry/events`,
   the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091.
 - `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by both: the edge sends it with
@@ -60,8 +60,8 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
   connection's address. Changing it needs both services restarted.
 
 The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
-`OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, set `:8091` when other containers call it) in one process, with
-an edge token generated per start.
+`OBSERVATORY_HUB_LISTEN` (default `:8091`, keep it off public networks) in one process, with an edge token generated
+per start.
 
 ## Serving modes
 

@@ -28,7 +28,7 @@ An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -
 storage-token` appends whichever is missing).
 
 `make run` starts `observatory serve all`: the edge (public entry point, web app) on `OBSERVATORY_EDGE_LISTEN`
-(default `:8090`) in front of the hub, which listens on `OBSERVATORY_HUB_LISTEN` (`:8091` with `make run`) for the
+(default `:8090`) in front of the hub, which listens on `OBSERVATORY_HUB_LISTEN` (default `:8091`) for the
 gateway, the storage server and the registry; the edge answers `/internal/*` with 404. `make edge-token` appends
 `OBSERVATORY_EDGE_TOKEN` to `deploy/dev/hub.env` if missing (`make run` does it): the token the edge proves itself
 with to the hub when the two run as separate processes (`observatory serve edge` and `observatory serve hub`); `serve all`

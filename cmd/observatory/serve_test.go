@@ -35,6 +35,31 @@ func TestServeEdgeRequiresConfig(t *testing.T) {
 	}
 }
 
+func TestServeRejectsOldListenVariable(t *testing.T) {
+	for _, svc := range []string{"hub", "all"} {
+		c, _, stderr := newTestCLI(t, nil)
+		c.getenv = func(k string) string {
+			return map[string]string{"OBSERVATORY_LISTEN": ":8091", "OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k]
+		}
+		if code := run(c, []string{"serve", svc}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_HUB_LISTEN") {
+			t.Errorf("serve %s: exit %d, stderr %q", svc, code, stderr.String())
+		}
+	}
+}
+
+func TestServeHubListensOnHubListen(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_HUB_LISTEN": taken.Addr().String()}[k] }
+	if code := run(c, []string{"serve", "hub"}); code != 1 || !strings.Contains(stderr.String(), taken.Addr().String()) {
+		t.Fatalf("exit %d, stderr %q; want a bind error on the taken OBSERVATORY_HUB_LISTEN address", code, stderr.String())
+	}
+}
+
 // TestServeAllRecordsClientIPThroughEdge runs the real edge and hub: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
 func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	edgeLn, err := net.Listen("tcp", "[::1]:0")

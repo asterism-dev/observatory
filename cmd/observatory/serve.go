@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -31,9 +32,12 @@ func cmdServe(c *cli, args []string) error {
 	defer stop()
 	// Restores the default handlers once shutdown starts, so a second signal during the drain exits at once.
 	go func() { <-ctx.Done(); stop() }()
+	if args[0] != "edge" && c.getenv("OBSERVATORY_LISTEN") != "" {
+		return errors.New("OBSERVATORY_LISTEN is no longer read: set OBSERVATORY_HUB_LISTEN for the hub (OBSERVATORY_EDGE_LISTEN for the edge)")
+	}
 	switch args[0] {
 	case "hub":
-		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_LISTEN", ":8091"))
+		ln, err := net.Listen("tcp", hubListen(c.getenv))
 		if err != nil {
 			return err
 		}
@@ -52,7 +56,7 @@ func cmdServe(c *cli, args []string) error {
 		if err != nil {
 			return err
 		}
-		return serveEdge(ctx, edgeConfig(c.getenv, c.getenv("OBSERVATORY_EDGE_HUB_URL"), c.getenv("OBSERVATORY_EDGE_TOKEN"), nil), ln)
+		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN")}, ln)
 	default:
 		ln, err := listenEdge(c.getenv)
 		if err != nil {
@@ -71,16 +75,16 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		}
 		return getenv(k)
 	}
-	hub := svcrun.Service{Name: "hub", Addr: envOr(getenv, "OBSERVATORY_HUB_LISTEN", "127.0.0.1:8091"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
+	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
-			return serveEdge(ctx, edgeConfig(getenv, hubURL, token, services), ln)
+			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, Services: services}, ln)
 		}}
 	}, []svcrun.Service{hub})
 }
 
-func edgeConfig(getenv func(string) string, hubURL, token string, services map[string]string) edge.Config {
-	return edge.Config{PublicURL: getenv("OBSERVATORY_PUBLIC_URL"), HubURL: hubURL, Token: token, Services: services}
+func hubListen(getenv func(string) string) string {
+	return envOr(getenv, "OBSERVATORY_HUB_LISTEN", ":8091")
 }
 
 func listenEdge(getenv func(string) string) (net.Listener, error) {
