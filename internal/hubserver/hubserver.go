@@ -105,11 +105,6 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	}
 	defer f.Close()
 	nh.OnChange(f.NotifyOrg)
-	busCtx, stopBus := context.WithCancel(ctx)
-	busDone := make(chan struct{})
-	go func() { runBus(busCtx, pool, s, f.NotifyOrg, cfg.NATSURL, cfg.NATSToken); close(busDone) }()
-	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
-	defer func() { stopBus(); <-busDone }()
 	go f.SweepSnapshots(ctx, 10*time.Second, store.SnapshotCopyTimeout)
 	go f.SweepEgressCAs(ctx, time.Hour)
 	var tc *telemetry.Client
@@ -199,6 +194,11 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		go sched.Run(ctx, 10*time.Second)
 		go api.NewAutoRebuilds(s, z, iam, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
+	busCtx, stopBus := context.WithCancel(ctx)
+	busDone := make(chan struct{})
+	go func() { runBus(busCtx, pool, s, f.NotifyOrg, manifests, cfg.NATSURL, cfg.NATSToken); close(busDone) }()
+	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
+	defer func() { stopBus(); <-busDone }()
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	apiHandler := api.New(s, iam, resources, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
@@ -231,7 +231,7 @@ func dialAddr(addr net.Addr) string {
 }
 
 // runBus relays the outbox and consumes iam events once the bus is reachable; until then the hub serves and the outbox buffers.
-func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func(uuid.UUID), url, token string) {
+func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter, url, token string) {
 	js, closeBus, err := bus.Await(ctx, url, token)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -256,15 +256,15 @@ func runBus(ctx context.Context, pool *pgxpool.Pool, s *store.Store, notify func
 		}
 	}
 	consumed := make(chan struct{})
-	go func() { consumeUntilDone(ctx, js, s, notify); close(consumed) }()
+	go func() { consumeUntilDone(ctx, js, s, notify, manifests); close(consumed) }()
 	defer func() { <-consumed }()
 	outbox.NewRelay(pool, js).Run(ctx)
 }
 
 // consumeUntilDone restarts the iam event consumer whenever it fails; unpurged rows wait in the meantime.
-func consumeUntilDone(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(uuid.UUID)) {
+func consumeUntilDone(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter) {
 	for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
-		err := consumeIAMEvents(ctx, js, s, notify)
+		err := consumeIAMEvents(ctx, js, s, notify, manifests)
 		if ctx.Err() != nil {
 			return
 		}

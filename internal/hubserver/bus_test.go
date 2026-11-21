@@ -150,7 +150,7 @@ func TestRelayLogsAndRetriesWrongToken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
 	defer cancel()
 	wrong := token[:31] + "x"
-	runBus(ctx, nil, nil, nil, url, wrong)
+	runBus(ctx, nil, nil, nil, nil, url, wrong)
 	if n := strings.Count(logs.String(), "event bus unavailable"); n < 2 {
 		t.Fatalf("logged %d retries, want >= 2:\n%s", n, logs.String())
 	}

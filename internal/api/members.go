@@ -112,8 +112,10 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.ownsNothing(w, r, m.OrgID, authz.UserSubject(target)) {
+		return
+	}
 	var removeErr, denied error
-	var private map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		cur, e, err := lockedPolicy(r, tx, m.OrgID)
 		if err != nil {
@@ -139,12 +141,6 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
-		if err := h.checkOwnership(r.Context(), m.OrgID, authz.UserSubject(target)); err != nil {
-			return err
-		}
-		if private, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeUser, target); err != nil {
-			return err
-		}
 		if err := tx.RemoveMember(r.Context(), m.OrgID, target); err != nil {
 			return err
 		}
@@ -165,9 +161,6 @@ func (h *api) removeMember(w http.ResponseWriter, r *http.Request) {
 		}
 		h.auditGuardDenial(r, m.OrgID, action, "org/members/"+target.String(), denied)
 		return
-	}
-	for id, digests := range private {
-		h.deleteManifests(r.Context(), id, digests)
 	}
 	h.fleet.NotifyOrg(m.OrgID)
 	w.WriteHeader(http.StatusNoContent)

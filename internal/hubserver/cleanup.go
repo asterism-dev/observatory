@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
+	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
@@ -28,7 +29,7 @@ const (
 var errUnparsable = errors.New("unparsable event")
 
 // consumeIAMEvents purges the hub's rows of removed members, deleted teams and ended sessions until ctx ends.
-func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(org uuid.UUID)) error {
+func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Store, notify func(org uuid.UUID), manifests api.ManifestDeleter) error {
 	c, err := js.CreateOrUpdateConsumer(ctx, bus.Stream, jetstream.ConsumerConfig{
 		Durable: cleanupConsumer,
 		FilterSubjects: []string{
@@ -45,7 +46,7 @@ func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Stor
 	if err != nil {
 		return fmt.Errorf("hub consumer: %w", err)
 	}
-	cc, err := c.Consume(func(msg jetstream.Msg) { handleIAMEvent(ctx, s, notify, msg) })
+	cc, err := c.Consume(func(msg jetstream.Msg) { handleIAMEvent(ctx, s, notify, manifests, msg) })
 	if err != nil {
 		return fmt.Errorf("consume: %w", err)
 	}
@@ -59,7 +60,7 @@ func consumeIAMEvents(ctx context.Context, js jetstream.JetStream, s *store.Stor
 	}
 }
 
-func handleIAMEvent(ctx context.Context, s *store.Store, notify func(uuid.UUID), msg jetstream.Msg) {
+func handleIAMEvent(ctx context.Context, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter, msg jetstream.Msg) {
 	var e eventsv1.Event
 	if err := proto.Unmarshal(msg.Data(), &e); err != nil {
 		slog.Error("hub: dropping undecodable event", "subject", msg.Subject(), "err", err)
@@ -70,12 +71,16 @@ func handleIAMEvent(ctx context.Context, s *store.Store, notify func(uuid.UUID),
 		_ = msg.Ack()
 		return
 	}
-	err := purge(ctx, s, notify, &e)
+	err := purge(ctx, s, notify, manifests, &e)
 	switch {
 	case errors.Is(err, errUnparsable):
 		slog.Error("hub: dropping iam event", "subject", msg.Subject(), "id", e.GetId(), "err", err)
 	case err != nil:
 		delay := cleanupRetryDelay(msg)
+		if ctx.Err() != nil {
+			_ = msg.NakWithDelay(delay)
+			return
+		}
 		slog.Warn("hub: iam event cleanup failed, retrying", "id", e.GetId(), "type", e.GetType(), "err", err, "retry_in", delay)
 		_ = msg.NakWithDelay(delay)
 		return
@@ -83,15 +88,29 @@ func handleIAMEvent(ctx context.Context, s *store.Store, notify func(uuid.UUID),
 	_ = msg.Ack()
 }
 
-func purge(ctx context.Context, s *store.Store, notify func(uuid.UUID), e *eventsv1.Event) error {
+func purge(ctx context.Context, s *store.Store, notify func(uuid.UUID), manifests api.ManifestDeleter, e *eventsv1.Event) error {
 	switch e.GetType() {
 	case store.ActionMemberRemove, store.ActionMemberLeave:
 		org, user, err := orgAndID(e, authz.ObjMembers+"/")
 		if err != nil {
 			return err
 		}
+		// A stale event, e.g. replayed to a fresh consumer, must not wipe a re-joined member's rows.
+		if _, err := s.Membership(ctx, org, user); err == nil {
+			slog.Info("hub: member is back in the org, keeping their rows", "org", org, "user", user, "id", e.GetId())
+			return nil
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		images, err := api.OwnedImageVersions(ctx, s, org, store.EnvScopeUser, user)
+		if err != nil {
+			return err
+		}
 		if err := s.PurgeMember(ctx, org, user); err != nil {
 			return err
+		}
+		for image, digests := range images {
+			api.DeleteManifests(ctx, manifests, image, digests)
 		}
 		notify(org)
 	case store.ActionTeamDelete:

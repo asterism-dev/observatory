@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -39,14 +40,16 @@ func (s ResourceServer) CheckOwnership(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&hubv1.CheckOwnershipResponse{OwnsVms: vms, OwnsDisks: disks}), nil
 }
 
-// checkOwnership fails with store.ErrOwnsResources while subject owns VMs or live disks; ponytail: no lock spans the services, so a concurrent create can orphan a resource.
-func (h *api) checkOwnership(ctx context.Context, org uuid.UUID, subject string) error {
-	res, err := h.resources.CheckOwnership(ctx, connect.NewRequest(&hubv1.CheckOwnershipRequest{OrgId: org.String(), Subject: subject}))
+// ownsNothing answers 409 while subject owns VMs or live disks in org; ponytail: checked before and not under the org lock, so a concurrent create can orphan a resource.
+func (h *api) ownsNothing(w http.ResponseWriter, r *http.Request, org uuid.UUID, subject string) bool {
+	res, err := h.resources.CheckOwnership(r.Context(), connect.NewRequest(&hubv1.CheckOwnershipRequest{OrgId: org.String(), Subject: subject}))
 	if err != nil {
-		return err
+		serverError(w, "check ownership", err)
+		return false
 	}
 	if res.Msg.OwnsVms || res.Msg.OwnsDisks {
-		return store.ErrOwnsResources
+		writeError(w, http.StatusConflict, store.ErrOwnsResources.Error())
+		return false
 	}
-	return nil
+	return true
 }

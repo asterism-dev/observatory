@@ -3,6 +3,7 @@ package hubserver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -31,11 +32,38 @@ type cleanupEnv struct {
 	js   jetstream.JetStream
 	org  store.Org
 
-	mu       sync.Mutex
-	notified []uuid.UUID
+	mu        sync.Mutex
+	notified  []uuid.UUID
+	manifests fakeManifests
+}
+
+type fakeManifests struct {
+	mu      sync.Mutex
+	deleted []string
+}
+
+func (f *fakeManifests) DeleteManifest(_ context.Context, repo, digest string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, repo+"@"+digest)
+	return nil
+}
+
+func (f *fakeManifests) list() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.deleted)
 }
 
 func newCleanupEnv(t *testing.T) *cleanupEnv {
+	t.Helper()
+	e := newIdleCleanupEnv(t)
+	e.start()
+	return e
+}
+
+// newIdleCleanupEnv is newCleanupEnv without the consumer, so events can queue up before it first runs.
+func newIdleCleanupEnv(t *testing.T) *cleanupEnv {
 	t.Helper()
 	ctx := context.Background()
 	url, token, stop, err := bus.Embedded(ctx, t.TempDir())
@@ -57,22 +85,36 @@ func newCleanupEnv(t *testing.T) *cleanupEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cctx, cancel := context.WithCancel(ctx)
+	return e
+}
+
+func (e *cleanupEnv) start() {
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- consumeIAMEvents(cctx, js, e.s, func(org uuid.UUID) {
+		done <- consumeIAMEvents(ctx, e.js, e.s, func(org uuid.UUID) {
 			e.mu.Lock()
 			e.notified = append(e.notified, org)
 			e.mu.Unlock()
-		})
+		}, &e.manifests)
 	}()
-	t.Cleanup(func() {
+	e.t.Cleanup(func() {
 		cancel()
 		if err := <-done; err != nil {
-			t.Error(err)
+			e.t.Error(err)
 		}
 	})
-	return e
+}
+
+// leave drops the membership as the iam side does before its event is published.
+func (e *cleanupEnv) leave(user uuid.UUID) {
+	e.t.Helper()
+	e.exec("DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", e.org.ID, user)
+}
+
+func (e *cleanupEnv) rejoin(user uuid.UUID) {
+	e.t.Helper()
+	e.exec("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", e.org.ID, user)
 }
 
 func (e *cleanupEnv) user(sub string) uuid.UUID {
@@ -125,6 +167,9 @@ func (e *cleanupEnv) seed(scope store.EnvScope, owner uuid.UUID, by uuid.UUID) {
 	}
 	img, err := e.s.CreateImage(ctx, store.Image{OrgID: org, Scope: scope, OwnerID: &owner, Name: "img-" + owner.String(), CreatedBy: by})
 	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.s.AddImageVersion(ctx, store.ImageVersion{ImageID: img.ID, Digest: imageDigest(owner), Source: store.VersionFromPush, SizeBytes: 1}); err != nil {
 		e.t.Fatal(err)
 	}
 	if err := e.s.SetImageDefault(ctx, store.ImageDefault{OrgID: org, Scope: scope, OwnerID: &owner, ImageID: img.ID, Tag: "v1"}); err != nil {
@@ -219,6 +264,21 @@ func (e *cleanupEnv) notifications() []uuid.UUID {
 
 func memberResource(id uuid.UUID) string { return "org/members/" + id.String() }
 
+func imageDigest(owner uuid.UUID) string {
+	return "sha256:" + strings.Repeat(strings.ReplaceAll(owner.String(), "-", ""), 2)
+}
+
+// imageManifest is the registry reference of owner's seeded image version.
+func (e *cleanupEnv) imageManifest(scope store.EnvScope, owner uuid.UUID) string {
+	e.t.Helper()
+	col := map[store.EnvScope]string{store.EnvScopeUser: "user_id", store.EnvScopeTeam: "team_id"}[scope]
+	var id uuid.UUID
+	if err := e.pool.QueryRow(context.Background(), "SELECT id FROM images WHERE "+col+" = $1", owner).Scan(&id); err != nil {
+		e.t.Fatal(err)
+	}
+	return "i/" + id.String() + "@" + imageDigest(owner)
+}
+
 func TestMemberDeleteEventPurges(t *testing.T) {
 	e := newCleanupEnv(t)
 	bob, carol := e.member("bob"), e.member("carol")
@@ -231,18 +291,75 @@ func TestMemberDeleteEventPurges(t *testing.T) {
 		}
 	}
 
+	manifest := e.imageManifest(store.EnvScopeUser, bob)
+
+	e.leave(bob)
 	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
 	e.waitFor("bob's rows to go", func() bool { return total(e.rows(store.EnvScopeUser, bob)) == 0 })
 	if got := e.rows(store.EnvScopeUser, carol); total(got) != len(before) {
 		t.Fatalf("carol's rows: %v", got)
 	}
 	e.waitFor("the org to be notified", func() bool { return slices.Contains(e.notifications(), e.org.ID) })
+	if got := e.manifests.list(); !slices.Equal(got, []string{manifest}) {
+		t.Fatalf("deleted manifests %v, want %s", got, manifest)
+	}
+}
+
+func TestRejoinedMemberKeepsRows(t *testing.T) {
+	e := newCleanupEnv(t)
+	bob := e.member("bob")
+	e.leave(bob)
+	e.rejoin(bob)
+	e.seed(store.EnvScopeUser, bob, bob)
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	e.settled()
+	if got := e.rows(store.EnvScopeUser, bob); total(got) != len(got) {
+		t.Fatalf("re-joined bob's rows: %v", got)
+	}
+	if got := e.manifests.list(); len(got) != 0 {
+		t.Fatalf("manifests deleted: %v", got)
+	}
+}
+
+// A fresh durable consumer starts with every retained event, including removals older than a re-join.
+func TestReplayedRemovalKeepsRejoinedMemberRows(t *testing.T) {
+	e := newIdleCleanupEnv(t)
+	bob := e.member("bob")
+	e.leave(bob)
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	e.rejoin(bob)
+	e.seed(store.EnvScopeUser, bob, bob)
+	e.start()
+	e.settled()
+	if got := e.rows(store.EnvScopeUser, bob); total(got) != len(got) {
+		t.Fatalf("re-joined bob's rows after replay: %v", got)
+	}
+}
+
+func TestStoreErrorRetries(t *testing.T) {
+	e := newCleanupEnv(t)
+	bob := e.member("bob")
+	e.seed(store.EnvScopeUser, bob, bob)
+	e.leave(bob)
+	e.exec("ALTER TABLE dashboards RENAME TO dashboards_away")
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	c, err := e.js.Consumer(context.Background(), bus.Stream, "hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor("the failed purge to be redelivered", func() bool {
+		info, err := c.Info(context.Background())
+		return err == nil && info.NumRedelivered > 0
+	})
+	e.exec("ALTER TABLE dashboards_away RENAME TO dashboards")
+	e.waitFor("bob's rows to go", func() bool { return total(e.rows(store.EnvScopeUser, bob)) == 0 })
 }
 
 func TestLeaveEventPurges(t *testing.T) {
 	e := newCleanupEnv(t)
 	bob := e.member("bob")
 	e.seed(store.EnvScopeUser, bob, bob)
+	e.leave(bob)
 	e.publish(store.ActionMemberLeave, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
 	e.waitFor("bob's rows to go", func() bool { return total(e.rows(store.EnvScopeUser, bob)) == 0 })
 }
@@ -281,18 +398,21 @@ func TestDeniedEventIgnored(t *testing.T) {
 	bob, carol := e.member("bob"), e.member("carol")
 	e.seed(store.EnvScopeUser, bob, bob)
 	e.seed(store.EnvScopeUser, carol, carol)
+	e.leave(bob)
+	e.leave(carol)
+	kept := e.rows(store.EnvScopeUser, bob)
 	for _, res := range []eventsv1.Result{eventsv1.Result_RESULT_DENIED, eventsv1.Result_RESULT_FAILED, eventsv1.Result_RESULT_UNSPECIFIED} {
 		e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), res)
 	}
-	// Unparsable resources and an event whose org disagrees with its subject are dropped, not retried.
+	// Unparsable resources and a member event without an org are dropped, not retried.
 	e.publish(store.ActionMemberRemove, &e.org.ID, "org/members/"+strings.ToUpper(bob.String()), eventsv1.Result_RESULT_ALLOWED)
 	e.publish(store.ActionMemberRemove, &e.org.ID, "org/teams/"+bob.String(), eventsv1.Result_RESULT_ALLOWED)
 	e.publish(store.ActionMemberRemove, nil, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
 	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(carol), eventsv1.Result_RESULT_ALLOWED)
 	e.waitFor("carol's rows to go", func() bool { return total(e.rows(store.EnvScopeUser, carol)) == 0 })
 	e.settled()
-	if got := e.rows(store.EnvScopeUser, bob); total(got) != len(got) {
-		t.Fatalf("bob's rows after ignored events: %v", got)
+	if got := e.rows(store.EnvScopeUser, bob); !maps.Equal(got, kept) {
+		t.Fatalf("bob's rows after ignored events: %v, want %v", got, kept)
 	}
 }
 
@@ -300,6 +420,7 @@ func TestDuplicateEventHarmless(t *testing.T) {
 	e := newCleanupEnv(t)
 	bob := e.member("bob")
 	e.seed(store.EnvScopeUser, bob, bob)
+	e.leave(bob)
 	for range 2 {
 		e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
 	}

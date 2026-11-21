@@ -132,7 +132,7 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream) error {
 		Subjects:   []string{"events.>"},
 		Storage:    jetstream.FileStorage,
 		Retention:  jetstream.LimitsPolicy,
-		MaxAge:     7 * 24 * time.Hour,
+		MaxAge:     7 * 24 * time.Hour, // ponytail: a consumer down longer than this loses events (the hub's purges); replay from the outbox or audit if that matters.
 		Duplicates: 10 * time.Minute,
 	})
 	if err != nil {

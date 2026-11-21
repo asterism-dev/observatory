@@ -146,6 +146,9 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	actor := authz.UserSubject(p.User.ID)
+	if !h.ownsNothing(w, r, m.OrgID, authz.TeamSubject(id)) {
+		return
+	}
 	var denied error
 	var images map[uuid.UUID][]string
 	if !h.commit(w, r, func(tx *store.Store) error {
@@ -158,10 +161,7 @@ func (h *api) deleteTeam(w http.ResponseWriter, r *http.Request) {
 				return denied
 			}
 		}
-		if err := h.checkOwnership(r.Context(), m.OrgID, authz.TeamSubject(id)); err != nil {
-			return err
-		}
-		if images, err = ownedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeTeam, id); err != nil {
+		if images, err = OwnedImageVersions(r.Context(), tx, m.OrgID, store.EnvScopeTeam, id); err != nil {
 			return err
 		}
 		if denied = guardOwnDenies(r.Context(), tx, cur, actor, func() error { return tx.DeleteTeam(r.Context(), m.OrgID, id) }); denied != nil {

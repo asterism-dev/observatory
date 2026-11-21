@@ -553,19 +553,23 @@ func (h *api) deleteImage(w http.ResponseWriter, r *http.Request) {
 
 // deleteManifests runs after the rows are gone; a failure only leaves an unreachable manifest behind.
 func (h *api) deleteManifests(ctx context.Context, image uuid.UUID, digests []string) {
-	if h.manifests == nil {
+	DeleteManifests(ctx, h.manifests, image, digests)
+}
+
+func DeleteManifests(ctx context.Context, m ManifestDeleter, image uuid.UUID, digests []string) {
+	if m == nil {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
 	for _, d := range digests {
-		if err := h.manifests.DeleteManifest(ctx, imageRepo(image), d); err != nil {
+		if err := m.DeleteManifest(ctx, imageRepo(image), d); err != nil {
 			slog.Warn("delete manifest", "image", image, "digest", d, "err", err)
 		}
 	}
 }
 
-// ownedImageVersions lists the version digests per image owned by a team or user, before their rows cascade away.
-func ownedImageVersions(ctx context.Context, s *store.Store, org uuid.UUID, scope store.EnvScope, owner uuid.UUID) (map[uuid.UUID][]string, error) {
+// OwnedImageVersions lists the version digests per image owned by a team or user, before their rows go.
+func OwnedImageVersions(ctx context.Context, s *store.Store, org uuid.UUID, scope store.EnvScope, owner uuid.UUID) (map[uuid.UUID][]string, error) {
 	list, err := s.ListImages(ctx, org)
 	if err != nil {
 		return nil, err

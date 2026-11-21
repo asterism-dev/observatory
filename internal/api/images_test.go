@@ -630,7 +630,8 @@ func TestImageDefaultsIntegrity(t *testing.T) {
 	}
 }
 
-func TestRemoveMemberDeletesPrivateImages(t *testing.T) {
+// The hub's iam event consumer deletes the private image and its manifests together (hubserver TestMemberDeleteEventPurges).
+func TestRemoveMemberLeavesPrivateImagesToPurge(t *testing.T) {
 	e := newEnv(t)
 	m := e.withManifests()
 	_, aliceTok := e.user("alice")
@@ -638,22 +639,15 @@ func TestRemoveMemberDeletesPrivateImages(t *testing.T) {
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	id := e.createImage(bobTok, org, `{"name":"tools","scope":"user"}`)
-	d := e.addVersion(id, 1, "latest")
-	if rec := e.send("PUT", "/api/orgs/"+org.String()+"/image-defaults/user", bobTok, `{"ref":"tools"}`); rec.Code != 204 {
-		t.Fatalf("default: %d %s", rec.Code, rec.Body.String())
-	}
+	e.addVersion(id, 1, "latest")
 	if rec := e.do("DELETE", "/api/orgs/"+org.String()+"/members/"+bob.ID.String(), aliceTok); rec.Code != 204 {
 		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
 	}
-	// The row itself goes when the hub consumes the removal event.
-	if err := e.store.PurgeMember(context.Background(), org, bob.ID); err != nil {
-		t.Fatal(err)
+	if _, err := e.store.Image(context.Background(), org, id); err != nil {
+		t.Fatalf("image gone before the purge: %v", err)
 	}
-	if _, err := e.store.Image(context.Background(), org, id); err != store.ErrNotFound {
-		t.Fatalf("private image kept: %v", err)
-	}
-	if len(m.deleted) != 1 || m.deleted[0] != "i/"+id.String()+"@"+d {
-		t.Fatalf("manifests: %v", m.deleted)
+	if len(m.deleted) != 0 {
+		t.Fatalf("manifests deleted before the purge: %v", m.deleted)
 	}
 }
 
