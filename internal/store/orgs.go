@@ -174,6 +174,9 @@ func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error
 		if _, err := tx.q.Exec(ctx, "DELETE FROM image_defaults WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
 			return err
 		}
+		if _, err := tx.q.Exec(ctx, "DELETE FROM dashboards WHERE org_id = $1 AND scope = 'user' AND user_id = $2", orgID, userID); err != nil {
+			return err
+		}
 		_, err = tx.q.Exec(ctx, "DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", orgID, userID)
 		return err
 	})

@@ -112,6 +112,7 @@ func New(p Policy) (*Enforcer, error) {
 		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "env:*", string(Allow)})
 		rules = append(rules, []string{u, org, UserIntegrationsObject(mr.UserID), "integration:*", string(Allow)})
 		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "image:*", string(Allow)})
+		rules = append(rules, []string{u, org, UserDashboardsObject(mr.UserID), "dashboard:*", string(Allow)})
 		for _, act := range []string{"device:create", "device:list", "device:delete"} {
 			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
 		}
@@ -124,6 +125,7 @@ func New(p Policy) (*Enforcer, error) {
 			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "env:*", string(Allow)})
 			rules = append(rules, []string{u, org, TeamIntegrationsObject(tm.TeamID), "integration:*", string(Allow)})
 			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "image:*", string(Allow)})
+			rules = append(rules, []string{u, org, TeamDashboardsObject(tm.TeamID), "dashboard:*", string(Allow)})
 			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "vm:create", string(Allow)})
 			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "disk:create", string(Allow)})
 			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
@@ -141,6 +143,8 @@ func New(p Policy) (*Enforcer, error) {
 			[]string{sub, org, TeamImagesObject(t.ID), "image:list", string(Allow)},
 			[]string{sub, org, TeamImagesObject(t.ID), "image:use", string(Allow)},
 			[]string{sub, org, ObjImages, "image:use", string(Allow)},
+			[]string{sub, org, TeamDashboardsObject(t.ID), "dashboard:read", string(Allow)},
+			[]string{sub, org, TeamDashboardsObject(t.ID), "dashboard:create", string(Allow)},
 		)
 	}
 	for _, vm := range p.VMs {
