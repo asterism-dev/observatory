@@ -5,7 +5,8 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { api, ApiError } from '@/api'
+import { api } from '@/api'
+import { errorKind } from '@/composables/apiError'
 import { useMe } from '@/composables/useMe'
 import { useSettingsNav } from '@/composables/useSettingsNav'
 import { THEME_PREFERENCES, useTheme } from '@/composables/useTheme'
@@ -37,7 +38,7 @@ async function signOut() {
     await api('/auth/logout', { method: 'POST' })
   } catch (e) {
     // 401: the session is already revoked, which is what signing out wants anyway.
-    if (!(e instanceof ApiError && e.status === 401)) {
+    if (!(errorKind(e) === 'unauthenticated')) {
       console.error('sign out failed', e)
       return
     }

@@ -5,7 +5,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ApiError } from '@/api'
+import { errorKind, errorText } from '@/composables/apiError'
 import CreateOrgDialog from '@/components/CreateOrgDialog.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useCrumbs, type Crumb } from '@/composables/useCrumbs'
@@ -17,7 +17,7 @@ import { useSettingsNav } from '@/composables/useSettingsNav'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const { me, activeOrg, selectOrg, load: loadMe } = useMe()
+const { me, activeOrg, selectOrg, load: loadMe, expire } = useMe()
 const { org, can, load: loadOrg } = useOrg()
 const { orgTabs, platformTabs } = useSettingsNav()
 const { extra } = useCrumbs()
@@ -56,11 +56,12 @@ watch(
       await loadOrg(id)
     } catch (e) {
       if (id !== (orgId.value || activeOrg.value?.id)) return
-      if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+      if (errorKind(e) === 'forbidden' || errorKind(e) === 'notFound') {
         // Refresh the org list first so the guard's '/' redirect doesn't land on this org again.
         const target = await loadMe().then(() => '/', () => '/profile')
         if (id === (orgId.value || activeOrg.value?.id)) router.replace(target)
-      } else orgError.value = e instanceof Error ? e.message : String(e)
+      } else if (errorKind(e) === 'unauthenticated') expire()
+      else orgError.value = errorText(e)
     }
   },
   { immediate: true },

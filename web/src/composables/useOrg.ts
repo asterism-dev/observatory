@@ -1,7 +1,8 @@
 import { ref } from 'vue'
 
+import { errorKind } from '@/composables/apiError'
 import { iamClient } from '@/composables/iamClient'
-import type { Org } from '@/composables/useMe'
+import { useMe, type Org } from '@/composables/useMe'
 
 export interface OrgDetail extends Org {
   permissions: string[]
@@ -13,7 +14,13 @@ let currentId = ''
 async function load(id: string) {
   currentId = id
   if (org.value?.id !== id) org.value = null
-  const res = await iamClient.getOrg({ org: id })
+  let res
+  try {
+    res = await iamClient.getOrg({ org: id })
+  } catch (e) {
+    if (errorKind(e) === 'unauthenticated') useMe().expire()
+    throw e
+  }
   const loaded = { ...res.org!, permissions: res.permissions }
   // A newer navigation superseded this request.
   if (id === currentId) org.value = loaded

@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-import { ApiError } from '@/api'
+import { errorKind } from '@/composables/apiError'
 import { useMe } from '@/composables/useMe'
 import AdminAuditView from '@/views/AdminAuditView.vue'
 import DashboardDetailView from '@/views/DashboardDetailView.vue'
@@ -110,7 +110,7 @@ router.beforeEach(async (to) => {
     try {
       await load()
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
+      if (errorKind(e) === 'unauthenticated') {
         return { path: '/login', query: { redirect: to.fullPath } }
       }
       throw e

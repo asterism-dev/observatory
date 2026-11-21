@@ -1,6 +1,7 @@
-import { Code, ConnectError, createClient } from '@connectrpc/connect'
+import { createClient } from '@connectrpc/connect'
 import { createConnectTransport } from '@connectrpc/connect-web'
 
+import { errorKind } from '@/composables/apiError'
 import { IAMService } from '@/gen/observatory/iam/v1/iam_pb'
 
 export const iamClient = createClient(
@@ -18,6 +19,6 @@ export const iamClient = createClient(
   }),
 )
 
-export const isUnauthenticated = (e: unknown) => e instanceof ConnectError && e.code === Code.Unauthenticated
-export const isNotFound = (e: unknown) => e instanceof ConnectError && e.code === Code.NotFound
-export const errorMessage = (e: unknown) => (e instanceof ConnectError ? e.rawMessage : e instanceof Error ? e.message : String(e))
+export { errorText as errorMessage } from '@/composables/apiError'
+export const isUnauthenticated = (e: unknown) => errorKind(e) === 'unauthenticated'
+export const isNotFound = (e: unknown) => errorKind(e) === 'notFound'
