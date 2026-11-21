@@ -235,8 +235,37 @@ probes after 10 min.
 - A device reaches only its own org's router address (`<slice>.1`); ACLs on `ls-transit` drop the other orgs'.
 - DNS picks the view by source address: a device or a VM management address sees only its own org's names
   (`<vm>.internal`, `<vm>.<network>.internal`); any other source gets REFUSED for `*.internal`. Other names are
-  forwarded upstream, except for queries from the gateway's own addresses: when the hub host resolves through a
-  device, Docker's DNS (the gateway's upstream) gets REFUSED and moves on to its next server instead of looping back.
+  forwarded upstream, except for queries from the gateway's own addresses, which get REFUSED.
+
+## Upstream DNS
+
+The gateway forwards names outside `*.internal` (from devices and VMs) to upstream resolvers. It asks them in order
+and moves on after a timeout, SERVFAIL or REFUSED. By default these are the Docker host's own upstream servers, so
+nothing goes to a third party the host does not already use:
+
+- The compose file mounts the host's `/run/systemd/resolve` (systemd-resolved's full server list) and
+  `/etc/resolv.conf` read-only. The gateway reads the first that exists, and reads it again whenever it changes
+  (DHCP at boot, a lease change) and every few seconds while it holds no usable server; each new list is logged as
+  `upstream DNS: …`. On a host without systemd-resolved, Docker creates an empty `/run/systemd/resolve` for the mount;
+  `/etc/resolv.conf` is mounted as a file, so a tool that replaces it (rather than editing it) needs
+  `docker compose restart gateway`.
+- It skips loopback (the `127.0.0.53` stub), link-local addresses, duplicates, and anything in `10.192.0.0/16` or
+  `10.198.0.0/16`. A device on the hub host (with `DNS = 10.192.0.1`, as generated) lists the gateway as its link's
+  server; asking it would route the lookup back through the tunnel to the gateway in a loop. A forwarder on the host
+  that itself asks the host's stub (dnsmasq or unbound on a LAN or bridge address) brings that loop back too.
+- These are the host's servers, not its resolver: the gateway asks every server for every name and ignores per-link
+  routing domains (split DNS such as `~corp` on a VPN link), `/etc/hosts`, mDNS and LLMNR. A name only a split-DNS
+  server knows resolves only if that server comes first or the others refuse it.
+- Without a usable server the gateway logs an error and answers SERVFAIL for public names; `*.internal` keeps
+  working. It never falls back to public resolvers.
+
+VMs get `nameserver 10.192.0.1` as their only resolver, reached over the management NIC, so they resolve public
+names through the same upstreams and have no DNS while the gateway is down.
+
+`OBSERVATORY_GATEWAY_DNS` (`deploy/.env`) replaces the list: comma-separated IPs, each with an optional port, used
+as given apart from duplicates. The gateway refuses to start on a value that is not an IP address. `127.0.0.53` is the gateway's own
+loopback inside its namespace, so it never answers; Docker's DNS (`127.0.0.11`) ends at the host's stub and brings the
+loop back.
 
 ## Networks
 
