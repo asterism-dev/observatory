@@ -53,6 +53,8 @@ linters:
             - github.com/google/uuid
             - github.com/jackc/pgx/v5
             - github.com/pressly/goose/v3
+            - github.com/nats-io/nats.go
+            - github.com/nats-io/nats-server/v2
         platform:
           files: ["**/internal/platform/**", "!$test"]
           list-mode: strict
@@ -67,6 +69,8 @@ linters:
             - github.com/google/uuid
             - github.com/jackc/pgx/v5
             - github.com/pressly/goose/v3
+            - github.com/nats-io/nats.go
+            - github.com/nats-io/nats-server/v2
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/api
               desc: platform code must not import a service

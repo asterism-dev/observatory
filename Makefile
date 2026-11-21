@@ -1,4 +1,4 @@
-.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token service-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap observatory cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token service-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down nats-up nats-down idp-up idp-down idp-bootstrap observatory cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -42,6 +42,12 @@ telemetry-up: telemetry-env
 
 telemetry-down:
 	docker compose -f deploy/dev/compose.yaml rm -sf victoriametrics victorialogs
+
+nats-up:
+	docker compose -f deploy/dev/compose.yaml --profile nats up -d nats
+
+nats-down:
+	docker compose -f deploy/dev/compose.yaml rm -sf nats
 
 idp-up:
 	[ -f deploy/idp/.env ] || cp deploy/idp/.env.example deploy/idp/.env

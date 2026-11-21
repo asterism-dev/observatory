@@ -67,6 +67,13 @@ services:
       retries: 10
     volumes:
       - postgres-data:/var/lib/postgresql/data
+  # Event bus; reached inside the compose network only.
+  nats:
+    image: nats:2.15.3-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - nats-data:/data
   # Reached only through the hub's /v2/ proxy; restarts until the hub has written its token certificate.
   registry:
     image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
@@ -188,6 +195,7 @@ services:
 
 volumes:
   postgres-data:
+  nats-data:
   registry-data:
   registry-keys:
   registry-certs:
