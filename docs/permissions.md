@@ -289,7 +289,8 @@ revoked (`409`).
 Extracted services do not see sessions. The edge exchanges the user's session (cookie or bearer token) for a short-lived
 signed token (EdDSA, valid at most 5 minutes and never longer than the session) and sends it to the service in place of
 the client's `Authorization` header. The edge caches it for at most 60 seconds, so a logout or revoked session reaches
-the services within about a minute. Services verify the token offline against the hub's published keys.
+the services within about a minute. The same goes for a removed platform admin role, which hub routes read from the
+token. Services verify the token offline against the hub's published keys.
 
 - A leaked identity token stays valid at the services until it expires: at most 5 minutes plus 30 seconds of clock skew
   allowance. Revoking the session stops new tokens, not one already issued.
@@ -332,11 +333,13 @@ consumes the allowed `iam.members.delete`, `iam.members.leave`, `iam.teams.delet
 `iam.sessions.revoke` events (durable consumer `hub`) and then deletes the subject's private env vars, integrations,
 images, dashboards, limits and devices, detaches a team from its disks and VM history, or drops the registry
 credentials of the session. Denied events are ignored. Cleanup is idempotent and retried until it succeeds; if the
-member rejoins in between, only what predates the removal is purged.
+member has rejoined by then, nothing is purged and their earlier rows stay.
 
 - Removing a member or deleting a team is refused with `409` while the hub reports that the subject owns VMs or live
   disks. The check and the delete are not one transaction, so a VM created in between is not caught.
 - Events stay on the bus for 7 days; cleanup that is delayed longer is lost.
+- Access ends with the membership, not the cleanup: a removed member's WireGuard device stays a gateway peer until it is
+  purged, but reaches no VM, because the allow lists come from the policy.
 - Deleting a manifest (image cleanup) is best effort; a failure leaves a registry blob until garbage collection.
 - Deleting an org or a user does not clean up hub rows yet and leaves orphans until the iam service is extracted.
 - Registry credentials end with the session that issued them: the registry refuses them once the session is revoked
