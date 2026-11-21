@@ -14,10 +14,12 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +69,16 @@ func main() {
 	}
 	go dns.serveUDP(pc, upstream)
 	go dns.serveTCP(tl, upstream)
+
+	hub, err := url.Parse(*hubURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cl, err := net.Listen("tcp", net.JoinHostPort(netaddr.GatewayUnderlay.String(), strconv.Itoa(netaddr.ControlPort)))
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { log.Fatal(newControlServer(hub, token).Serve(cl)) }()
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	call := func(method, path string, body []byte) ([]byte, error) {

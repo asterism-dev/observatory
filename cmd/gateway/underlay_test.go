@@ -42,7 +42,7 @@ func TestUnderlayRules(t *testing.T) {
 	}
 }
 
-func TestUnderlayRulesQuarantine(t *testing.T) {
+func TestUnderlayRulesQuarantineControlException(t *testing.T) {
 	st := proto.GatewayState{
 		Orgs: []proto.GatewayOrg{{ID: orgA}},
 		Chassis: []proto.GatewayChassis{
@@ -53,8 +53,8 @@ func TestUnderlayRulesQuarantine(t *testing.T) {
 	r := underlayRules(st)
 	for _, want := range []string{
 		"set quarantine {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.11 }\n\t}",
-		"type filter hook input priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop",
-		"type filter hook output priority 0; policy accept;\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop",
+		"type filter hook input priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine ip daddr 10.198.0.1 tcp dport 8091 accept\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop",
+		"type filter hook output priority 0; policy accept;\n\t\toifname \"wg-underlay\" ip daddr @quarantine ip saddr 10.198.0.1 tcp sport 8091 ct state established accept\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop",
 		"type filter hook forward priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop\n",
 	} {
 		if !strings.Contains(r, want) {

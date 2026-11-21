@@ -65,6 +65,7 @@ done
 rule INPUT -i wg-clients -j DROP
 rule INPUT -i wg-underlay -p udp --dport 6081 -j ACCEPT
 rule INPUT -i wg-underlay -p tcp --dport 6642 -j ACCEPT
+rule INPUT -i wg-underlay -d 10.198.0.1 -p tcp --dport 8091 -j ACCEPT
 rule INPUT -i wg-underlay -d 10.198.0.1 -p icmp --icmp-type echo-request -m limit --limit 10/second -j ACCEPT
 rule INPUT -i wg-underlay -d 10.198.0.1 -p tcp --dport 10810:11809 -j ACCEPT
 # SB and storage exports only from the underlay, not from the container network either

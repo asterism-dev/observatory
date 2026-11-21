@@ -67,3 +67,9 @@ type GatewayStatus struct {
 	Quarantined []string `json:"quarantined"`
 	Version     string   `json:"version"`
 }
+
+// Headers the gateway's control proxy sets on node requests; the hub trusts the peer header only together with the gateway token.
+const (
+	HeaderUnderlayPeer = "X-Observatory-Underlay-Peer"
+	HeaderGateway      = "X-Observatory-Gateway"
+)
