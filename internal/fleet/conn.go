@@ -77,16 +77,13 @@ func (f *Fleet) underlayNode(r *http.Request) (store.Node, int) {
 	return node, http.StatusOK
 }
 
-// ServeHealth answers a node's health check over the underlay and records when it last succeeded.
+// ServeHealth answers a node's health check over the underlay.
 func (f *Fleet) ServeHealth(w http.ResponseWriter, r *http.Request) {
-	node, status := f.underlayNode(r)
+	_, status := f.underlayNode(r)
 	if status != http.StatusOK {
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
-	f.mu.Lock()
-	f.healthSeen[node.ID] = time.Now()
-	f.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
