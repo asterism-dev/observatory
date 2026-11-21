@@ -3,7 +3,10 @@ package authz
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"github.com/google/uuid"
 )
 
@@ -33,9 +37,38 @@ type Watcher struct {
 	cur    atomic.Pointer[snapshot]
 }
 
-// NewWatcher takes a client that already authenticates with the service token.
-func NewWatcher(client iamv1connect.PolicyServiceClient) *Watcher {
-	return &Watcher{client: client}
+// NewWatcher streams from hubURL's /internal/iam/ with serviceToken; a nil client gets one without a timeout, which would cut the stream.
+func NewWatcher(hubURL, serviceToken string, client *http.Client) (*Watcher, error) {
+	if hubURL == "" || serviceToken == "" {
+		return nil, errors.New("authz: hub url and service token are required")
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	base := strings.TrimSuffix(hubURL, "/") + "/internal/iam"
+	return &Watcher{client: iamv1connect.NewPolicyServiceClient(client, base, connect.WithInterceptors(bearer(serviceToken)))}, nil
+}
+
+// bearer sets the service token on outgoing calls; WatchPolicy is a server stream, so the streaming client path matters.
+type bearer string
+
+func (b bearer) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set("Authorization", "Bearer "+string(b))
+		return next(ctx, req)
+	}
+}
+
+func (b bearer) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set("Authorization", "Bearer "+string(b))
+		return conn
+	}
+}
+
+func (b bearer) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 // Run watches until ctx ends, reconnecting with backoff; a lost stream keeps the last snapshot.
@@ -84,9 +117,9 @@ func (w *Watcher) apply(m *iamv1.Policy) {
 		slog.Error("policy snapshot rejected, keeping the previous one", "revision", m.GetRevision(), "err", err)
 		return
 	}
-	if cur := w.cur.Load(); cur != nil && m.GetRevision() <= cur.revision {
+	if cur := w.cur.Load(); cur != nil && m.GetRevision() < cur.revision {
 		// Still applied: the stream is the only source, and ignoring it could freeze a revoked grant.
-		slog.Warn("policy revision did not increase", "revision", m.GetRevision(), "previous", cur.revision)
+		slog.Warn("policy revision went backwards", "revision", m.GetRevision(), "previous", cur.revision)
 	}
 	members := make(map[orgUser]bool, len(p.Memberships))
 	for _, mr := range p.Memberships {
@@ -102,12 +135,6 @@ func (w *Watcher) Enforcer() (*coreauthz.Enforcer, bool) {
 		return nil, false
 	}
 	return s.enforcer, true
-}
-
-// Member reports org membership from the latest snapshot; false without one.
-func (w *Watcher) Member(_ context.Context, org, user uuid.UUID) bool {
-	s := w.cur.Load()
-	return s != nil && s.members[orgUser{org, user}]
 }
 
 func policyFrom(m *iamv1.Policy) (coreauthz.Policy, error) {
@@ -139,7 +166,7 @@ func policyFrom(m *iamv1.Policy) (coreauthz.Policy, error) {
 type uuids struct{ err error }
 
 func (u *uuids) parse(s string) uuid.UUID {
-	id, err := canonicalUUID(s)
+	id, err := uuidx.Canonical(s)
 	if err != nil && u.err == nil {
 		u.err = err
 	}

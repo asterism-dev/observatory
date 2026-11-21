@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
@@ -78,14 +79,6 @@ func NewVerifier(jwksURL, issuer, serviceToken string, client *http.Client) (*Ve
 	return &Verifier{jwksURL: jwksURL, issuer: issuer, serviceToken: serviceToken, client: client, now: time.Now, fetchTimeout: fetchTimeout}, nil
 }
 
-func canonicalUUID(s string) (uuid.UUID, error) {
-	id, err := uuid.Parse(s)
-	if err == nil && id.String() != s {
-		err = errors.New("not canonical")
-	}
-	return id, err
-}
-
 func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 	var c claims
 	_, err := jwt.ParseWithClaims(raw, &c, func(t *jwt.Token) (any, error) {
@@ -106,11 +99,11 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 	if err != nil {
 		return Principal{}, fmt.Errorf("invalid token: %w", err)
 	}
-	user, err := canonicalUUID(c.Subject)
+	user, err := uuidx.Canonical(c.Subject)
 	if err != nil {
 		return Principal{}, errors.New("invalid token: bad sub")
 	}
-	sid, err := canonicalUUID(c.Session)
+	sid, err := uuidx.Canonical(c.Session)
 	if err != nil {
 		return Principal{}, errors.New("invalid token: bad sid")
 	}

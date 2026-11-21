@@ -10,7 +10,7 @@ import (
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
-	"github.com/google/uuid"
+	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -18,15 +18,11 @@ import (
 type interceptor struct {
 	verifier *identity.Verifier
 	watcher  *Watcher
-	members  func(ctx context.Context, org, user uuid.UUID) bool
 }
 
-// NewInterceptor authorizes every handler call by its permission annotation; a nil members uses w.Member.
-func NewInterceptor(v *identity.Verifier, w *Watcher, members func(ctx context.Context, org, user uuid.UUID) bool) connect.Interceptor {
-	if members == nil {
-		members = w.Member
-	}
-	return &interceptor{verifier: v, watcher: w, members: members}
+// NewInterceptor authorizes every handler call by its permission annotation against w's latest snapshot.
+func NewInterceptor(v *identity.Verifier, w *Watcher) connect.Interceptor {
+	return &interceptor{verifier: v, watcher: w}
 }
 
 func (i *interceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
@@ -64,19 +60,20 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 	}
 	md, _ := req.Spec().Schema.(protoreflect.MethodDescriptor)
 	if md == nil {
-		return nil, errBadAnnotation
+		return nil, errBadAnnotation()
 	}
 	perm, ok := permission.Of(md)
 	if !ok {
-		return nil, errBadAnnotation
+		return nil, errBadAnnotation()
 	}
-	enforcer, ok := i.watcher.Enforcer()
-	if !ok {
+	// One Load per call so membership and enforcer come from the same snapshot.
+	snap := i.watcher.cur.Load()
+	if snap == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("no policy snapshot yet"))
 	}
 	msg, ok := req.Any().(proto.Message)
 	if !ok {
-		return nil, errBadAnnotation
+		return nil, errBadAnnotation()
 	}
 	m := msg.ProtoReflect()
 	ctx = identity.WithPrincipal(ctx, p)
@@ -85,21 +82,21 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 		return ctx, platformScope(p, perm, m)
 	}
 	if orgField.Kind() != protoreflect.StringKind || orgField.Cardinality() == protoreflect.Repeated {
-		return nil, errBadAnnotation
+		return nil, errBadAnnotation()
 	}
-	org, err := canonicalUUID(m.Get(orgField).String())
+	org, err := uuidx.Canonical(m.Get(orgField).String())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("org: %w", err))
 	}
 	// Checked before the object so non-members learn nothing about the request's validity.
-	if !i.members(ctx, org, p.User) {
+	if !snap.members[orgUser{org, p.User}] {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("not found"))
 	}
 	obj, err := resolveObject(perm.Object, m)
 	if err != nil {
 		return nil, err
 	}
-	if !enforcer.Allowed(coreauthz.UserSubject(p.User), org, obj, perm.Name) {
+	if !snap.enforcer.Allowed(coreauthz.UserSubject(p.User), org, obj, perm.Name) {
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("permission denied"))
 	}
 	return ctx, nil

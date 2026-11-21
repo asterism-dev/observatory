@@ -98,18 +98,28 @@ func newFixture(t *testing.T) *fixture {
 	}
 
 	f := &fixture{key: priv, policy: &fakePolicy{conns: make(chan chan *iamv1.Policy)}, org: uuid.New(), member: uuid.New(), viewer: uuid.New()}
+	path, h := iamv1connect.NewPolicyServiceHandler(f.policy)
 	mux := http.NewServeMux()
-	mux.Handle(iamv1connect.NewPolicyServiceHandler(f.policy))
+	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})))
 	hub := httptest.NewServer(mux)
 	t.Cleanup(hub.Close)
-	w := NewWatcher(iamv1connect.NewPolicyServiceClient(hub.Client(), hub.URL))
+	w, err := NewWatcher(hub.URL+"/", testToken, hub.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { w.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 
 	svcMux := http.NewServeMux()
-	svcMux.Handle(testv1connect.NewEchoServiceHandler(echoServer{}, connect.WithInterceptors(NewInterceptor(v, w, nil))))
+	svcMux.Handle(testv1connect.NewEchoServiceHandler(echoServer{}, connect.WithInterceptors(NewInterceptor(v, w))))
 	svc := httptest.NewServer(svcMux)
 	t.Cleanup(svc.Close)
 	f.echo = testv1connect.NewEchoServiceClient(svc.Client(), svc.URL)
@@ -314,6 +324,14 @@ func TestResolveObjectRejectsBadAnnotations(t *testing.T) {
 	for _, pattern := range []string{"org/echoes/{missing}", "org/echoes/{echo", "org/echoes/echo}", "org/{{echo}}"} {
 		if _, err := resolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
 			t.Errorf("resolveObject(%q) err = %v, want Unimplemented", pattern, err)
+		}
+	}
+}
+
+func TestNewWatcherRequiresURLAndToken(t *testing.T) {
+	for _, args := range [][2]string{{"", testToken}, {"https://hub", ""}} {
+		if _, err := NewWatcher(args[0], args[1], nil); err == nil {
+			t.Errorf("NewWatcher(%q, %q) succeeded", args[0], args[1])
 		}
 	}
 }
