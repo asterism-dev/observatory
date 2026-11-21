@@ -7,20 +7,27 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 )
 
 type Service struct {
 	Name string
+	// Addr is where the service listens; empty means an ephemeral loopback port.
+	Addr string
 	Run  func(ctx context.Context, ln net.Listener) error
 }
 
-// All binds every service on an ephemeral loopback port, starts the edge on edgeLn last with their URLs, and stops all once any returns.
+// All binds every service, starts the edge on edgeLn last with their URLs, and stops all once any returns; on cancel the edge drains before the services stop.
 func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string]string, hubURL string) Service, svcs []Service) error {
 	lns := make([]net.Listener, 0, len(svcs))
 	services := make(map[string]string, len(svcs))
 	for _, s := range svcs {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		addr := s.Addr
+		if addr == "" {
+			addr = "127.0.0.1:0"
+		}
+		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			edgeLn.Close()
 			for _, l := range lns {
@@ -29,15 +36,18 @@ func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string
 			return fmt.Errorf("%s: %w", s.Name, err)
 		}
 		lns = append(lns, ln)
-		services[s.Name] = "http://" + ln.Addr().String()
+		services[s.Name] = "http://" + dialAddr(ln.Addr().(*net.TCPAddr))
 	}
 	hubURL := services["hub"]
 	delete(services, "hub")
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Services outlive the parent context: they stop once the edge has returned.
+	svcCtx, cancelSvcs := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSvcs()
+	edgeCtx, cancelEdge := context.WithCancel(ctx)
+	defer cancelEdge()
 	errs := make(chan error, len(svcs)+1)
-	start := func(s Service, ln net.Listener) {
+	start := func(ctx context.Context, s Service, ln net.Listener) {
 		go func() {
 			err := s.Run(ctx, ln)
 			ln.Close()
@@ -45,13 +55,14 @@ func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string
 				err = fmt.Errorf("%s: %w", s.Name, err)
 			}
 			errs <- err
-			cancel()
+			cancelEdge()
+			cancelSvcs()
 		}()
 	}
 	for i, s := range svcs {
-		start(s, lns[i])
+		start(svcCtx, s, lns[i])
 	}
-	start(edge(services, hubURL), edgeLn)
+	start(edgeCtx, edge(services, hubURL), edgeLn)
 	var first error
 	for range len(svcs) + 1 {
 		if err := <-errs; err != nil && first == nil {
@@ -59,6 +70,13 @@ func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string
 		}
 	}
 	return first
+}
+
+func dialAddr(a *net.TCPAddr) string {
+	if a.IP.IsUnspecified() {
+		return net.JoinHostPort("127.0.0.1", strconv.Itoa(a.Port))
+	}
+	return a.String()
 }
 
 // Serve serves srv on ln until ctx is done, then drains in-flight requests for up to 10s before returning.

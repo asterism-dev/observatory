@@ -29,6 +29,8 @@ func cmdServe(c *cli, args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(c.ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Restores the default handlers once shutdown starts, so a second signal during the drain exits at once.
+	go func() { <-ctx.Done(); stop() }()
 	switch args[0] {
 	case "hub":
 		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_LISTEN", ":8091"))
@@ -69,7 +71,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		}
 		return getenv(k)
 	}
-	hub := svcrun.Service{Name: "hub", Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
+	hub := svcrun.Service{Name: "hub", Addr: envOr(getenv, "OBSERVATORY_HUB_LISTEN", "127.0.0.1:8091"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
 			return serveEdge(ctx, edgeConfig(getenv, hubURL, token, services), ln)

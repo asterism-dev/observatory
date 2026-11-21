@@ -13,4 +13,4 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY --from=build /storage /usr/local/bin/storage
 VOLUME /disks
 # storage stays PID 1: docker stop signals only it, and its exit SIGKILLs every nbdkit (never a graceful nbdkit stop)
-ENTRYPOINT ["sh", "-c", "exec storage -hub \"${HUB_URL:-http://host.docker.internal:8090}\""]
+ENTRYPOINT ["sh", "-c", "exec storage -hub \"${HUB_URL:-http://host.docker.internal:8091}\""]

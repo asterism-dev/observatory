@@ -86,4 +86,4 @@ rule FORWARD -i gw0 -o wg-clients -m conntrack --ctstate ESTABLISHED,RELATED -j 
 # per-org filtering happens in the nft table obs_underlay
 rule FORWARD -i wg-underlay -o wg-underlay -j ACCEPT
 
-exec gateway -hub "${HUB_URL:-http://host.docker.internal:8090}"
+exec gateway -hub "${HUB_URL:-http://host.docker.internal:8091}"

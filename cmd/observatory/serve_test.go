@@ -64,6 +64,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		"OBSERVATORY_SECRETS_KEY":        base64.StdEncoding.EncodeToString(key),
 		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
 		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
+		"OBSERVATORY_HUB_LISTEN":         "127.0.0.1:0",
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)

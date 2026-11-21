@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -160,5 +161,63 @@ func TestServeDrainsBeforeReturning(t *testing.T) {
 	}
 	if err := <-served; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunAllDrainsEdgeBeforeServices(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	edgeDone := make(chan struct{})
+	hubSawEdgeDone := make(chan bool, 1)
+	edge := func(map[string]string, string) Service {
+		return Service{Name: "edge", Run: func(ctx context.Context, _ net.Listener) error {
+			<-ctx.Done()
+			time.Sleep(50 * time.Millisecond)
+			close(edgeDone)
+			return nil
+		}}
+	}
+	hub := Service{Name: "hub", Run: func(ctx context.Context, _ net.Listener) error {
+		<-ctx.Done()
+		select {
+		case <-edgeDone:
+			hubSawEdgeDone <- true
+		default:
+			hubSawEdgeDone <- false
+		}
+		return nil
+	}}
+	done := make(chan error, 1)
+	go func() { done <- All(ctx, listen(t), edge, []Service{hub}) }()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !<-hubSawEdgeDone {
+		t.Fatal("hub was cancelled before the edge had drained")
+	}
+}
+
+func TestRunAllListensOnServiceAddr(t *testing.T) {
+	free := listen(t)
+	port := free.Addr().(*net.TCPAddr).Port
+	free.Close()
+	got := make(chan string, 1)
+	edge := func(_ map[string]string, hubURL string) Service {
+		return Service{Name: "edge", Run: func(context.Context, net.Listener) error {
+			got <- hubURL
+			body, err := get(hubURL)
+			if err == nil && body != "hub" {
+				err = errors.New("hub answered " + body)
+			}
+			return err
+		}}
+	}
+	hub := httpService("hub", text("hub"))
+	hub.Addr = fmt.Sprintf(":%d", port)
+	if err := All(t.Context(), listen(t), edge, []Service{hub}); err != nil {
+		t.Fatal(err)
+	}
+	if u, want := <-got, fmt.Sprintf("http://127.0.0.1:%d", port); u != want {
+		t.Fatalf("hub URL %q, want %q", u, want)
 	}
 }
