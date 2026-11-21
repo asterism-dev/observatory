@@ -193,7 +193,7 @@ func TestBuildLogTruncation(t *testing.T) {
 	}
 	raw := all.Bytes()
 	for off := 0; off < len(raw); off += 1 << 20 {
-		if err := s.AppendBuildLog(ctx, b.ID, raw[off:min(off+1<<20, len(raw))]); err != nil {
+		if _, err := s.AppendBuildLog(ctx, b.ID, raw[off:min(off+1<<20, len(raw))]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -217,7 +217,7 @@ func TestBuildLogTruncation(t *testing.T) {
 	}
 
 	small, _ := s.CreateImageBuild(ctx, store.ImageBuild{ImageID: newImage(t, s, org, user, "l2").ID, Revision: 1, StartedBy: user})
-	_ = s.AppendBuildLog(ctx, small.ID, []byte("hello\n"))
+	_, _ = s.AppendBuildLog(ctx, small.ID, []byte("hello\n"))
 	if err := s.FinishBuildLog(ctx, small.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -235,14 +235,17 @@ func TestBuildLogLiveCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	chunk := bytes.Repeat([]byte("x"), 8<<20)
-	for range store.BuildLogLiveCap / len(chunk) {
-		if err := s.AppendBuildLog(ctx, b.ID, chunk); err != nil {
+	for range store.BuildLogLiveCap/len(chunk) - 1 {
+		if _, err := s.AppendBuildLog(ctx, b.ID, chunk); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if n, err := s.AppendBuildLog(ctx, b.ID, append(chunk[:len(chunk)-3:len(chunk)-3], "abcdef"...)); err != nil || n != len(chunk) {
+		t.Fatalf("crossing append accepted %d, %v", n, err)
+	}
 	for _, more := range []string{"over\n", "dropped\n"} {
-		if err := s.AppendBuildLog(ctx, b.ID, []byte(more)); err != nil {
-			t.Fatal(err)
+		if n, err := s.AppendBuildLog(ctx, b.ID, []byte(more)); err != nil || n != 0 {
+			t.Fatalf("append past the cap: %d, %v", n, err)
 		}
 	}
 	got, err := s.BuildLog(ctx, b.ID)
@@ -353,7 +356,7 @@ func TestBuildLogFinishOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = s.AppendBuildLog(ctx, b.ID, []byte("hello\n"))
+	_, _ = s.AppendBuildLog(ctx, b.ID, []byte("hello\n"))
 	for range 2 {
 		if err := s.FinishBuildLog(ctx, b.ID); err != nil {
 			t.Fatal(err)
@@ -362,7 +365,7 @@ func TestBuildLogFinishOnce(t *testing.T) {
 	if got, _ := s.BuildLog(ctx, b.ID); string(got) != "hello\n" {
 		t.Fatalf("log after double finish: %q", got)
 	}
-	if err := s.AppendBuildLog(ctx, b.ID, []byte("late\n")); !errors.Is(err, store.ErrBuildLogFinished) {
+	if _, err := s.AppendBuildLog(ctx, b.ID, []byte("late\n")); !errors.Is(err, store.ErrBuildLogFinished) {
 		t.Fatalf("append after finish: %v", err)
 	}
 	if got, _ := s.BuildLog(ctx, b.ID); string(got) != "hello\n" {
@@ -371,7 +374,7 @@ func TestBuildLogFinishOnce(t *testing.T) {
 	if err := s.FinishBuildLog(ctx, uuid.New()); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("finish unknown: %v", err)
 	}
-	if err := s.AppendBuildLog(ctx, uuid.New(), []byte("x")); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.AppendBuildLog(ctx, uuid.New(), []byte("x")); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("append unknown: %v", err)
 	}
 }

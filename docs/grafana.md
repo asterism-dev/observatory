@@ -36,7 +36,7 @@ As with Prometheus, the datasource must use server-side access.
 
 ## What a token sees
 
-All telemetry of the organization, including its VM logs. Nothing of other organizations: the hub adds the
+All telemetry of the organization, including its VM logs and the build logs of its org and team images ([Build logs](telemetry.md#build-logs)). Nothing of other organizations: the hub adds the
 organization filter to every query and drops any filter the client sends to change it.
 
 ## Lifecycle

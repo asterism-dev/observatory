@@ -17,8 +17,9 @@ import (
 var ErrStore = errors.New("telemetry store unavailable")
 
 const (
-	NodeLogStreamFields = "observatory.org,observatory.node,service.name"
-	VMLogStreamFields   = "observatory.org,observatory.vm,observatory.stream"
+	NodeLogStreamFields  = "observatory.org,observatory.node,service.name"
+	VMLogStreamFields    = "observatory.org,observatory.vm,observatory.stream"
+	BuildLogStreamFields = "observatory.org,observatory.image,observatory.stream"
 )
 
 type Client struct {

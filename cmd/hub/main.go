@@ -102,6 +102,21 @@ func run() error {
 	if cfg.MetricsURL != "" {
 		tc = &telemetry.Client{MetricsURL: cfg.MetricsURL, LogsURL: cfg.LogsURL}
 	}
+	var buildLogs *telemetry.LogWriter
+	if tc != nil {
+		buildLogs = telemetry.NewLogWriter(tc, telemetry.BuildLogStreamFields, 10000)
+		logsDone := make(chan struct{})
+		go func() { buildLogs.Run(ctx); close(logsDone) }()
+		defer func() {
+			if ctx.Err() == nil {
+				return
+			}
+			select {
+			case <-logsDone:
+			case <-time.After(3 * time.Second):
+			}
+		}()
+	}
 	api.NodeEndpoints(mux, s, f)
 	api.OTLPEndpoints(mux, s, tc)
 	api.GatewayEndpoints(mux, nh)
@@ -166,7 +181,7 @@ func run() error {
 		manifests = client
 		f.PullImagesFrom(cfg.NodeURL, iss)
 		f.BootBuildersWith(sched.BootEnv)
-		api.BuildEndpoints(mux, s, sched, client, tags)
+		api.BuildEndpoints(mux, s, sched, client, tags, buildLogs)
 		go sched.Run(ctx, 10*time.Second)
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/telemetry"
 )
 
 const (
@@ -331,8 +332,11 @@ func (h *api) listBuilderVMs(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildEndpoints serves the build agent in builder VMs, which authenticates with its build secret.
-func BuildEndpoints(mux *http.ServeMux, s *store.Store, b *builds.Scheduler, manifests RegistryManifests, tags *TagSync) {
+func BuildEndpoints(mux *http.ServeMux, s *store.Store, b *builds.Scheduler, manifests RegistryManifests, tags *TagSync, logs *telemetry.LogWriter) {
 	a := &buildAgent{store: s, builds: b, events: &registryEvents{store: s, manifests: manifests, tags: tags}}
+	if logs != nil {
+		a.copier = newBuildLogCopier(logs, s)
+	}
 	mux.HandleFunc("GET /api/builds/{id}/context", a.context)
 	mux.HandleFunc("POST /api/builds/{id}/log", a.log)
 	mux.HandleFunc("POST /api/builds/{id}/result", a.result)
@@ -342,6 +346,7 @@ type buildAgent struct {
 	store  *store.Store
 	builds *builds.Scheduler
 	events *registryEvents
+	copier *buildLogCopier
 }
 
 func (a *buildAgent) build(w http.ResponseWriter, r *http.Request) (store.ImageBuild, bool) {
@@ -398,12 +403,16 @@ func (a *buildAgent) log(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "log chunk too large")
 		return
 	}
-	if err := a.store.AppendBuildLog(r.Context(), b.ID, chunk); errors.Is(err, store.ErrBuildLogFinished) {
+	accepted, err := a.store.AppendBuildLog(r.Context(), b.ID, chunk)
+	if errors.Is(err, store.ErrBuildLogFinished) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	} else if err != nil {
 		serverError(w, "append build log", err)
 		return
+	}
+	if a.copier != nil {
+		a.copier.chunk(r.Context(), b, chunk[:accepted])
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -450,6 +459,9 @@ func (a *buildAgent) result(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		serverError(w, "finish build", err)
 		return
+	}
+	if a.copier != nil {
+		a.copier.finish(b)
 	}
 	if state == store.BuildSucceeded {
 		a.events.tags.Kick(b.ImageID)
