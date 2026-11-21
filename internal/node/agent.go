@@ -32,8 +32,6 @@ const (
 	// The hub gives up after 3 s too; a later reply is dropped.
 	guestProcessesTimeout = 3 * time.Second
 
-	underlayMTU = 1420
-
 	defaultDiskRefresh = 60 * time.Second
 	candidateCheck     = time.Minute
 	pathReport         = time.Minute
@@ -340,7 +338,7 @@ func clip(s string, n int) string {
 func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 	c := chassisconf.Config{
 		Name: a.NodeID, PrivateKey: a.ChassisPrivateKey, Address: u.Address, HubKey: u.HubKey, Endpoint: u.Endpoint,
-		SBRemote: u.SBRemote, CACert: u.CACert, Cert: u.Cert, KeyFile: a.OVNKeyFile, MTU: underlayMTU, ListenPort: netaddr.NodeUnderlayPort,
+		SBRemote: u.SBRemote, CACert: u.CACert, Cert: u.Cert, KeyFile: a.OVNKeyFile, MTU: netaddr.UnderlayMTU, ListenPort: netaddr.NodeUnderlayPort,
 	}
 	a.chassisMu.Lock()
 	if a.chassisStopping {

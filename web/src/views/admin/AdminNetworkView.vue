@@ -12,7 +12,7 @@ const mtu = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const valid = () => /^\d+$/.test(mtu.value) && +mtu.value >= 1000 && +mtu.value <= 1400
+const valid = () => /^\d+$/.test(mtu.value) && +mtu.value >= 1000 && +mtu.value <= 1362
 
 async function load() {
   try {

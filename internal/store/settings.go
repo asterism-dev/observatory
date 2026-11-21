@@ -6,11 +6,14 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/netaddr"
 )
 
 const (
 	MinGuestMTU = 1000
-	MaxGuestMTU = 1400
+	// Guest frames ride Geneve inside wg-underlay, so a larger MTU would not fit.
+	MaxGuestMTU = netaddr.UnderlayMTU - netaddr.GeneveOverhead
 )
 
 var ErrGuestMTURange = errors.New("guest MTU out of range")

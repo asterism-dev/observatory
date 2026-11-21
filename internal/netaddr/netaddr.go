@@ -26,6 +26,9 @@ const (
 	DefaultGuestMTU = 1300
 	UnderlayPort    = 51820
 	ClientsPort     = 51821
+	// UnderlayMTU is the nodes' wg-underlay MTU; Geneve inside it costs GeneveOverhead.
+	UnderlayMTU    = 1420
+	GeneveOverhead = 58
 	// NodeUnderlayPort is where nodes listen on wg-underlay for direct peers.
 	NodeUnderlayPort = 51822
 	// ControlPort is the gateway proxy that carries node control traffic over the underlay.

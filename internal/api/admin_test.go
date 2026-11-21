@@ -149,7 +149,7 @@ func TestAdminNetworkGuestMTU(t *testing.T) {
 	if got.GuestMTU != 1300 {
 		t.Fatalf("default %d", got.GuestMTU)
 	}
-	for _, body := range []string{`{"guestMTU":999}`, `{"guestMTU":1401}`, `{}`, `x`} {
+	for _, body := range []string{`{"guestMTU":999}`, `{"guestMTU":1363}`, `{}`, `x`} {
 		if rec := e.send("PUT", "/api/admin/network", rootTok, body); rec.Code != 400 {
 			t.Fatalf("%s: %d", body, rec.Code)
 		}
