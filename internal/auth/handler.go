@@ -38,6 +38,8 @@ type Handler struct {
 	Reload func(context.Context) error
 	// EdgeToken authenticates the edge's client IP header; TrustEdge resolves the client IP with it once per request.
 	EdgeToken string
+	// Verifier checks the JWT the edge attaches to /api/ requests.
+	Verifier Verifier
 }
 
 type oidcState struct {
@@ -51,7 +53,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/callback", h.callback)
 	mux.HandleFunc("GET /api/auth/config", h.config)
 	mux.HandleFunc("POST /api/auth/cli-token", h.cliToken)
-	mux.Handle("POST /auth/logout", h.Require(http.HandlerFunc(h.logout)))
+	mux.Handle("POST /auth/logout", h.requireSession(http.HandlerFunc(h.logout)))
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package hubserver
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/registry"
@@ -81,7 +83,14 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	slog.Info("management addresses backfilled", "vms", filled)
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken}
+	// The hub verifies edge-issued JWTs against its own JWKS, over its own listener, like any other service.
+	selfToken := rand.Text() + rand.Text()
+	cfg.ServiceTokens[selfService] = selfToken
+	verifier, err := identity.NewVerifier("http://"+dialAddr(ln.Addr()), cfg.PublicURL, selfToken, nil)
+	if err != nil {
+		return err
+	}
+	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken, Verifier: verifier}
 
 	mux := http.NewServeMux()
 	a.Routes(mux)
@@ -199,6 +208,21 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	slog.Info("hub listening", "addr", ln.Addr().String())
 	return run.Serve(ctx, srv, ln)
+}
+
+// dialAddr turns a listen address into one the hub can call itself on; a wildcard host becomes loopback.
+func dialAddr(addr net.Addr) string {
+	host, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+		if ip != nil && ip.To4() == nil {
+			host = "::1"
+		}
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // relayEvents publishes the outbox once the bus is reachable; until then the hub serves and the outbox buffers.

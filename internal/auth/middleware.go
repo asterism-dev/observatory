@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -45,7 +46,34 @@ func RequestMeta(r *http.Request) (ip, userAgent string) {
 	return ip, textx.Sanitize(r.UserAgent())
 }
 
+// Verifier checks an edge-attached identity JWT.
+type Verifier interface {
+	Verify(ctx context.Context, raw string) (identity.Principal, error)
+}
+
+// Require accepts only a JWT the edge attached; CSRF is the edge's job, it refuses cookie writes without X-Observatory before swapping.
 func (h *Handler) Require(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scheme, raw, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(raw) == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		p, err := h.Verifier.Verify(r.Context(), strings.TrimSpace(raw))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		ctx := context.WithValue(r.Context(), principalKey{}, Principal{
+			User:    store.User{ID: p.User, Name: p.Name, PlatformAdmin: p.PlatformAdmin},
+			Session: store.Session{ID: p.Session, UserID: p.User, Kind: store.SessionKind(p.SessionKind), ExpiresAt: p.SessionExpires},
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// requireSession guards /auth/ routes, which the edge forwards with the raw session.
+func (h *Handler) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, fromCookie := credentials(r)
 		if token == "" {
@@ -67,13 +95,7 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "missing X-Observatory header")
 			return
 		}
-		user, err := h.Store.User(r.Context(), sess.UserID)
-		if err != nil {
-			slog.Error("load session user", "user", sess.UserID, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: user, Session: sess})
+		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: store.User{ID: sess.UserID}, Session: sess})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

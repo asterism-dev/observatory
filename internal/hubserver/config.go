@@ -165,6 +165,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if cfg.ServiceTokens, err = servicetoken.Parse(getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
 		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
 	}
+	if _, ok := cfg.ServiceTokens[selfService]; ok {
+		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: the name %q is reserved for the hub itself", selfService)
+	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")
 	cfg.DevSkipVerify, cfg.DevClaudeTokenURL = skip == "1", getenv("OBSERVATORY_DEV_CLAUDE_TOKEN_URL")

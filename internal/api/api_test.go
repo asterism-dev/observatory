@@ -19,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/store/storetest"
@@ -35,6 +36,7 @@ type env struct {
 	api   *api
 	h     http.Handler
 
+	iss      *auth.Issuer
 	verifier *fakeVerifier
 	oauth    *fakeOAuth
 	google   *fakeGoogle
@@ -50,7 +52,17 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
+	iss, err := auth.NewIssuer(context.Background(), s, "https://hub.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks := httptest.NewServer(iss.JWKSHandler())
+	t.Cleanup(jwks.Close)
+	idv, err := identity.NewVerifier(jwks.URL, "https://hub.test", "unused-service-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Verifier: idv}
 	nh, err := network.Load(context.Background(), s, z, network.Config{GatewayHost: "hub.test", GatewayToken: gatewayToken})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +75,35 @@ func newEnv(t *testing.T) *env {
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
 	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
-	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler, verifier: fv, oauth: fo, google: fg}
+	e := &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, iss: iss, verifier: fv, oauth: fo, google: fg}
+	e.h = e.asEdge(handler)
+	return e
+}
+
+// asEdge swaps a session bearer on /api/ for a JWT as the edge does; an unknown or revoked session loses the credential.
+func (e *env) asEdge(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || !strings.HasPrefix(tok, "obs_") || !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Header.Del("Authorization")
+		if sess, err := e.store.SessionByToken(r.Context(), tok); err == nil {
+			u, err := e.store.User(r.Context(), sess.UserID)
+			if err != nil {
+				e.t.Errorf("edge: load user: %v", err)
+				return
+			}
+			jwt, _, err := e.iss.Mint(u, sess)
+			if err != nil {
+				e.t.Errorf("edge: mint: %v", err)
+				return
+			}
+			r.Header.Set("Authorization", "Bearer "+jwt)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (e *env) newFleet() *fleet.Fleet {

@@ -29,9 +29,12 @@ const (
 )
 
 type Principal struct {
-	User          uuid.UUID
-	Session       uuid.UUID
-	PlatformAdmin bool
+	User           uuid.UUID
+	Session        uuid.UUID
+	PlatformAdmin  bool
+	Name           string
+	SessionKind    string
+	SessionExpires time.Time
 }
 
 type principalKey struct{}
@@ -91,6 +94,9 @@ type claims struct {
 	jwt.RegisteredClaims
 	Session       string `json:"sid"`
 	PlatformAdmin bool   `json:"pa"`
+	Name          string `json:"name"`
+	SessionKind   string `json:"sk"`
+	SessionExp    int64  `json:"sx"`
 }
 
 type keySet struct {
@@ -153,7 +159,11 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 	if err != nil {
 		return Principal{}, errors.New("invalid token: bad sid")
 	}
-	return Principal{User: user, Session: sid, PlatformAdmin: c.PlatformAdmin}, nil
+	p := Principal{User: user, Session: sid, PlatformAdmin: c.PlatformAdmin, Name: c.Name, SessionKind: c.SessionKind}
+	if c.SessionExp > 0 {
+		p.SessionExpires = time.Unix(c.SessionExp, 0)
+	}
+	return p, nil
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, error) {

@@ -34,11 +34,6 @@ func TestCLITokenExchange(t *testing.T) {
 		t.Fatalf("expiry %v", d)
 	}
 
-	req := httptest.NewRequest("GET", "/whoami", nil)
-	req.Header.Set("Authorization", "Bearer "+out.Token)
-	if rec := e.do(req); rec.Code != http.StatusOK || rec.Body.String() != "a@x.io" {
-		t.Fatalf("bearer: %d %q", rec.Code, rec.Body)
-	}
 	sess, err := e.store.SessionByToken(context.Background(), out.Token)
 	if err != nil || sess.Kind != store.SessionCLI {
 		t.Fatalf("session %+v, %v", sess, err)

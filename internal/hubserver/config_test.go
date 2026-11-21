@@ -2,6 +2,7 @@ package hubserver
 
 import (
 	"encoding/base64"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,10 @@ func TestLoadConfig(t *testing.T) {
 	env["OBSERVATORY_SERVICE_TOKENS"] = "edge=" + strings.Repeat("e", 32)
 	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.ServiceTokens["edge"] != strings.Repeat("e", 32) {
 		t.Fatalf("service tokens: %v, %v", cfg.ServiceTokens, err)
+	}
+	env["OBSERVATORY_SERVICE_TOKENS"] = "hub=" + strings.Repeat("h", 32)
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("configured hub token: %v", err)
 	}
 	delete(env, "OBSERVATORY_SERVICE_TOKENS")
 	delete(env, "OBSERVATORY_BUILDER_CPUS")
@@ -295,5 +300,17 @@ func TestHubConfigRequiresEdgeToken(t *testing.T) {
 	env["OBSERVATORY_EDGE_TOKEN"] = strings.Repeat("e", 32)
 	if cfg, err := load(); err != nil || cfg.EdgeToken != env["OBSERVATORY_EDGE_TOKEN"] {
 		t.Fatalf("valid token: %v", err)
+	}
+}
+
+func TestDialAddr(t *testing.T) {
+	for in, want := range map[string]string{"0.0.0.0:8080": "127.0.0.1:8080", "[::]:8080": "[::1]:8080", "10.0.0.5:8080": "10.0.0.5:8080"} {
+		addr, err := net.ResolveTCPAddr("tcp", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := dialAddr(addr); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
+		}
 	}
 }

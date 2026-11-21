@@ -256,6 +256,27 @@ func TestAdminRegistryGC(t *testing.T) {
 	}
 }
 
+func TestRegistryCredentialNeedsCLISession(t *testing.T) {
+	e := newEnv(t)
+	alice, _ := e.user("alice")
+	_, sess, err := e.store.CreateSession(t.Context(), alice.ID, store.SessionCLI, time.Hour, "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hub decides from the JWT's sk claim alone, not from the session row.
+	for kind, want := range map[store.SessionKind]int{store.SessionBrowser: 403, store.SessionCLI: 201} {
+		s := sess
+		s.Kind = kind
+		jwt, _, err := e.iss.Mint(alice, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("POST", "/api/registry/credentials", jwt); rec.Code != want {
+			t.Fatalf("%s session: %d %s, want %d", kind, rec.Code, rec.Body.String(), want)
+		}
+	}
+}
+
 func TestCredentialExchangeExpiry(t *testing.T) {
 	e := newEnv(t)
 	alice, aliceTok := e.user("alice")

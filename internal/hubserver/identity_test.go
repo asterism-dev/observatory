@@ -19,6 +19,7 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
@@ -46,7 +47,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	iss, err := NewIssuer(ctx, s, issuerURL)
+	iss, err := auth.NewIssuer(ctx, s, issuerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,13 +117,14 @@ func TestJWKSHasCurrentKey(t *testing.T) {
 		t.Fatalf("keys: %v", keys)
 	}
 	// The key is sealed in hub_secrets, so a second issuer (restart, another hub) publishes the same one.
-	iss, err := NewIssuer(context.Background(), e.s, issuerURL)
+	iss, err := auth.NewIssuer(context.Background(), e.s, issuerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again := e.jwks(t)
-	if _, ok := again[iss.kid]; !ok || len(again) != 1 {
-		t.Fatalf("restart changed the key: %v vs %s", keys, iss.kid)
+	rec := httptest.NewRecorder()
+	iss.JWKSHandler().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Body.String() != e.do("GET", "/internal/iam/jwks", "Bearer "+svcToken, nil).Body.String() {
+		t.Fatalf("restart changed the key: %v vs %s", keys, rec.Body)
 	}
 }
 
@@ -175,6 +177,38 @@ func TestTokenEndpointIssuesJWT(t *testing.T) {
 	c.PA = true
 	if _, err := jwt.ParseWithClaims(out.Token, &c, func(tk *jwt.Token) (any, error) { return keys[tk.Header["kid"].(string)], nil }); err != nil || c.PA {
 		t.Fatalf("bob: pa=%v err=%v", c.PA, err)
+	}
+}
+
+func TestTokenCarriesNameKindAndSessionExpiry(t *testing.T) {
+	e := newIAMEnv(t)
+	res, err := e.s.Login(context.Background(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "Alice\x07 Doe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, sess, err := e.s.CreateSession(context.Background(), res.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do("POST", "/internal/iam/token", "Bearer "+svcToken, map[string]string{"session_token": tok})
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("%d %s: %v", rec.Code, rec.Body, err)
+	}
+	var c struct {
+		jwt.RegisteredClaims
+		Name string `json:"name"`
+		SK   string `json:"sk"`
+		SX   int64  `json:"sx"`
+	}
+	keys := e.jwks(t)
+	if _, err := jwt.ParseWithClaims(out.Token, &c, func(tk *jwt.Token) (any, error) { return keys[tk.Header["kid"].(string)], nil }); err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "Alice Doe" || c.SK != "cli" || c.SX != sess.ExpiresAt.Unix() {
+		t.Fatalf("name %q, sk %q, sx %d (session expires %d)", c.Name, c.SK, c.SX, sess.ExpiresAt.Unix())
 	}
 }
 
@@ -266,7 +300,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	}
 
 	// Without OBSERVATORY_SERVICE_TOKENS every internal call is refused.
-	iss, err := NewIssuer(context.Background(), e.s, issuerURL)
+	iss, err := auth.NewIssuer(context.Background(), e.s, issuerURL)
 	if err != nil {
 		t.Fatal(err)
 	}

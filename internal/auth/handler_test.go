@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/identity"
+	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
@@ -78,6 +83,8 @@ type env struct {
 	t     *testing.T
 	pool  *pgxpool.Pool
 	store *store.Store
+	a     *Handler
+	iss   *Issuer
 	h     http.Handler
 	// header is added to every request, e.g. to arrive through the edge.
 	header http.Header
@@ -88,8 +95,19 @@ const edgeToken = "0123456789abcdef0123456789abcdef"
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := store.New(pool).WithMasterKey(seal.Key{1})
+	iss, err := NewIssuer(context.Background(), s, "https://hub.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwks := httptest.NewServer(iss.JWKSHandler())
+	t.Cleanup(jwks.Close)
+	v, err := identity.NewVerifier(jwks.URL, "https://hub.test/", "unused-service-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &Handler{
+		Verifier:    v,
 		Store:       s,
 		Auth:        fakeAuth{id: store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Alice"}, cliToken: "good"},
 		Issuer:      "https://idp.test",
@@ -104,9 +122,9 @@ func newEnv(t *testing.T) *env {
 		if !ok {
 			t.Error("no principal")
 		}
-		_, _ = w.Write([]byte(p.User.Email))
+		_, _ = w.Write([]byte(p.User.Name))
 	})))
-	return &env{t: t, pool: pool, store: s, h: h.TrustEdge(mux)}
+	return &env{t: t, pool: pool, store: s, a: h, iss: iss, h: h.TrustEdge(mux)}
 }
 
 func (e *env) do(r *http.Request) *httptest.ResponseRecorder {
@@ -254,56 +272,111 @@ func TestCallbackIdPErrorIsSanitized(t *testing.T) {
 	}
 }
 
+// minted logs Alice in with a session of kind and returns her, the session and its JWT.
+func (e *env) minted(kind store.SessionKind) (store.User, store.Session, string) {
+	e.t.Helper()
+	ctx := context.Background()
+	res, err := e.store.Login(ctx, store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Alice"})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	_, sess, err := e.store.CreateSession(ctx, res.User.ID, kind, time.Hour, "", "")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	tok, _, err := e.iss.Mint(res.User, sess)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return res.User, sess, tok
+}
+
+func (e *env) whoami(method string, set func(*http.Request)) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/whoami", nil)
+	set(req)
+	return e.do(req)
+}
+
 func TestRequire(t *testing.T) {
 	e := newEnv(t)
-	sc := e.sessionCookie()
-
-	if rec := e.do(httptest.NewRequest("GET", "/whoami", nil)); rec.Code != http.StatusUnauthorized ||
-		rec.Body.String() != `{"error":"unauthorized"}`+"\n" {
-		t.Fatalf("no creds: %d %q", rec.Code, rec.Body.String())
+	_, _, tok := e.minted(store.SessionBrowser)
+	for _, method := range []string{"GET", "POST"} {
+		// No X-Observatory: the edge enforces CSRF before it attaches a JWT.
+		if rec := e.whoami(method, func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok) }); rec.Code != http.StatusOK || rec.Body.String() != "Alice" {
+			t.Fatalf("%s: %d %q", method, rec.Code, rec.Body.String())
+		}
 	}
+}
 
-	sess, err := e.store.SessionByToken(context.Background(), sc.Value)
+func TestRequireRejects(t *testing.T) {
+	e := newEnv(t)
+	user, sess, tok := e.minted(store.SessionBrowser)
+	raw, _, err := e.store.CreateSession(context.Background(), user.ID, store.SessionCLI, time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	revokedTok, revoked, err := e.store.CreateSession(context.Background(), sess.UserID, store.SessionCLI, time.Hour, "", "")
-	if err != nil {
+	sign := func(method jwt.SigningMethod, key any, edit func(*userClaims)) string {
+		c := e.iss.claims(user, sess, time.Now())
+		edit(&c)
+		jt := jwt.NewWithClaims(method, c)
+		jt.Header["kid"] = e.iss.kid
+		s, err := jt.SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	keep := func(*userClaims) {}
+	for name, set := range map[string]func(*http.Request){
+		"none":        func(*http.Request) {},
+		"raw session": func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+raw) },
+		"jwt cookie":  func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "obs_session", Value: tok}) },
+		"basic":       func(r *http.Request) { r.Header.Set("Authorization", "Basic "+tok) },
+		"hs256": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodHS256, []byte(e.iss.key.Public().(ed25519.PublicKey)), keep))
+		},
+		"forged": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, other, keep))
+		},
+		"expired": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) {
+				c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
+			}))
+		},
+		"wrong aud": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Audience = jwt.ClaimStrings{"other"} }))
+		},
+		"wrong iss": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Issuer = "https://evil.test" }))
+		},
+	} {
+		if rec := e.whoami("GET", set); rec.Code != http.StatusUnauthorized || rec.Body.String() != `{"error":"unauthorized"}`+"\n" {
+			t.Errorf("%s: %d %q", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestRequirePrincipalFromClaims(t *testing.T) {
+	e := newEnv(t)
+	user, sess, tok := e.minted(store.SessionCLI)
+	// The hub authenticates offline: a revoked session's JWT stays valid until it expires.
+	if err := e.store.RevokeSession(context.Background(), user.ID, sess.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.RevokeSession(context.Background(), sess.UserID, revoked.ID); err != nil {
-		t.Fatal(err)
+	var got Principal
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	e.a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got, _ = PrincipalFrom(r.Context()) })).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
 	}
-	req := httptest.NewRequest("GET", "/whoami", nil)
-	req.Header.Set("Authorization", "Bearer "+revokedTok)
-	if rec := e.do(req); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("revoked bearer: %d", rec.Code)
+	if got.User.ID != user.ID || got.User.Name != "Alice" || !got.User.PlatformAdmin {
+		t.Fatalf("user %+v", got.User)
 	}
-
-	req = httptest.NewRequest("GET", "/whoami", nil)
-	req.AddCookie(sc)
-	if rec := e.do(req); rec.Code != http.StatusOK || rec.Body.String() != "a@x.io" {
-		t.Fatalf("cookie GET: %d %q", rec.Code, rec.Body.String())
-	}
-
-	req = httptest.NewRequest("POST", "/whoami", nil)
-	req.AddCookie(sc)
-	if rec := e.do(req); rec.Code != http.StatusForbidden ||
-		rec.Body.String() != `{"error":"missing X-Observatory header"}`+"\n" {
-		t.Fatalf("cookie POST without header: %d %q", rec.Code, rec.Body.String())
-	}
-
-	req = httptest.NewRequest("POST", "/whoami", nil)
-	req.AddCookie(sc)
-	req.Header.Set("X-Observatory", "1")
-	if rec := e.do(req); rec.Code != http.StatusOK {
-		t.Fatalf("cookie POST with header: %d", rec.Code)
-	}
-
-	req = httptest.NewRequest("POST", "/whoami", nil)
-	req.Header.Set("Authorization", "Bearer "+sc.Value)
-	if rec := e.do(req); rec.Code != http.StatusOK {
-		t.Fatalf("bearer POST: %d", rec.Code)
+	if got.Session.ID != sess.ID || got.Session.UserID != user.ID || got.Session.Kind != store.SessionCLI || got.Session.ExpiresAt.Unix() != sess.ExpiresAt.Unix() {
+		t.Fatalf("session %+v, want %+v", got.Session, sess)
 	}
 }
 
@@ -313,6 +386,13 @@ func TestLogoutRevokesSession(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(sc)
+	if rec := e.do(req); rec.Code != http.StatusForbidden ||
+		rec.Body.String() != `{"error":"missing X-Observatory header"}`+"\n" {
+		t.Fatalf("cookie logout without header: %d %q", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest("POST", "/auth/logout", nil)
+	req.AddCookie(sc)
 	req.Header.Set("X-Observatory", "1")
 	rec := e.do(req)
 	if rec.Code != http.StatusNoContent {
@@ -321,14 +401,18 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if c := cookieNamed(rec, "obs_session"); c == nil || c.MaxAge >= 0 {
 		t.Fatalf("session cookie not cleared: %+v", c)
 	}
-
-	req = httptest.NewRequest("GET", "/whoami", nil)
-	req.AddCookie(sc)
-	if rec := e.do(req); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("after logout: %d", rec.Code)
+	if _, err := e.store.SessionByToken(context.Background(), sc.Value); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("session after logout: %v", err)
 	}
 	if !e.actions(store.ResultAllowed)[store.ActionAuthLogout] {
 		t.Fatal("no iam.sessions.delete audit")
+	}
+
+	req = httptest.NewRequest("POST", "/auth/logout", nil)
+	req.AddCookie(sc)
+	req.Header.Set("X-Observatory", "1")
+	if rec := e.do(req); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("logout with a revoked session: %d", rec.Code)
 	}
 }
 

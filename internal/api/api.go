@@ -243,6 +243,16 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 
 func (h *api) me(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
+	// The JWT carries no e-mail; the hub still owns the users table until iam moves out.
+	u, err := h.store.User(r.Context(), p.User.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err != nil {
+		serverError(w, "user", err)
+		return
+	}
 	ms, err := h.store.Memberships(r.Context(), p.User.ID)
 	if err != nil {
 		serverError(w, "memberships", err)
@@ -253,7 +263,7 @@ func (h *api) me(w http.ResponseWriter, r *http.Request) {
 		orgs = append(orgs, toOrgJSON(m))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":          map[string]any{"id": p.User.ID, "email": p.User.Email, "name": p.User.Name, "platformAdmin": p.User.PlatformAdmin},
+		"user":          map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "platformAdmin": p.User.PlatformAdmin},
 		"orgs":          orgs,
 		"docsURL":       h.docsURL,
 		"version":       version.Version,
