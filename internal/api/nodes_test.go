@@ -490,7 +490,7 @@ func TestEmergencyEndpointRejects(t *testing.T) {
 	if rec := e.emergency(cred, `{"version":"v0.1.0","update":true}`); rec.Code != 400 {
 		t.Fatalf("unknown field: %d", rec.Code)
 	}
-	if rec := e.emergency(cred, `{"reason":"`+strings.Repeat("x", 8<<10)+`"}`); rec.Code != 400 {
+	if rec := e.emergency(cred, `{"reason":"`+strings.Repeat("x", 20<<10)+`"}`); rec.Code != 400 {
 		t.Fatalf("oversized body: %d", rec.Code)
 	}
 	if rec := e.emergency(cred, `{"version":"v`+strings.Repeat("1", 100)+`"}`); rec.Code != 400 {
