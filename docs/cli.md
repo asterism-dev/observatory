@@ -2,8 +2,8 @@
 
 `observatory` does from a terminal what the web UI does: VMs and their power states, SSH and desktop, snapshots and
 forks, disks, networks, devices, variables, secrets, integrations, nodes, teams, members and roles. It is a thin client
-of the hub's REST API (`/api/...`) with your own session, so every command has the same permissions and audit as the web
-UI.
+of the hub's REST API (`/api/...`) and of the iam API (`/api/iam/v1/`, see [permissions](permissions.md#iam-api)) with
+your own session, so every command has the same permissions and audit as the web UI.
 
 ```
 observatory login --hub https://hub.example
@@ -163,8 +163,8 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `node add <name>` / `node token <node>` | register a node / issue a new install command; both print it. `token` revokes the current credential, so an enrolled node disconnects until reinstalled (confirms) |
 | `node rename <node> <name>` / `node delete <node>` | delete confirms |
 | `team list` / `team show <team>` / `team create <name>` / `team rename <team> <name>` / `team delete <team>` | delete confirms; `me`, `org` and `observatory` are reserved names |
-| `team add <team> <member> [--admin]` / `team remove <team> <member>` | remove confirms |
-| `member list` / `member role <member> owner\|admin\|member` / `member remove <member>` | remove confirms |
+| `team add <team> <member> [--admin]` / `team remove <team> <member>` | remove confirms; removing yourself leaves the team |
+| `member list` / `member role <member> owner\|admin\|member` / `member remove <member>` | remove confirms; removing yourself leaves the org |
 | `invite list` / `invite create [--role member]` / `invite revoke <id>` | create prints the link once; revoke confirms |
 | `invite accept [--from-file F\|-]` | join an org; the token or link comes from stdin or the file |
 | `role list` / `role show <role>` / `role catalog` | roles, their rules, and the permissions a rule can name |
@@ -180,6 +180,11 @@ Lists are tables, `show` prints `key: value` lines, actions print one sentence. 
 response body unchanged (indented), so scripts get the REST contract; composed commands print the final resource (the
 VM after `vm restart --wait`), and actions without a body print nothing. List endpoints keep their wrapper
 (`{"vms": [...]}`).
+
+The account, org, team, member, invite, role, binding, session and SSH key commands (and `whoami`) print the iam
+API's JSON response: camelCase fields, the response message as the wrapper (`{"members": [...]}`, `{"team": {...}}`) and
+no fields that hold their default value (`false`, `0`, `""`, empty lists). `role show --json` prints the role, which
+`role create --file` and `role update --file` accept as is.
 
 ```
 observatory vm list --json | jq -r '.vms[] | select(.state=="running") | .name'

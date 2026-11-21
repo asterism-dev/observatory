@@ -206,7 +206,7 @@ holds `compute.instances.connect` on `org/vms/*`, the escalation rule rejects su
 add, rename or delete nodes. Node usage graphs and logs need `compute.nodes.getMetrics`; admins and owners have it, members only through a custom role.
 
 A member who still owns VMs or disks cannot be removed from the org or leave it, and a team that owns VMs or
-disks cannot be deleted (`409` "owns VMs or disks").
+disks cannot be deleted (failed precondition, "owns VMs or disks").
 
 ## VM lifecycle
 
@@ -282,7 +282,7 @@ team or member limit (both return `400` "limit exceeds org limit"). Creating a V
 A platform admin administers the installation: lists all orgs and their members, sets org limits, manages
 the platform-admin flag of users and reads the global audit log. It grants **no** tenant permissions: a
 platform admin has no access to an org's data unless they are a member. The last platform admin cannot be
-revoked (`409`).
+revoked (failed precondition).
 
 ## How services authorize
 
@@ -321,6 +321,29 @@ The service's interceptor checks it before the handler runs:
   change reaches them within seconds. A service refuses requests until it has received a policy, and keeps the last one
   if the stream drops.
 
+## IAM API
+
+Users, sessions, SSH keys, orgs, members, invites, teams, roles, bindings and the platform admin calls are one service,
+`observatory.iam.v1.IAMService`, served at `/api/iam/v1/` over Connect, gRPC and REST. All three take the same path
+through authorization and audit. REST paths follow the methods, for example `GET /api/iam/v1/me`,
+`DELETE /api/iam/v1/orgs/{org}/members/{user}` or `POST /api/iam/v1/invites:accept`; the Connect path is
+`/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. The service runs inside the hub for now.
+
+- **`{self}`.** The calls on your own account (`GetMe`, sessions, SSH keys, `CreateOrg`, `AcceptInvite`, `LeaveOrg`)
+  have the object `user:{self}`, and `{self}` is always the caller. A session or SSH key ID of another user is not
+  found, and nothing changes.
+- **Membership only.** `GetOrg` and `LeaveOrg` need membership and no permission: a member passes even under a
+  `deny * on *` rule, and a non-member gets not found.
+- Removing yourself is `LeaveOrg` or `LeaveTeam`; `DeleteMember` and `RemoveTeamMember` refuse your own ID.
+- Errors map as follows. Not found and permission denied mean what they say. Conflicts such as the last owner or a
+  member who still owns VMs are failed precondition. Bad input is invalid argument.
+- A REST request with a query string is refused with `400` before authentication, so a query field cannot override
+  the org in the path.
+- Writes record their audit events in their own transaction, with the same types and resources as before, so the hub's
+  cleanup sees each removal exactly once.
+- The hub keeps `GET /api/info` (docs URL, version, latest version) and the platform admin's org limits
+  (`GET`/`PUT /api/admin/orgs/{org}/limits`).
+
 ## Hub as iam client
 
 The hub does not read users, memberships or teams for authorization. It verifies the identity token and takes an
@@ -335,7 +358,7 @@ images, dashboards, limits and devices, detaches a team from its disks and VM hi
 credentials of the session. Denied events are ignored. Cleanup is idempotent and retried until it succeeds; if the
 member has rejoined by then, nothing is purged and their earlier rows stay.
 
-- Removing a member or deleting a team is refused with `409` while the hub reports that the subject owns VMs or live
+- Removing a member or deleting a team is refused (failed precondition) while the hub reports that the subject owns VMs or live
   disks. The check and the delete are not one transaction, so a VM created in between is not caught.
 - Events stay on the bus for 7 days; cleanup that is delayed longer is lost.
 - Access ends with the membership, not the cleanup: a removed member's WireGuard device stays a gateway peer until it is
