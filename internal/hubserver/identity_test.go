@@ -28,6 +28,7 @@ import (
 
 const (
 	svcToken  = "0123456789abcdef0123456789abcdef"
+	otherTok  = "fedcba9876543210fedcba9876543210"
 	issuerURL = "https://hub.test"
 )
 
@@ -51,7 +52,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	}
 	ps := NewPolicyServer()
 	z.OnReload(ps.Publish)
-	return &iamEnv{s: s, z: z, h: servicetoken.Middleware(map[string]string{"edge": svcToken})(internalIAM(iss, ps))}
+	return &iamEnv{s: s, z: z, h: servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalIAM(iss, ps))}
 }
 
 func (e *iamEnv) do(method, path, auth string, body any) *httptest.ResponseRecorder {
@@ -202,6 +203,31 @@ func TestTokenExpiryBoundBySession(t *testing.T) {
 	}
 	if c.ExpiresAt.After(sess.ExpiresAt) || sess.ExpiresAt.Sub(c.ExpiresAt.Time) >= time.Second || !out.ExpiresAt.Equal(c.ExpiresAt.Time) {
 		t.Fatalf("exp %v, expires_at %v, session expires %v", c.ExpiresAt, out.ExpiresAt, sess.ExpiresAt)
+	}
+}
+
+func TestTokenEndpointOnlyForEdge(t *testing.T) {
+	e := newIAMEnv(t)
+	_, tok, _ := e.login(t, "alice")
+	if rec := e.do("POST", "/internal/iam/token", "Bearer "+otherTok, map[string]string{"session_token": tok}); rec.Code != http.StatusForbidden {
+		t.Fatalf("compute minting user tokens: %d", rec.Code)
+	}
+	if rec := e.do("GET", "/internal/iam/jwks", "Bearer "+otherTok, nil); rec.Code != http.StatusOK {
+		t.Fatalf("compute reading jwks: %d", rec.Code)
+	}
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req := connect.NewRequest(&iamv1.WatchPolicyRequest{})
+	req.Header().Set("Authorization", "Bearer "+otherTok)
+	stream, err := iamv1connect.NewPolicyServiceClient(srv.Client(), srv.URL+"/internal/iam").WatchPolicy(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	if !stream.Receive() {
+		t.Fatalf("compute watching policy: %v", stream.Err())
 	}
 }
 

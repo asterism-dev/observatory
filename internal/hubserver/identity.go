@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ const (
 	jwtAudience       = "observatory"
 	jwtTTL            = 5 * time.Minute
 	policySendTimeout = 30 * time.Second
+	tokenCaller       = "edge"
 )
 
 type streamControllerKey struct{}
@@ -86,6 +88,11 @@ func (i *Issuer) TokenHandler() http.Handler {
 			return
 		}
 		caller, _ := servicetoken.Caller(r.Context())
+		// Only the edge turns sessions into user identities; a service holding a session token must not impersonate its user.
+		if caller != tokenCaller {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if in.SessionToken == "" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -267,6 +274,21 @@ func policyMessage(p authz.Policy) *iamv1.Policy {
 		m.Teams = append(m.Teams, &iamv1.TeamRef{OrgId: t.OrgID.String(), Id: t.ID.String()})
 	}
 	return m
+}
+
+// mountIdentity serves the transitional identity issuer under /internal/iam/, fed by every successful z.Reload.
+func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *authz.Service, cfg config) error {
+	jwtIssuer, err := NewIssuer(ctx, s, strings.TrimRight(cfg.PublicURL, "/"))
+	if err != nil {
+		return err
+	}
+	policies := NewPolicyServer()
+	z.OnReload(policies.Publish)
+	if len(cfg.ServiceTokens) == 0 {
+		slog.Warn("OBSERVATORY_SERVICE_TOKENS is not set; the hub refuses every /internal/iam/ call")
+	}
+	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(jwtIssuer, policies)))
+	return nil
 }
 
 // internalIAM serves /internal/iam/*; the caller wraps it in servicetoken.Middleware.

@@ -24,7 +24,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/platform/run"
-	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -73,20 +72,13 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	slog.Info("management addresses backfilled", "vms", filled)
-	iss, err := NewIssuer(ctx, s, strings.TrimRight(cfg.PublicURL, "/"))
-	if err != nil {
-		return err
-	}
-	policies := NewPolicyServer()
-	z.OnReload(policies.Publish)
-	if len(cfg.ServiceTokens) == 0 {
-		slog.Warn("OBSERVATORY_SERVICE_TOKENS is not set; the hub refuses every /internal/iam/ call")
-	}
 	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken}
 
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(iss, policies)))
+	if err := mountIdentity(ctx, mux, s, z, cfg); err != nil {
+		return err
+	}
 	f, err := fleet.New(ctx, s, z, nh)
 	if err != nil {
 		return err
