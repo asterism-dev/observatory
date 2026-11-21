@@ -8,8 +8,8 @@ import { useRoute } from 'vue-router'
 
 import { api } from '@/api'
 import TelemetryLogs from '@/components/TelemetryLogs.vue'
-import { entriesUrl, groupName, retentionSpan, type GroupKind, type LogGroup, type LogGroupList, type LogStream } from '@/composables/logs'
-import { presets, rangeFor, type Preset, type UsageRange } from '@/composables/telemetry'
+import { entriesUrl, groupName, logRange, rangeOptions, retentionSpan, type GroupKind, type LogGroup, type LogGroupList, type LogStream } from '@/composables/logs'
+import { presets, rangeFor, type UsageRange } from '@/composables/telemetry'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import { DataTable, EmptyState, Page, Section, Tag } from '@/ui'
@@ -25,16 +25,17 @@ const group = ref<LogGroup | null>(null)
 const streams = ref<LogStream[]>([])
 const retention = ref(0)
 const error = ref('')
-const preset = ref<Preset>('1h')
+const preset = ref('1h')
 const range = ref<UsageRange>({ ...rangeFor('1h', new Date()), now: true })
 
-const presetOptions = presets.map((p) => ({ value: p, label: p }))
 const title = computed(() => (group.value ? groupName(group.value) : ''))
 const filter = computed(() => ({ key: 'stream' as const, options: streams.value.map((s) => s.name) }))
-const keptFor = computed(() => {
+const retentionLabel = computed(() => {
   const { unit, n } = retentionSpan(retention.value)
-  return t('logs.retention', { for: t(`logs.${unit}`, { n }, n) })
+  return t(`logs.${unit}`, { n }, n)
 })
+const keptFor = computed(() => (retention.value ? t('logs.retention', { for: retentionLabel.value }) : ''))
+const presetOptions = computed(() => rangeOptions(presets, retention.value, retentionLabel.value))
 const when = (iso: string) => d(new Date(iso), { dateStyle: 'short', timeStyle: 'medium' })
 const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: t('logs.stream') },
@@ -42,7 +43,7 @@ const columns = computed<TableColumn[]>(() => [
   ...(kind.value === 'image' ? [{ key: 'build', label: t('logs.build') }] : []),
 ])
 
-watch(preset, (p) => (range.value = { ...rangeFor(p, new Date()), now: true }))
+watch(preset, (p) => (range.value = { ...logRange(p, retention.value, new Date(), rangeFor), now: true }))
 watchEffect(() => {
   if (group.value && org.value) setCrumbs(route.path, [{ label: title.value }])
 })
@@ -98,7 +99,7 @@ watch(
           <Select v-model="preset" :options="presetOptions" :aria-label="t('logs.range')" />
         </div>
         <TelemetryLogs :url="entriesUrl(org.id, group)" :range="range" :hover-at="null" :filter="filter" />
-        <p class="muted">{{ keptFor }}</p>
+        <p v-if="keptFor" class="muted">{{ keptFor }}</p>
       </template>
     </template>
   </Page>

@@ -1,3 +1,5 @@
+import type { Preset } from './telemetry.ts'
+
 export type GroupKind = 'vm' | 'node' | 'image'
 export const groupKinds: GroupKind[] = ['vm', 'node', 'image']
 
@@ -52,4 +54,18 @@ export interface LogGroupList {
 export function retentionSpan(seconds: number): { unit: 'days' | 'hours'; n: number } {
   const hours = Math.max(1, Math.round(seconds / 3600))
   return hours % 24 === 0 ? { unit: 'days', n: hours / 24 } : { unit: 'hours', n: hours }
+}
+
+export const retentionRange = 'retention'
+
+// Presets stop at 7 days; the extra option reaches back the whole retention.
+export function rangeOptions(presets: string[], retentionSeconds: number, retentionLabel: string) {
+  const out = presets.map((p) => ({ value: p, label: p }))
+  if (retentionSeconds > 7 * 86400) out.push({ value: retentionRange, label: retentionLabel })
+  return out
+}
+
+export function logRange(value: string, retentionSeconds: number, now: Date, preset: (p: Preset, now: Date) => { from: Date; to: Date }) {
+  if (value === retentionRange) return { from: new Date(now.getTime() - retentionSeconds * 1000), to: now }
+  return preset(value as Preset, now)
 }

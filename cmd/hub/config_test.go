@@ -251,7 +251,7 @@ func TestConfigLogsRetention(t *testing.T) {
 			t.Errorf("%q: %v, %v", v, cfg.LogsRetention, err)
 		}
 	}
-	for _, v := range []string{"14", "d", "0d", "-1d", "1.5d", "3m", "1y", "14 d"} {
+	for _, v := range []string{"14", "d", "0d", "-1d", "1.5d", "3m", "1y", "14 d", "9999999999w", "9223372036854775807h"} {
 		if _, err := load(v); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_LOGS_RETENTION") {
 			t.Errorf("%q: error %v", v, err)
 		}

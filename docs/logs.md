@@ -2,7 +2,7 @@
 
 The *Logs* page of the web app browses and searches all logs of your organization in one place, including the logs of
 VMs, nodes and image builds that no longer exist. Telemetry must be on ([Telemetry](telemetry.md)); while it is off, the
-page's endpoints answer 404 `telemetry is off`. The page is shown to people with the `logs:read` permission: org admins
+page's endpoints answer 404 `not found`. The page is shown to people with the `logs:read` permission: org admins
 and owners, or members through a custom role ([Permissions](permissions.md)). Everyone else gets no navigation entry and a
 "no access" page on the direct URL.
 

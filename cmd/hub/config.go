@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -167,7 +168,7 @@ func parseRetention(v string) (time.Duration, error) {
 	}
 	unit := map[byte]time.Duration{'h': time.Hour, 'd': 24 * time.Hour, 'w': 7 * 24 * time.Hour}[v[len(v)-1]]
 	n, err := strconv.Atoi(v[:len(v)-1])
-	if unit == 0 || err != nil || n < 1 || strings.ContainsAny(v, "+-") {
+	if unit == 0 || err != nil || n < 1 || n > math.MaxInt64/int(unit) || strings.ContainsAny(v, "+-") {
 		return 0, errors.New("OBSERVATORY_LOGS_RETENTION must be <n>h, <n>d or <n>w")
 	}
 	return time.Duration(n) * unit, nil

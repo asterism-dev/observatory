@@ -204,6 +204,11 @@ func TestExplorerQueryStatsDetection(t *testing.T) {
 	if res.Stats || len(res.Rows) != 1 || res.Rows[0]["_msg"] != "hello" {
 		t.Fatalf("rows result %+v", res)
 	}
+	reply = `{"_time":"2026-11-20T10:00:00Z","_msg":"a"}` + "\n" + `{"_time":"2026-11-20T10:02:00Z","_msg":"c"}` + "\n" + `{"_time":"2026-11-20T10:01:00Z","_msg":"b"}` + "\n"
+	res, err = c.ExplorerQuery(context.Background(), exOrg, nil, "*", time.Now().Add(-time.Hour), time.Now(), 10)
+	if err != nil || res.Rows[0]["_msg"] != "c" || res.Rows[1]["_msg"] != "b" || res.Rows[2]["_msg"] != "a" {
+		t.Fatalf("not newest first: %+v, %v", res, err)
+	}
 }
 
 func TestExplorerQueryScopingLive(t *testing.T) {

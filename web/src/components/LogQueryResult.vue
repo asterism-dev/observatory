@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TableColumn } from '@asterism-dev/lumen'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import type { LogQueryResult } from '@/composables/logs'
@@ -11,6 +11,7 @@ const { t } = useI18n()
 const open = ref(new Set<number>())
 
 const statRows = computed(() => props.result.rows.map((r, i) => ({ ...r, __row: i })))
+watch(() => props.result, () => (open.value = new Set()))
 const columns = computed<TableColumn[]>(() => props.result.columns.map((c) => ({ key: c, label: c })))
 const toggle = (i: number) => (open.value.delete(i) ? null : open.value.add(i))
 </script>

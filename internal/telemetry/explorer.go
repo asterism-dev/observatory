@@ -190,6 +190,10 @@ func (c *Client) ExplorerQuery(ctx context.Context, org uuid.UUID, groups []Grou
 			break
 		}
 	}
+	if !res.Stats {
+		// The store's row order under a limit is not guaranteed; RFC3339 times in UTC sort as strings.
+		sort.SliceStable(res.Rows, func(i, j int) bool { return res.Rows[i]["_time"] > res.Rows[j]["_time"] })
+	}
 	return res, nil
 }
 
