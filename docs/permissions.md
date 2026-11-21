@@ -283,6 +283,24 @@ the platform-admin flag of users and reads the global audit log. It grants **no*
 platform admin has no access to an org's data unless they are a member. The last platform admin cannot be
 revoked (`409`).
 
+## How services authorize
+
+Extracted services do not see sessions. The edge exchanges the user's session (cookie or bearer token) for a short-lived
+signed token (EdDSA, valid at most 5 minutes and never longer than the session) and sends it to the service in place of
+the client's `Authorization` header. The edge caches it for at most 60 seconds, so a logout or revoked session reaches
+the services within about a minute. Services verify the token offline against the hub's published keys.
+
+Every RPC carries a permission annotation: a permission name (`service.resource.verb`), an object pattern and a kind.
+The service's interceptor checks it before the handler runs:
+
+- A method without a valid annotation is refused, never allowed.
+- A caller who is not a member of the request's org gets not found; a member without the permission is denied.
+- Requests without an `org` field are platform scope and only allowed for platform admins, except when the object
+  starts with `user:`: then the owning user passes regardless of permission.
+- The policy (roles, bindings, teams, memberships) is streamed from the hub to every service and applies locally; a
+  change reaches them within seconds. A service refuses requests until it has received a policy, and keeps the last one
+  if the stream drops.
+
 ## Audit
 
 Every state change writes an audit row in the same transaction. Every denied authorization writes a row

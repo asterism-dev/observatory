@@ -61,7 +61,15 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
 - `OBSERVATORY_EDGE_SERVICE_TOKEN` (`openssl rand -hex 32`, at least 32 characters, different from the edge token) is the
   edge's service token: the hub gets it as `OBSERVATORY_SERVICE_TOKENS=edge=<token>`, the edge as
   `OBSERVATORY_SERVICE_TOKEN`, and the edge uses it to exchange the user's session for a short-lived signed identity token
-  on requests to extracted services (`/api/<service>/v1/`). Changing it needs both services restarted.
+  on requests to extracted services (`/api/<service>/v1/`).
+- `OBSERVATORY_SERVICE_TOKENS` (hub) is a comma-separated list of `name=token` pairs, one per calling service. Each token
+  needs at least 32 characters and no two pairs may share a token or a name. For development `make service-token`
+  appends a pair for the edge (`OBSERVATORY_SERVICE_TOKEN` and `OBSERVATORY_SERVICE_TOKENS`) to `deploy/dev/hub.env`.
+- `/internal/iam/*` on the hub (token exchange, signing keys, policy stream) is never public: the edge answers 404, and
+  the hub requires a service token, answers 403 for a missing or wrong one and logs the attempt. Without
+  `OBSERVATORY_SERVICE_TOKENS` the hub refuses every call there.
+- To rotate a service token, set the new value for both sides (in compose: `OBSERVATORY_EDGE_SERVICE_TOKEN` in
+  `deploy/.env`) and restart the hub and the edge. Until both run the new value, requests to extracted services fail.
 
 The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
 `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
