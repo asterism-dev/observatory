@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -80,9 +81,25 @@ func (c *Client) do(hc *http.Client, req *http.Request) (*http.Response, error) 
 		return resp, nil
 	}
 	defer resp.Body.Close()
-	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-	if resp.StatusCode >= 500 {
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	// A redirect is never followed, so it is as unusable as a 5xx.
+	if resp.StatusCode >= 500 || resp.StatusCode < 400 {
 		return nil, fmt.Errorf("%w: status %d", ErrStore, resp.StatusCode)
 	}
-	return nil, fmt.Errorf("telemetry store rejected request: status %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
+	rej := &RejectedError{Status: resp.StatusCode, Msg: string(bytes.TrimSpace(msg))}
+	var body struct{ Error string }
+	if json.Unmarshal(msg, &body) == nil && body.Error != "" {
+		rej.Msg = body.Error
+	}
+	return nil, rej
+}
+
+// RejectedError is a 4xx answer of the store, such as a query that does not parse; Msg is the store's error text.
+type RejectedError struct {
+	Status int
+	Msg    string
+}
+
+func (e *RejectedError) Error() string {
+	return fmt.Sprintf("telemetry store rejected request: status %d: %s", e.Status, e.Msg)
 }

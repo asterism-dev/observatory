@@ -385,3 +385,180 @@ func (c *Client) VMDrops(ctx context.Context, org, vm uuid.UUID, from, to time.T
 	}
 	return out, nil
 }
+
+// MaxQueryPoints caps the points per series of a RawQuery.
+const MaxQueryPoints = 11000
+
+// Scope confines a dashboard query to the series a viewer may see; the zero value matches nothing.
+type Scope struct {
+	// OrgWide is set for viewers holding vm:metrics and node:metrics on the whole org.
+	OrgWide bool
+	VMs     []uuid.UUID
+	Nodes   bool
+}
+
+func (s Scope) empty() bool { return !s.OrgWide && len(s.VMs) == 0 && !s.Nodes }
+
+// form scopes a request; VictoriaMetrics ORs the extra_filters[] and ANDs each with extra_label on every selector.
+func (s Scope) form(org uuid.UUID) url.Values {
+	form := url.Values{"extra_label": {"observatory_org=" + org.String()}}
+	if s.OrgWide {
+		return form
+	}
+	if len(s.VMs) > 0 {
+		ids := make([]string, len(s.VMs))
+		for i, vm := range s.VMs {
+			ids[i] = vm.String()
+		}
+		form.Add("extra_filters[]", `{observatory_vm=~"`+strings.Join(ids, "|")+`"}`)
+	}
+	if s.Nodes {
+		form.Add("extra_filters[]", `{observatory_vm=""}`)
+	}
+	return form
+}
+
+// visible drops result series labelled with a VM outside the scope, which absent() fabricates from the query text.
+func (s Scope) visible(metric map[string]string) bool {
+	vm := metric["observatory_vm"]
+	return s.OrgWide || vm == "" || slices.ContainsFunc(s.VMs, func(id uuid.UUID) bool { return id.String() == vm })
+}
+
+type RangeResult struct {
+	T      []int64       `json:"t"`
+	Series []RangeSeries `json:"series"`
+}
+
+type RangeSeries struct {
+	Labels map[string]string `json:"labels"`
+	Values []*float64        `json:"values"`
+}
+
+type InstantSeries struct {
+	Labels map[string]string `json:"labels"`
+	Value  *float64          `json:"value"`
+}
+
+// RawQuery runs a dashboard range query; step <= 0 picks about 300 points, and step is raised to stay within MaxQueryPoints.
+func (c *Client) RawQuery(ctx context.Context, org uuid.UUID, s Scope, q string, from, to time.Time, step time.Duration) (RangeResult, error) {
+	out := RangeResult{T: []int64{}, Series: []RangeSeries{}}
+	if s.empty() {
+		return out, nil
+	}
+	span := int64(math.Ceil(to.Sub(from).Seconds()))
+	secs := int64(math.Ceil(step.Seconds()))
+	if secs <= 0 {
+		secs = span / 300
+	}
+	// VictoriaMetrics may align start down to a step multiple, which adds a point.
+	secs = max(secs, 1, (span+MaxQueryPoints-3)/(MaxQueryPoints-2))
+	form := s.form(org)
+	form.Set("query", q)
+	form.Set("start", strconv.FormatInt(from.Unix(), 10))
+	form.Set("end", strconv.FormatInt(to.Unix(), 10))
+	form.Set("step", strconv.FormatInt(secs, 10)+"s")
+	var body struct {
+		Data struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Values [][2]any          `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := c.queryStore(ctx, "/api/v1/query_range", form, &body); err != nil {
+		return RangeResult{}, err
+	}
+	stamps := map[int64]bool{}
+	var points []map[int64]float64
+	for _, r := range body.Data.Result {
+		if !s.visible(r.Metric) {
+			continue
+		}
+		vals := map[int64]float64{}
+		for _, p := range r.Values {
+			if v, at, ok := (instantSample{Value: p}).number(); ok {
+				vals[at.Unix()] = v
+				stamps[at.Unix()] = true
+			}
+		}
+		out.Series = append(out.Series, RangeSeries{Labels: r.Metric})
+		points = append(points, vals)
+	}
+	for ts := range stamps {
+		out.T = append(out.T, ts)
+	}
+	slices.Sort(out.T)
+	for i, vals := range points {
+		out.Series[i].Values = make([]*float64, len(out.T))
+		for j, ts := range out.T {
+			if v, ok := vals[ts]; ok {
+				out.Series[i].Values[j] = &v
+			}
+		}
+	}
+	return out, nil
+}
+
+// Instant runs a dashboard instant query at at.
+func (c *Client) Instant(ctx context.Context, org uuid.UUID, s Scope, q string, at time.Time) ([]InstantSeries, error) {
+	out := []InstantSeries{}
+	if s.empty() {
+		return out, nil
+	}
+	form := s.form(org)
+	form.Set("query", q)
+	form.Set("time", strconv.FormatInt(at.Unix(), 10))
+	var body struct {
+		Data struct {
+			Result []instantSample `json:"result"`
+		} `json:"data"`
+	}
+	if err := c.queryStore(ctx, "/api/v1/query", form, &body); err != nil {
+		return nil, err
+	}
+	for _, r := range body.Data.Result {
+		if !s.visible(r.Metric) {
+			continue
+		}
+		series := InstantSeries{Labels: r.Metric}
+		if v, _, ok := r.number(); ok {
+			series.Value = &v
+		}
+		out = append(out, series)
+	}
+	return out, nil
+}
+
+// MetricNames lists the metric names in scope; a non-empty match is a series selector narrowing them.
+func (c *Client) MetricNames(ctx context.Context, org uuid.UUID, s Scope, match string) ([]string, error) {
+	if s.empty() {
+		return []string{}, nil
+	}
+	form := s.form(org)
+	if match != "" {
+		form.Set("match[]", match)
+	}
+	var body struct {
+		Data []string `json:"data"`
+	}
+	if err := c.queryStore(ctx, "/api/v1/label/__name__/values", form, &body); err != nil {
+		return nil, err
+	}
+	if body.Data == nil {
+		return []string{}, nil
+	}
+	return body.Data, nil
+}
+
+// queryStore bounds a dashboard request by ctx alone, so the caller sets its timeout.
+func (c *Client) queryStore(ctx context.Context, path string, form url.Values, v any) error {
+	resp, err := c.postForm(ctx, c.StoreClient(0), c.MetricsURL+path, form)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("%w: decode %s: %v", ErrStore, path, err)
+	}
+	return nil
+}

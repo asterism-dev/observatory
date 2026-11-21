@@ -48,6 +48,8 @@ type api struct {
 	// tokenChecks maps a telemetry token ID to when its creator's access was last confirmed.
 	tokenChecks  sync.Map
 	grafanaLimit *rateLimiter
+	// dashboardLimit is keyed by user ID.
+	dashboardLimit *rateLimiter
 	// grafanaInflight caps a token's concurrent proxy requests, tails included; grafanaTails caps its tails.
 	grafanaInflight, grafanaTails *tokenSlots
 	// grafanaTailMax caps a Grafana logs tail; grafanaTailRecheck is how often the tail re-checks its token.
@@ -64,7 +66,7 @@ func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *n
 
 func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client) (*api, http.Handler) {
 	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
-		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100),
+		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100), dashboardLimit: newRateLimiter(10, 40),
 		grafanaInflight: newTokenSlots(20), grafanaTails: newTokenSlots(5),
 		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second}
 	mux := http.NewServeMux()
@@ -160,6 +162,8 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("GET /api/orgs/{org}/dashboards/{id}", h.getDashboard)
 	mux.HandleFunc("PUT /api/orgs/{org}/dashboards/{id}", h.updateDashboard)
 	mux.HandleFunc("DELETE /api/orgs/{org}/dashboards/{id}", h.deleteDashboard)
+	mux.HandleFunc("POST /api/orgs/{org}/dashboards/query", h.dashboardQuery)
+	mux.HandleFunc("GET /api/orgs/{org}/dashboards/metric-names", h.dashboardMetricNames)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes", h.listNodes)
 	mux.HandleFunc("POST /api/orgs/{org}/nodes", h.createNode)
 	mux.HandleFunc("GET /api/orgs/{org}/nodes/{id}", h.getNode)
