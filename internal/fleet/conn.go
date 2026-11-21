@@ -90,6 +90,8 @@ func (f *Fleet) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+const maxVersionLen = 64
+
 // ServeEmergency takes a node's emergency poll over the public HTTPS URL while its underlay is down; the reply hands over an update an update run waits to deliver.
 func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
 	cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -106,9 +108,15 @@ func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
 	var rep proto.EmergencyReport
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&rep); err != nil {
+	if err := dec.Decode(&rep); err != nil || len(rep.Version) > maxVersionLen {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
+	}
+	// Without a connection no register stores the version, so a node updated here would otherwise stay outdated.
+	if rep.Version != "" && rep.Version != node.Version {
+		if err := f.store.SetNodeVersion(r.Context(), node.ID, rep.Version); err != nil {
+			slog.Error("store emergency version", "node", node.ID, "err", err)
+		}
 	}
 	f.mu.Lock()
 	if !f.underlayDown(node.ID) {

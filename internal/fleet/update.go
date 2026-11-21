@@ -175,7 +175,7 @@ func (f *Fleet) runUpdate(r *updateRun, nodes []store.Node) {
 // updateNode asks the node to update, over its connection or else its next emergency poll, and waits until it runs the hub's version with its VMs back; it returns why that failed, or "".
 func (f *Fleet) updateNode(n store.Node) string {
 	ctx := f.ctx
-	sent := time.Now()
+	sent, asked := time.Now(), clock() // asked compares with emergency reports, which carry clock() times
 	f.mu.Lock()
 	c := f.conns[n.ID]
 	delete(f.updateErrs, n.ID)
@@ -212,13 +212,24 @@ func (f *Fleet) updateNode(n store.Node) string {
 			since = c.since
 		}
 		em := f.emergency[n.ID]
+		// The underlay came back before the node polled for the update it waits for on the emergency channel.
+		redirect := c != nil && f.emergencyUpd[n.ID]
+		if redirect {
+			delete(f.emergencyUpd, n.ID)
+		}
 		f.mu.Unlock()
 		if failed {
 			return report
 		}
+		if redirect {
+			if reason := f.sendUpdate(ctx, n.ID, c, t.back); reason != "" {
+				return reason
+			}
+			continue
+		}
 		if backAt.IsZero() {
 			// Without a connection there are no VM statuses to wait for; the new version answering on the emergency channel is all the hub can see.
-			if em.at.After(sent) && em.version == version.Version {
+			if em.at.After(asked) && em.version == version.Version {
 				return ""
 			}
 			// The old binary may reconnect while the installer reconfigures networking; only the new version counts.

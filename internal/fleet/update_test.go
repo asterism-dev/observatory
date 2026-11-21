@@ -637,6 +637,25 @@ func TestEmergencyUpdateCompletes(t *testing.T) {
 	if r := e.ended(); r.State != "done" || r.Nodes[0].Status != "done" {
 		t.Fatalf("run %+v", r)
 	}
+	if n := e.storedNode(ns[0].ID); n.Version != version.Version || e.f.Updatable(n) {
+		t.Fatalf("version %q stored, updatable %v", n.Version, e.f.Updatable(n))
+	}
+}
+
+func TestEmergencyUpdateFollowsUnderlayRecovery(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.underlayDown(ns[0])
+	e.start(ns[0])
+	waitFor(t, func() bool { return e.f.Updating(ns[0].ID) })
+	e.back(ns[0], oldVersion)
+	ns[0].conn.awaitUpdate()
+	if _, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion}); r.Update {
+		t.Fatal("update also delivered on the emergency channel")
+	}
+	e.back(ns[0], version.Version)
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
 }
 
 func TestEmergencyUpdateFailsOnReport(t *testing.T) {

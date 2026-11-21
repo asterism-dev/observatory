@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -74,6 +76,15 @@ func TestNodeLifecycle(t *testing.T) {
 	}
 	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.CPUs != 8 || got.MemoryMB != 16384 || got.Version != "v1" || got.LastSeen == nil || !strings.Contains(string(got.Machine), "amd64") || got.Hypervisor == nil || *got.Hypervisor != *hv {
 		t.Fatalf("info: %+v", got)
+	}
+	if err := s.SetNodeVersion(ctx, n.ID, "v2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.Version != "v2" || got.CPUs != 8 || got.Hypervisor == nil {
+		t.Fatalf("after SetNodeVersion: %+v", got)
+	}
+	if err := s.SetNodeVersion(ctx, uuid.New(), "v2"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown node: %v", err)
 	}
 }
 

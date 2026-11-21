@@ -493,4 +493,34 @@ func TestEmergencyEndpointRejects(t *testing.T) {
 	if rec := e.emergency(cred, `{"reason":"`+strings.Repeat("x", 8<<10)+`"}`); rec.Code != 400 {
 		t.Fatalf("oversized body: %d", rec.Code)
 	}
+	if rec := e.emergency(cred, `{"version":"v`+strings.Repeat("1", 100)+`"}`); rec.Code != 400 {
+		t.Fatalf("overlong version: %d", rec.Code)
+	}
+}
+
+func TestEmergencyEndpointStoresVersion(t *testing.T) {
+	hubVersion(t, "v0.5.0")
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id, cred := e.credentialFor(tok, org, "n1")
+	node, _ := uuid.Parse(id)
+	if err := e.store.UpdateNodeInfo(context.Background(), node, 4, 4096, nil, "v0.4.0", fcV); err != nil {
+		t.Fatal(err)
+	}
+	read := func() (n struct {
+		Version             string
+		Outdated, Updatable bool
+	}) {
+		decode(t, e.do("GET", nodesPath(org)+"/"+id, tok), &n)
+		return
+	}
+	e.emergency(cred, `{"version":"v0.4.0"}`)
+	if n := read(); n.Version != "v0.4.0" || !n.Updatable {
+		t.Fatalf("before: %+v", n)
+	}
+	e.emergency(cred, `{"version":"v0.5.0"}`)
+	if n := read(); n.Version != "v0.5.0" || n.Outdated || n.Updatable {
+		t.Fatalf("after: %+v", n)
+	}
 }
