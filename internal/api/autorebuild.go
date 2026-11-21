@@ -14,8 +14,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/builds"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -35,6 +37,7 @@ var autoPeriods = map[string]time.Duration{store.AutoDaily: 24 * time.Hour, stor
 type AutoRebuilds struct {
 	store    *store.Store
 	z        *authz.Service
+	iam      iamv1connect.IAMInternalServiceClient
 	builds   *builds.Scheduler
 	hubHosts []string
 	resolve  func(ctx context.Context, ref name.Reference) (string, error)
@@ -49,8 +52,8 @@ type resolution struct {
 }
 
 // NewAutoRebuilds takes the hub URLs that FROM lines may name observatory images by; those are looked up in the database.
-func NewAutoRebuilds(s *store.Store, z *authz.Service, b *builds.Scheduler, hubURLs ...string) *AutoRebuilds {
-	a := &AutoRebuilds{store: s, z: z, builds: b, Now: time.Now,
+func NewAutoRebuilds(s *store.Store, z *authz.Service, iam iamv1connect.IAMInternalServiceClient, b *builds.Scheduler, hubURLs ...string) *AutoRebuilds {
+	a := &AutoRebuilds{store: s, z: z, iam: iam, builds: b, Now: time.Now,
 		resolve: func(ctx context.Context, ref name.Reference) (string, error) {
 			return registry.PlatformDigest(ctx, ref, remote.WithTransport(registry.PublicTransport()))
 		}}
@@ -262,8 +265,8 @@ func (a *AutoRebuilds) mayBuild(ctx context.Context, img store.Image, rev store.
 }
 
 func (a *AutoRebuilds) userName(ctx context.Context, id uuid.UUID) string {
-	if u, err := a.store.User(ctx, id); err == nil {
-		return u.Name
+	if names, err := iaminternal.UserNames(ctx, a.iam, []uuid.UUID{id}); err == nil && names[id] != "" {
+		return names[id]
 	}
 	return id.String()
 }

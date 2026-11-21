@@ -60,10 +60,10 @@ func (s *Store) DeleteSSHKey(ctx context.Context, user, id uuid.UUID) error {
 	return nil
 }
 
-func (s *Store) SSHKeysOf(ctx context.Context, users []uuid.UUID) ([]string, error) {
-	rows, err := s.q.Query(ctx, "SELECT DISTINCT public_key FROM ssh_keys WHERE user_id = ANY($1) ORDER BY public_key", users)
+func (s *Store) SSHKeysOf(ctx context.Context, users []uuid.UUID) ([]SSHKey, error) {
+	rows, err := s.q.Query(ctx, "SELECT "+sshKeyColumns+" FROM ssh_keys WHERE user_id = ANY($1) ORDER BY user_id, created_at, id", users)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (SSHKey, error) { return scanSSHKey(r) })
 }

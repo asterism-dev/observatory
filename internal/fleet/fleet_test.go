@@ -33,6 +33,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
@@ -78,7 +79,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := fleet.New(ctx, s, z, h)
+	f, err := fleet.New(ctx, s, z, h, iaminternal.Server{Store: s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +363,7 @@ func TestConnectRefusedWithoutUnderlayAddress(t *testing.T) {
 func TestConnectWithoutNetwork(t *testing.T) {
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n1")
-	f, err := fleet.New(context.Background(), e.s, e.z, nil)
+	f, err := fleet.New(context.Background(), e.s, e.z, nil, iaminternal.Server{Store: e.s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +461,9 @@ func TestTeamMemberRemovalDropsKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := e.z.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
 	ownerKey, bobKey := e.sshKey(e.owner), e.sshKey(bob.User.ID)
 	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
 
@@ -469,6 +473,9 @@ func TestTeamMemberRemovalDropsKey(t *testing.T) {
 		t.Fatalf("keys = %v", keys)
 	}
 	if err := e.s.RemoveTeamMember(ctx, e.org.ID, team.ID, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
 	e.f.NotifyOrg(e.org.ID)
@@ -916,7 +923,7 @@ func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, "UPDATE disk_exports SET releasing = true, release_seq = $2 WHERE disk_id = $1", d.ID, future); err != nil {
 		t.Fatal(err)
 	}
-	f, err := fleet.New(ctx, e.s, e.z, e.h)
+	f, err := fleet.New(ctx, e.s, e.z, e.h, iaminternal.Server{Store: e.s})
 	if err != nil {
 		t.Fatal(err)
 	}

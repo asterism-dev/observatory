@@ -45,14 +45,10 @@ func (h *api) listDevices(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "devices", err)
 		return
 	}
-	members, err := h.store.Members(r.Context(), m.OrgID)
+	names, err := h.memberNames(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
-	}
-	names := map[uuid.UUID]string{}
-	for _, mb := range members {
-		names[mb.User.ID] = mb.User.Name
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)

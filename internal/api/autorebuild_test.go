@@ -25,7 +25,7 @@ type autoEnv struct {
 
 func (e *buildEnv) withAuto() *autoEnv {
 	a := &autoEnv{buildEnv: e, now: time.Now(), bases: map[string]string{}}
-	a.auto = NewAutoRebuilds(e.store, e.z, e.sched, "https://hub.test", "http://hub.internal:8090")
+	a.auto = NewAutoRebuilds(e.store, e.z, e.api.iam, e.sched, "https://hub.test", "http://hub.internal:8090")
 	a.auto.Now = func() time.Time { return a.now }
 	a.auto.resolve = func(_ context.Context, ref name.Reference) (string, error) {
 		a.looks++

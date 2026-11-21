@@ -17,7 +17,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
@@ -32,6 +34,7 @@ type Fleet struct {
 	store *store.Store
 	authz *authz.Service
 	net   *network.Hub
+	iam   iamv1connect.IAMInternalServiceClient
 
 	// seq numbers every desired list hub-wide; starting at the clock (or above any recorded release_seq) keeps it increasing across hub restarts.
 	seq atomic.Uint64
@@ -66,12 +69,12 @@ type Fleet struct {
 // BuilderBoot returns a builder VM's whole env and its integration tokens.
 type BuilderBoot func(ctx context.Context, v store.VM) (map[string]string, []proto.IntegrationToken, error)
 
-func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) (*Fleet, error) {
+func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub, iam iamv1connect.IAMInternalServiceClient) (*Fleet, error) {
 	maxSeq, err := s.MaxReleaseSeq(ctx)
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
+	f := &Fleet{store: s, authz: z, net: n, iam: iam, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
 		emergency: map[uuid.UUID]emergencySeen{}, emergencyUpd: map[uuid.UUID]bool{}, candidates: map[uuid.UUID][]string{}, paths: map[uuid.UUID][]proto.PathStatus{}, punches: map[punchPair]punchState{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ping.every, f.ping.timeout = 30*time.Second, 10*time.Second
@@ -515,16 +518,9 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 	case v.UserID != nil:
 		owner, users = authz.UserSubject(*v.UserID), []uuid.UUID{*v.UserID}
 	case v.TeamID != nil:
-		owner = authz.TeamSubject(*v.TeamID)
-		members, err := f.store.TeamMembers(ctx, org, *v.TeamID)
-		if err != nil {
-			return nil, nil, nil, false, err
-		}
-		for _, m := range members {
-			users = append(users, m.User.ID)
-		}
+		owner, users = authz.TeamSubject(*v.TeamID), f.authz.Enforcer().TeamMembers(org, *v.TeamID)
 	}
-	keys, err := f.store.SSHKeysOf(ctx, users)
+	keys, err := iaminternal.SSHKeys(ctx, f.iam, users)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
@@ -542,9 +538,6 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 		var ib []proto.HostBoundSecret
 		ib, tokens = IntegrationEntries(res)
 		bound = append(bound, ib...)
-	}
-	if keys == nil {
-		keys = []string{}
 	}
 	return &proto.Boot{SSHPublicKeys: keys, Env: env}, bound, tokens, unresolved, nil
 }

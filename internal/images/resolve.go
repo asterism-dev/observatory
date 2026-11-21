@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -43,6 +46,7 @@ type Resolved struct {
 
 type Resolver struct {
 	Store *store.Store
+	IAM   iamv1connect.IAMInternalServiceClient
 	Authz Checker
 }
 
@@ -93,7 +97,7 @@ func (r Resolver) find(ctx context.Context, org, caller uuid.UUID, owner Owner, 
 	case "":
 		return r.findBare(ctx, org, caller, owner, p.Name)
 	}
-	teams, err := r.Store.Teams(ctx, org)
+	teams, err := iaminternal.ListTeams(ctx, r.IAM, org)
 	if err != nil {
 		return store.Image{}, err
 	}
@@ -123,11 +127,15 @@ func (r Resolver) findBare(ctx context.Context, org, caller uuid.UUID, owner Own
 		return store.Image{}, err
 	}
 	if owner.TeamID != nil {
-		t, err := r.Store.Team(ctx, org, *owner.TeamID)
+		teams, err := iaminternal.ListTeams(ctx, r.IAM, org)
 		if err != nil {
 			return store.Image{}, err
 		}
-		if err := add(store.EnvScopeTeam, owner.TeamID, t.Name); err != nil {
+		i := slices.IndexFunc(teams, func(t store.Team) bool { return t.ID == *owner.TeamID })
+		if i < 0 {
+			return store.Image{}, fmt.Errorf("team %s: %w", *owner.TeamID, store.ErrNotFound)
+		}
+		if err := add(store.EnvScopeTeam, owner.TeamID, teams[i].Name); err != nil {
 			return store.Image{}, err
 		}
 	}

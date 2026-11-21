@@ -74,22 +74,15 @@ func (h *api) vmHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	users, teams := map[uuid.UUID]string{}, map[uuid.UUID]string{}
-	members, err := h.store.Members(r.Context(), m.OrgID)
+	users, err := h.memberNames(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "members", err)
 		return
 	}
-	for _, mb := range members {
-		users[mb.User.ID] = mb.User.Name
-	}
-	teamList, err := h.store.Teams(r.Context(), m.OrgID)
+	teams, err := h.teamNames(r.Context(), m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return
-	}
-	for _, t := range teamList {
-		teams[t.ID] = t.Name
 	}
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	user := func(id *uuid.UUID) *refJSON {

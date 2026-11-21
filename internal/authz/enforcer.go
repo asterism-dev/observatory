@@ -75,12 +75,13 @@ type Policy struct {
 }
 
 type Enforcer struct {
-	policy Policy
-	ce     *casbin.Enforcer
-	vms    map[uuid.UUID]VMRef
-	teams  map[teamMember]bool
-	roles  map[userOrg]string
-	orgsOf map[uuid.UUID][]uuid.UUID
+	policy  Policy
+	ce      *casbin.Enforcer
+	vms     map[uuid.UUID]VMRef
+	teams   map[teamMember]bool
+	roles   map[userOrg]string
+	orgsOf  map[uuid.UUID][]uuid.UUID
+	usersOf map[uuid.UUID][]uuid.UUID
 	// members maps every known team, empty ones included, to its user IDs.
 	members map[TeamRef][]uuid.UUID
 }
@@ -214,13 +215,14 @@ func New(p Policy) (*Enforcer, error) {
 		}
 	}
 	e := &Enforcer{policy: p, ce: ce, vms: make(map[uuid.UUID]VMRef, len(p.VMs)), teams: make(map[teamMember]bool, len(p.TeamMembers)),
-		roles: make(map[userOrg]string, len(p.Memberships)), orgsOf: map[uuid.UUID][]uuid.UUID{}, members: make(map[TeamRef][]uuid.UUID, len(p.Teams))}
+		roles: make(map[userOrg]string, len(p.Memberships)), orgsOf: map[uuid.UUID][]uuid.UUID{}, usersOf: map[uuid.UUID][]uuid.UUID{}, members: make(map[TeamRef][]uuid.UUID, len(p.Teams))}
 	for _, vm := range p.VMs {
 		e.vms[vm.ID] = vm
 	}
 	for _, mr := range p.Memberships {
 		e.roles[userOrg{mr.UserID, mr.OrgID}] = mr.Role
 		e.orgsOf[mr.UserID] = append(e.orgsOf[mr.UserID], mr.OrgID)
+		e.usersOf[mr.OrgID] = append(e.usersOf[mr.OrgID], mr.UserID)
 	}
 	for _, t := range p.Teams {
 		e.members[TeamRef{OrgID: t.OrgID, ID: t.ID}] = nil
@@ -240,6 +242,9 @@ func (e *Enforcer) Role(org, user uuid.UUID) (string, bool) {
 }
 
 func (e *Enforcer) OrgsOf(user uuid.UUID) []uuid.UUID { return slices.Clone(e.orgsOf[user]) }
+
+// UsersOf returns the user IDs of org's members.
+func (e *Enforcer) UsersOf(org uuid.UUID) []uuid.UUID { return slices.Clone(e.usersOf[org]) }
 
 func (e *Enforcer) TeamMembers(org, team uuid.UUID) []uuid.UUID {
 	return slices.Clone(e.members[TeamRef{OrgID: org, ID: team}])

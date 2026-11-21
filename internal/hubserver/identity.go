@@ -17,6 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -147,15 +148,17 @@ func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *a
 	if !slices.ContainsFunc(slices.Collect(maps.Keys(cfg.ServiceTokens)), func(name string) bool { return name != selfService }) {
 		slog.Warn("OBSERVATORY_SERVICE_TOKENS is not set; the hub refuses every /internal/iam/ call")
 	}
-	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(jwtIssuer, policies)))
+	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(jwtIssuer, policies, iaminternal.Server{Store: s})))
 	return nil
 }
 
 // internalIAM serves /internal/iam/*; the caller wraps it in servicetoken.Middleware.
-func internalIAM(iss *auth.Issuer, ps *PolicyServer) http.Handler {
+func internalIAM(iss *auth.Issuer, ps *PolicyServer, iam iamv1connect.IAMInternalServiceHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/internal/iam/token", iss.TokenHandler())
 	mux.Handle("/internal/iam/jwks", iss.JWKSHandler())
+	iamPath, iamHandler := iamv1connect.NewIAMInternalServiceHandler(iam)
+	mux.Handle("/internal/iam"+iamPath, http.StripPrefix("/internal/iam", iamHandler))
 	path, h := iamv1connect.NewPolicyServiceHandler(ps)
 	stream := http.StripPrefix("/internal/iam", h)
 	mux.Handle("/internal/iam"+path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

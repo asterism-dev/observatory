@@ -22,6 +22,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -53,7 +54,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	}
 	ps := NewPolicyServer()
 	z.OnReload(ps.Publish)
-	return &iamEnv{s: s, z: z, h: servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalIAM(iss, ps))}
+	return &iamEnv{s: s, z: z, h: servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalIAM(iss, ps, iaminternal.Server{Store: s}))}
 }
 
 func (e *iamEnv) do(method, path, auth string, body any) *httptest.ResponseRecorder {
@@ -304,7 +305,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed := servicetoken.Middleware(nil)(internalIAM(iss, NewPolicyServer()))
+	closed := servicetoken.Middleware(nil)(internalIAM(iss, NewPolicyServer(), iaminternal.Server{Store: e.s}))
 	for _, p := range paths {
 		r := httptest.NewRequest(p.method, p.path, nil)
 		r.Header.Set("Authorization", "Bearer ")
@@ -315,6 +316,58 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 		}
 	}
 }
+
+func TestIAMInternalRequiresServiceToken(t *testing.T) {
+	e := newIAMEnv(t)
+	ctx := t.Context()
+	alice, tok, _ := e.login(t, "alice")
+	if _, err := e.s.AddSSHKey(ctx, store.SSHKey{UserID: alice.ID, Name: "k", PublicKey: testSSHKey}); err != nil {
+		t.Fatal(err)
+	}
+	org, err := e.s.CreateOrg(ctx, "acme", alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateTeam(ctx, org.ID, "core"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(e.h)
+	defer srv.Close()
+	c := iamv1connect.NewIAMInternalServiceClient(srv.Client(), srv.URL+"/internal/iam")
+	ids := []string{alice.ID.String()}
+	// The session token itself is no service credential.
+	for _, auth := range []string{"", "Bearer wrong-wrong-wrong-wrong-wrong-wrong", "Bearer " + tok} {
+		_, uerr := c.GetUsers(ctx, withAuth(&iamv1.GetUsersRequest{UserIds: ids}, auth))
+		_, kerr := c.ListSSHKeys(ctx, withAuth(&iamv1.ListSSHKeysRequest{UserIds: ids}, auth))
+		_, terr := c.ListTeams(ctx, withAuth(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}, auth))
+		for _, err := range []error{uerr, kerr, terr} {
+			if connect.CodeOf(err) != connect.CodePermissionDenied {
+				t.Errorf("with %q: %v", auth, err)
+			}
+		}
+	}
+	auth := "Bearer " + svcToken
+	us, err := c.GetUsers(ctx, withAuth(&iamv1.GetUsersRequest{UserIds: ids}, auth))
+	if err != nil || len(us.Msg.Users) != 1 || us.Msg.Users[0].Name != "alice" || us.Msg.Users[0].Email != "alice@x.io" {
+		t.Fatalf("GetUsers: %v %v", us, err)
+	}
+	ks, err := c.ListSSHKeys(ctx, withAuth(&iamv1.ListSSHKeysRequest{UserIds: ids}, auth))
+	if err != nil || len(ks.Msg.Keys) != 1 || ks.Msg.Keys[0].UserId != alice.ID.String() {
+		t.Fatalf("ListSSHKeys: %v %v", ks, err)
+	}
+	ts, err := c.ListTeams(ctx, withAuth(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}, auth))
+	if err != nil || len(ts.Msg.Teams) != 1 || ts.Msg.Teams[0].Name != "core" {
+		t.Fatalf("ListTeams: %v %v", ts, err)
+	}
+}
+
+func withAuth[T any](msg *T, auth string) *connect.Request[T] {
+	r := connect.NewRequest(msg)
+	r.Header().Set("Authorization", auth)
+	return r
+}
+
+const testSSHKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO+6yIP+G69X+7mX0h8gSHrNNG4s+hDeXmzGTGYeH6nA laptop"
 
 func TestWatchPolicySendsSnapshotAndUpdates(t *testing.T) {
 	e := newIAMEnv(t)

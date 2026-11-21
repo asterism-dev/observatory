@@ -22,6 +22,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
@@ -128,7 +129,7 @@ func (h *api) imageFromPath(w http.ResponseWriter, r *http.Request, act string) 
 }
 
 func (h *api) teamNames(ctx context.Context, org uuid.UUID) (map[uuid.UUID]string, error) {
-	teams, err := h.store.Teams(ctx, org)
+	teams, err := iaminternal.ListTeams(ctx, h.iam, org)
 	names := make(map[uuid.UUID]string, len(teams))
 	for _, t := range teams {
 		names[t.ID] = t.Name
@@ -345,23 +346,27 @@ func describeRef(ref store.RecipeRef) string {
 	return ref.Kind + " " + string(ref.Scope) + "/" + ref.Name
 }
 
+// memberNames maps org's members, as the policy has them, to their display names.
+func (h *api) memberNames(ctx context.Context, org uuid.UUID) (map[uuid.UUID]string, error) {
+	return iaminternal.UserNames(ctx, h.iam, h.z.Enforcer().UsersOf(org))
+}
+
 // defaultSees reports whether a default at scope/owner may point at img.
-func defaultSees(ctx context.Context, s *store.Store, scope store.EnvScope, owner *uuid.UUID, img store.Image) (bool, error) {
+func defaultSees(e *authz.Enforcer, scope store.EnvScope, owner *uuid.UUID, img store.Image) bool {
 	if img.Platform || img.Scope == store.EnvScopeOrg {
-		return true, nil
+		return true
 	}
 	switch {
 	case scope == store.EnvScopeTeam || img.Scope == store.EnvScopeUser:
-		return scope == img.Scope && sameOwner(owner, img.OwnerID), nil
+		return scope == img.Scope && sameOwner(owner, img.OwnerID)
 	case scope == store.EnvScopeUser:
-		members, err := s.TeamMembers(ctx, img.OrgID, *img.OwnerID)
-		return slices.ContainsFunc(members, func(m store.TeamMember) bool { return m.User.ID == *owner }), err
+		return slices.Contains(e.TeamMembers(img.OrgID, *img.OwnerID), *owner)
 	}
-	return false, nil
+	return false
 }
 
 // dropBlindDefaults clears defaults that can no longer see img after a visibility change.
-func dropBlindDefaults(ctx context.Context, tx *store.Store, img store.Image) error {
+func dropBlindDefaults(ctx context.Context, tx *store.Store, e *authz.Enforcer, img store.Image) error {
 	ds, err := tx.ImageDefaults(ctx, img.OrgID)
 	if err != nil {
 		return err
@@ -370,11 +375,7 @@ func dropBlindDefaults(ctx context.Context, tx *store.Store, img store.Image) er
 		if d.ImageID != img.ID {
 			continue
 		}
-		ok, err := defaultSees(ctx, tx, d.Scope, d.OwnerID, img)
-		if err != nil {
-			return err
-		}
-		if !ok {
+		if !defaultSees(e, d.Scope, d.OwnerID, img) {
 			if err := tx.ClearImageDefault(ctx, d.OrgID, d.Scope, d.OwnerID); err != nil {
 				return err
 			}
@@ -504,7 +505,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		if v, err = tx.UpdateImage(ctx, v); err != nil {
 			return err
 		}
-		if err := dropBlindDefaults(ctx, tx, v); err != nil {
+		if err := dropBlindDefaults(ctx, tx, h.z.Enforcer(), v); err != nil {
 			return err
 		}
 		e := imageAudit(r, store.ActionImageUpdate, v)
@@ -1072,11 +1073,8 @@ func (h *api) defaultLevelFromPath(w http.ResponseWriter, r *http.Request, act s
 		if !ok {
 			return l, false
 		}
-		if _, err := h.store.Team(r.Context(), m.OrgID, id); errors.Is(err, store.ErrNotFound) {
+		if !h.z.Enforcer().HasTeam(m.OrgID, id) {
 			writeError(w, http.StatusNotFound, "not found")
-			return l, false
-		} else if err != nil {
-			serverError(w, "team", err)
 			return l, false
 		}
 		l.scope, l.owner, l.vmFor = store.EnvScopeTeam, &id, images.Owner{TeamID: &id}
@@ -1091,7 +1089,9 @@ func (h *api) defaultLevelFromPath(w http.ResponseWriter, r *http.Request, act s
 	return l, h.authorize(w, r, m.OrgID, imageObject(l.scope, l.owner), act)
 }
 
-func (h *api) resolver() images.Resolver { return images.Resolver{Store: h.store, Authz: h.z} }
+func (h *api) resolver() images.Resolver {
+	return images.Resolver{Store: h.store, IAM: h.iam, Authz: h.z}
+}
 
 func (h *api) getImageDefault(w http.ResponseWriter, r *http.Request) {
 	l, ok := h.defaultLevelFromPath(w, r, "artifacts.images.list")
@@ -1189,12 +1189,7 @@ func (h *api) setImageDefault(w http.ResponseWriter, r *http.Request) {
 		}
 		d.ImageID = platform.ID
 	} else {
-		sees, err := defaultSees(ctx, h.store, l.scope, l.owner, *res.Image)
-		if err != nil {
-			serverError(w, "team members", err)
-			return
-		}
-		if !sees {
+		if !defaultSees(h.z.Enforcer(), l.scope, l.owner, *res.Image) {
 			writeError(w, http.StatusUnprocessableEntity, "this image is not visible at this level")
 			return
 		}

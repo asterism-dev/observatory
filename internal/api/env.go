@@ -13,6 +13,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -54,23 +55,19 @@ func (h *api) listEnv(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "env vars", err)
 		return
 	}
-	teams, err := h.store.Teams(ctx, m.OrgID)
+	teams, err := iaminternal.ListTeams(ctx, h.iam, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
-		return
-	}
-	members, err := h.store.Members(ctx, m.OrgID)
-	if err != nil {
-		serverError(w, "members", err)
 		return
 	}
 	teamNames := make(map[uuid.UUID]string, len(teams))
 	for _, t := range teams {
 		teamNames[t.ID] = t.Name
 	}
-	userNames := make(map[uuid.UUID]string, len(members))
-	for _, mb := range members {
-		userNames[mb.User.ID] = mb.User.Name
+	userNames, err := h.memberNames(ctx, m.OrgID)
+	if err != nil {
+		serverError(w, "members", err)
+		return
 	}
 	type userRef struct {
 		ID   uuid.UUID `json:"id"`
@@ -149,15 +146,8 @@ func (h *api) envTarget(w http.ResponseWriter, r *http.Request, org uuid.UUID, s
 		p, _ := auth.PrincipalFrom(r.Context())
 		return &p.User.ID, true
 	case store.EnvScopeTeam:
-		if teamID != nil {
-			_, err := h.store.Team(r.Context(), org, *teamID)
-			if err == nil {
-				return teamID, true
-			}
-			if !errors.Is(err, store.ErrNotFound) {
-				serverError(w, "team", err)
-				return nil, false
-			}
+		if teamID != nil && h.z.Enforcer().HasTeam(org, *teamID) {
+			return teamID, true
 		}
 		writeError(w, http.StatusBadRequest, "invalid team")
 		return nil, false

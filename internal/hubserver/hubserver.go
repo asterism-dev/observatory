@@ -25,6 +25,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
@@ -98,7 +99,9 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	if err := mountIdentity(ctx, mux, s, z, cfg); err != nil {
 		return err
 	}
-	f, err := fleet.New(ctx, s, z, nh)
+	// In-process until iam runs as its own service.
+	iam := iaminternal.Server{Store: s}
+	f, err := fleet.New(ctx, s, z, nh, iam)
 	if err != nil {
 		return err
 	}
@@ -191,10 +194,10 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		f.BootBuildersWith(sched.BootEnv)
 		api.BuildEndpoints(mux, s, sched, client, tags, buildLogs)
 		go sched.Run(ctx, 10*time.Second)
-		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
+		go api.NewAutoRebuilds(s, z, iam, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
+	apiHandler := api.New(s, iam, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
 	handler := a.TrustEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

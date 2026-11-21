@@ -37,22 +37,13 @@ type diskAttachJSON struct {
 type ownerNames struct{ users, teams map[uuid.UUID]string }
 
 func (h *api) ownerNames(r *http.Request, org uuid.UUID) (ownerNames, error) {
-	n := ownerNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}}
-	members, err := h.store.Members(r.Context(), org)
-	if err != nil {
+	var n ownerNames
+	var err error
+	if n.users, err = h.memberNames(r.Context(), org); err != nil {
 		return n, err
 	}
-	for _, m := range members {
-		n.users[m.User.ID] = m.User.Name
-	}
-	teams, err := h.store.Teams(r.Context(), org)
-	if err != nil {
-		return n, err
-	}
-	for _, t := range teams {
-		n.teams[t.ID] = t.Name
-	}
-	return n, nil
+	n.teams, err = h.teamNames(r.Context(), org)
+	return n, err
 }
 
 func (h *api) diskJSON(r *http.Request, d store.Disk, names ownerNames) diskJSON {

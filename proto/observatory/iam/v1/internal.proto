@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package observatory.iam.v1;
+
+// IAMInternalService answers services' identity lookups; callers authenticate with a service token.
+service IAMInternalService {
+  // GetUsers returns the known users among user_ids, at most 1000 per call.
+  rpc GetUsers(GetUsersRequest) returns (GetUsersResponse);
+  // ListSSHKeys returns the SSH public keys of user_ids, at most 1000 per call.
+  rpc ListSSHKeys(ListSSHKeysRequest) returns (ListSSHKeysResponse);
+  rpc ListTeams(ListTeamsRequest) returns (ListTeamsResponse);
+}
+
+message GetUsersRequest {
+  repeated string user_ids = 1;
+}
+
+message GetUsersResponse {
+  repeated User users = 1;
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message ListSSHKeysRequest {
+  repeated string user_ids = 1;
+}
+
+message ListSSHKeysResponse {
+  repeated SSHKey keys = 1;
+}
+
+message SSHKey {
+  string user_id = 1;
+  string public_key = 2;
+}
+
+message ListTeamsRequest {
+  string org_id = 1;
+}
+
+message ListTeamsResponse {
+  repeated Team teams = 1;
+}
+
+message Team {
+  string id = 1;
+  string name = 2;
+}

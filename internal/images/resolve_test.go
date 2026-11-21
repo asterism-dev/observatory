@@ -11,6 +11,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -80,7 +81,7 @@ func newFixture(t *testing.T, g grants) fixture {
 	g[authz.ObjImages+" artifacts.images.use"] = true
 	g[authz.UserImagesObject(f.user)+" artifacts.images.use"] = true
 	g[authz.TeamImagesObject(f.team.ID)+" artifacts.images.use"] = true
-	f.r = images.Resolver{Store: s, Authz: g}
+	f.r = images.Resolver{Store: s, IAM: iaminternal.Server{Store: s}, Authz: g}
 	return f
 }
 

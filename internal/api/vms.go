@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -101,15 +102,12 @@ type vmNames struct {
 
 func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	ctx := r.Context()
-	n := vmNames{users: map[uuid.UUID]string{}, teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}, networks: map[uuid.UUID]string{}, nics: map[uuid.UUID][]store.VMNIC{}, disks: map[uuid.UUID]store.Disk{}}
-	members, err := h.store.Members(ctx, org)
-	if err != nil {
+	n := vmNames{teams: map[uuid.UUID]string{}, nodes: map[uuid.UUID]string{}, networks: map[uuid.UUID]string{}, nics: map[uuid.UUID][]store.VMNIC{}, disks: map[uuid.UUID]store.Disk{}}
+	var err error
+	if n.users, err = h.memberNames(ctx, org); err != nil {
 		return n, err
 	}
-	for _, m := range members {
-		n.users[m.User.ID] = m.User.Name
-	}
-	if n.teamList, err = h.store.Teams(ctx, org); err != nil {
+	if n.teamList, err = iaminternal.ListTeams(ctx, h.iam, org); err != nil {
 		return n, err
 	}
 	for _, t := range n.teamList {

@@ -113,6 +113,14 @@ func (s *Store) User(ctx context.Context, id uuid.UUID) (User, error) {
 	return u, err
 }
 
+func (s *Store) UsersByID(ctx context.Context, ids []uuid.UUID) ([]User, error) {
+	rows, err := s.q.Query(ctx, "SELECT "+userColumns+" FROM users WHERE id = ANY($1) ORDER BY id", ids)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (User, error) { return scanUser(r) })
+}
+
 func (s *Store) Memberships(ctx context.Context, userID uuid.UUID) ([]Membership, error) {
 	rows, err := s.q.Query(ctx, `
 		SELECT o.id, o.name, o.personal_for IS NOT NULL, o.created_at, m.role

@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -228,19 +229,19 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "integrations", err)
 		return
 	}
-	teams, err := h.store.Teams(ctx, m.OrgID)
+	teams, err := iaminternal.ListTeams(ctx, h.iam, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
-		return
-	}
-	accounts, err := h.store.OrgIntegrationAccounts(ctx, m.OrgID)
-	if err != nil {
-		serverError(w, "integration accounts", err)
 		return
 	}
 	teamNames := make(map[uuid.UUID]string, len(teams))
 	for _, t := range teams {
 		teamNames[t.ID] = t.Name
+	}
+	accounts, err := h.store.OrgIntegrationAccounts(ctx, m.OrgID)
+	if err != nil {
+		serverError(w, "integration accounts", err)
+		return
 	}
 	type usageJSON struct {
 		FiveHourPct      *float64   `json:"fiveHourPct"`
@@ -930,6 +931,11 @@ func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
 		TeamName string            `json:"teamName,omitempty"`
 		Mode     integrations.Mode `json:"mode,omitempty"`
 	}
+	teamNames, err := h.teamNames(ctx, v.OrgID)
+	if err != nil {
+		serverError(w, "teams", err)
+		return
+	}
 	p, _ := auth.PrincipalFrom(ctx)
 	e, sub := h.z.Enforcer(), authz.UserSubject(p.User.ID)
 	out := []lineJSON{}
@@ -940,12 +946,7 @@ func (h *api) vmIntegrations(w http.ResponseWriter, r *http.Request) {
 			j.Scope, j.Mode = ri.Scope, ri.Mode
 			if ri.Scope == store.EnvScopeTeam {
 				// A team deleted since the resolve just loses its name.
-				t, err := h.store.Team(ctx, v.OrgID, *ri.OwnerID)
-				if err != nil && !errors.Is(err, store.ErrNotFound) {
-					serverError(w, "team", err)
-					return
-				}
-				j.TeamName = t.Name
+				j.TeamName = teamNames[*ri.OwnerID]
 			}
 		}
 		out = append(out, j)

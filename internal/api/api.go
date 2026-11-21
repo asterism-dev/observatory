@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/builds"
@@ -28,6 +29,7 @@ import (
 
 type api struct {
 	store       *store.Store
+	iam         iamv1connect.IAMInternalServiceClient
 	z           *authz.Service
 	publicURL   *url.URL
 	docsURL     string
@@ -64,13 +66,13 @@ type api struct {
 }
 
 // New takes a nil builds when the hub has no registry; builds are refused then.
-func New(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) http.Handler {
-	_, handler := newAPI(s, a, z, f, n, d, ig, manifests, tags, b, gc, docsURL, newer, firecracker, tc, logsRetention)
+func New(s *store.Store, iam iamv1connect.IAMInternalServiceClient, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) http.Handler {
+	_, handler := newAPI(s, iam, a, z, f, n, d, ig, manifests, tags, b, gc, docsURL, newer, firecracker, tc, logsRetention)
 	return handler
 }
 
-func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) (*api, http.Handler) {
-	h := &api{store: s, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
+func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n *network.Hub, d *disks.Hub, ig Integrations, manifests ManifestDeleter, tags *TagSync, b *builds.Scheduler, gc *registry.GC, docsURL string, newer func() string, firecracker string, tc *telemetry.Client, logsRetention time.Duration) (*api, http.Handler) {
+	h := &api{store: s, iam: iam, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
 		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100), dashboardLimit: newRateLimiter(10, 40),
 		grafanaInflight: newTokenSlots(20), grafanaTails: newTokenSlots(5),
 		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second,

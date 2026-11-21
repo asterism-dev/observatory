@@ -40,7 +40,7 @@ func TestSSHKeys(t *testing.T) {
 	if list, err := s.SSHKeys(ctx, a.User.ID); err != nil || len(list) != 1 {
 		t.Fatalf("list: %+v %v", list, err)
 	}
-	if keys, err := s.SSHKeysOf(ctx, []uuid.UUID{a.User.ID, b.User.ID}); err != nil || len(keys) != 2 {
+	if keys, err := s.SSHKeysOf(ctx, []uuid.UUID{a.User.ID, b.User.ID}); err != nil || len(keys) != 3 {
 		t.Fatalf("of: %v %v", keys, err)
 	}
 	if err := s.DeleteSSHKey(ctx, b.User.ID, k.ID); !errors.Is(err, store.ErrNotFound) {
