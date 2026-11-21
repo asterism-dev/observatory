@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
+	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
@@ -121,15 +123,10 @@ func TestServeHubListensOnHubListen(t *testing.T) {
 	}
 }
 
-// TestServeAllRecordsClientIPThroughEdge runs the real edge, hub, bus and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
-func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
-	edgeLn, err := net.Listen("tcp", "[::1]:0")
-	if err != nil {
-		t.Skipf("no IPv6 loopback: %v", err)
-	}
-	pool := dbtest.New(t)
+func serveAllEnv(t *testing.T, pool *pgxpool.Pool, edgeLn net.Listener) (map[string]string, string) {
+	t.Helper()
 	idp := httptest.NewServer(nil)
-	defer idp.Close()
+	t.Cleanup(idp.Close)
 	idp.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/.well-known/openid-configuration" {
 			http.NotFound(w, r)
@@ -155,6 +152,17 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		// Invalid on purpose: serve all must replace it with the tokens it generates, or the hub would refuse to start.
 		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}
+	return env, env["OBSERVATORY_SECRETS_KEY"]
+}
+
+// TestServeAllRecordsClientIPThroughEdge runs the real edge, hub, bus and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
+func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	pool := dbtest.New(t)
+	env, _ := serveAllEnv(t, pool, edgeLn)
 	// Created before start: the hub loads its policy snapshot then and is not told about later direct writes.
 	s := store.New(pool)
 	alice, err := s.Login(t.Context(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
@@ -281,5 +289,119 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	if c, err := net.Dial("tcp", edgeLn.Addr().String()); err == nil {
 		c.Close()
 		t.Fatal("edge still accepts connections")
+	}
+}
+
+func TestServeAllIAMBoundary(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env, masterKey := serveAllEnv(t, pool, edgeLn)
+	master, err := seal.ParseKey(masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	s := store.New(pool).WithMasterKey(master)
+	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, _, err := s.CreateInvite(ctx, org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	node, enroll, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.EnrollNode(ctx, enroll); err != nil {
+		t.Fatal(err)
+	}
+	vm, err := s.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &bob.User.ID, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob.User.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateEnvVar(ctx, store.EnvVar{OrgID: org.ID, Kind: store.EnvPlain, Scope: store.EnvScopeUser, OwnerID: &bob.User.ID, Name: "BOB_PRIVATE", CreatedBy: bob.User.ID, UpdatedBy: bob.User.ID}, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	base := "http://" + edgeLn.Addr().String()
+	call := func(method, path, token string) (int, string) {
+		req, _ := http.NewRequest(method, base+path, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("X-Observatory", "1")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+
+	code, body := call("GET", "/api/me", aliceToken)
+	if code != http.StatusOK || !strings.Contains(body, `"name":"alice"`) {
+		t.Fatalf("/api/me with a CLI session: %d %s", code, body)
+	}
+	// A non-session bearer is not swapped at the edge, so the 401 comes from the node auth in the hub.
+	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized {
+		t.Fatalf("/api/nodes/health: %d %s", code, body)
+	}
+
+	member := "/api/orgs/" + org.ID.String() + "/members/" + bob.User.ID.String()
+	if code, body := call("DELETE", member, aliceToken); code != http.StatusConflict {
+		t.Fatalf("remove a member that owns a VM: %d %s", code, body)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM vms WHERE id = $1", vm.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call("DELETE", member, aliceToken); code != http.StatusNoContent {
+		t.Fatalf("remove the member after the VM is gone: %d %s", code, body)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var n int
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", org.ID, bob.User.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("bob's private env var survived his removal")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

@@ -162,6 +162,14 @@ func TestIdentityEndToEnd(t *testing.T) {
 		t.Fatalf("service saw edge %q, client ip %q, or the session token", hdr.Get(edge.HeaderEdge), hdr.Get(edge.HeaderClientIP))
 	}
 
+	p, err := v.Verify(ctx, strings.TrimPrefix(hdr.Get("Authorization"), "Bearer "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "bob" || p.SessionKind != string(store.SessionCLI) || p.SessionExpires.Unix() != sess.ExpiresAt.Unix() {
+		t.Fatalf("service saw name %q, session kind %q, session expiry %v", p.Name, p.SessionKind, p.SessionExpires)
+	}
+
 	if err := s.RemoveMember(ctx, org.ID, bob.User.ID); err != nil {
 		t.Fatal(err)
 	}
