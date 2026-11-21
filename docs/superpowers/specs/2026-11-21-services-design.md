@@ -89,7 +89,8 @@ Success:
 
 | Service | Owns (from today's tables and features) | GUI category |
 |---|---|---|
-| **iam** | users, orgs, memberships, sessions, invites, teams, roles, rules, bindings, SSH keys, platform admin, audit log (consumer of all audit events) *(audit placement: our call)*, OIDC login, CLI tokens, service accounts | Management |
+| **iam** | users, orgs, memberships, sessions, invites, teams, roles, rules, bindings, SSH keys, platform admin, action catalog registry, OIDC login, CLI tokens, service accounts | Management |
+| **audit** | audit trail of every service (see Audit), audit settings, retention | Management |
 | **quota** | limits per user/team/org, current usage counters, reservations | Management |
 | **compute** | nodes as VM hosts (capacity, hypervisor, control channel from the mesh spec), node updates, VMs, VM history, snapshots, auto-suspend, delete-after, egress CAs, disks, disk exports, storage server control | Compute |
 | **network** | underlay hosts (enrollment, roles, addresses, peer sets, endpoints, quarantine; mesh spec), devices, networks, VM network attachments, OVN state, gateway state *(underlay ownership: our call; quarantine stays inside one service, and compute refers to a node by its host id)* | Networking |
@@ -151,9 +152,42 @@ fit under build.
 - Events are protobuf messages with the same `buf breaking` rules as the APIs.
 - Subjects carry org and type, e.g. `org.<id>.compute.vm.stopped`; every event names the action and object a reader
   would need to see it, so user subscriptions can later be permission-checked against the catalog.
-- From day 1: audit events (consumed by iam), lifecycle events for every resource with owner, team, org, size and
+- From day 1: audit events (consumed by audit), lifecycle events for every resource with owner, team, org, size and
   timestamp (consumed by quota for reconciliation, later metering), and cleanup reactions (e.g. VM deleted → network
   ports released). GUI live updates via edge are allowed but not required.
+
+### Action catalog
+
+- Each service defines its actions next to its API: every RPC carries a proto annotation with its action, object
+  pattern and kind (write or read). The same annotation drives the permission check, the audit interceptor and the
+  catalog *(our call)*.
+- At start a service registers its catalog with iam: actions, object patterns, descriptions, kind, built-in role
+  defaults and owner-grant templates (user decision: actions live in the service and are published to iam).
+- iam validates custom rules against the registered catalogs, and the GUI role editor lists actions from there, so a
+  new service's actions appear without changes to iam or the GUI.
+- An action that disappears from a catalog while custom rules still use it is kept and marked as unknown, not deleted
+  *(our call)*.
+
+### Audit
+
+Like a cloud audit trail (user decision):
+
+- A shared Connect interceptor in every service records automatically every write call and every denied call:
+  principal, org, action, object, result, source IP, user agent, request id. Services may attach domain details (e.g.
+  old and new role). Events go through the outbox and the bus to the audit service, which stores them append-only in
+  its own Postgres database.
+- **Data events** (read calls) are off by default and can be switched on per org and per service by org admins with a
+  new action `audit:configure` on `org/audit`. The platform admin sets retention and may cap what orgs can enable
+  *(our call)*.
+- `audit:read` per org and platform-wide audit for platform admins stay as today; the GUI filters by principal, action,
+  object, time and result.
+- Later, over the bus: streaming to a SIEM (user subscription), export into buckets.
+
+### Settings other services need
+
+General rule *(our call)*: a setting belongs to the service whose topic it is. Other services load it through its API
+at start, keep it in memory, update it on a `<svc>.settings.changed` event, and reload everything after a lost NATS
+connection. Audit settings are the first case; no general settings service.
 
 ### Interfaces
 
@@ -175,7 +209,7 @@ fit under build.
 
 ### Deployment
 
-- One image `observatory`; compose starts edge, iam, quota, compute, network, artifacts, build, secrets, telemetry,
+- One image `observatory`; compose starts edge, iam, audit, quota, compute, network, artifacts, build, secrets, telemetry,
   NATS, Postgres, plus today's gateway, storage server, distribution registry and VictoriaMetrics/VictoriaLogs.
 - Single host: services reach each other locally by name.
 
@@ -194,8 +228,8 @@ fit under build.
 
 ### Order of work *(our call)*
 
-1. Foundation: proto/buf tooling, `serve` command, edge, iam (incl. policy streaming, service accounts, audit), NATS +
-   outbox library, quota.
+1. Foundation: proto/buf tooling, `serve` command, edge, iam (incl. catalog registry, policy streaming, service
+   accounts), NATS + outbox library, audit (interceptor and service), quota.
 2. compute (nodes, VMs, disks, snapshots) on top of the mesh control channel.
 3. network.
 4. secrets/integrations.
