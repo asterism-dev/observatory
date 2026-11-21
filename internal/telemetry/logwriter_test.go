@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -176,5 +177,35 @@ func TestLogWriterTruncatesOnRuneBoundary(t *testing.T) {
 	body := fake.reqs[0].ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue()
 	if !utf8.ValidString(body) || len(body) != 16<<10-1 {
 		t.Fatalf("valid=%v len=%d", utf8.ValidString(body), len(body))
+	}
+}
+
+func TestLogWriterFloodAllocatesLittle(t *testing.T) {
+	w := telemetry.NewLogWriter(&telemetry.Client{LogsURL: "http://127.0.0.1:1"}, "a", 1000)
+	lines := make([]string, 1<<20)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	w.Write(attrs("x"), lines)
+	runtime.ReadMemStats(&after)
+	if n := w.Queued(); n != 1000 {
+		t.Fatalf("queued = %d", n)
+	}
+	if d := after.TotalAlloc - before.TotalAlloc; d > 2<<20 {
+		t.Fatalf("allocated %d bytes", d)
+	}
+}
+
+func TestLogWriterKeepsOrderWithinWrite(t *testing.T) {
+	fake := &fakeVL{}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+	w := telemetry.NewLogWriter(&telemetry.Client{LogsURL: srv.URL}, "a", 10)
+	w.Write(attrs("x"), []string{"1", "2", "3"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.Run(ctx)
+	recs := fake.reqs[0].ResourceLogs[0].ScopeLogs[0].LogRecords
+	if len(recs) != 3 || recs[0].TimeUnixNano >= recs[1].TimeUnixNano || recs[1].TimeUnixNano >= recs[2].TimeUnixNano {
+		t.Fatalf("timestamps %v", recs)
 	}
 }

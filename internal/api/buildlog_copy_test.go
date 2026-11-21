@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/asterism-dev/observatory/internal/store"
@@ -250,5 +252,39 @@ func TestBuildLogTelemetryOff(t *testing.T) {
 	rec := e.do("GET", buildsPath(org, e.build(b.ID).ImageID)+"/"+b.ID.String()+"/log", tok)
 	if rec.Code != 200 || rec.Body.String() != "x\ny" {
 		t.Fatalf("log: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBuildLogNewlineFloodBounded(t *testing.T) {
+	w := telemetry.NewLogWriter(&telemetry.Client{LogsURL: "http://127.0.0.1:1"}, "a", copyMaxLines)
+	c := newBuildLogCopier(w, nil)
+	b := store.ImageBuild{ID: uuid.New()}
+	now := time.Now()
+	c.builds[b.ID] = &copiedBuild{resource: []*commonpb.KeyValue{attr("k", "v")}, checked: now, seen: now}
+	flood := make([]byte, 8<<20)
+	for i := range flood {
+		flood[i] = '\n'
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	c.chunk(context.Background(), b, flood)
+	runtime.ReadMemStats(&after)
+	if n := w.Queued(); n != copyMaxLines {
+		t.Fatalf("queued = %d", n)
+	}
+	if d := after.TotalAlloc - before.TotalAlloc; d > 40<<20 {
+		t.Fatalf("allocated %d bytes", d)
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		n    int
+		want string
+	}{{"a\nb\nc", 2, "b\nc"}, {"a\nb\nc", 1, "c"}, {"a\nb\nc", 3, "a\nb\nc"}, {"a\nb\nc", 9, "a\nb\nc"}, {"", 2, ""}} {
+		if got := lastLines(c.in, c.n); got != c.want {
+			t.Fatalf("lastLines(%q,%d) = %q, want %q", c.in, c.n, got, c.want)
+		}
 	}
 }

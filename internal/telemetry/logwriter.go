@@ -49,14 +49,22 @@ func NewLogWriter(c *Client, streamFields string, maxQueue int) *LogWriter {
 // Write queues one record per line, dropping the oldest queued lines when full.
 func (w *LogWriter) Write(resource []*commonpb.KeyValue, lines []string) {
 	now := time.Now()
+	skipped := max(0, len(lines)-w.maxQueue)
+	lines = lines[skipped:]
 	w.mu.Lock()
-	for _, l := range lines {
-		w.queue = append(w.queue, queuedLine{resource, strings.Clone(truncateUTF8(l, logMaxBody)), now})
+	for i, l := range lines {
+		// Increasing timestamps keep the order of lines written together.
+		w.queue = append(w.queue, queuedLine{resource, strings.Clone(truncateUTF8(l, logMaxBody)), now.Add(time.Duration(skipped + i))})
 	}
+	w.dropped += skipped
 	if drop := len(w.queue) - w.maxQueue; drop > 0 {
-		clear(w.queue[:drop])
-		w.queue = w.queue[drop:]
 		w.dropped += drop
+		if cap(w.queue) > 2*w.maxQueue {
+			w.queue = append(make([]queuedLine, 0, w.maxQueue), w.queue[drop:]...)
+		} else {
+			clear(w.queue[:drop])
+			w.queue = w.queue[drop:]
+		}
 	}
 	full := len(w.queue) >= logBatchLines
 	w.mu.Unlock()

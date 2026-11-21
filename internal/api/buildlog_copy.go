@@ -19,6 +19,7 @@ import (
 const (
 	// Past this many builds the least recently seen state is dropped; builds ended by the scheduler (timeout, cancel) never reach finish.
 	maxCopiedBuilds = 1024
+	copyMaxLines    = 10000
 	// The writer truncates lines at 16 KiB on a rune boundary; the extra bytes let it find one.
 	maxCarriedPartial = 16<<10 + utf8.UTFMax
 )
@@ -57,15 +58,31 @@ func (c *buildLogCopier) chunk(ctx context.Context, b store.ImageBuild, data []b
 	if st.resource == nil {
 		return
 	}
-	parts := strings.Split(st.partial+string(data), "\n")
-	last := len(parts) - 1
-	for i := range parts[:last] {
-		parts[i] = strings.TrimSuffix(parts[i], "\r")
+	all := st.partial + string(data)
+	end := strings.LastIndexByte(all, '\n')
+	if end < 0 {
+		st.partial = strings.Clone(all[:min(len(all), maxCarriedPartial)])
+		return
 	}
-	st.partial = strings.Clone(parts[last][:min(len(parts[last]), maxCarriedPartial)])
-	if last > 0 {
-		c.w.Write(st.resource, parts[:last])
+	rest := all[end+1:]
+	st.partial = strings.Clone(rest[:min(len(rest), maxCarriedPartial)])
+	complete := lastLines(all[:end], copyMaxLines)
+	lines := strings.Split(complete, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
 	}
+	c.w.Write(st.resource, lines)
+}
+
+// lastLines returns the last n lines of s, which has no trailing newline.
+func lastLines(s string, n int) string {
+	i := len(s)
+	for range n {
+		if i = strings.LastIndexByte(s[:i], '\n'); i < 0 {
+			return s
+		}
+	}
+	return s[i+1:]
 }
 
 func (c *buildLogCopier) finish(b store.ImageBuild) {
