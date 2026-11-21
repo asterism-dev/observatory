@@ -159,7 +159,11 @@ services:
       dockerfile: deploy/storage.Dockerfile
     restart: unless-stopped
     network_mode: service:gateway
-    depends_on: [gateway]
+    # compose restarts of the gateway take storage along; after a crash storage exits on its own (cmd/storage)
+    depends_on:
+      gateway:
+        condition: service_started
+        restart: true
     environment:
       HUB_URL: http://hub:8091
       OBSERVATORY_STORAGE_TOKEN: ${OBSERVATORY_STORAGE_TOKEN:?set OBSERVATORY_STORAGE_TOKEN in deploy/.env}
