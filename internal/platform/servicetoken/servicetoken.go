@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 )
 
 const minLen = 32
@@ -53,7 +56,8 @@ func Middleware(tokens map[string]string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			name, ok := match(tokens, r.Header.Get("Authorization"))
 			if !ok {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				slog.Warn("internal call without a valid service token", "remote", clientip.From(r, ""), "path", r.URL.Path)
+				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), callerKey{}, name)))

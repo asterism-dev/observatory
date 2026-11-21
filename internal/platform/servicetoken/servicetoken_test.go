@@ -59,7 +59,7 @@ func TestMiddlewareSetsCaller(t *testing.T) {
 		r.Header.Set("Authorization", auth)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
-		if rec.Code != http.StatusUnauthorized {
+		if rec.Code != http.StatusForbidden {
 			t.Errorf("%q: %d", auth, rec.Code)
 		}
 	}

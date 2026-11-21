@@ -20,7 +20,9 @@ const (
 	sessionCookie = "obs_session"
 	jwtCacheSize  = 10000
 	// Refetching early keeps a cached JWT from lapsing in flight or inside a service's clock skew allowance.
-	jwtRefreshMargin = 30 * time.Second
+	jwtRefreshMargin = 60 * time.Second
+	// Bounds how long a logout or revoked session keeps reaching services through a cached JWT.
+	jwtCacheTTL = 60 * time.Second
 )
 
 var errUnauthorized = errors.New("session rejected by issuer")
@@ -80,10 +82,16 @@ func (id *identity) jwt(ctx context.Context, session string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// Draining lets the connection be reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
 		return "", errUnauthorized
+	case http.StatusForbidden:
+		return "", errors.New("issuer rejected the edge's service token (check OBSERVATORY_SERVICE_TOKEN)")
 	default:
 		return "", fmt.Errorf("issuer answered %s", resp.Status)
 	}
@@ -95,8 +103,16 @@ func (id *identity) jwt(ctx context.Context, session string) (string, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil || out.Token == "" {
 		return "", errors.New("issuer sent an invalid response")
 	}
-	id.cache.add(key, out.Token, out.ExpiresAt.Add(-jwtRefreshMargin))
+	id.cache.add(key, out.Token, cacheUntil(out.ExpiresAt, time.Now()))
 	return out.Token, nil
+}
+
+func cacheUntil(exp, now time.Time) time.Time {
+	until := exp.Add(-jwtRefreshMargin)
+	if limit := now.Add(jwtCacheTTL); limit.Before(until) {
+		return limit
+	}
+	return until
 }
 
 // credentials mirrors the hub's: an Authorization header wins, and a malformed one is not replaced by the cookie.

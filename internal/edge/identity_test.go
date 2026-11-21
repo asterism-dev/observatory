@@ -12,7 +12,7 @@ import (
 
 const validSession = "obs_valid"
 
-// issuingHub records hub requests and answers /internal/iam/token like the hub's issuer: a JWT for validSession, 401 otherwise.
+// issuingHub records hub requests and answers /internal/iam/token like the hub's issuer: 403 for a wrong service token, a JWT for validSession, 401 otherwise.
 func issuingHub(t *testing.T, status int) (*httptest.Server, chan seen, *atomic.Int32) {
 	t.Helper()
 	ch := make(chan seen, 16)
@@ -27,7 +27,11 @@ func issuingHub(t *testing.T, status int) (*httptest.Server, chan seen, *atomic.
 		var in struct {
 			SessionToken string `json:"session_token"`
 		}
-		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+testServiceToken || json.NewDecoder(r.Body).Decode(&in) != nil || in.SessionToken != validSession {
+		if r.Header.Get("Authorization") != "Bearer "+testServiceToken {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&in) != nil || in.SessionToken != validSession {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -187,6 +191,33 @@ func TestEdgeIssuerFailure(t *testing.T) {
 		t.Fatalf("status %d, want 502", code)
 	}
 	noRequest(t, ch, "service")
+}
+
+func TestEdgeMisconfiguredServiceToken(t *testing.T) {
+	hub, _, _ := issuingHub(t, http.StatusOK)
+	svc, ch := recorder(t, "iam")
+	h, err := New(Config{HubURL: hub.URL, Token: testToken, ServiceToken: "wrong-wrong-wrong-wrong-wrong-wrong", Services: map[string]string{"iam": svc.URL}}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(h)
+	t.Cleanup(edge.Close)
+	req, _ := http.NewRequest("GET", edge.URL+"/api/iam/v1/x", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
+	if code, _ := get(t, req); code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502 for a rejected service token", code)
+	}
+	noRequest(t, ch, "service")
+}
+
+func TestCacheUntilCapsLifetime(t *testing.T) {
+	now := time.Now()
+	if got := cacheUntil(now.Add(5*time.Minute), now); !got.Equal(now.Add(jwtCacheTTL)) {
+		t.Fatalf("long-lived JWT cached until %v, want now+%v", got.Sub(now), jwtCacheTTL)
+	}
+	if got := cacheUntil(now.Add(90*time.Second), now); !got.Equal(now.Add(30 * time.Second)) {
+		t.Fatalf("short-lived JWT cached until %v, want exp-%v", got.Sub(now), jwtRefreshMargin)
+	}
 }
 
 func TestJWTCacheEvictsAndExpires(t *testing.T) {

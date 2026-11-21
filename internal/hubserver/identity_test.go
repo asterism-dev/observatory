@@ -233,7 +233,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	for _, p := range paths {
 		// The session token itself is no service credential.
 		for _, auth := range []string{"", "Bearer wrong-wrong-wrong-wrong-wrong-wrong", "Bearer " + tok} {
-			if rec := e.do(p.method, p.path, auth, map[string]string{"session_token": tok}); rec.Code != http.StatusUnauthorized {
+			if rec := e.do(p.method, p.path, auth, map[string]string{"session_token": tok}); rec.Code != http.StatusForbidden {
 				t.Errorf("%s %s with %q: %d", p.method, p.path, auth, rec.Code)
 			}
 		}
@@ -250,7 +250,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer ")
 		rec := httptest.NewRecorder()
 		closed.ServeHTTP(rec, r)
-		if rec.Code != http.StatusUnauthorized {
+		if rec.Code != http.StatusForbidden {
 			t.Errorf("no tokens configured, %s: %d", p.path, rec.Code)
 		}
 	}
