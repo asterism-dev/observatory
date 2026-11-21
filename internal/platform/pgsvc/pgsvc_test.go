@@ -72,6 +72,14 @@ func TestInvalidSchemaRejected(t *testing.T) {
 	}
 }
 
+func TestPublicSchemaRejected(t *testing.T) {
+	pool, err := pgsvc.Open(context.Background(), dbtest.Empty(t), "public", migrations("t"))
+	if err == nil {
+		pool.Close()
+		t.Fatal("schema public accepted")
+	}
+}
+
 func TestReopenIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	url := dbtest.Empty(t)

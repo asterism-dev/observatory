@@ -24,6 +24,9 @@ func Open(ctx context.Context, url, schema string, migrations fs.FS) (*pgxpool.P
 	if !schemaName.MatchString(schema) {
 		return nil, fmt.Errorf("invalid schema name %q", schema)
 	}
+	if schema == "public" {
+		return nil, errors.New("schema public belongs to the hub, not a service")
+	}
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
@@ -58,6 +61,7 @@ func migrate(ctx context.Context, cfg *pgx.ConnConfig, schema string, migrations
 	// Per-schema advisory lock so several instances of one service migrate one after another.
 	h := fnv.New64a()
 	h.Write([]byte("observatory.pgsvc." + schema))
+	// Polls the lock every second for up to 120 tries, so a peer's migration may take two minutes.
 	locker, err := lock.NewPostgresSessionLocker(lock.WithLockID(int64(h.Sum64())), lock.WithLockTimeout(1, 120))
 	if err != nil {
 		return fmt.Errorf("create migration locker: %w", err)
