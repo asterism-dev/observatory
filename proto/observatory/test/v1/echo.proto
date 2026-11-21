@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package observatory.test.v1;
+
+import "observatory/v1/annotations.proto";
+
+message EchoRequest {
+  string text = 1;
+}
+
+message EchoResponse {
+  string text = 1;
+}
+
+message PeekRequest {}
+
+message PeekResponse {}
+
+service EchoService {
+  rpc Echo(EchoRequest) returns (EchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.create"
+      object: "org/echoes"
+      kind: KIND_WRITE
+    };
+  }
+  // No kind: Of must refuse it rather than treat it as a read.
+  rpc Peek(PeekRequest) returns (PeekResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.get"
+      object: "org/echoes"
+    };
+  }
+}

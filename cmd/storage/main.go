@@ -26,7 +26,7 @@ import (
 )
 
 func main() {
-	hubURL := flag.String("hub", "http://127.0.0.1:8090", "hub base URL")
+	hubURL := flag.String("hub", "http://127.0.0.1:8091", "hub base URL")
 	dir := flag.String("dir", "/disks", "disk file directory")
 	keyDir := flag.String("key-dir", "/run/storage", "export key directory")
 	addr := flag.String("addr", netaddr.GatewayUnderlay.String(), "address the exports listen on")

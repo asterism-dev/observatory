@@ -1,19 +1,15 @@
-package main
+package hubserver
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/signal"
-	"path"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 	// The hub image has no zoneinfo; TZ picks the zone OBSERVATORY_REGISTRY_GC_TIME is in.
 	_ "time/tzdata"
@@ -27,22 +23,17 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
-	"github.com/asterism-dev/observatory/web"
 )
 
-func main() {
-	if err := run(); err != nil {
-		slog.Error("hub failed", "err", err)
-		os.Exit(1)
-	}
-}
-
-func run() error {
-	cfg, err := loadConfig(os.Getenv)
+// Run serves the hub on ln until ctx is done; the SPA and public routing are the edge's.
+func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error {
+	defer ln.Close()
+	cfg, err := loadConfig(getenv)
 	if err != nil {
 		return err
 	}
@@ -50,8 +41,6 @@ func run() error {
 	if err != nil || publicURL.Scheme == "" || publicURL.Host == "" {
 		return errors.New("OBSERVATORY_PUBLIC_URL must be an absolute URL")
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := db.Migrate(ctx, cfg.DatabaseURL); err != nil {
 		return err
@@ -83,12 +72,8 @@ func run() error {
 		return err
 	}
 	slog.Info("management addresses backfilled", "vms", filled)
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload}
+	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: z.Reload, EdgeToken: cfg.EdgeToken}
 
-	dist, err := fs.Sub(web.Dist, "dist")
-	if err != nil {
-		return err
-	}
 	mux := http.NewServeMux()
 	a.Routes(mux)
 	f, err := fleet.New(ctx, s, z, nh)
@@ -140,7 +125,7 @@ func run() error {
 		slog.Warn("dev mode: claude usage endpoint overridden", "url", cfg.DevClaudeUsageURL)
 	}
 	newer := func() string { return "" }
-	if release.Enabled(os.Getenv) {
+	if release.Enabled(getenv) {
 		ck := &release.Checker{URL: release.LatestURL, Client: &http.Client{Timeout: 10 * time.Second}}
 		go ck.Run(ctx, 6*time.Hour)
 		newer = ck.Newer
@@ -189,29 +174,19 @@ func run() error {
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
-	mux.Handle("/", spa(dist))
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := a.TrustEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/grafana/") {
 			apiHandler.ServeHTTP(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}))
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second,
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
-	slog.Info("hub listening", "addr", cfg.Listen)
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	slog.Info("hub listening", "addr", ln.Addr().String())
+	return run.Serve(ctx, srv, ln)
 }
 
 // newScheduler resolves the builder image once; if that fails, every build fails with the reason until the hub restarts.
@@ -227,17 +202,4 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg confi
 	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online)
 	sched.Size = cfg.BuilderSize
 	return sched
-}
-
-// spa serves index.html for extensionless paths that are not files, so GUI routes like /vms survive a reload.
-func spa(dist fs.FS) http.Handler {
-	files := http.FileServerFS(dist)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := path.Clean(r.URL.Path)
-		if _, err := fs.Stat(dist, strings.TrimPrefix(p, "/")); err != nil && path.Ext(p) == "" {
-			http.ServeFileFS(w, r, dist, "index.html")
-			return
-		}
-		files.ServeHTTP(w, r)
-	})
 }

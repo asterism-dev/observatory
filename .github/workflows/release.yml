@@ -100,11 +100,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # The kernel build takes long, so it runs only when the pinned tag in the hub Dockerfile is not published yet.
+      # The kernel build takes long, so it runs only when the pinned tag in the observatory Dockerfile is not published yet.
       - id: pin
         run: |
-          tag=$(sed -n 's/^ARG GUESTBOOT_TAG=//p' deploy/hub.Dockerfile)
-          [ -n "$tag" ] || { echo "GUESTBOOT_TAG is missing in deploy/hub.Dockerfile" >&2; exit 1; }
+          tag=$(sed -n 's/^ARG GUESTBOOT_TAG=//p' deploy/observatory.Dockerfile)
+          [ -n "$tag" ] || { echo "GUESTBOOT_TAG is missing in deploy/observatory.Dockerfile" >&2; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if docker buildx imagetools inspect "ghcr.io/asterism-dev/observatory-guestboot:$tag" > /dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -129,7 +129,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [hub, gateway, storage, guest, builder]
+        image: [observatory, gateway, storage, guest, builder]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -151,7 +151,7 @@ jobs:
           push: true
           build-args: VERSION=${{ needs.bump.outputs.tag }}
           # latest moves only in the release job, once every image and binary of this version exists.
-          tags: ghcr.io/asterism-dev/observatory-${{ matrix.image }}:${{ needs.bump.outputs.tag }}
+          tags: ghcr.io/asterism-dev/${{ matrix.image == 'observatory' && 'observatory' || format('observatory-{0}', matrix.image) }}:${{ needs.bump.outputs.tag }}
           # Links the package to this repository so it inherits the repository's access.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -179,8 +179,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - run: |
-          for image in hub gateway storage guest builder; do
-            docker buildx imagetools create -t "ghcr.io/asterism-dev/observatory-$image:latest" "ghcr.io/asterism-dev/observatory-$image:$TAG"
+          for image in observatory observatory-gateway observatory-storage observatory-guest observatory-builder; do
+            docker buildx imagetools create -t "ghcr.io/asterism-dev/$image:latest" "ghcr.io/asterism-dev/$image:$TAG"
           done
         env:
           TAG: ${{ needs.bump.outputs.tag }}

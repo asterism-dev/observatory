@@ -33,7 +33,7 @@ import (
 const sslDir = "/var/lib/ovn/ssl"
 
 func main() {
-	hubURL := flag.String("hub", "http://127.0.0.1:8090", "hub base URL")
+	hubURL := flag.String("hub", "http://127.0.0.1:8091", "hub base URL")
 	nbDB := flag.String("nb", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NB database")
 	flag.Parse()
 	log.Printf("%s %s", filepath.Base(os.Args[0]), version.Version)

@@ -3,6 +3,7 @@ module github.com/asterism-dev/observatory
 go 1.27
 
 require (
+	connectrpc.com/connect v1.21.1
 	github.com/casbin/casbin/v3 v3.11.0
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.21.0

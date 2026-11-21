@@ -35,6 +35,8 @@ type Handler struct {
 	CLIClientID string
 	// Reload refreshes permissions after a login created a user or personal org.
 	Reload func(context.Context) error
+	// EdgeToken authenticates the edge's client IP header; TrustEdge resolves the client IP with it once per request.
+	EdgeToken string
 }
 
 type oidcState struct {

@@ -18,7 +18,6 @@ build() { # name pkg os arch
 for os in linux darwin; do
 	for arch in amd64 arm64; do
 		build observatory ./cmd/observatory "$os" "$arch"
-		build hub ./cmd/hub "$os" "$arch"
 	done
 done
 # Nodes run Firecracker, which needs linux/amd64.

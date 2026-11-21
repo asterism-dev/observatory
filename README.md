@@ -17,7 +17,7 @@ Needs Go, Node 22, Docker and `jq`.
 
 ```sh
 make dev-up idp-up idp-bootstrap   # Postgres, Zitadel (deploy/idp), deploy/dev/hub.env
-make run                           # hub on :8090
+make run                           # edge on :8090, hub on :8091
 npm --prefix web ci                # first time only
 npm --prefix web run dev           # Vite on :5173, proxies /api and /auth
 ```
@@ -26,12 +26,19 @@ An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -
 `OBSERVATORY_GATEWAY_TOKEN=$(openssl rand -hex 32)` and `OBSERVATORY_STORAGE_TOKEN=$(openssl rand -hex 32)` (at least
 32 characters each; the gateway and the storage server authenticate to the hub with them; `make gateway-token
 storage-token` appends whichever is missing).
+
+`make run` starts `observatory serve all`: the edge (public entry point, web app) on `OBSERVATORY_EDGE_LISTEN`
+(default `:8090`) in front of the hub, which listens on `OBSERVATORY_HUB_LISTEN` (`:8091` with `make run`) for the
+gateway, the storage server and the registry; the edge answers `/internal/*` with 404. `make edge-token` appends
+`OBSERVATORY_EDGE_TOKEN` to `deploy/dev/hub.env` if missing (`make run` does it): the token the edge proves itself
+with to the hub when the two run as separate processes (`observatory serve edge` and `observatory serve hub`); `serve all`
+generates its own per start.
 `OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.
 
 Nodes need the WireGuard/OVN gateway: they reach the hub's control endpoint only through it, over the underlay.
 Start it, and the storage server for disks, in Docker (they need
 `OBSERVATORY_GATEWAY_TOKEN` and `OBSERVATORY_STORAGE_TOKEN`, added if missing, and reach the hub at `HUB_URL`, default
-`http://host.docker.internal:8090`):
+`http://host.docker.internal:8091`):
 
 ```sh
 make gateway-up      # gateway-down stops both
@@ -54,7 +61,7 @@ For telemetry, start the stores with `make telemetry-up` (`telemetry-down` stops
 `localhost:58428` and `localhost:59428`.
 
 Open <http://localhost:5173>. The first user to log in becomes platform admin.
-With only the built hub (`make hub`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.
+With only the built binary (`make observatory`, then `bin/observatory serve all`), set `OBSERVATORY_PUBLIC_URL=http://localhost:8090`.
 
 ## Nodes
 

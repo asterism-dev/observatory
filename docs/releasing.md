@@ -6,14 +6,15 @@ Every push to `main` runs `.github/workflows/release.yml`:
    version, `fix`/`perf`/`refactor` the patch version, a breaking change (`!` or `BREAKING CHANGE:`) the minor version
    while we are below 1.0. It prepends the section to `CHANGELOG.md`, commits `bump: version …` and pushes the commit
    and the tag. Only `docs`, `chore`, `ci`, `test`, `style` or `build` commits: the run ends without a release.
-2. **Binaries:** `scripts/release-build.sh` builds `observatory` (CLI) and `hub` for linux and darwin on amd64 and
-   arm64, and `observatory-node` for linux/amd64, one `tar.gz` each, plus `SHA256SUMS`.
+2. **Binaries:** `scripts/release-build.sh` builds `observatory` (CLI and services) for linux and darwin on amd64 and
+   arm64, and `observatory-node` and `observatory-init` for linux/amd64, one `tar.gz` each, plus `SHA256SUMS`.
 3. **Guest boot files:** the `guestboot` job builds `ghcr.io/asterism-dev/observatory-guestboot` (guest kernel,
-   `mke2fs`, `resize2fs`) for linux/amd64, tagged with `GUESTBOOT_TAG` from `deploy/hub.Dockerfile`. The kernel build is
+   `mke2fs`, `resize2fs`) for linux/amd64, tagged with `GUESTBOOT_TAG` from `deploy/observatory.Dockerfile`. The kernel build is
    slow, so it runs only when that tag is not published yet; raise the tag to rebuild.
-4. **Images:** `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` for linux/amd64 and linux/arm64, and the guest
-   image `ghcr.io/asterism-dev/observatory-guest` for linux/amd64, tagged with the version. The hub image bundles the
-   guest boot files of step 3.
+4. **Images:** `ghcr.io/asterism-dev/observatory` (edge and hub, `observatory serve` with `all` as the default
+   argument) and `ghcr.io/asterism-dev/observatory-{gateway,storage}` for linux/amd64 and linux/arm64, and the guest
+   and builder images `ghcr.io/asterism-dev/observatory-{guest,builder}` for linux/amd64, tagged with the version. The
+   `observatory` image bundles the guest boot files of step 3.
 5. **Release:** a GitHub release named after the tag, with the changelog section as text and the archives attached;
    then `latest` moves to this version's images.
 

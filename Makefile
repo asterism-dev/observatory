@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token edge-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap observatory cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -11,6 +11,9 @@ gateway-token:
 
 storage-token:
 	grep -q '^OBSERVATORY_STORAGE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_STORAGE_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
+
+edge-token:
+	grep -q '^OBSERVATORY_EDGE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_EDGE_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
 
 gateway-up: gateway-token storage-token
 	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway storage
@@ -47,8 +50,8 @@ idp-down:
 idp-bootstrap:
 	sh deploy/idp/bootstrap.sh
 
-hub: web node
-	go build -o bin/hub ./cmd/hub
+observatory: web node
+	go build -o bin/observatory ./cmd/observatory
 
 cli:
 	go build -o bin/observatory ./cmd/observatory
@@ -60,8 +63,20 @@ test:
 	OBSERVATORY_TEST_DATABASE_URL=$${OBSERVATORY_TEST_DATABASE_URL:-postgres://observatory:observatory@localhost:55432/observatory?sslmode=disable} go test ./...
 	node --test web/src/composables/*.test.ts
 
-run:
-	set -a; . deploy/dev/hub.env; set +a; go run ./cmd/hub
+run: edge-token
+	set -a; . deploy/dev/hub.env; set +a; OBSERVATORY_HUB_LISTEN=$${OBSERVATORY_HUB_LISTEN:-:8091} go run ./cmd/observatory serve all
 
 node:
 	GOOS=linux GOARCH=amd64 go build -o bin/observatory-node-linux-amd64 ./cmd/node
+
+gen:
+	test -x web/node_modules/.bin/protoc-gen-es || npm --prefix web ci
+	go tool -modfile=tools/go.mod buf generate
+
+gen-check: gen
+	git diff --exit-code -- gen web/src/gen
+	test -z "$$(git ls-files --others --exclude-standard -- gen web/src/gen)"
+
+lint:
+	go tool -modfile=tools/go.mod golangci-lint run
+	go tool -modfile=tools/go.mod buf lint

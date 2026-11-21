@@ -1,12 +1,31 @@
 name: observatory-hub
 
+x-observatory: &observatory
+  image: ghcr.io/asterism-dev/observatory:${OBSERVATORY_VERSION:-latest}
+  build:
+    context: ..
+    dockerfile: deploy/observatory.Dockerfile
+  restart: unless-stopped
+  # Covers the 10s drain of in-flight requests before Docker kills the process.
+  stop_grace_period: 20s
+
 services:
+  # Public entry point: serves the web app and forwards to the hub, never to /internal/*.
+  edge:
+    <<: *observatory
+    command: ["edge"]
+    environment:
+      OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
+      OBSERVATORY_EDGE_HUB_URL: http://hub:8091
+    ports:
+      - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
+    depends_on:
+      hub:
+        condition: service_started
+  # Listens on 8091 inside the compose network only: the edge and the internal callers (registry, gateway, storage) reach it there.
   hub:
-    image: ghcr.io/asterism-dev/observatory-hub:${OBSERVATORY_VERSION:-latest}
-    build:
-      context: ..
-      dockerfile: deploy/hub.Dockerfile
-    restart: unless-stopped
+    <<: *observatory
+    command: ["hub"]
     env_file: .env
     # Repeats the required values from .env so a missing one stops `up` instead of leaving the hub in a restart loop.
     environment:
@@ -16,6 +35,7 @@ services:
       OBSERVATORY_OIDC_WEB_CLIENT_ID: ${OBSERVATORY_OIDC_WEB_CLIENT_ID:?set OBSERVATORY_OIDC_WEB_CLIENT_ID in deploy/.env}
       OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
+      OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
       OBSERVATORY_REGISTRY_URL: http://registry:5000
       OBSERVATORY_REGISTRY_KEY_DIR: /keys
       OBSERVATORY_REGISTRY_CERT_DIR: /certs
@@ -23,8 +43,6 @@ services:
       OBSERVATORY_REGISTRY_CONFIG: /etc/distribution/config.yml
       OBSERVATORY_METRICS_URL: http://victoriametrics:8428
       OBSERVATORY_LOGS_URL: http://victorialogs:9428
-    ports:
-      - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     volumes:
       - registry-keys:/keys
       - registry-certs:/certs
@@ -63,7 +81,7 @@ services:
       REGISTRY_AUTH_TOKEN_REALM: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}/v2/token
       REGISTRY_NOTIFICATIONS_ENDPOINTS: |
         - name: hub
-          url: http://hub:8090/internal/registry/events
+          url: http://hub:8091/internal/registry/events
           headers: {Authorization: ["Bearer ${OBSERVATORY_REGISTRY_EVENTS_SECRET:?set OBSERVATORY_REGISTRY_EVENTS_SECRET in deploy/.env}"]}
           timeout: 10s
           threshold: 3
@@ -125,7 +143,7 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
     environment:
-      HUB_URL: http://hub:8090
+      HUB_URL: http://hub:8091
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
     ports:
       - "51820:51820/udp"
@@ -143,7 +161,7 @@ services:
     network_mode: service:gateway
     depends_on: [gateway]
     environment:
-      HUB_URL: http://hub:8090
+      HUB_URL: http://hub:8091
       OBSERVATORY_STORAGE_TOKEN: ${OBSERVATORY_STORAGE_TOKEN:?set OBSERVATORY_STORAGE_TOKEN in deploy/.env}
     volumes:
       - disks:/disks
@@ -152,7 +170,7 @@ services:
     image: caddy:2.11.9
     profiles: [tls]
     restart: unless-stopped
-    depends_on: [hub]
+    depends_on: [edge]
     environment:
       OBSERVATORY_DOMAIN: ${OBSERVATORY_DOMAIN:-}
       OBSERVATORY_TLS: ${OBSERVATORY_TLS:-acme}

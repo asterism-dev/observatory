@@ -1,4 +1,4 @@
-package main
+package hubserver
 
 import (
 	"encoding/base64"
@@ -14,7 +14,7 @@ func TestLoadConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty env accepted")
 	}
-	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_OIDC_ISSUER", "OBSERVATORY_OIDC_WEB_CLIENT_ID", "OBSERVATORY_OIDC_CLI_CLIENT_ID", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN"} {
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_OIDC_ISSUER", "OBSERVATORY_OIDC_WEB_CLIENT_ID", "OBSERVATORY_OIDC_CLI_CLIENT_ID", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN", "OBSERVATORY_EDGE_TOKEN"} {
 		if !strings.Contains(err.Error(), k) {
 			t.Errorf("error does not name %s: %v", k, err)
 		}
@@ -27,11 +27,12 @@ func TestLoadConfig(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
 	cfg, err := loadConfig(func(k string) string { return env[k] })
-	if err != nil || cfg.Listen != ":8090" || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
+	if err != nil || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
 		t.Fatalf("%+v, %v", cfg, err)
 	}
 	if cfg.NodeURL.String() != "http://h" {
@@ -91,10 +92,6 @@ func TestLoadConfig(t *testing.T) {
 	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.NodeBinary != "/x" {
 		t.Fatalf("node binary override: %+v", cfg)
 	}
-	env["OBSERVATORY_LISTEN"] = ":1"
-	if cfg, _ = loadConfig(func(k string) string { return env[k] }); cfg.Listen != ":1" {
-		t.Fatalf("listen override: %+v", cfg)
-	}
 
 	env["OBSERVATORY_REGISTRY_URL"] = "http://registry:5000"
 	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_REGISTRY_KEY_DIR") {
@@ -126,6 +123,7 @@ func TestConfigGatewayToken(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "https://hub.example:8443",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
 	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
@@ -151,6 +149,7 @@ func TestConfigStorageToken(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 	}
 	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
@@ -172,6 +171,7 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -200,6 +200,7 @@ func TestConfigTelemetryBothOrNeither(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -239,6 +240,7 @@ func TestConfigLogsRetention(t *testing.T) {
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
 		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_EDGE_TOKEN":    strings.Repeat("e", 32),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
@@ -255,5 +257,27 @@ func TestConfigLogsRetention(t *testing.T) {
 		if _, err := load(v); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_LOGS_RETENTION") {
 			t.Errorf("%q: error %v", v, err)
 		}
+	}
+}
+
+func TestHubConfigRequiresEdgeToken(t *testing.T) {
+	env := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	load := func() (config, error) { return loadConfig(func(k string) string { return env[k] }) }
+	if _, err := load(); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_EDGE_TOKEN") {
+		t.Fatalf("missing token: %v", err)
+	}
+	env["OBSERVATORY_EDGE_TOKEN"] = strings.Repeat("e", 31)
+	if _, err := load(); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_EDGE_TOKEN") {
+		t.Fatalf("short token: %v", err)
+	}
+	env["OBSERVATORY_EDGE_TOKEN"] = strings.Repeat("e", 32)
+	if cfg, err := load(); err != nil || cfg.EdgeToken != env["OBSERVATORY_EDGE_TOKEN"] {
+		t.Fatalf("valid token: %v", err)
 	}
 }

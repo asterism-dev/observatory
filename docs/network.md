@@ -61,8 +61,8 @@ The storage server runs as compose service `storage` in the gateway's network na
 Disk files live in the `disks` volume. Put it on XFS (`mkfs.xfs -m reflink=1`) or btrfs for instant copies; other
 filesystems fall back to a sparse copy. Operation and security of disks: [disks.md](disks.md).
 
-The container reads `OBSERVATORY_GATEWAY_TOKEN` and `HUB_URL` (default `http://host.docker.internal:8090`). For a
-hub on another port, set `HUB_URL` in the shell or in `hub.env`. The gateway needs the `openvswitch` and `wireguard`
+The container reads `OBSERVATORY_GATEWAY_TOKEN` and `HUB_URL` (default `http://host.docker.internal:8091`, the hub's direct
+listener: the public edge answers `/internal/*` with 404). For a hub on another port, set `HUB_URL` in the shell or in `hub.env`. The gateway needs the `openvswitch` and `wireguard`
 kernel modules on the Docker host; the compose `modules` service loads them.
 
 Do not run the gateway on a host that is also a node: both would share the kernel's OVS datapath.

@@ -1,0 +1,73 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - errcheck
+    - govet
+    - staticcheck
+  settings:
+    staticcheck:
+      # golangci-lint's defaults minus QF1001: negated conditions are written as they read.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF1001"]
+    errcheck:
+      exclude-functions:
+        - (net.Listener).Close
+        - (net.Conn).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close
+        - (*net/http.Server).Close
+        - (*github.com/coder/websocket.Conn).CloseNow
+        - io.WriteString
+    depguard:
+      rules:
+        edge:
+          files: ["**/internal/edge/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/edge
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - github.com/asterism-dev/observatory/web
+            - github.com/coder/websocket
+        hubserver:
+          files: ["**/internal/hubserver/**"]
+          deny:
+            - pkg: github.com/asterism-dev/observatory/internal/edge
+              desc: the hub must not depend on the edge; shared code belongs in internal/platform
+        platform:
+          files: ["**/internal/platform/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - google.golang.org/protobuf
+          deny:
+            - pkg: github.com/asterism-dev/observatory/internal/api
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/store
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/fleet
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/network
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/db
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/auth
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/authz
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/registry
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/hubserver
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/edge
+              desc: platform code must not import a service
+  exclusions:
+    rules:
+      # ponytail: errcheck covers only the packages added with the edge; the older tree has ~700 findings to fix first.
+      - path-except: ^(internal/(edge|hubserver|platform)/|cmd/observatory/serve)
+        linters: [errcheck]

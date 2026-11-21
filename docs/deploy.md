@@ -1,6 +1,6 @@
 # Deploying the hub with Docker Compose
 
-`deploy/compose.yaml` runs the hub with its Postgres, the WireGuard/OVN gateway, the storage server and the image
+`deploy/compose.yaml` runs the edge and the hub with the hub's Postgres, the WireGuard/OVN gateway, the storage server and the image
 registry, configured
 only through `deploy/.env`. A login service is not part of it: use any OIDC provider (see [idp.md](idp.md)) or the
 Zitadel stack in `deploy/idp/`.
@@ -29,7 +29,7 @@ docker compose -f deploy/compose.yaml up -d
 docker compose -f deploy/compose.yaml --profile tls up -d
 ```
 
-`up` pulls the published images `ghcr.io/asterism-dev/observatory-{hub,gateway,storage}` at `OBSERVATORY_VERSION`
+`up` pulls the published images `ghcr.io/asterism-dev/observatory` and `ghcr.io/asterism-dev/observatory-{gateway,storage}` at `OBSERVATORY_VERSION`
 (`latest` by default, or a release tag such as `v0.1.0`); `up --build` builds them from the checkout instead.
 
 The bundled Zitadel serves plain HTTP; its `.env.example` holds insecure defaults that must change before the host is
@@ -39,11 +39,30 @@ together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL
 `http://<ZITADEL_DOMAIN>:8080` and becomes the hub's issuer. `bootstrap.sh` needs `curl` and `jq`, reads the admin
 token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
 
-After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub restarts,
-`docker compose -f deploy/compose.yaml logs hub` (a short token or a malformed key stops it there).
+After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub or the edge
+restarts, `docker compose -f deploy/compose.yaml logs hub edge` (a short token or a malformed key stops it there).
 
 The first user to log in to the hub becomes platform admin: log in right after the first start, and turn off
 self-registration in the login service (or keep it unreachable) until then.
+
+## Edge and hub
+
+Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory serve <service>`):
+
+- `edge` (`serve edge`) is the only service with a published HTTP port (`OBSERVATORY_HTTP_PORT`, container port
+  8090). It serves the web app and forwards everything else to the hub at `OBSERVATORY_EDGE_HUB_URL`
+  (`http://hub:8091`), and answers `/internal/*` with 404.
+- `hub` (`serve hub`) listens on port 8091 (`OBSERVATORY_HUB_LISTEN`, default `:8091`) inside the compose network only. The edge and the
+  internal callers reach it there: the registry posts its push notifications to `http://hub:8091/internal/registry/events`,
+  the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091.
+- `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by both: the edge sends it with
+  each request, and the hub takes the client IP from the edge's header only when the token matches, otherwise the
+  connection's address. Changing it needs both services restarted.
+
+The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
+`OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
+when other containers must call the hub, and keep that port off public networks) in one process, with an edge token generated
+per start.
 
 ## Serving modes
 
@@ -54,7 +73,7 @@ self-registration in the login service (or keep it unreachable) until then.
 | `--profile tls up` | `OBSERVATORY_TLS=internal`, same domain and URL | certificate from Caddy's own CA, no public DNS needed |
 
 With the `tls` profile set `OBSERVATORY_HTTP_PORT=127.0.0.1:8090`: Docker's published ports bypass host firewalls
-such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090. Nodes
+such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090 (the edge). Nodes
 open their control connection through the gateway, not through the proxy (it is refused there); they use the public
 URL only for enrollment, their underlay config and the emergency channel.
 
@@ -86,8 +105,7 @@ cannot read it.
 - `OBSERVATORY_SECRETS_KEY` encrypts every stored secret. Back it up; a new key makes them unreadable.
 - `OBSERVATORY_OIDC_ISSUER` must be reachable from the hub container, so not `localhost`.
 - `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub. They arrive at
-  `/internal/registry/events`, which the `tls` profile's Caddy answers with 404 from outside; behind your own proxy,
-  block `/internal/*` as well.
+  `/internal/registry/events` on the hub's port 8091; the edge answers `/internal/*` with 404.
 - `OBSERVATORY_REGISTRY_URL` (the compose file sets `http://registry:5000`), `OBSERVATORY_REGISTRY_KEY_DIR` and
   `OBSERVATORY_REGISTRY_CERT_DIR` turn the registry on; without a URL the hub has no images. The events secret must be
   at least 32 characters.

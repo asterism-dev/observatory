@@ -255,7 +255,7 @@ func (n *fakeNode) desired() proto.Message {
 				n.t.Fatalf("incomplete boot for %s: %+v", d.Spec.ID, d.Boot)
 			}
 		}
-		return m
+		return m //nolint:staticcheck // n.t.Fatalf ends the test
 	}
 }
 

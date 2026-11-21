@@ -15,6 +15,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -200,7 +201,12 @@ type realmKey struct{}
 // registryProxy points the token realm at the configured URL whose host the request came in on, never at the Host header itself.
 func registryProxy(upstream, public *url.URL, others []*url.URL) http.Handler {
 	rp := &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(upstream) },
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(upstream)
+			// The edge token must not leak to the registry container.
+			pr.Out.Header.Del(clientip.HeaderClientIP)
+			pr.Out.Header.Del(clientip.HeaderEdge)
+		},
 		ModifyResponse: func(resp *http.Response) error {
 			if v := resp.Header.Get("WWW-Authenticate"); v != "" {
 				realm := resp.Request.Context().Value(realmKey{}).(string)

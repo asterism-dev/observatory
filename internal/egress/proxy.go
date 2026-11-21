@@ -96,7 +96,7 @@ func (p *Proxy) Serve(l net.Listener) error {
 		c, err := l.Accept()
 		if err != nil {
 			var ne net.Error
-			if errors.As(err, &ne) && ne.Temporary() {
+			if errors.As(err, &ne) && ne.Temporary() { //nolint:staticcheck // accept errors still report EMFILE and similar as temporary, as in net/http
 				delay = min(max(2*delay, 5*time.Millisecond), time.Second)
 				time.Sleep(delay)
 				continue

@@ -1,4 +1,4 @@
-package main
+package hubserver
 
 import (
 	"crypto/sha256"
