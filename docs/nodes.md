@@ -12,6 +12,7 @@ have nodes.
 - Root, or a user with `sudo`.
 - The hub's public URL (`http(s)://host[:port]`) reachable from the host, and internet access for packages, Firecracker and the guest image (`ghcr.io`).
 - Outbound UDP to the gateway on port 51820 (the WireGuard underlay, see [network.md](network.md)).
+- Optional: inbound UDP 51822 from the other nodes of the org, for direct paths. Without it traffic uses the gateway.
 - The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
@@ -82,6 +83,15 @@ address in `10.198.0.0/16` and returns the underlay config. The node then writes
   the WireGuard key is `/var/lib/observatory-node/vms/chassis.key`;
 - the OVS `system-id` (the node id), `ovn-remote=ssl:10.198.0.1:6642`, Geneve encapsulation over the underlay address,
   and restarts `ovn-controller` when this changes.
+
+The node also listens on `wg-underlay` UDP 51822 for direct peers of its org ([network.md](network.md#direct-paths)).
+On `wg-underlay` the firewall table `inet obs_underlay_node` admits Geneve (UDP 6081), ICMP echo and established
+traffic from peers and everything from `10.198.0.1`, so a direct peer never reaches the node's host services.
+
+The node page lists a Paths table: per peer node the path (direct or relay), the endpoint, the path MTU and a
+fragmentation warning with the recommended guest MTU when the guest MTU plus 138 exceeds it. Path MTU is probed in the
+background; failed probes are retried after 10 min. The guest MTU is a platform setting
+([network.md](network.md#guest-mtu)).
 
 Each VM's management and network NICs are taps on `br-int`. The chassis cert is valid for one year; the hub renews
 it while the node is connected once less than 30 days are left.

@@ -99,6 +99,40 @@ On macOS:
 - A device on the machine that runs the gateway container gets no handshake through the machine's own address (the
   WireGuard app sends over the physical interface). Set `Endpoint = 127.0.0.1:51821` in that device's config.
 
+## Direct paths
+
+Nodes of one org reach each other through the gateway (relay) or, when possible, directly over their own network.
+Only the hub host needs inbound ports; a node listens on `wg-underlay` UDP 51822 for direct peers, and if that port is
+unreachable the relay is used.
+
+- Each node reports candidate addresses: private LAN addresses first, then public addresses and the endpoint the
+  gateway observed for it, then CGNAT/VPN-range addresses (`100.64.0.0/10`, other interfaces such as `tailscale0`),
+  at most 8. Loopback, link-local, multicast, the platform pools from the address plan (including `10.198.0.0/16`,
+  `192.168.64.0/24` and `10.64.0.0/10`), addresses with a zone ID and docker/OVS/bridge/`wg-underlay` interfaces are
+  never candidates; the hub validates and drops them. A physical LAN inside `10.64.0.0/10` therefore cannot be used for direct paths.
+  Other VPNs' configuration is never touched, only their addresses are read.
+- The hub pushes each node its peer set: the enrolled, non-quarantined nodes of its own org with an underlay address.
+  Nodes of other orgs and quarantined nodes never appear in it, and a quarantined node drops out of every peer set on
+  the next push.
+- A node tries each candidate for 15 s. A path counts as direct only after a fresh WireGuard handshake (younger than
+  3 min); until then traffic stays on the relay and the peer gets no allowed IPs. If every candidate fails the node
+  keeps the relay and retries every 2 min. A direct path whose handshake is older than 3 min falls back to the relay.
+- On `wg-underlay` the node admits only Geneve (UDP 6081), ICMP echo and established/related traffic from peers, and
+  everything from the gateway (`10.198.0.1`); see [nodes.md](nodes.md#underlay).
+
+The node page lists every path with its mode, endpoint and path MTU.
+
+## Guest MTU
+
+VM interfaces (DHCP) and device configs use the guest MTU, a platform setting (platform admin, Admin → Network): 1000
+to 1400, default 1300. It applies to VMs on their next start and to newly downloaded device configs; changing it never
+restarts a VM and it is never lowered automatically.
+
+Geneve (58 bytes) and WireGuard (80 bytes) add 138 bytes of overhead. When the guest MTU plus 138 exceeds the MTU of
+a direct path, packets on it are fragmented. The node page then shows a warning and the recommended guest MTU, the
+path MTU minus 138 rounded down to a multiple of 10. The node probes the path MTU in the background and retries failed
+probes after 10 min.
+
 ## Isolation
 
 - A device reaches only the VMs its person may `vm:connect`: the owner of a user VM, the members of the owning team for
@@ -137,7 +171,8 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
   the node is re-enrolled (regenerate its credential, then re-install).
 - The gateway deletes southbound chassis rows of unknown and quarantined nodes, so a re-enrolled node registers afresh.
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.
-- The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway.
+- The gateway forwards underlay traffic only between nodes of the same org and between a node and the gateway. Direct
+  paths are only configured between nodes of one org.
 
 ## Known limits
 

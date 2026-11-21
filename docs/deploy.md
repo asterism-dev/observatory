@@ -9,7 +9,7 @@ Zitadel stack in `deploy/idp/`.
 
 - A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch`, `wireguard` and
   `xt_connlimit` modules (the stack loads them).
-- Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices);
+- Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices; nodes may optionally accept UDP 51822 from each other for direct paths);
   with the bundled login service also TCP 8080.
 
 ## Steps
