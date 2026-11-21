@@ -1,14 +1,16 @@
 # Nodes
 
 A node is a Linux host that runs an org's VMs with Firecracker. It belongs to one org, holds its own credential and
-keeps a WebSocket connection to the hub, which pushes the desired VMs.
+keeps a control connection to the hub, which pushes the desired VMs. The connection runs over the WireGuard
+underlay to the gateway ([Control path](#control-path)); the VMs need the gateway, so a hub without a network cannot
+have nodes.
 
 ## Requirements
 
 - Linux on amd64 (x86_64) with systemd, `apt` (tested on Debian 13; other apt-based distributions such as Ubuntu 24.04 should work but are untested) and `curl`.
 - KVM: `/dev/kvm` must exist. In a VM, enable nested virtualization.
 - Root, or a user with `sudo`.
-- The hub's URL reachable from the host, and internet access for packages, Firecracker and the guest image (`ghcr.io`).
+- The hub's public URL (`http(s)://host[:port]`) reachable from the host, and internet access for packages, Firecracker and the guest image (`ghcr.io`).
 - Outbound UDP to the gateway on port 51820 (the WireGuard underlay, see [network.md](network.md)).
 - The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
@@ -39,8 +41,12 @@ printf '%s\n' "$TOKEN" | sudo sh install.sh --hub http://hub.example:8090 --toke
 
 The hub serves the installer, the node binary and its `SHA256SUMS` itself (`make node` builds the binary; see the
 README). Over plain HTTP the checksum only catches broken downloads, not tampering: whoever can change the binary can
-change the checksum too. In production, put the hub behind a TLS reverse proxy and use its `https://` URL; the node
-then connects with `wss://`.
+change the checksum too. In production, put the hub behind a TLS reverse proxy and use its `https://` URL.
+
+The installer writes that URL to `node.json` as `hub.url`, the public base URL. The node uses it for enrollment, its
+underlay config and the emergency channel, never for the control connection.
+
+1.0 is a fresh install: there is no upgrade path for nodes from 0.x. Install them again with a new enrollment token.
 
 ## What the installer changes on the host
 
@@ -142,6 +148,41 @@ The root-only Linux tests (`go test -run TestEgress ./internal/provider/linuxvm/
 addresses to `vmm0`: on a live node they wipe the running VMs' redirects until the node restarts. Run them in a
 separate network namespace or on a host without VMs.
 
+## Control path
+
+The node gets its underlay config (WireGuard keys, address, gateway endpoint) with HTTPS `POST /api/nodes/underlay`,
+authenticated with its credential, at start and whenever its chassis certificate has less than 30 days left (checked
+every 24 hours). Everything else normally runs over the underlay:
+
+- The gateway runs an HTTP reverse proxy on `10.198.0.1:8091`, reachable only through `wg-underlay`. It forwards
+  `/api/nodes/connect` (the control WebSocket, JSON messages, 1 MiB per message) and `/api/nodes/health` to the hub and
+  nothing else. It replaces `X-Observatory-Underlay-Peer` (the WireGuard peer's source IP) and
+  `X-Observatory-Gateway` (the gateway token) on every request; the headers from the client are dropped.
+- The hub accepts the control connection only through that proxy: the gateway token must be valid, the credential
+  must be valid and the peer IP must be the node's underlay IP. A request to `/api/nodes/connect` on the public URL is
+  refused, even with a valid credential, and so is node A's credential from node B's address.
+
+## Health check and emergency channel
+
+The node calls `GET /api/nodes/health` over the underlay every 60 seconds. After 3 consecutive failures it switches to
+the emergency channel and polls `POST /api/nodes/emergency` over HTTPS (the public URL) every minute. One passing
+health check switches back. VMs keep running throughout.
+
+The emergency channel carries only a status report, an update and a new underlay config, nothing else. The node reports
+its version and the result of the last update, and stores the version the hub asked for. An update failure is reported in
+the next poll. The hub can only trigger an update of the node that polls.
+
+| State | Meaning |
+| --- | --- |
+| `pending` | enrolled, never connected |
+| `online` | control connection is live |
+| `underlay_down` | no control connection, emergency report within the last 2 minutes |
+| `offline` | no control connection and no recent report |
+
+`quarantined` is a separate flag, see [network.md](network.md#nodes-and-southbound-trust). The hub can update an
+`underlay_down` node: the update is delivered on its next emergency poll, or over the control connection if the
+underlay comes back first. Nothing else works on such a node until the underlay is back.
+
 ## Integrations
 
 The node runs a token service for every VM it runs ([integrations.md](integrations.md)). The guest connects over
@@ -218,19 +259,8 @@ keeps its id and its VMs, which are reconciled when it reconnects.
 
 Use this after a lost or leaked credential, or to move the node to another hub URL.
 
-Nodes installed before the VM network existed must be re-installed this way: the new binary sends its underlay keys on
-register and joins the gateway. Their VMs get the management NIC on their next start.
-
-Nodes installed before disks existed must be re-installed too: only the new installer adds the nftables rules that keep
-VMs off the underlay (`vmm0` → `10.198.0.0/16` dropped). Without them a guest can reach the storage exports (it still
-needs the export key) and the southbound DB through its node.
-
-Nodes installed before hibernation existed should be re-installed as well: only the new unit has `KillMode=mixed` and
-`TimeoutStopSec=300`, which let a service restart hibernate the VMs instead of killing them
-([vm-lifecycle.md](vm-lifecycle.md#node-restart)).
-
-Nodes installed before host-bound secrets existed should be re-installed too: the new unit keeps secret values off swap
-and out of core dumps and starts after `nftables.service`.
+1.0 nodes are fresh installs. Nodes from 0.x cannot be re-enrolled or updated into 1.0: remove them and add them
+again.
 
 ## Remove
 

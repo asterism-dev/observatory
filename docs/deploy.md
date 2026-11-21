@@ -54,8 +54,9 @@ self-registration in the login service (or keep it unreachable) until then.
 | `--profile tls up` | `OBSERVATORY_TLS=internal`, same domain and URL | certificate from Caddy's own CA, no public DNS needed |
 
 With the `tls` profile set `OBSERVATORY_HTTP_PORT=127.0.0.1:8090`: Docker's published ports bypass host firewalls
-such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090 and
-keep websockets (`/api/nodes/connect`) working.
+such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090. Nodes
+open their control connection through the gateway, not through the proxy (it is refused there); they use the public
+URL only for enrollment, their underlay config and the emergency channel.
 
 ## Trusting the internal CA
 
