@@ -22,30 +22,39 @@ const (
 
 var underlayClient = &http.Client{Timeout: 30 * time.Second}
 
-// refreshUnderlay trades the chassis key and a fresh CSR for the underlay config and applies it.
+// refreshUnderlay trades the chassis key and a fresh CSR for the underlay config and applies it in the background.
 func (a *Agent) refreshUnderlay(ctx context.Context) error {
-	body, err := json.Marshal(proto.UnderlayRequest{ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR})
+	u, err := a.fetchUnderlay(ctx)
 	if err != nil {
 		return err
 	}
+	go a.startChassis(ctx, u)
+	return nil
+}
+
+func (a *Agent) fetchUnderlay(ctx context.Context) (proto.Underlay, error) {
+	var u proto.Underlay
+	body, err := json.Marshal(proto.UnderlayRequest{ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR})
+	if err != nil {
+		return u, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.HubURL+"/api/nodes/underlay", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return u, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.Credential)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := underlayClient.Do(req)
 	if err != nil {
-		return err
+		return u, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return fmt.Errorf("underlay request: %s: %s", resp.Status, bytes.TrimSpace(msg))
+		return u, fmt.Errorf("underlay request: %s: %s", resp.Status, bytes.TrimSpace(msg))
 	}
-	var u proto.Underlay
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return fmt.Errorf("underlay response: %w", err)
+		return u, fmt.Errorf("underlay response: %w", err)
 	}
 	a.mu.Lock()
 	a.underlayCert = u.Cert
@@ -53,8 +62,7 @@ func (a *Agent) refreshUnderlay(ctx context.Context) error {
 	if a.mesh != nil {
 		a.mesh.setGateway(u.HubKey)
 	}
-	go a.startChassis(ctx, u)
-	return nil
+	return u, nil
 }
 
 func (a *Agent) renewUnderlay(ctx context.Context) {
