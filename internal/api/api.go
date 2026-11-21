@@ -311,6 +311,10 @@ func (h *api) revokeSession(w http.ResponseWriter, r *http.Request) {
 		if err := tx.RevokeSession(r.Context(), p.User.ID, id); err != nil {
 			return err
 		}
+		// ponytail: iam writes a hub table so the registry refuses without the bus; 5b moves this into iam's revoke path.
+		if err := tx.DeleteSessionCredentials(r.Context(), id); err != nil {
+			return err
+		}
 		return tx.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionSessionRevoke,
 			Resource: "session/" + id.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,

@@ -335,6 +335,35 @@ func TestRegistryCredentialRefusedAfterSessionRevokeEvent(t *testing.T) {
 	}
 }
 
+// No consumer runs here, so the refusal must come from the revoke itself, not from the bus.
+func TestRegistryCredentialRefusedAtSessionRevoke(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	h := e.registryHandler("http://registry.invalid", nil)
+	cli := e.cliSession(alice)
+	cred := e.registryCredential(cli)
+	sess, err := e.store.SessionByToken(t.Context(), cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The edge may still hold a JWT minted before the revoke.
+	jwt, _, err := e.iss.Mint(alice, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("DELETE", "/api/me/sessions/"+sess.ID.String(), aliceTok); rec.Code != 204 {
+		t.Fatalf("revoke: %d", rec.Code)
+	}
+	if code, _ := grant(t, h, "observatory", cred, repoScope(a, "pull")); code != 401 {
+		t.Fatalf("credential of a revoked session: %d", code)
+	}
+	if rec := e.do("POST", "/api/registry/credentials", jwt); rec.Code != 401 {
+		t.Fatalf("new credential for a revoked session: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProxyStreamsBlob(t *testing.T) {
 	e := newEnv(t)
 	const size = 1 << 30

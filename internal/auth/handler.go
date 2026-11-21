@@ -204,6 +204,10 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		if err := tx.RevokeSession(r.Context(), p.User.ID, p.Session.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
+		// ponytail: iam writes a hub table so the registry refuses without the bus; 5b moves this into iam's revoke path.
+		if err := tx.DeleteSessionCredentials(r.Context(), p.Session.ID); err != nil {
+			return err
+		}
 		return tx.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionAuthLogout,
 			Resource: "session/" + p.Session.ID.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,

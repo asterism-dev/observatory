@@ -389,6 +389,14 @@ func TestRequirePrincipalFromClaims(t *testing.T) {
 func TestLogoutRevokesSession(t *testing.T) {
 	e := newEnv(t)
 	sc := e.sessionCookie()
+	sess, err := e.store.SessionByToken(context.Background(), sc.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, _, err := e.store.CreateRegistryCredential(context.Background(), sess.UserID, sess.ID, sess.ExpiresAt, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
 	req.AddCookie(sc)
@@ -412,6 +420,13 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 	if !e.actions(store.ResultAllowed)[store.ActionAuthLogout] {
 		t.Fatal("no iam.sessions.delete audit")
+	}
+	// No consumer runs here, so the refusal must come from the logout itself, not from the bus.
+	if _, err := e.store.RegistryCredentialUser(context.Background(), cred); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("registry credential after logout: %v", err)
+	}
+	if _, _, err := e.store.CreateRegistryCredential(context.Background(), sess.UserID, sess.ID, sess.ExpiresAt, time.Hour); !errors.Is(err, store.ErrSessionRevoked) {
+		t.Fatalf("new registry credential after logout: %v", err)
 	}
 
 	req = httptest.NewRequest("POST", "/auth/logout", nil)
