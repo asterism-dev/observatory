@@ -154,8 +154,21 @@ func TestJSONPassThrough(t *testing.T) {
 	if code := run(c, []string{"org", "show", "--json"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	want := "{\n  \"org\": {\n    \"id\": \"o1\",\n    \"name\": \"orga\",\n    \"role\": \"owner\"\n  },\n  \"permissions\": [\n    \"vm.create\",\n    \"vm.read\"\n  ]\n}\n"
+	want := "{\n  \"org\": {\n    \"id\": \"o1\",\n    \"name\": \"orga\",\n    \"personal\": false,\n    \"role\": \"owner\"\n  },\n  \"permissions\": [\n    \"vm.create\",\n    \"vm.read\"\n  ]\n}\n"
 	if stdout.String() != want {
 		t.Fatalf("got %q, want %q", stdout.String(), want)
+	}
+}
+
+func TestJSONEmitsDefaults(t *testing.T) {
+	h := newFakeHub(t)
+	h.on(iamRPC+"GetMe", 200, `{"user":{"id":"u1","name":"Ada"}}`)
+	c, stdout, _ := newTestCLI(t, h)
+	if code := run(c, []string{"whoami", "--json"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	// Scripts rely on false and [] being present rather than omitted.
+	if !strings.Contains(stdout.String(), `"platformAdmin": false`) || !strings.Contains(stdout.String(), `"orgs": []`) {
+		t.Fatalf("got %s", stdout)
 	}
 }

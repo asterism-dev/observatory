@@ -187,7 +187,7 @@ func (c *cli) connectCall(path string, req, resp proto.Message) error {
 
 // pj is the protojson form --json prints.
 func pj(m proto.Message) json.RawMessage {
-	b, _ := protojson.Marshal(m)
+	b, _ := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(m)
 	return b
 }
 

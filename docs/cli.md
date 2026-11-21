@@ -183,7 +183,7 @@ VM after `vm restart --wait`), and actions without a body print nothing. List en
 
 The account, org, team, member, invite, role, binding, session and SSH key commands (and `whoami`) print the iam
 API's JSON response: camelCase fields, the response message as the wrapper (`{"members": [...]}`, `{"team": {...}}`) and
-no fields that hold their default value (`false`, `0`, `""`, empty lists). `role show --json` prints the role, which
+every field, also those at their default value (`false`, `0`, `""`, `[]`). `role show --json` prints the role, which
 `role create --file` and `role update --file` accept as is.
 
 ```
