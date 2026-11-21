@@ -19,17 +19,19 @@ const testToken = "0123456789abcdef0123456789abcdef"
 var assets = fstest.MapFS{
 	"index.html":  {Data: []byte("<html>spa</html>")},
 	"assets/a.js": {Data: []byte("console.log(1)")},
+	"fonts.v1/x":  {Data: []byte("font")},
 }
 
 type seen struct {
 	path, rawPath, host, clientIP, edge string
+	header                              http.Header
 }
 
 func recorder(t *testing.T, name string) (*httptest.Server, chan seen) {
 	t.Helper()
 	ch := make(chan seen, 16)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ch <- seen{r.URL.Path, r.URL.RawPath, r.Host, r.Header.Get(HeaderClientIP), r.Header.Get(HeaderEdge)}
+		ch <- seen{r.URL.Path, r.URL.RawPath, r.Host, r.Header.Get(HeaderClientIP), r.Header.Get(HeaderEdge), r.Header.Clone()}
 		_, _ = io.WriteString(w, name)
 	}))
 	t.Cleanup(srv.Close)
@@ -101,9 +103,11 @@ func TestEdgeRoutesToService(t *testing.T) {
 func TestEdgeBlocksInternal(t *testing.T) {
 	hub, ch := recorder(t, "hub")
 	edge := newEdge(t, hub.URL, nil)
-	for _, p := range []string{"/internal/registry/events", "/internal", "/api/../internal/x", "/grafana/%2e%2e/internal/x"} {
+	for _, p := range []string{"/internal/registry/events", "/internal", "/api/../internal/x", "/grafana/%2e%2e/internal/x", "/internal%2Fx", "//internal/x"} {
 		req, _ := http.NewRequest("GET", edge.URL+p, nil)
-		req.URL.Opaque = p // send the path verbatim, unclean
+		if !strings.HasPrefix(p, "//") { // an Opaque of //x would be sent as an absolute URL
+			req.URL.Opaque = p // send the path verbatim, unclean
+		}
 		if code, _ := get(t, req); code != http.StatusNotFound {
 			t.Fatalf("%s: got %d, want 404", p, code)
 		}
@@ -125,6 +129,38 @@ func TestEdgeStampsClientIP(t *testing.T) {
 	s := <-ch
 	if s.clientIP != "127.0.0.1" || s.edge != testToken {
 		t.Fatalf("upstream saw client ip %q, edge %q", s.clientIP, s.edge)
+	}
+}
+
+func TestEdgeTrustedHeadersCannotBeSpoofed(t *testing.T) {
+	hub, ch := recorder(t, "hub")
+	edge := newEdge(t, hub.URL, nil)
+	for name, set := range map[string]func(http.Header){
+		"connection hop-by-hop": func(h http.Header) {
+			h.Set("Connection", HeaderEdge+", "+HeaderClientIP)
+		},
+		"lower case": func(h http.Header) {
+			h["x-observatory-client-ip"] = []string{"6.6.6.6"}
+			h["x-observatory-edge"] = []string{"spoofed"}
+		},
+		"multi value": func(h http.Header) {
+			h[HeaderClientIP] = []string{"6.6.6.6", "7.7.7.7"}
+			h[HeaderEdge] = []string{"spoofed", testToken}
+		},
+		"forwarded for": func(h http.Header) {
+			h.Set("X-Forwarded-For", "6.6.6.6")
+		},
+	} {
+		req, _ := http.NewRequest("GET", edge.URL+"/api/me", nil)
+		set(req.Header)
+		get(t, req)
+		s := <-ch
+		if ips, edges := s.header.Values(HeaderClientIP), s.header.Values(HeaderEdge); len(ips) != 1 || ips[0] != "127.0.0.1" || len(edges) != 1 || edges[0] != testToken {
+			t.Errorf("%s: upstream saw client ip %q, edge %q", name, ips, edges)
+		}
+		if xff := s.header.Values("X-Forwarded-For"); len(xff) != 0 {
+			t.Errorf("%s: upstream saw X-Forwarded-For %q", name, xff)
+		}
 	}
 }
 
@@ -201,7 +237,9 @@ func TestEdgeWebSocketUpgrade(t *testing.T) {
 func TestEdgeServesSPA(t *testing.T) {
 	hub, _ := recorder(t, "hub")
 	edge := newEdge(t, hub.URL, nil)
-	for p, want := range map[string]string{"/vms/x": "<html>spa</html>", "/assets/a.js": "console.log(1)", "/": "<html>spa</html>"} {
+	// Directories without an index fall back to the app instead of a listing.
+	for p, want := range map[string]string{"/vms/x": "<html>spa</html>", "/assets/a.js": "console.log(1)", "/": "<html>spa</html>",
+		"/assets/": "<html>spa</html>", "/assets": "<html>spa</html>", "/fonts.v1/": "<html>spa</html>"} {
 		req, _ := http.NewRequest("GET", edge.URL+p, nil)
 		if code, body := get(t, req); code != 200 || body != want {
 			t.Fatalf("%s: %d %q", p, code, body)
