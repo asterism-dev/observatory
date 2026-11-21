@@ -99,8 +99,8 @@ Disk files live in the `disks` volume:
   for the truth.
 - **Stopping:** the storage server and its NBD servers are killed hard (never a graceful NBD shutdown), so the nodes'
   `qemu-nbd` reconnects instead of failing writes. `docker compose restart storage` (or stop/start) pauses disk I/O in
-  running VMs until it is back; nothing is lost. A gateway restart does the same, because the storage server shares
-  its network namespace.
+  running VMs until it is back; nothing is lost. A gateway restart or crash does not restart the storage server: both
+  run in the network namespace of the compose service `netns`, which outlives them.
 
 ## Security model
 
