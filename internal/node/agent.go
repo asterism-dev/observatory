@@ -284,6 +284,8 @@ func (a *Agent) handle(ctx context.Context, m proto.Message, send func(proto.Mes
 		go func() { _ = send(a.processes(ctx, m)) }()
 	case m.Type == proto.TypePeers && m.Peers != nil && a.mesh != nil:
 		a.mesh.update(*m.Peers)
+	case m.Type == proto.TypePunch && m.Punch != nil && a.mesh != nil:
+		a.mesh.punch(*m.Punch, a.mesh.now())
 	case m.Type == "update":
 		// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
 		a.runUpdate(ctx, func(m proto.Message) error {

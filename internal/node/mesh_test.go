@@ -602,3 +602,189 @@ func TestPathsChangedIgnoresHandshake(t *testing.T) {
 		t.Fatal("a mode or peer change not detected")
 	}
 }
+
+const punchEP = "198.51.100.20:40000"
+
+func punchSet(p proto.Peer, ep string) string {
+	return "wg set wg-underlay peer " + p.PublicKey + " endpoint " + ep + " persistent-keepalive 1"
+}
+
+func keepalive25(p proto.Peer) string {
+	return "wg set wg-underlay peer " + p.PublicKey + " persistent-keepalive 25"
+}
+
+// relayedEnv has peerA on relay after both candidates failed, with its next retry two minutes away.
+func relayedEnv(t *testing.T) *meshEnv {
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.advance(15 * time.Second)
+	e.advance(15 * time.Second)
+	e.wg.calls = nil
+	return e
+}
+
+func (e *meshEnv) punch(ep string, at time.Time) {
+	e.m.punch(proto.Punch{NodeID: "a", Endpoint: ep, At: at}, e.now)
+}
+
+func TestPunchSetsEndpointAndFastKeepalive(t *testing.T) {
+	e := relayedEnv(t)
+	e.punch(punchEP, e.now.Add(2*time.Second))
+	e.advance(time.Second)
+	if e.wg.took(punchSet(peerA, punchEP)) {
+		t.Fatal("punch started before its time")
+	}
+	e.advance(time.Second)
+	if !e.wg.took(punchSet(peerA, punchEP)) || e.wg.peers[peerA.PublicKey].endpoint != punchEP {
+		t.Fatalf("punch not started at its time: %v", e.wg.calls)
+	}
+	e.wg.calls = nil
+	for range 8 {
+		e.advance(time.Second)
+	}
+	if slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.HasPrefix(c, "wg set") }) || e.wg.peers[peerA.PublicKey].endpoint != punchEP {
+		t.Fatalf("regular step touched the peer during the punch window: %v", e.wg.calls)
+	}
+}
+
+func TestPunchRestoresKeepalive(t *testing.T) {
+	e := relayedEnv(t)
+	e.punch(punchEP, e.now)
+	if !e.wg.took(punchSet(peerA, punchEP)) {
+		t.Fatalf("due punch not started at once: %v", e.wg.calls)
+	}
+	e.advance(9 * time.Second)
+	if e.wg.took(keepalive25(peerA)) {
+		t.Fatal("keepalive restored before the window ended")
+	}
+	e.advance(time.Second)
+	if !e.wg.took(keepalive25(peerA)) {
+		t.Fatalf("keepalive not restored after the window: %v", e.wg.calls)
+	}
+	if s := e.path(t, "a"); s.Mode != "relay" {
+		t.Fatalf("mode = %q after a failed punch, want relay", s.Mode)
+	}
+
+	e = relayedEnv(t)
+	e.punch(punchEP, e.now)
+	e.m.update(proto.Peers{})
+	e.advance(10 * time.Second)
+	if e.wg.took(keepalive25(peerA)) || e.wg.peers[peerA.PublicKey] != nil {
+		t.Fatalf("removed peer re-added by the keepalive restore: %v", e.wg.calls)
+	}
+}
+
+func TestPunchNeverSetsAllowedIPsBeforeHandshake(t *testing.T) {
+	e := relayedEnv(t)
+	e.punch(punchEP, e.now.Add(2*time.Second))
+	for range 15 {
+		e.advance(time.Second)
+	}
+	if !e.wg.took(punchSet(peerA, punchEP)) {
+		t.Fatalf("punch not started: %v", e.wg.calls)
+	}
+	if e.wg.routed() || e.wg.peers[peerA.PublicKey].ips != "" {
+		t.Fatalf("/32 moved off the relay without a handshake: %v", e.wg.calls)
+	}
+}
+
+func TestPunchHandshakeMakesDirect(t *testing.T) {
+	e := relayedEnv(t)
+	e.punch(punchEP, e.now)
+	e.advance(3 * time.Second)
+	e.handshake(peerA.PublicKey)
+	e.wg.peers[peerA.PublicKey].endpoint = "198.51.100.20:40001" // the NAT mapped another port
+	e.advance(time.Second)
+	if s := e.path(t, "a"); s.Mode != "direct" || s.Endpoint != "198.51.100.20:40001" || !e.wg.took(route(peerA)) {
+		t.Fatalf("path = %+v after a handshake in the punch window, want direct: %v", s, e.wg.calls)
+	}
+	e.advance(6 * time.Second)
+	if s := e.path(t, "a"); s.Mode != "direct" || !e.wg.took(keepalive25(peerA)) {
+		t.Fatalf("path = %+v after the window, want direct with keepalive 25: %v", s, e.wg.calls)
+	}
+}
+
+func TestPunchIgnoredForDirectPeer(t *testing.T) {
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.handshake(peerA.PublicKey)
+	e.advance(5 * time.Second)
+	e.wg.calls = nil
+	e.punch(punchEP, e.now)
+	e.punch(punchEP, e.now.Add(2*time.Second))
+	for range 12 {
+		e.advance(time.Second)
+	}
+	if slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.HasPrefix(c, "wg set") }) {
+		t.Fatalf("punch reconfigured a direct peer: %v", e.wg.calls)
+	}
+}
+
+func TestPunchRejectsInvalidEndpoint(t *testing.T) {
+	for _, ep := range []string{"10.198.0.5:51822", "[2606:4700::1%eth0]:51822", "x;reboot", "198.51.100.20", "198.51.100.20:0"} {
+		e := relayedEnv(t)
+		e.punch(ep, e.now)
+		e.advance(2 * time.Second)
+		for _, c := range e.wg.calls {
+			if strings.Contains(c, "persistent-keepalive 1") || strings.Contains(c, ep) {
+				t.Fatalf("invalid endpoint %q punched: %q", ep, c)
+			}
+		}
+	}
+}
+
+func TestPunchIgnoredForUnknownPeer(t *testing.T) {
+	e := relayedEnv(t)
+	e.m.punch(proto.Punch{NodeID: "other-org", Endpoint: punchEP, At: e.now}, e.now)
+	e.advance(2 * time.Second)
+	if slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.HasPrefix(c, "wg set") }) {
+		t.Fatalf("punch for a node outside the peer set applied: %v", e.wg.calls)
+	}
+}
+
+func TestPunchClockSkewGuard(t *testing.T) {
+	for name, tc := range map[string]struct {
+		offset time.Duration
+		want   bool
+	}{
+		"far future":  {31 * time.Second, false},
+		"far past":    {-31 * time.Second, false},
+		"past window": {-10 * time.Second, false},
+		"near future": {29 * time.Second, true},
+		"in window":   {-5 * time.Second, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := relayedEnv(t)
+			at := e.now.Add(tc.offset)
+			e.punch(punchEP, at)
+			for range 30 {
+				e.advance(time.Second)
+			}
+			if got := e.wg.took(punchSet(peerA, punchEP)); got != tc.want {
+				t.Fatalf("punched = %v, want %v: %v", got, tc.want, e.wg.calls)
+			}
+		})
+	}
+	e := relayedEnv(t)
+	e.punch(punchEP, e.now.Add(-5*time.Second))
+	if !e.wg.took(punchSet(peerA, punchEP)) {
+		t.Fatalf("punch inside its window not started at once: %v", e.wg.calls)
+	}
+	e.advance(4 * time.Second)
+	if e.wg.took(keepalive25(peerA)) {
+		t.Fatal("late punch ended early")
+	}
+	e.advance(time.Second)
+	if !e.wg.took(keepalive25(peerA)) {
+		t.Fatalf("late punch window not kept to its start time: %v", e.wg.calls)
+	}
+}
+
+func TestAgentAppliesPunch(t *testing.T) {
+	e := relayedEnv(t)
+	a := &Agent{mesh: e.m}
+	a.handle(t.Context(), proto.Message{Type: proto.TypePunch, Punch: &proto.Punch{NodeID: "a", Endpoint: punchEP, At: e.now}}, nil)
+	if !e.wg.took(punchSet(peerA, punchEP)) {
+		t.Fatalf("punch message not applied: %v", e.wg.calls)
+	}
+}
