@@ -2,19 +2,23 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
+	"github.com/asterism-dev/observatory/internal/platform/outbox"
 )
 
 type ActorKind string
 
 const (
 	ActorUser   ActorKind = "user"
-	ActorVM     ActorKind = "vm"
 	ActorNode   ActorKind = "node"
 	ActorSystem ActorKind = "system"
 )
@@ -34,7 +38,6 @@ const (
 	ActionSessionRevoke       = "iam.sessions.revoke"
 	ActionOrgCreate           = "iam.orgs.create"
 	ActionPlatformGrantAdmin  = "iam.platformAdmins.create"
-	ActionAuditRead           = "audit.events.list"
 	ActionOrgUpdate           = "iam.orgs.update"
 	ActionMemberInvite        = "iam.invites.create"
 	ActionInviteRevoke        = "iam.invites.delete"
@@ -109,8 +112,6 @@ const (
 )
 
 type AuditEntry struct {
-	ID        int64
-	At        time.Time
 	ActorKind ActorKind
 	ActorID   string
 	OrgID     *uuid.UUID
@@ -122,19 +123,7 @@ type AuditEntry struct {
 	Details   map[string]any
 }
 
-type AuditFilter struct {
-	ActorID, Action string
-	OrgID           *uuid.UUID
-	From, To        time.Time
-	Before          int64
-	Limit           int
-}
-
-const (
-	defaultAuditLimit = 50
-	maxAuditLimit     = 200
-	maxTextBytes      = 512
-)
+const maxTextBytes = 512
 
 // SanitizeText makes client-controlled text storable: valid UTF-8, no control characters (Postgres rejects NUL), at most 512 bytes.
 func SanitizeText(s string) string {
@@ -150,6 +139,12 @@ func SanitizeText(s string) string {
 	return s
 }
 
+var (
+	actorKinds = map[ActorKind]eventsv1.ActorKind{ActorUser: eventsv1.ActorKind_ACTOR_KIND_USER, ActorNode: eventsv1.ActorKind_ACTOR_KIND_NODE, ActorSystem: eventsv1.ActorKind_ACTOR_KIND_SYSTEM}
+	results    = map[Result]eventsv1.Result{ResultAllowed: eventsv1.Result_RESULT_ALLOWED, ResultDenied: eventsv1.Result_RESULT_DENIED, ResultFailed: eventsv1.Result_RESULT_FAILED}
+)
+
+// Audit writes e as an audit event to the outbox, in s's transaction if it has one, so it is published only if that commits.
 func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 	details := make(map[string]any, len(e.Details))
 	for k, v := range e.Details {
@@ -158,71 +153,23 @@ func (s *Store) Audit(ctx context.Context, e AuditEntry) error {
 		}
 		details[k] = v
 	}
-	e.Details = details
-	e.UserAgent = SanitizeText(e.UserAgent)
-	_, err := s.q.Exec(ctx, `
-		INSERT INTO audit_log (actor_kind, actor_id, org_id, action, resource, result, ip, user_agent, details)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		e.ActorKind, e.ActorID, e.OrgID, e.Action, e.Resource, e.Result, e.IP, e.UserAgent, e.Details)
-	return err
-}
-
-func (s *Store) AuditEntries(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
-	var (
-		where []string
-		args  []any
-	)
-	add := func(cond string, v any) {
-		args = append(args, v)
-		where = append(where, fmt.Sprintf(cond, len(args)))
-	}
-	if f.ActorID != "" {
-		add("actor_id = $%d", f.ActorID)
-	}
-	if f.Action != "" {
-		add("action = $%d", f.Action)
-	}
-	if f.OrgID != nil {
-		add("org_id = $%d", *f.OrgID)
-	}
-	if !f.From.IsZero() {
-		add("at >= $%d", f.From)
-	}
-	if !f.To.IsZero() {
-		add("at < $%d", f.To)
-	}
-	if f.Before > 0 {
-		add("id < $%d", f.Before)
-	}
-	limit := f.Limit
-	if limit <= 0 {
-		limit = defaultAuditLimit
-	}
-	limit = min(limit, maxAuditLimit)
-	args = append(args, limit)
-
-	query := "SELECT id, at, actor_kind, actor_id, org_id, action, resource, result, ip, user_agent, details FROM audit_log"
-	for i, w := range where {
-		if i == 0 {
-			query += " WHERE " + w
-		} else {
-			query += " AND " + w
-		}
-	}
-	query += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
-
-	rows, err := s.q.Query(ctx, query, args...)
+	// A JSON round trip turns UUIDs, slices and structs into values a Struct can hold, as the jsonb column did.
+	b, err := json.Marshal(details)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("audit details: %w", err)
 	}
-	defer rows.Close()
-	var out []AuditEntry
-	for rows.Next() {
-		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.At, &e.ActorKind, &e.ActorID, &e.OrgID, &e.Action, &e.Resource, &e.Result, &e.IP, &e.UserAgent, &e.Details); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
+	var plain map[string]any
+	if err := json.Unmarshal(b, &plain); err != nil {
+		return fmt.Errorf("audit details: %w", err)
 	}
-	return out, rows.Err()
+	st, err := structpb.NewStruct(plain)
+	if err != nil {
+		return fmt.Errorf("audit details: %w", err)
+	}
+	ev := &eventsv1.Event{Type: e.Action, Actor: &eventsv1.Actor{Kind: actorKinds[e.ActorKind], Id: e.ActorID}, Resource: e.Resource,
+		Result: results[e.Result], ClientIp: e.IP, UserAgent: SanitizeText(e.UserAgent), Details: st, Audit: true}
+	if e.OrgID != nil {
+		ev.Org = e.OrgID.String()
+	}
+	return pgx.BeginFunc(ctx, s.q, func(tx pgx.Tx) error { return outbox.Write(ctx, tx, ev) })
 }

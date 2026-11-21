@@ -92,20 +92,11 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
-// serveAll runs the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens that live only in this process.
+// serveAll runs the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
 	token := rand.Text() + rand.Text()
 	serviceToken := rand.Text() + rand.Text()
 	auditToken := rand.Text() + rand.Text()
-	hubEnv := func(k string) string {
-		switch k {
-		case "OBSERVATORY_EDGE_TOKEN":
-			return token
-		case "OBSERVATORY_SERVICE_TOKENS":
-			return "edge=" + serviceToken + ",audit=" + auditToken
-		}
-		return getenv(k)
-	}
 	auditCfg := auditConfig(getenv)
 	auditCfg.ServiceToken = auditToken
 	if auditCfg.NATSURL == "" {
@@ -115,6 +106,19 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 			return err
 		}
 		defer stop()
+	}
+	hubEnv := func(k string) string {
+		switch k {
+		case "OBSERVATORY_EDGE_TOKEN":
+			return token
+		case "OBSERVATORY_SERVICE_TOKENS":
+			return "edge=" + serviceToken + ",audit=" + auditToken
+		case "OBSERVATORY_NATS_URL":
+			return auditCfg.NATSURL
+		case "OBSERVATORY_NATS_TOKEN":
+			return auditCfg.NATSToken
+		}
+		return getenv(k)
 	}
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	auditSvc := svcrun.Service{Name: "audit", Run: func(ctx context.Context, ln net.Listener) error { return audit.Run(ctx, auditCfg, ln) }}

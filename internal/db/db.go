@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+
+	"github.com/asterism-dev/observatory/internal/platform/outbox"
 )
 
 //go:embed migrations/*.sql
@@ -35,11 +37,7 @@ func Migrate(ctx context.Context, url string) error {
 	conn := stdlib.OpenDB(*cfg)
 	defer conn.Close()
 
-	migrationsFS, err := fs.Sub(migrations, "migrations")
-	if err != nil {
-		return err
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, conn, migrationsFS)
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, Migrations())
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}
@@ -47,4 +45,10 @@ func Migrate(ctx context.Context, url string) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	return nil
+}
+
+// Migrations is the hub's migration set, with the shared outbox table as 00034.
+func Migrations() fs.FS {
+	sub, _ := fs.Sub(migrations, "migrations") // A constant valid path, so Sub cannot fail.
+	return outbox.Migrations(sub, 34)
 }

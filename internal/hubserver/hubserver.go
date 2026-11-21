@@ -23,6 +23,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/release"
@@ -50,6 +52,19 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	defer pool.Close()
+	js, closeBus, err := bus.Connect(ctx, cfg.NATSURL, cfg.NATSToken)
+	if err != nil {
+		return err
+	}
+	defer closeBus()
+	if err := bus.EnsureStream(ctx, js); err != nil {
+		return err
+	}
+	relayCtx, stopRelay := context.WithCancel(ctx)
+	relayDone := make(chan struct{})
+	go func() { outbox.NewRelay(pool, js).Run(relayCtx); close(relayDone) }()
+	// The relay must stop before the pool and the bus close under it, also when Run fails before ctx ends.
+	defer func() { stopRelay(); <-relayDone }()
 
 	oidc, err := auth.NewOIDC(ctx, cfg.Issuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
 	if err != nil {

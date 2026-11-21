@@ -267,17 +267,3 @@ func (h *api) renameOrg(w http.ResponseWriter, r *http.Request) {
 	m.Org.Name = name
 	writeJSON(w, http.StatusOK, toOrgJSON(m))
 }
-
-func (h *api) orgAudit(w http.ResponseWriter, r *http.Request) {
-	m, ok := h.orgFromPath(w, r)
-	if !ok || !h.authorize(w, r, m.Org.ID, authz.ObjAudit, "audit.events.list") {
-		return
-	}
-	f, err := auditFilter(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	f.OrgID = &m.Org.ID
-	h.writeAuditPage(w, r, f)
-}

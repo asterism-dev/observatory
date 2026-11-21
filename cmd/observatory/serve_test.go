@@ -16,9 +16,11 @@ import (
 
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
+	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestServeRejectsUnknownService(t *testing.T) {
@@ -108,7 +110,7 @@ func TestServeHubListensOnHubListen(t *testing.T) {
 	}
 }
 
-// TestServeAllRecordsClientIPThroughEdge runs the real edge, hub and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
+// TestServeAllRecordsClientIPThroughEdge runs the real edge, hub, bus and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
 func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	edgeLn, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
@@ -156,6 +158,21 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bob, err := s.Login(t.Context(), store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, _, err := s.CreateInvite(t.Context(), org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AcceptInvite(t.Context(), inv, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	bobSession, _, err := s.CreateSession(t.Context(), bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -179,37 +196,66 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		}
 	}
 
-	rows, err := pool.Query(t.Context(), "SELECT ip FROM audit_log WHERE action = $1 ORDER BY id", store.ActionAuthLogin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ips []string
-	for rows.Next() {
-		var ip string
-		if err := rows.Scan(&ip); err != nil {
-			t.Fatal(err)
-		}
-		ips = append(ips, ip)
+	ips := []string{}
+	for _, e := range storetest.Audit(t, pool, store.ActionAuthLogin) {
+		ips = append(ips, e.IP)
 	}
 	if len(ips) != 2 || ips[0] != "::1" || ips[1] != "::1" {
 		t.Fatalf("audited IPs %v, want the edge's ::1 twice", ips)
 	}
 
-	auditClient := auditv1connect.NewAuditServiceClient(client, "http://"+edgeLn.Addr().String()+"/api/audit/v1")
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		req := connect.NewRequest(&auditv1.ListEventsRequest{Org: org.ID.String()})
-		req.Header().Set("Authorization", "Bearer "+session)
-		_, err := auditClient.ListEvents(t.Context(), req)
-		if err == nil {
-			break
+	invite := func(token string) int {
+		req, _ := http.NewRequest("POST", "http://"+edgeLn.Addr().String()+"/api/orgs/"+org.ID.String()+"/invites", strings.NewReader(`{"role":"member"}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Observatory", "1")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
 		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := invite(session); code != http.StatusCreated {
+		t.Fatalf("owner invite: %d", code)
+	}
+	if code := invite(bobSession); code != http.StatusForbidden {
+		t.Fatalf("member invite: %d", code)
+	}
+
+	// The hub's events reach the audit service through its outbox, the relay and the bus.
+	auditClient := auditv1connect.NewAuditServiceClient(client, "http://"+edgeLn.Addr().String()+"/api/audit/v1")
+	var allowed, denied *eventsv1.Event
+	deadline := time.Now().Add(15 * time.Second)
+	for allowed == nil || denied == nil {
+		req := connect.NewRequest(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: store.ActionMemberInvite}})
+		req.Header().Set("Authorization", "Bearer "+session)
+		resp, err := auditClient.ListEvents(t.Context(), req)
 		// Unavailable until the audit service has its first policy snapshot from the hub.
-		if connect.CodeOf(err) != connect.CodeUnavailable || time.Now().After(deadline) {
+		if err != nil && connect.CodeOf(err) != connect.CodeUnavailable {
 			cancel()
 			t.Fatalf("audit through the edge: %v", err)
 		}
+		if err == nil {
+			for _, e := range resp.Msg.GetEvents() {
+				switch e.GetResult() {
+				case eventsv1.Result_RESULT_ALLOWED:
+					allowed = e
+				case eventsv1.Result_RESULT_DENIED:
+					denied = e
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("invite events not in the audit trail: allowed %v, denied %v", allowed, denied)
+		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if allowed.GetActor().GetId() != alice.User.ID.String() || allowed.GetOrg() != org.ID.String() || allowed.GetClientIp() != "::1" {
+		t.Fatalf("allowed invite event %v", allowed)
+	}
+	if denied.GetActor().GetId() != bob.User.ID.String() || denied.GetOrg() != org.ID.String() || denied.GetClientIp() != "::1" {
+		t.Fatalf("denied invite event %v", denied)
 	}
 
 	cancel()

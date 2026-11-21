@@ -48,6 +48,8 @@ services:
       OBSERVATORY_REGISTRY_CONFIG: /etc/distribution/config.yml
       OBSERVATORY_METRICS_URL: http://victoriametrics:8428
       OBSERVATORY_LOGS_URL: http://victorialogs:9428
+      OBSERVATORY_NATS_URL: nats://nats:4222
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
     volumes:
       - registry-keys:/keys
       - registry-certs:/certs
@@ -56,6 +58,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_started
   # Stores the audit trail from the event bus and serves it on 8092 to the edge (/api/audit/v1/); not published.
   audit:
     <<: *observatory

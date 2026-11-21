@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -84,7 +83,6 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("POST /api/me/ssh-keys", h.addSSHKey)
 	mux.HandleFunc("DELETE /api/me/ssh-keys/{id}", h.deleteSSHKey)
 	mux.HandleFunc("POST /api/registry/credentials", h.createRegistryCredential)
-	mux.HandleFunc("GET /api/admin/audit", h.adminAudit)
 	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
 	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
 	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
@@ -97,7 +95,6 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("POST /api/orgs", h.createOrg)
 	mux.HandleFunc("GET /api/orgs/{org}", h.getOrg)
 	mux.HandleFunc("PATCH /api/orgs/{org}", h.renameOrg)
-	mux.HandleFunc("GET /api/orgs/{org}/audit", h.orgAudit)
 	mux.HandleFunc("GET /api/orgs/{org}/members", h.listMembers)
 	mux.HandleFunc("PATCH /api/orgs/{org}/members/{user}", h.setMemberRole)
 	mux.HandleFunc("DELETE /api/orgs/{org}/members/{user}", h.removeMember)
@@ -314,89 +311,6 @@ func (h *api) revokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *api) adminAudit(w http.ResponseWriter, r *http.Request) {
-	p, _ := auth.PrincipalFrom(r.Context())
-	if !p.User.PlatformAdmin {
-		ip, ua := auth.RequestMeta(r)
-		if err := h.store.Audit(r.Context(), store.AuditEntry{
-			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionAuditRead,
-			Resource: "audit", Result: store.ResultDenied, IP: ip, UserAgent: ua,
-		}); err != nil {
-			slog.Error("audit denied audit read", "user", p.User.ID, "err", err)
-		}
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	f, err := auditFilter(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	h.writeAuditPage(w, r, f)
-}
-
-func (h *api) writeAuditPage(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
-	entries, err := h.store.AuditEntries(r.Context(), f)
-	if err != nil {
-		serverError(w, "audit entries", err)
-		return
-	}
-	type entryJSON struct {
-		ID        int64           `json:"id"`
-		At        time.Time       `json:"at"`
-		ActorKind store.ActorKind `json:"actorKind"`
-		ActorID   string          `json:"actorId"`
-		OrgID     *uuid.UUID      `json:"orgId"`
-		Action    string          `json:"action"`
-		Resource  string          `json:"resource"`
-		Result    store.Result    `json:"result"`
-		IP        string          `json:"ip"`
-		UserAgent string          `json:"userAgent"`
-		Details   map[string]any  `json:"details"`
-	}
-	out := make([]entryJSON, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, entryJSON{e.ID, e.At, e.ActorKind, e.ActorID, e.OrgID, e.Action, e.Resource, e.Result, e.IP, e.UserAgent, e.Details})
-	}
-	var next *int64
-	if len(entries) == f.Limit {
-		next = &entries[len(entries)-1].ID
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": out, "next": next})
-}
-
-func auditFilter(r *http.Request) (store.AuditFilter, error) {
-	q := r.URL.Query()
-	f := store.AuditFilter{ActorID: q.Get("actor"), Action: q.Get("action"), Limit: 50}
-	var err error
-	if v := q.Get("org"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			return f, errors.New("invalid org")
-		}
-		f.OrgID = &id
-	}
-	for key, dst := range map[string]*time.Time{"from": &f.From, "to": &f.To} {
-		if v := q.Get(key); v != "" {
-			if *dst, err = time.Parse(time.RFC3339, v); err != nil {
-				return f, errors.New("invalid " + key)
-			}
-		}
-	}
-	if v := q.Get("before"); v != "" {
-		if f.Before, err = strconv.ParseInt(v, 10, 64); err != nil || f.Before < 1 {
-			return f, errors.New("invalid before")
-		}
-	}
-	if v := q.Get("limit"); v != "" {
-		if f.Limit, err = strconv.Atoi(v); err != nil || f.Limit < 1 {
-			return f, errors.New("invalid limit")
-		}
-		f.Limit = min(f.Limit, 200)
-	}
-	return f, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

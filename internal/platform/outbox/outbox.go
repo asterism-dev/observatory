@@ -30,7 +30,8 @@ const (
 	batchSize      = 100
 )
 
-var eventType = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$`)
+// Segments may be camelCase like the permission names they mirror (iam.members.setRole).
+var eventType = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*(\.[a-z][a-zA-Z0-9_]*)*$`)
 
 //go:embed migrations/outbox.sql
 var migrationFS embed.FS

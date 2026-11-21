@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/auth"
@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 	"github.com/asterism-dev/observatory/internal/version"
 )
 
@@ -116,11 +117,12 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 
 func (e *env) audit(action string) []store.AuditEntry {
 	e.t.Helper()
-	es, err := e.store.AuditEntries(context.Background(), store.AuditFilter{Action: action})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return es
+	return storetest.Audit(e.t, e.pool, action)
+}
+
+// canReadAudit is the check the audit service makes for the org's trail.
+func (e *env) canReadAudit(user, org uuid.UUID) bool {
+	return e.z.Enforcer().Allowed(authz.UserSubject(user), org, authz.ObjAudit, "audit.events.list")
 }
 
 func TestMe(t *testing.T) {
@@ -229,61 +231,6 @@ func TestSessionsListAndRevoke(t *testing.T) {
 	}
 }
 
-func TestAdminAudit(t *testing.T) {
-	e := newEnv(t)
-	_, adminTok := e.user("alice")
-	bob, userTok := e.user("bob")
-
-	for range 4 {
-		if err := e.store.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorSystem, Action: "test:seed", Result: store.ResultAllowed}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var page struct {
-		Entries []struct {
-			ID     int64
-			Action string
-		}
-		Next *int64
-	}
-	rec := e.do("GET", "/api/admin/audit?limit=2", adminTok)
-	if rec.Code != 200 {
-		t.Fatalf("admin: %d %s", rec.Code, rec.Body.String())
-	}
-	decode(t, rec, &page)
-	if len(page.Entries) != 2 || page.Next == nil || *page.Next != page.Entries[1].ID {
-		t.Fatalf("page 1: %s", rec.Body.String())
-	}
-	var page2 struct {
-		Entries []struct{ ID int64 }
-		Next    *int64
-	}
-	decode(t, e.do("GET", "/api/admin/audit?limit=2&before="+strconv.FormatInt(*page.Next, 10), adminTok), &page2)
-	if len(page2.Entries) == 0 || page2.Entries[0].ID >= *page.Next {
-		t.Fatalf("page 2: %+v", page2)
-	}
-
-	rec = e.do("GET", "/api/admin/audit?action=nothing", adminTok)
-	if !strings.Contains(rec.Body.String(), `"entries":[]`) || !strings.Contains(rec.Body.String(), `"next":null`) {
-		t.Fatalf("empty: %s", rec.Body.String())
-	}
-
-	rec = e.do("GET", "/api/admin/audit", userTok)
-	if rec.Code != 403 {
-		t.Fatalf("non-admin: %d", rec.Code)
-	}
-	es := e.audit("audit.events.list")
-	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != bob.ID.String() {
-		t.Fatalf("denied audit: %+v", es)
-	}
-
-	for _, q := range []string{"limit=abc", "limit=0", "before=x", "from=yesterday", "org=zzz"} {
-		if rec := e.do("GET", "/api/admin/audit?"+q, adminTok); rec.Code != 400 {
-			t.Fatalf("%s: %d", q, rec.Code)
-		}
-	}
-}
-
 func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	e := newEnv(t)
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
@@ -299,20 +246,5 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/me", nil))
 	if rec.Code != 401 {
 		t.Fatalf("/api/me unauthenticated: %d", rec.Code)
-	}
-}
-
-func TestAuditFilterByNewAction(t *testing.T) {
-	e := newEnv(t)
-	_, adminTok := e.user("alice")
-	for _, a := range []string{store.ActionVMDeleteAfter, store.ActionAuthLogin} {
-		if err := e.store.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorSystem, Action: a, Result: store.ResultAllowed}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var page struct{ Entries []struct{ Action string } }
-	decode(t, e.do("GET", "/api/admin/audit?action=compute.instances.setDeleteAfter", adminTok), &page)
-	if len(page.Entries) != 1 || page.Entries[0].Action != "compute.instances.setDeleteAfter" {
-		t.Fatalf("filter: %+v", page.Entries)
 	}
 }

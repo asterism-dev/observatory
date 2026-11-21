@@ -82,7 +82,7 @@ Global flags: `--hub URL`, `--org NAME|ID`, `--json`, `--yes`/`-y`, `--timeout D
 |---|---|
 | `org list` / `org use <org>` / `org show` | your orgs; set the default; the current org and your permissions |
 | `org create <name>` / `org rename <name>` | create an org; rename the current one |
-| `org audit [--limit N] [--action A] [--actor ID] [--since 24h]` | the audit log (`--json` includes `next` for paging) |
+| `org audit [--limit N] [--action A] [--actor ID] [--since 24h]` | the audit log from the audit service (`--json` prints its response, `nextPageToken` for paging) |
 
 ### VMs
 
@@ -184,7 +184,7 @@ VM after `vm restart --wait`), and actions without a body print nothing. List en
 ```
 observatory vm list --json | jq -r '.vms[] | select(.state=="running") | .name'
 observatory vm show dev --json | jq -r .state
-observatory org audit --since 24h --json | jq -r '.entries[] | [.action, .result] | @tsv'
+observatory org audit --since 24h --json | jq -r '.events[] | [.type, .result] | @tsv'
 ```
 
 stdout carries only the result; prompts, warnings, `--wait` progress (on a terminal) and errors

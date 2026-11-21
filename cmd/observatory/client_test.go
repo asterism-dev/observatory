@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"net/url"
+	"io"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -155,24 +157,44 @@ func TestOrgSelectionPrecedence(t *testing.T) {
 	}
 }
 
+const listEventsPath = "/api/audit/v1/observatory.audit.v1.AuditService/ListEvents"
+
 func TestOrgAuditQuery(t *testing.T) {
 	h := newFakeHub(t)
 	meOneOrg(h)
-	h.on("GET /api/orgs/o1/audit", 200, `{"entries":[{"id":7,"at":"2026-11-19T13:58:00Z","actorKind":"user","actorId":"u1","orgId":"o1","action":"vm.delete","resource":"vm/v1","result":"allowed","ip":"","userAgent":"","details":null}],"next":null}`)
+	h.onFunc("POST "+listEventsPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-Type") != "application/json" {
+			http.Error(w, "content type "+r.Header.Get("Content-Type"), http.StatusUnsupportedMediaType)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"events":[{"id":"0190f5a2-7c3b-7d4e-8f60-123456789abc","time":"2026-11-19T13:58:00Z","type":"compute.instances.delete","org":"o1","actor":{"kind":"ACTOR_KIND_USER","id":"u1"},"resource":"vm/v1","result":"RESULT_DENIED","clientIp":"203.0.113.7","audit":true}],"nextPageToken":"n"}`)
+	})
 	c, stdout, _ := newTestCLI(t, h)
-	if code := run(c, []string{"org", "audit", "--limit", "5", "--action", "vm.delete", "--since", "1h"}); code != 0 {
+	if code := run(c, []string{"org", "audit", "--limit", "5", "--action", "compute.instances.delete", "--actor", "u1", "--since", "1h"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	q, err := url.ParseQuery(h.calls("GET /api/orgs/o1/audit")[0].Query)
-	if err != nil {
+	call := h.calls("POST " + listEventsPath)[0]
+	var got map[string]any
+	if err := json.Unmarshal([]byte(call.Body), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := url.Values{"limit": {"5"}, "action": {"vm.delete"}, "from": {testNow.Add(-time.Hour).Format(time.RFC3339)}}
-	if q.Encode() != want.Encode() {
-		t.Fatalf("query %v, want %v", q, want)
+	want := map[string]any{"org": "o1", "pageSize": 5.0, "filter": map[string]any{"type": "compute.instances.delete", "actorId": "u1", "from": testNow.Add(-time.Hour).Format(time.RFC3339)}}
+	if !reflect.DeepEqual(got, want) || call.Auth != "Bearer tok-test" {
+		t.Fatalf("request %s (auth %q), want %v", call.Body, call.Auth, want)
 	}
-	if !strings.Contains(stdout.String(), "vm.delete") || !strings.Contains(stdout.String(), "5 min ago") {
-		t.Errorf("stdout %q", stdout.String())
+	if out := stdout.String(); !strings.Contains(out, "compute.instances.delete") || !strings.Contains(out, "5 min ago") || !strings.Contains(out, "denied") || !strings.Contains(out, "u1") {
+		t.Errorf("stdout %q", out)
+	}
+}
+
+func TestOrgAuditConnectError(t *testing.T) {
+	h := newFakeHub(t)
+	meOneOrg(h)
+	h.on("POST "+listEventsPath, http.StatusForbidden, `{"code":"permission_denied","message":"permission denied"}`)
+	c, _, stderr := newTestCLI(t, h)
+	if code := run(c, []string{"org", "audit"}); code != 4 || !strings.Contains(stderr.String(), "permission denied") || strings.Contains(stderr.String(), "{") {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
 

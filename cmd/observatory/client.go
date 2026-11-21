@@ -124,8 +124,12 @@ func (c *cli) do(method, path, bearer string, body, into any) error {
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		var e struct{ Error, Code string }
-		if json.Unmarshal(b, &e) != nil || e.Error == "" {
+		// The hub answers {"error"}, Connect services {"code","message"}.
+		var e struct{ Error, Code, Message string }
+		if json.Unmarshal(b, &e) == nil && e.Error == "" {
+			e.Error = e.Message
+		}
+		if e.Error == "" {
 			e.Error = strings.TrimSpace(string(b[:min(len(b), 512)]))
 		}
 		return &apiError{resp.StatusCode, e.Error, e.Code}

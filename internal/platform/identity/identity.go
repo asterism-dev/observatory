@@ -45,6 +45,18 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
+type clientIPKey struct{}
+
+// WithClientIP records the edge's client IP header of a call whose JWT verified.
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+func ClientIP(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey{}).(string)
+	return ip
+}
+
 type claims struct {
 	jwt.RegisteredClaims
 	Session       string `json:"sid"`

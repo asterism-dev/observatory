@@ -86,7 +86,8 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
 - Hub: `OBSERVATORY_HUB_URL` (internal hub address for signing keys and the policy stream), `OBSERVATORY_PUBLIC_URL`
   (token issuer) and `OBSERVATORY_SERVICE_TOKEN`. In compose that token is `OBSERVATORY_AUDIT_SERVICE_TOKEN`, which the
   hub also gets as `audit=<token>` in `OBSERVATORY_SERVICE_TOKENS`.
-- Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`. The durable consumer `audit` acknowledges an event only once
+- Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`, which the hub needs too: it writes its audit events to its
+  `outbox` table and relays them to the bus, retrying while the bus is down. The durable consumer `audit` acknowledges an event only once
   it is stored; a redelivered event is stored once (by event id).
 - `audit.events` is append-only: a trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Only the daily retention job
   deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than 365 days are

@@ -135,11 +135,7 @@ func noSecrets(t *testing.T, what, s string) {
 
 func (e *env) allAudit() []store.AuditEntry {
 	e.t.Helper()
-	es, err := e.store.AuditEntries(context.Background(), store.AuditFilter{Limit: 1000})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return es
+	return e.audit("")
 }
 
 func (e *env) noSecretsInAudit() {

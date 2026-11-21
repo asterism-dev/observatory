@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
@@ -76,7 +77,8 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 		return nil, errBadAnnotation()
 	}
 	m := msg.ProtoReflect()
-	ctx = identity.WithPrincipal(ctx, p)
+	// Only now: the header is the edge's, and a verified JWT means the call came through it (or holds a leaked token).
+	ctx = identity.WithClientIP(identity.WithPrincipal(ctx, p), req.Header().Get(clientip.HeaderClientIP))
 	orgField := m.Descriptor().Fields().ByName("org")
 	if orgField == nil {
 		return ctx, platformScope(p, perm, m)

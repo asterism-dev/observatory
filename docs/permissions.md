@@ -297,7 +297,9 @@ the services within about a minute. Services verify the token offline against th
   stream only.
 - The hub publishes one signing key today. The key set is a list so a previous key can stay published during a
   rotation, which comes later.
-- Services see neither the edge token nor the edge's client IP header; those go to the hub only.
+- Services never see the edge token. The edge overwrites `X-Observatory-Client-IP` on every request, and a service
+  records it only for a call whose identity token verified. Limitation: a leaked identity token (at most 5.5 minutes)
+  could be used to forge the client IP in the audit trail.
 
 Every RPC carries a permission annotation: a permission name (`service.resource.verb`), an object pattern and a kind.
 The service's interceptor checks it before the handler runs:
@@ -312,8 +314,9 @@ The service's interceptor checks it before the handler runs:
 
 ## Audit
 
-Every state change writes an audit row in the same transaction. Every denied authorization writes a row
-with result `denied`, actor, org, action and object. A denied row carries the same action name as the allowed one,
+Every state change writes an audit event to the hub's outbox in the same transaction, so it is published only if the
+change commits; the relay delivers it over the event bus to the audit service, which serves the trail at
+`/api/audit/v1/`. Every denied authorization writes an event with result `denied`, actor, org, action and object. A denied row carries the same action name as the allowed one,
 so consumers must filter on `result` when they count what happened.
 
 ## Not yet built

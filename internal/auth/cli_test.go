@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func (e *env) cliToken(body string) *httptest.ResponseRecorder {
@@ -62,11 +63,7 @@ func TestCLITokenRejectsInvalid(t *testing.T) {
 	if !e.actions(store.ResultFailed)[store.ActionAuthCLILogin] {
 		t.Fatal("no failed audit")
 	}
-	entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, en := range entries {
+	for _, en := range storetest.Audit(t, e.pool, "") {
 		if d, _ := json.Marshal(en.Details); strings.Contains(string(d), "secret-detail") || strings.Contains(string(d), "bad") {
 			t.Fatalf("audit leaks verifier error: %s", d)
 		}

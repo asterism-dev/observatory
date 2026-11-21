@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/asterism-dev/observatory/internal/version"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
+	"github.com/asterism-dev/observatory/internal/version"
 )
 
 func cmdLogin(c *cli, args []string) error {
@@ -256,57 +259,40 @@ func cmdOrgRename(c *cli, args []string) error {
 
 func cmdOrgAudit(c *cli, args []string) error {
 	fs := c.flags("org audit")
-	limit := fs.Int("limit", 0, "at most `N` entries (hub default 50, max 200)")
+	limit := fs.Int("limit", 0, "at most `N` entries (default 50, max 200)")
 	action := fs.String("action", "", "only this action, e.g. compute.instances.delete")
 	actor := fs.String("actor", "", "only this actor `ID`")
 	since := fs.Duration("since", 0, "only entries newer than this, e.g. 24h")
 	if _, err := c.parse(fs, args, 0, 0); err != nil {
 		return err
 	}
-	q := url.Values{}
-	if *limit > 0 {
-		q.Set("limit", strconv.Itoa(*limit))
-	}
-	if *action != "" {
-		q.Set("action", *action)
-	}
-	if *actor != "" {
-		q.Set("actor", *actor)
-	}
-	if *since > 0 {
-		q.Set("from", c.now().Add(-*since).UTC().Format(time.RFC3339))
-	}
-	path, err := c.orgPath("/audit")
+	o, err := c.currentOrg()
 	if err != nil {
 		return err
 	}
-	if len(q) > 0 {
-		path += "?" + q.Encode()
+	req := &auditv1.ListEventsRequest{Org: o.ID, PageSize: int32(min(max(*limit, 0), 200)), Filter: &auditv1.EventFilter{Type: *action, ActorId: *actor}}
+	if *since > 0 {
+		req.Filter.From = timestamppb.New(c.now().Add(-*since))
+	}
+	body, err := protojson.Marshal(req)
+	if err != nil {
+		return err
 	}
 	var raw json.RawMessage
-	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
+	if err := c.call(http.MethodPost, "/api/audit/v1/observatory.audit.v1.AuditService/ListEvents", json.RawMessage(body), &raw); err != nil {
 		return err
 	}
-	var page struct {
-		Entries []struct {
-			At        time.Time `json:"at"`
-			ActorKind string    `json:"actorKind"`
-			ActorID   string    `json:"actorId"`
-			Action    string    `json:"action"`
-			Resource  string    `json:"resource"`
-			Result    string    `json:"result"`
-		} `json:"entries"`
-	}
-	if err := json.Unmarshal(raw, &page); err != nil {
+	var resp auditv1.ListEventsResponse
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, &resp); err != nil {
 		return err
 	}
-	rows := make([][]string, 0, len(page.Entries))
-	for _, e := range page.Entries {
-		actor := e.ActorID
+	rows := make([][]string, 0, len(resp.GetEvents()))
+	for _, e := range resp.GetEvents() {
+		actor := e.GetActor().GetId()
 		if actor == "" {
-			actor = e.ActorKind
+			actor = strings.ToLower(strings.TrimPrefix(e.GetActor().GetKind().String(), "ACTOR_KIND_"))
 		}
-		rows = append(rows, []string{ago(c.now(), e.At), actor, e.Action, e.Resource, e.Result})
+		rows = append(rows, []string{ago(c.now(), e.GetTime().AsTime()), actor, e.GetType(), e.GetResource(), strings.ToLower(strings.TrimPrefix(e.GetResult().String(), "RESULT_"))})
 	}
 	return c.emit(raw, []string{"time", "actor", "action", "resource", "result"}, rows)
 }
