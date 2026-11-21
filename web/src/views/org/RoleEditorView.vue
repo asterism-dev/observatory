@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { actionSuggestions } from '@/composables/roleActions'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section, Tag } from '@/ui'
@@ -70,11 +71,7 @@ const parentOptions = computed(() =>
 )
 
 const objects = computed(() => [...new Set(catalog.value.map((p) => p.object))])
-const actions = computed(() => {
-  const all = catalog.value.map((p) => p.action)
-  const types = new Set(all.map((a) => a.split(':')[0] + ':*'))
-  return ['*', ...types, ...new Set(all)]
-})
+const actions = computed(() => actionSuggestions(catalog.value.map((p) => p.action)))
 
 // Combobox filters are the caller's job; the typed text is offered as a pick so free-form values work.
 function suggestions(pool: string[], key: string) {
