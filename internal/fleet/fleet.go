@@ -45,6 +45,7 @@ type Fleet struct {
 	diskErrs     map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 	retrying     map[uuid.UUID]bool              // orgs with a pending integrationRetry push
 	imageRetries map[uuid.UUID]imageRetry        // by node
+	healthSeen   map[uuid.UUID]time.Time         // node → last successful health check over the underlay
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
@@ -65,7 +66,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{}, healthSeen: map[uuid.UUID]time.Time{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
@@ -249,7 +250,7 @@ func (f *Fleet) Disconnect(node uuid.UUID) {
 	}
 	f.mu.Unlock()
 	if c != nil {
-		c.sess.Close()
+		c.ws.CloseNow()
 	}
 }
 
@@ -261,7 +262,7 @@ func (f *Fleet) attach(c *conn) {
 	f.conns[c.node] = c
 	f.mu.Unlock()
 	if old != nil {
-		old.sess.Close()
+		old.ws.CloseNow()
 	}
 }
 

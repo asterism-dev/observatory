@@ -416,3 +416,35 @@ func TestNodeUnderlayEndpointNoNetwork(t *testing.T) {
 		t.Fatalf("authenticated: %d", got)
 	}
 }
+
+func TestHealthEndpoint(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	_, cred := e.credentialFor(tok, org, "n1")
+	_, key, _ := wgkey.Generate()
+	var u proto.Underlay
+	decode(t, e.underlay(cred, key, chassisCSR(t)), &u)
+	peer := netip.MustParsePrefix(u.Address).Addr().String()
+	mux := http.NewServeMux()
+	NodeEndpoints(mux, e.store, e.newFleet(), e.net)
+	call := func(h map[string]string) int {
+		req := httptest.NewRequest("GET", "/api/nodes/health", nil)
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	auth := "Bearer " + cred
+	if got := call(map[string]string{"Authorization": auth, proto.HeaderGateway: gatewayToken, proto.HeaderUnderlayPeer: peer}); got != 204 {
+		t.Fatalf("via gateway: %d", got)
+	}
+	if got := call(map[string]string{"Authorization": auth, proto.HeaderUnderlayPeer: peer}); got != 401 {
+		t.Fatalf("direct: %d", got)
+	}
+	if got := call(map[string]string{"Authorization": auth, proto.HeaderGateway: gatewayToken, proto.HeaderUnderlayPeer: "10.198.255.250"}); got != 403 {
+		t.Fatalf("other peer: %d", got)
+	}
+}

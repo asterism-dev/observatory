@@ -5,15 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -30,7 +29,7 @@ var imageRetryMin, imageRetryMax = 30 * time.Second, 5 * time.Minute
 
 type conn struct {
 	node, org uuid.UUID
-	sess      *yamux.Session
+	ws        *websocket.Conn
 	vms       map[string]bool            // IDs of the VMs in the last desired list; guarded by Fleet.mu
 	accounts  map[string]map[string]bool // account IDs by integration ID in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
@@ -52,17 +51,50 @@ func (c *conn) kick() {
 	}
 }
 
-// ServeConnect accepts a node: WebSocket → yamux, the first node-opened stream is the control stream and must start with register.
-func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
+// underlayNode returns the Bearer credential's node, but only for a request the gateway's control proxy forwarded from that node's underlay address; otherwise a status to refuse with.
+func (f *Fleet) underlayNode(r *http.Request) (store.Node, int) {
+	if f.net == nil {
+		return store.Node{}, http.StatusServiceUnavailable
+	}
+	if !f.net.TokenOK(r.Header.Get(proto.HeaderGateway)) {
+		return store.Node{}, http.StatusUnauthorized
+	}
 	cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	node, err := f.store.NodeByCredential(r.Context(), cred)
 	if !ok || errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
+		return store.Node{}, http.StatusUnauthorized
 	}
 	if err != nil {
 		slog.Error("node auth", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		return store.Node{}, http.StatusInternalServerError
+	}
+	// The proxy stamps an empty peer when it cannot parse the remote address; that never matches.
+	peer, err := netip.ParseAddr(r.Header.Get(proto.HeaderUnderlayPeer))
+	if err != nil || !node.UnderlayIP.IsValid() || peer.Unmap() != node.UnderlayIP {
+		slog.Warn("node control from wrong underlay peer", "node", node.ID)
+		return store.Node{}, http.StatusForbidden
+	}
+	return node, http.StatusOK
+}
+
+// ServeHealth answers a node's health check over the underlay and records when it last succeeded.
+func (f *Fleet) ServeHealth(w http.ResponseWriter, r *http.Request) {
+	node, status := f.underlayNode(r)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	f.mu.Lock()
+	f.healthSeen[node.ID] = time.Now()
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ServeConnect accepts a node through the gateway's control proxy: one WebSocket carrying JSON messages, starting with register.
+func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
+	node, status := f.underlayNode(r)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	// The hijacked connection would otherwise keep the server's per-request deadlines.
@@ -73,19 +105,10 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer ws.CloseNow()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Server(websocket.NetConn(ctx, ws, websocket.MessageBinary), cfg)
-	if err != nil {
-		return
-	}
-	defer sess.Close()
-	ctrl, err := sess.Accept()
-	if err != nil {
-		return
-	}
+	ctrl := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	dec := json.NewDecoder(ctrl)
 	var m proto.Message
 	if err := dec.Decode(&m); err != nil || m.Type != "register" || m.Register == nil {
@@ -96,7 +119,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
-	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
+	c := &conn{node: node.ID, org: node.OrgID, ws: ws, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
 		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}}
 	for _, st := range m.Register.VMs {
 		c.seen[st.ID] = true
@@ -105,6 +128,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	defer f.detach(c)
 	defer f.failSnapshots(node.ID)
 	// A Disconnect racing with this handshake ran before attach; recheck so a revoked credential never stays connected.
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if _, err := f.store.NodeByCredential(ctx, cred); err != nil {
 		return
 	}
@@ -220,13 +244,13 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg pr
 			return
 		case <-c.update:
 			if err := enc.Encode(proto.Message{Type: "update"}); err != nil {
-				c.sess.Close()
+				c.ws.CloseNow()
 				return
 			}
 			continue
 		case m := <-c.requests:
 			if err := enc.Encode(m); err != nil {
-				c.sess.Close()
+				c.ws.CloseNow()
 				return
 			}
 			continue
@@ -264,7 +288,7 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg pr
 			}
 		}
 		if err := enc.Encode(proto.Message{Type: "desired", Desired: desired, Seq: seq}); err != nil {
-			c.sess.Close()
+			c.ws.CloseNow()
 			return
 		}
 	}

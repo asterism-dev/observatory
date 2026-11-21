@@ -353,7 +353,7 @@ func TestUpdateFailsWhenNodeOffline(t *testing.T) {
 	e, ns := updEnv(t, "n1", "n2")
 	e.start(ns...)
 	ns[0].conn.awaitUpdate()
-	ns[1].conn.sess.Close()
+	ns[1].conn.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(ns[1].ID) })
 	e.back(ns[0], version.Version)
 	r := e.ended()
@@ -444,7 +444,7 @@ func TestStartUpdateRejects(t *testing.T) {
 	gone, cred := e.node(e.org.ID, "gone")
 	c := e.register(cred, proto.Register{Version: oldVersion, Hypervisor: hv})
 	c.desired()
-	c.sess.Close()
+	c.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(gone.ID) })
 	for _, id := range []uuid.UUID{plain.ID, current.ID, gone.ID} {
 		n := e.storedNode(id)
@@ -540,7 +540,7 @@ func TestUpdateSurvivesReconnectDuringVMWait(t *testing.T) {
 	e.start(ns...)
 	ns[0].conn.awaitUpdate()
 	e.back(ns[0], version.Version)
-	ns[0].conn.sess.Close()
+	ns[0].conn.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(ns[0].ID) })
 	e.back(ns[0], version.Version, running(v))
 	if r := e.ended(); r.State != "done" {

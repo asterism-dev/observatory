@@ -252,6 +252,7 @@ func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
 // NodeEndpoints registers the routes nodes call themselves; they authenticate with enroll tokens or credentials, not sessions.
 func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet, nh *network.Hub) {
 	mux.HandleFunc("GET /api/nodes/connect", f.ServeConnect)
+	mux.HandleFunc("GET /api/nodes/health", f.ServeHealth)
 	mux.HandleFunc("POST /api/nodes/enroll", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Token string }
 		if !readJSON(w, r, &body) {

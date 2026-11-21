@@ -10,7 +10,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +24,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/hashicorp/yamux"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/ssh"
@@ -40,7 +38,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
+
+const gatewayToken = "0123456789abcdef0123456789abcdef"
 
 type env struct {
 	t     *testing.T
@@ -71,7 +72,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := network.Load(ctx, s, z, network.Config{GatewayHost: "gw.test", GatewayToken: "0123456789abcdef0123456789abcdef"})
+	h, err := network.Load(ctx, s, z, network.Config{GatewayHost: "gw.test", GatewayToken: gatewayToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +95,13 @@ func (e *env) node(org uuid.UUID, name string) (store.Node, string) {
 	}
 	_, cred, err := e.s.EnrollNode(ctx, tok)
 	if err != nil {
+		e.t.Fatal(err)
+	}
+	_, key, err := wgkey.Generate()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if n.UnderlayIP, err = e.s.EnrollChassis(ctx, n.ID, key); err != nil {
 		e.t.Fatal(err)
 	}
 	return n, cred
@@ -136,30 +144,35 @@ func (e *env) envVar(name, value string) store.EnvVar {
 
 type fakeNode struct {
 	t    *testing.T
-	sess *yamux.Session
+	ws   *websocket.Conn
 	enc  *json.Encoder
 	msgs chan proto.Message
 }
 
+// underlayHeaders are what the gateway's control proxy sends for a request from peer.
+func underlayHeaders(cred, peer string) http.Header {
+	return http.Header{"Authorization": {"Bearer " + cred}, proto.HeaderGateway: {gatewayToken}, proto.HeaderUnderlayPeer: {peer}}
+}
+
+// dial connects as the gateway proxy would for the credential's node, from its underlay address.
 func (e *env) dial(cred string) (*fakeNode, *http.Response, error) {
+	var peer string
+	if n, err := e.s.NodeByCredential(context.Background(), cred); err == nil {
+		peer = n.UnderlayIP.String()
+	}
+	return e.dialWith(underlayHeaders(cred, peer))
+}
+
+func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	url := "ws" + strings.TrimPrefix(e.srv.URL, "http")
-	ws, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
+	ws, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
 		return nil, resp, err
 	}
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Client(websocket.NetConn(context.Background(), ws, websocket.MessageBinary), cfg)
-	if err != nil {
-		return nil, resp, err
-	}
-	ctrl, err := sess.Open()
-	if err != nil {
-		return nil, resp, err
-	}
-	n := &fakeNode{t: e.t, sess: sess, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16)}
+	ctrl := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
+	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16)}
 	go func() {
 		defer close(n.msgs)
 		dec := json.NewDecoder(ctrl)
@@ -171,7 +184,7 @@ func (e *env) dial(cred string) (*fakeNode, *http.Response, error) {
 			n.msgs <- m
 		}
 	}()
-	e.t.Cleanup(func() { sess.Close() })
+	e.t.Cleanup(func() { ws.CloseNow() })
 	return n, resp, nil
 }
 
@@ -274,6 +287,89 @@ func TestBadCredential(t *testing.T) {
 	}
 	if _, resp, err := e.dial(cred); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("revoked credential: err=%v resp=%v", err, resp)
+	}
+}
+
+func TestConnectRefusedWithoutGateway(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n1")
+	direct := http.Header{"Authorization": {"Bearer " + cred}, proto.HeaderUnderlayPeer: {n.UnderlayIP.String()}}
+	wrong := underlayHeaders(cred, n.UnderlayIP.String())
+	wrong.Set(proto.HeaderGateway, "ffffffffffffffffffffffffffffffff")
+	for name, h := range map[string]http.Header{"no gateway token": direct, "wrong gateway token": wrong} {
+		if _, resp, err := e.dialWith(h); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s: err=%v resp=%v", name, err, resp)
+		}
+	}
+}
+
+func TestConnectRefusedSpoofedPeer(t *testing.T) {
+	e := newEnv(t)
+	_, cred := e.node(e.org.ID, "n1")
+	other, _ := e.node(e.org.ID, "n2")
+	for _, peer := range []string{"", "garbage", "10.198.255.250", "127.0.0.1", other.UnderlayIP.String()} {
+		if _, resp, err := e.dialWith(underlayHeaders(cred, peer)); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("peer %q: err=%v resp=%v", peer, err, resp)
+		}
+	}
+}
+
+func TestConnectRefusedForeignCredential(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	other, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, credA := e.node(e.org.ID, "a")
+	b, _ := e.node(other.ID, "b")
+	if _, resp, err := e.dialWith(underlayHeaders(credA, b.UnderlayIP.String())); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("err=%v resp=%v", err, resp)
+	}
+}
+
+func TestConnectRefusedWithoutUnderlayAddress(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, tok, err := e.s.CreateNode(ctx, store.Node{OrgID: e.org.ID, Name: "bare", CreatedBy: e.owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cred, err := e.s.EnrollNode(ctx, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, peer := range []string{"", "invalid IP"} {
+		if _, resp, err := e.dialWith(underlayHeaders(cred, peer)); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("node %s peer %q: err=%v resp=%v", n.ID, peer, err, resp)
+		}
+	}
+}
+
+func TestConnectWithoutNetwork(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n1")
+	f, err := fleet.New(context.Background(), e.s, e.z, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(f.Close)
+	e.srv = httptest.NewServer(http.HandlerFunc(f.ServeConnect))
+	t.Cleanup(e.srv.Close)
+	if _, resp, err := e.dialWith(underlayHeaders(cred, n.UnderlayIP.String())); err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("err=%v resp=%v", err, resp)
+	}
+}
+
+func TestConnectOverUnderlay(t *testing.T) {
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n1")
+	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
+	if got := ids(e.connect(cred).desired()); !slices.Equal(got, []string{v.ID.String()}) {
+		t.Fatalf("desired %v", got)
+	}
+	if !e.f.Online(n.ID) {
+		t.Fatal("node not online")
 	}
 }
 
@@ -429,7 +525,7 @@ func TestVMDeletedWhileOfflineAbsentOnReconnect(t *testing.T) {
 	if got := ids(node.desired()); len(got) != 2 {
 		t.Fatalf("desired = %v", got)
 	}
-	node.sess.Close()
+	node.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 	if err := e.s.DeleteVM(ctx, e.org.ID, drop.ID, nil, store.DeleteReasonUser); err != nil {
 		t.Fatal(err)
@@ -763,7 +859,7 @@ func TestStaleRegisterDoesNotRelease(t *testing.T) {
 	node.desired()
 	s := e.detach(node, v)
 	waitFor(t, func() bool { seq, _ := e.releaseSeq(d.ID); return seq != nil })
-	node.sess.Close()
+	node.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 
 	node = e.register(cred, proto.Register{AppliedSeq: s - 1})
@@ -771,7 +867,7 @@ func TestStaleRegisterDoesNotRelease(t *testing.T) {
 	if _, ok := e.releaseSeq(d.ID); !ok {
 		t.Fatal("export released by a register from before the detach")
 	}
-	node.sess.Close()
+	node.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 	e.register(cred, proto.Register{AppliedSeq: s}).desired()
 	if _, ok := e.releaseSeq(d.ID); ok {
@@ -789,7 +885,7 @@ func TestSeqMonotonicAcrossConnections(t *testing.T) {
 	if last <= first {
 		t.Fatalf("seq %d after %d", last, first)
 	}
-	node.sess.Close()
+	node.ws.CloseNow()
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 	if got := e.connect(cred).desired().Seq; got <= last {
 		t.Fatalf("seq after reconnect %d, last before %d", got, last)
@@ -1043,7 +1139,7 @@ func TestDisconnectFailsSnapshotWaitingForCopies(t *testing.T) {
 	node.send(proto.Message{Type: "status", Status: &proto.VMStatus{ID: v.ID.String(), State: proto.StateRunning,
 		Snapshots: []proto.SnapshotInfo{{ID: sn.ID.String(), SizeBytes: 1}}}})
 	node.desired()
-	node.sess.Close()
+	node.ws.CloseNow()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		got, _ := e.s.Snapshot(context.Background(), e.org.ID, v.ID, sn.ID)

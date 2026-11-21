@@ -1,12 +1,14 @@
 package fleet
 
 import (
-	"io"
-	"net"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -50,15 +52,17 @@ func UpdateErr(f *Fleet, node uuid.UUID) (string, bool) {
 
 // AttachStalledConn stands in for a live connection whose push loop never takes the update request; end closes it.
 func AttachStalledConn(f *Fleet, node, org uuid.UUID) (end func()) {
-	pipe, _ := net.Pipe()
-	cfg := yamux.DefaultConfig()
-	cfg.EnableKeepAlive, cfg.LogOutput = false, io.Discard
-	sess, err := yamux.Client(pipe, cfg)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ws, err := websocket.Accept(w, r, nil); err == nil {
+			ws.Reader(context.Background())
+		}
+	}))
+	ws, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
 	if err != nil {
 		panic(err)
 	}
 	done := make(chan struct{})
-	f.attach(&conn{node: node, org: org, sess: sess, update: make(chan struct{}), done: done, seen: map[string]bool{},
+	f.attach(&conn{node: node, org: org, ws: ws, update: make(chan struct{}), done: done, seen: map[string]bool{},
 		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}})
 	return func() { close(done) }
 }
