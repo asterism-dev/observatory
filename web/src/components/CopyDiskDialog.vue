@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import { errorText } from '@/composables/apiError'
 import { iamClient } from '@/composables/iamClient'
 
 const props = defineProps<{ open: boolean; orgId: string; diskId: string; diskName: string; unsettled: boolean }>()
@@ -51,7 +52,7 @@ async function copy() {
     if (res?.warning) warning.value = res.warning
     else emit('update:open', false)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = errorText(e)
   } finally {
     busy.value = false
   }

@@ -95,6 +95,7 @@ async function load() {
 }
 
 async function save() {
+  if (badEffects.value.length) return
   busy.value = true
   error.value = ''
   const isNew = roleId.value === 'new'
