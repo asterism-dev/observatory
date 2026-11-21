@@ -7,3 +7,7 @@ export function actionSuggestions(all: string[]): string[] {
   }
   return ['*', ...groups, ...new Set(all)]
 }
+
+export function unknownEffects(rules: { effect: string }[]): string[] {
+  return [...new Set(rules.map((r) => r.effect).filter((e) => e !== 'allow' && e !== 'deny'))]
+}

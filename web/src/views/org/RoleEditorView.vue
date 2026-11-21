@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { errorMessage as message, iamClient } from '@/composables/iamClient'
-import { actionSuggestions } from '@/composables/roleActions'
+import { actionSuggestions, unknownEffects } from '@/composables/roleActions'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import type { CatalogEntry as Perm, Role } from '@/gen/observatory/iam/v1/iam_pb'
@@ -13,7 +13,8 @@ import { Card, Section, Tag } from '@/ui'
 
 interface Rule {
   uid: number
-  effect: 'allow' | 'deny'
+  // Kept as sent so an effect this editor does not know is never saved as 'allow'.
+  effect: string
   object: string
   action: string
 }
@@ -44,6 +45,7 @@ watchEffect(() => {
   const label = roleId.value === 'new' ? t('roles.create') : current.value?.name
   if (label) setCrumbs(route.path, [{ label, to: route.path }])
 })
+const badEffects = computed(() => unknownEffects(rules.value))
 const canDeny = computed(() => ['owner', 'admin'].includes(org.value?.role ?? ''))
 
 const effectOptions = computed(() => [
@@ -85,7 +87,7 @@ async function load() {
     name.value = r?.name ?? ''
     description.value = r?.description ?? ''
     parents.value = [...(r?.parents ?? [])]
-    rules.value = (r?.rules ?? []).map((x) => withUid({ effect: x.effect === 'deny' ? 'deny' : 'allow', object: x.object, action: x.action }))
+    rules.value = (r?.rules ?? []).map((x) => withUid({ effect: x.effect, object: x.object, action: x.action }))
     if (roleId.value !== 'new' && !r) error.value = t('roles.notFound')
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
@@ -124,6 +126,7 @@ watch(
   <template v-if="org">
     <p v-if="current?.builtin" class="muted">{{ t('roles.builtinNote') }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
+    <p v-if="badEffects.length" role="alert">{{ t('roles.unknownEffect', { effects: badEffects.join(', ') }) }}</p>
 
     <Section :label="t('nav.general')">
       <Card>
@@ -157,6 +160,7 @@ watch(
       <Card>
         <div v-for="(rule, i) in rules" :key="rule.uid" class="row">
           <SegmentedControl v-model="rule.effect" :options="effectOptions" :disabled="readonly" />
+          <Tag v-if="badEffects.includes(rule.effect)">{{ rule.effect }}</Tag>
           <Combobox
             v-model="rule.object"
             v-model:search="searches[`o${rule.uid}`]"
@@ -179,7 +183,7 @@ watch(
 
     <div class="row">
       <Button @click="router.push(`/orgs/${org.id}/roles`)">{{ t('roles.back') }}</Button>
-      <Button v-if="!readonly" variant="accent" :disabled="busy || !name.trim()" @click="save">{{ t('org.save') }}</Button>
+      <Button v-if="!readonly" variant="accent" :disabled="busy || !name.trim() || badEffects.length > 0" @click="save">{{ t('org.save') }}</Button>
     </div>
   </template>
 </template>

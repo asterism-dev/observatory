@@ -191,7 +191,8 @@
     "addRule": "Regel hinzufügen",
     "removeRule": "Entfernen",
     "back": "Zurück",
-    "notFound": "Rolle nicht gefunden"
+    "notFound": "Rolle nicht gefunden",
+    "unknownEffect": "Unbekannte Regelwirkung: {effects}. Vor dem Speichern auf Erlauben oder Verbieten ändern."
   },
   "limits": {
     "org": "Organisation (von Plattform-Admins gesetzt)",

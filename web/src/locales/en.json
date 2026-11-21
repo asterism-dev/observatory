@@ -191,7 +191,8 @@
     "addRule": "Add rule",
     "removeRule": "Remove",
     "back": "Back",
-    "notFound": "Role not found"
+    "notFound": "Role not found",
+    "unknownEffect": "Unknown rule effect: {effects}. Change it to Allow or Deny before saving."
   },
   "limits": {
     "org": "Organization (set by platform admins)",
