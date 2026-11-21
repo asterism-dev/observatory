@@ -1138,3 +1138,21 @@ func TestTelemetryTokenPermission(t *testing.T) {
 		}
 	}
 }
+
+func TestLogsReadPermission(t *testing.T) {
+	org := uuid.New()
+	owner, admin, member := uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{Memberships: []MemberRole{
+		{OrgID: org, UserID: owner, Role: "owner"},
+		{OrgID: org, UserID: admin, Role: "admin"},
+		{OrgID: org, UserID: member, Role: "member"},
+	}})
+	for u, want := range map[uuid.UUID]bool{owner: true, admin: true, member: false} {
+		if got := e.Allowed(UserSubject(u), org, ObjLogs, "logs:read"); got != want {
+			t.Errorf("%v: got %v", u, got)
+		}
+	}
+	if err := ValidatePattern(ObjLogs); err != nil {
+		t.Fatalf("logs:read not grantable: %v", err)
+	}
+}

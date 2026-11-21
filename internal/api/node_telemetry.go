@@ -69,6 +69,11 @@ func (h *api) writeLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQ
 	if q.From, q.To, ok = timeRange(w, r, time.Hour); !ok {
 		return
 	}
+	h.writeLogLines(w, r, q)
+}
+
+// writeLogLines answers q, its range already set, with the request's limit.
+func (h *api) writeLogLines(w http.ResponseWriter, r *http.Request, q telemetry.LogQuery) {
 	q.Limit = defaultLogLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
 		var err error

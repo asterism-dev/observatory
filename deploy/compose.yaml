@@ -99,6 +99,7 @@ services:
     command:
       - -storageDataPath=/storage
       - -retentionPeriod=${OBSERVATORY_LOGS_RETENTION:-14d}
+      - -search.maxQueryDuration=60s
     volumes:
       - logs-data:/storage
   # Loads the kernel modules the gateway needs; built-in modules make modprobe fail harmlessly.

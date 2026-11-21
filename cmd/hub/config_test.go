@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/asterism-dev/observatory/internal/builds"
 )
@@ -229,6 +230,30 @@ func TestConfigTelemetryBothOrNeither(t *testing.T) {
 	} {
 		if _, err := load(c.env); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v: error %v does not mention %s", c.env, err, c.want)
+		}
+	}
+}
+
+func TestConfigLogsRetention(t *testing.T) {
+	base := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	load := func(v string) (config, error) {
+		base["OBSERVATORY_LOGS_RETENTION"] = v
+		return loadConfig(func(k string) string { return base[k] })
+	}
+	for v, want := range map[string]time.Duration{"": 14 * 24 * time.Hour, "14d": 14 * 24 * time.Hour, "36h": 36 * time.Hour, "2w": 14 * 24 * time.Hour} {
+		if cfg, err := load(v); err != nil || cfg.LogsRetention != want {
+			t.Errorf("%q: %v, %v", v, cfg.LogsRetention, err)
+		}
+	}
+	for _, v := range []string{"14", "d", "0d", "-1d", "1.5d", "3m", "1y", "14 d"} {
+		if _, err := load(v); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_LOGS_RETENTION") {
+			t.Errorf("%q: error %v", v, err)
 		}
 	}
 }

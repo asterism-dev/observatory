@@ -104,6 +104,7 @@ const (
 	ActionDashboardCreate     = "dashboard:create"
 	ActionDashboardUpdate     = "dashboard:update"
 	ActionDashboardDelete     = "dashboard:delete"
+	ActionLogsRead            = "logs:read"
 )
 
 type AuditEntry struct {
