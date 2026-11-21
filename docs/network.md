@@ -132,14 +132,16 @@ When a node reports its paths and both nodes of a same-org pair report each othe
 them a punch: the other node's endpoint as the gateway observed it and a common start time 2 s ahead. A punch is only
 sent between nodes that are in each other's peer set, so never across orgs or to a quarantined node.
 
-- At the start time each node points the peer at that endpoint with a 1 s keepalive for 10 s, so both NATs open a
-  mapping towards each other at about the same time. Afterwards the keepalive returns to 25 s.
+- At its first 5 s check after the start time each node points the peer at that endpoint and sends handshakes for 10 s
+  (1 s keepalive). Afterwards the keepalive returns to 25 s.
 - As for candidates, the path counts as direct only after a fresh handshake; during the punch traffic stays on the
   relay and the peer gets no allowed IPs. Without a handshake the node keeps the relay and the regular 2 min retry.
-- The hub punches a pair at most once every 5 min. After 3 failed punches in a row it waits 1 h before the next.
+- The hub punches a pair at most once every 5 min. After 3 failed punches in a row it waits 1 h; after each such
+  backoff the pair gets up to 3 more punches 5 min apart.
 - A node ignores a punch for a node outside its peer set, for a peer already direct, with an invalid endpoint
-  (validated like candidates) or whose start time is more than 30 s off its own clock. A start time already past but
-  within the 10 s window starts the punch at once, for the rest of the window.
+  (validated like candidates), arriving while a punch for that peer is running, or whose start time is more than 30 s
+  off its own clock. A start time already past but within the 10 s window starts the punch at once, for the rest of
+  the window.
 
 Known limits:
 
@@ -147,7 +149,7 @@ Known limits:
 - Switching a path between direct and relay can drop traffic for up to one 5 s check.
 - A node uses the first working candidate in rank order (LAN, public, VPN), not the one with the largest MTU.
 - Hole punching cannot pass a symmetric NAT or CGNAT, which map each destination to a new port; such pairs stay on
-  the relay and are punched again only after each 1 h backoff.
+  the relay and get up to 3 more punches after each 1 h backoff.
 
 ## Guest MTU
 
