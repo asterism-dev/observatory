@@ -73,6 +73,8 @@ services:
     profiles: [gateway]
     restart: unless-stopped
     init: true
+    cap_drop: [ALL]
+    read_only: true
     command: ["sleep", "infinity"]
     sysctls:
       net.ipv4.ip_forward: "1"
@@ -101,7 +103,7 @@ services:
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch
-  # Shares the gateway's network namespace so exports listen on the underlay address only, nothing published on the host.
+  # In the netns service's namespace, with the gateway, so exports listen on the underlay address only, nothing published on the host.
   storage:
     build:
       context: ../..
