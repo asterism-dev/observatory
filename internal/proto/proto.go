@@ -271,7 +271,7 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates", "paths" (node→hub), "peers" (hub→node), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates", "paths" (node→hub), "peers", "punch" (hub→node), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -291,13 +291,21 @@ type Message struct {
 	Candidates []string           `json:"candidates,omitempty"` // type "candidates": the node's underlay endpoints as ip:port
 	Peers      *Peers             `json:"peers,omitempty"`
 	Paths      []PathStatus       `json:"paths,omitempty"` // type "paths": how the node reaches each peer node
+	Punch      *Punch             `json:"punch,omitempty"`
 }
 
 const (
 	TypePeers      = "peers"
 	TypePaths      = "paths"
 	TypeCandidates = "candidates"
+	TypePunch      = "punch"
 )
+
+type Punch struct {
+	NodeID   string    `json:"nodeId"`
+	Endpoint string    `json:"endpoint"`
+	At       time.Time `json:"at"` // start time on the hub clock; both sides of a pair get the same
+}
 
 // Peers is the full set of same-org nodes a node may reach directly, sorted by NodeID.
 type Peers struct {

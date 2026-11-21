@@ -60,8 +60,9 @@ func (f *Fleet) storePaths(ctx context.Context, node store.Node, in []proto.Path
 	}
 	valid := validPaths(in, peers)
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.conns[node.ID] != nil {
 		f.paths[node.ID] = valid
 	}
+	f.mu.Unlock()
+	f.maybePunch(ctx, node.OrgID, node.ID)
 }
