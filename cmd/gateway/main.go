@@ -57,14 +57,16 @@ func main() {
 	}
 
 	dns := newDNSServer()
-	upstreams, err := loadUpstreams(os.Getenv("OBSERVATORY_GATEWAY_DNS"), "/host/resolve/resolv.conf", "/host/resolv.conf")
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(upstreams) == 0 {
-		log.Print("ERROR: no usable upstream DNS in the host's /run/systemd/resolve/resolv.conf or /etc/resolv.conf (missing, or only loopback, stub, link-local or gateway addresses); public names get SERVFAIL until OBSERVATORY_GATEWAY_DNS is set")
+	upstreams := (&hostResolvers{files: []string{"/host/resolve/resolv.conf", "/host/resolv.conf"}}).get
+	if s := os.Getenv("OBSERVATORY_GATEWAY_DNS"); strings.TrimSpace(s) != "" {
+		list, err := parseUpstreams(s)
+		if err != nil {
+			log.Fatal(err)
+		}
+		logUpstreams(list)
+		upstreams = func() []string { return list }
 	} else {
-		log.Printf("upstream DNS: %s", strings.Join(upstreams, ", "))
+		upstreams()
 	}
 	listen := net.JoinHostPort(netaddr.GatewayDNS.String(), "53")
 	pc, err := net.ListenPacket("udp", listen)

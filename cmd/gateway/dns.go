@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -136,17 +139,47 @@ func reply(req dnsmessage.Message, rcode dnsmessage.RCode, answers []dnsmessage.
 	}).Pack()
 }
 
-// loadUpstreams parses the OBSERVATORY_GATEWAY_DNS override, else takes the nameservers of the first readable host resolv.conf.
-func loadUpstreams(override string, hostFiles ...string) ([]string, error) {
-	if strings.TrimSpace(override) != "" {
-		return parseUpstreams(override)
-	}
-	for _, f := range hostFiles {
-		if b, err := os.ReadFile(f); err == nil {
-			return hostUpstreams(b), nil
+// hostResolvers follows the host's resolv.conf: read again whenever the file changes (its directory is mounted, so resolved's renamed file shows up), and every few seconds while it yields nothing.
+type hostResolvers struct {
+	files []string
+	mu    sync.Mutex
+	key   string
+	read  time.Time
+	list  []string
+}
+
+func (h *hostResolvers) get() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	key, path := "", ""
+	for _, f := range h.files {
+		if fi, err := os.Stat(f); err == nil {
+			key, path = fmt.Sprintf("%s %d %d", f, fi.ModTime().UnixNano(), fi.Size()), f
+			break
 		}
 	}
-	return nil, nil
+	if key == h.key && !h.read.IsZero() && (len(h.list) > 0 || time.Since(h.read) < 5*time.Second) {
+		return h.list
+	}
+	var list []string
+	if path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			list = hostUpstreams(b)
+		}
+	}
+	if h.read.IsZero() || strings.Join(list, ",") != strings.Join(h.list, ",") {
+		logUpstreams(list)
+	}
+	h.key, h.read, h.list = key, time.Now(), list
+	return list
+}
+
+func logUpstreams(list []string) {
+	if len(list) == 0 {
+		log.Print("ERROR: no usable upstream DNS in the host's /run/systemd/resolve/resolv.conf or /etc/resolv.conf (missing, or only loopback, stub, link-local or gateway addresses); public names get SERVFAIL until one appears or OBSERVATORY_GATEWAY_DNS is set")
+		return
+	}
+	log.Printf("upstream DNS: %s", strings.Join(list, ", "))
 }
 
 // hostUpstreams drops the stub, link-local and the gateway's own pools: a device on the hub host lists 10.192.0.1 as its link's DNS, which would loop.
@@ -166,19 +199,20 @@ func hostUpstreams(conf []byte) []string {
 			netaddr.DevicePool.Contains(a) || netaddr.UnderlayPool.Contains(a) {
 			continue
 		}
-		out = append(out, netip.AddrPortFrom(a.WithZone(""), 53).String())
+		out = appendNew(out, netip.AddrPortFrom(a.WithZone(""), 53).String())
 	}
 	return out
 }
 
+// parseUpstreams reads OBSERVATORY_GATEWAY_DNS: comma-separated IPs, each with an optional port.
 func parseUpstreams(s string) ([]string, error) {
 	var out []string
 	for _, f := range strings.Split(s, ",") {
 		f = strings.TrimSpace(f)
 		if ap, err := netip.ParseAddrPort(f); err == nil {
-			out = append(out, ap.String())
+			out = appendNew(out, ap.String())
 		} else if a, err := netip.ParseAddr(f); err == nil {
-			out = append(out, netip.AddrPortFrom(a, 53).String())
+			out = appendNew(out, netip.AddrPortFrom(a, 53).String())
 		} else {
 			return nil, fmt.Errorf("OBSERVATORY_GATEWAY_DNS: %q is not an IP address or IP:port", f)
 		}
@@ -186,12 +220,32 @@ func parseUpstreams(s string) ([]string, error) {
 	return out, nil
 }
 
-// forward asks each upstream in turn until one answers.
+// appendNew skips duplicates: resolved lists a server once globally and once per link, and a dead one would cost its timeout twice.
+func appendNew(list []string, s string) []string {
+	if slices.Contains(list, s) {
+		return list
+	}
+	return append(list, s)
+}
+
+// forward asks each upstream in turn until one answers; SERVFAIL or REFUSED (a per-link split-DNS server asked for a public name) moves on too.
 func forward(network string, req []byte, upstreams []string) (resp []byte, err error) {
+	var last []byte
 	for _, u := range upstreams {
-		if resp, err = exchange(network, req, u); err == nil {
-			return resp, nil
+		if resp, err = exchange(network, req, u); err == nil && len(resp) < 4 {
+			err = errors.New("short DNS reply from " + u)
 		}
+		if err != nil {
+			continue
+		}
+		if rc := dnsmessage.RCode(resp[3] & 0x0f); rc == dnsmessage.RCodeServerFailure || rc == dnsmessage.RCodeRefused {
+			last = resp
+			continue
+		}
+		return resp, nil
+	}
+	if last != nil {
+		return last, nil
 	}
 	return nil, err
 }
@@ -241,7 +295,7 @@ func sourceAddr(a net.Addr) netip.Addr {
 	return ap.Addr().Unmap()
 }
 
-func (d *dnsServer) serveUDP(conn net.PacketConn, upstreams []string) {
+func (d *dnsServer) serveUDP(conn net.PacketConn, upstreams func() []string) {
 	buf := make([]byte, 65535)
 	for {
 		n, from, err := conn.ReadFrom(buf)
@@ -252,14 +306,14 @@ func (d *dnsServer) serveUDP(conn net.PacketConn, upstreams []string) {
 		d.sem <- struct{}{}
 		go func() {
 			defer func() { <-d.sem }()
-			if resp, err := d.handle("udp", req, upstreams, sourceAddr(from)); err == nil {
+			if resp, err := d.handle("udp", req, upstreams(), sourceAddr(from)); err == nil {
 				conn.WriteTo(resp, from)
 			}
 		}()
 	}
 }
 
-func (d *dnsServer) serveTCP(l net.Listener, upstreams []string) {
+func (d *dnsServer) serveTCP(l net.Listener, upstreams func() []string) {
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -276,7 +330,7 @@ func (d *dnsServer) serveTCP(l net.Listener, upstreams []string) {
 				if err != nil {
 					return
 				}
-				resp, err := d.handle("tcp", req, upstreams, src)
+				resp, err := d.handle("tcp", req, upstreams(), src)
 				if err != nil || writeFramed(c, resp) != nil {
 					return
 				}
