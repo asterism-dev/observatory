@@ -180,5 +180,8 @@ The hub checks GitHub for a newer release every 6 hours and shows platform admin
 an older version than the hub are marked on the node pages. `OBSERVATORY_NO_UPDATE_CHECK=1` in `deploy/.env` turns the
 check off (air-gapped hosts). Builds that are not a release tag never check.
 
+Upgrading to the release with identity at the edge: `OBSERVATORY_EDGE_SERVICE_TOKEN` in `deploy/.env` is required from
+this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); `docker compose` refuses to start without it.
+
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
 `registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data` and, with TLS, `caddy-data`.

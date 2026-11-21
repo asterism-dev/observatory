@@ -290,6 +290,15 @@ signed token (EdDSA, valid at most 5 minutes and never longer than the session) 
 the client's `Authorization` header. The edge caches it for at most 60 seconds, so a logout or revoked session reaches
 the services within about a minute. Services verify the token offline against the hub's published keys.
 
+- A leaked identity token stays valid at the services until it expires: at most 5 minutes plus 30 seconds of clock skew
+  allowance. Revoking the session stops new tokens, not one already issued.
+- While the hub is unreachable the edge cannot exchange sessions and answers 502 for requests to extracted services.
+- Only the edge may exchange sessions; other services get 403 from the token endpoint and use the keys and the policy
+  stream only.
+- The hub publishes one signing key today. The key set is a list so a previous key can stay published during a
+  rotation, which comes later.
+- Services see neither the edge token nor the edge's client IP header; those go to the hub only.
+
 Every RPC carries a permission annotation: a permission name (`service.resource.verb`), an object pattern and a kind.
 The service's interceptor checks it before the handler runs:
 
