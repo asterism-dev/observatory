@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -228,10 +229,14 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
 		case m.Type == "candidates":
+			valid := validCandidates(m.Candidates)
 			f.mu.Lock()
-			f.candidates[node.ID] = validCandidates(m.Candidates)
+			changed := !slices.Equal(f.candidates[node.ID], valid)
+			f.candidates[node.ID] = valid
 			f.mu.Unlock()
-			f.NotifyOrg(node.OrgID)
+			if changed {
+				f.NotifyOrg(node.OrgID)
+			}
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		case m.Type == "image" && m.Image != nil:

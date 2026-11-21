@@ -42,15 +42,21 @@ func (f *Fleet) Candidates(node uuid.UUID) []string {
 	f.mu.Lock()
 	list := slices.Clone(f.candidates[node])
 	f.mu.Unlock()
-	if cs, ok := f.net.ChassisStatus(node); ok && cs.Endpoint != "" {
-		at := slices.IndexFunc(list, func(s string) bool {
-			ap, err := netip.ParseAddrPort(s)
-			return err == nil && cgnat.Contains(ap.Addr())
-		})
-		if at < 0 {
-			at = len(list)
-		}
-		list = slices.Insert(list, at, cs.Endpoint)
+	cs, ok := f.net.ChassisStatus(node)
+	if !ok {
+		return list
 	}
-	return validCandidates(list)
+	observed := validCandidates([]string{cs.Endpoint})
+	if len(observed) == 0 || slices.Contains(list, observed[0]) {
+		return list
+	}
+	list = list[:min(len(list), maxCandidates-1)] // room for the observed endpoint, which is never the one dropped
+	at := slices.IndexFunc(list, func(s string) bool {
+		ap, err := netip.ParseAddrPort(s)
+		return err == nil && cgnat.Contains(ap.Addr())
+	})
+	if at < 0 {
+		at = len(list)
+	}
+	return slices.Insert(list, at, observed[0])
 }

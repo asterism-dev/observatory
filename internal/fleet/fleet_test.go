@@ -2522,3 +2522,49 @@ func TestFleetStoresCandidates(t *testing.T) {
 		t.Fatalf("after disconnect: %v", got)
 	}
 }
+
+func TestFleetObservedEndpointKeptAtCap(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	var eight []string
+	for i := 1; i <= 8; i++ {
+		eight = append(eight, fmt.Sprintf("192.168.1.%d:51822", i))
+	}
+	e.connect(cred).send(proto.Message{Type: "candidates", Candidates: eight})
+	chassis, _ := e.s.Chassis(ctx)
+	key := chassis[0].PublicKey
+	waitFor(t, func() bool { return len(e.f.Candidates(n.ID)) == 8 })
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "203.0.113.5:40001"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := e.f.Candidates(n.ID)
+	if len(got) != 8 || got[7] != "203.0.113.5:40001" {
+		t.Fatalf("got %v", got)
+	}
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "10.198.0.9:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.f.Candidates(n.ID); slices.Contains(got, "10.198.0.9:1") || len(got) != 8 {
+		t.Fatalf("invalid observed endpoint kept: %v", got)
+	}
+}
+
+func TestFleetUnchangedCandidatesDoNotPush(t *testing.T) {
+	e := newEnv(t)
+	_, credA := e.node(e.org.ID, "a")
+	_, credB := e.node(e.org.ID, "b")
+	a := e.connect(credA)
+	b := e.connect(credB)
+	a.desired()
+	b.desired()
+	msg := proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822"}}
+	a.send(msg)
+	b.next()
+	a.send(msg)
+	select {
+	case m := <-b.msgs:
+		t.Fatalf("push after unchanged candidates: %q", m.Type)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
