@@ -105,7 +105,17 @@ func run() error {
 	var buildLogs *telemetry.LogWriter
 	if tc != nil {
 		buildLogs = telemetry.NewLogWriter(tc, telemetry.BuildLogStreamFields, 10000)
-		go buildLogs.Run(ctx)
+		logsDone := make(chan struct{})
+		go func() { buildLogs.Run(ctx); close(logsDone) }()
+		defer func() {
+			if ctx.Err() == nil {
+				return
+			}
+			select {
+			case <-logsDone:
+			case <-time.After(3 * time.Second):
+			}
+		}()
 	}
 	api.NodeEndpoints(mux, s, f)
 	api.OTLPEndpoints(mux, s, tc)
