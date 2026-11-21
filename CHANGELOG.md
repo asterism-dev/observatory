@@ -1,3 +1,9 @@
+## v0.20.0 (2026-11-21)
+
+### Feat
+
+- **builds**: copy build logs to the log store (#41)
+
 ## v0.19.0 (2026-11-21)
 
 ### Feat
