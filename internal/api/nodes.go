@@ -12,6 +12,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -55,8 +56,7 @@ type pathJSON struct {
 	RecommendedGuestMTU int        `json:"recommendedGuestMTU,omitempty"`
 }
 
-// Geneve 58 + WireGuard 80 bytes of overhead on top of the guest MTU.
-const tunnelOverhead = 138
+const tunnelOverhead = netaddr.GeneveOverhead + netaddr.WireGuardOverhead
 
 func pathWarning(guestMTU, pathMTU int) (warn bool, recommended int) {
 	if pathMTU <= 0 || guestMTU+tunnelOverhead <= pathMTU {
