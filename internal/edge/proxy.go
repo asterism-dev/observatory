@@ -9,7 +9,7 @@ import (
 )
 
 // proxy forwards to target unchanged except for the trusted headers, which only the edge may set.
-func proxy(target *url.URL, token string, withIdentity bool) http.Handler {
+func proxy(target *url.URL, token string, withIdentity bool) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)

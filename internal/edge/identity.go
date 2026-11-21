@@ -21,7 +21,7 @@ const (
 	jwtCacheSize  = 10000
 	// Refetching early keeps a cached JWT from lapsing in flight or inside a service's clock skew allowance.
 	jwtRefreshMargin = 60 * time.Second
-	// Bounds how long a logout or revoked session keeps reaching services through a cached JWT.
+	// Bounds how long a revoked session keeps reaching services through a cached JWT.
 	jwtCacheTTL = 60 * time.Second
 )
 
@@ -33,6 +33,7 @@ type jwtKey struct{}
 type hubIdentity struct {
 	jwt     string
 	swapped bool
+	key     [32]byte
 }
 
 type hubIdentityKey struct{}
@@ -89,8 +90,23 @@ func (id *identity) hubMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusBadGateway, "identity unavailable")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{jwt: jwt, swapped: true})))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{jwt: jwt, swapped: true, key: sha256.Sum256([]byte(session))})))
 	})
+}
+
+// forget drops a session's cached JWT once the hub logged it out or refused it, so the next request asks the issuer again.
+func (id *identity) forget(resp *http.Response) error {
+	r := resp.Request
+	if hid, ok := r.Context().Value(hubIdentityKey{}).(hubIdentity); ok && hid.swapped && resp.StatusCode == http.StatusUnauthorized {
+		id.cache.remove(hid.key)
+	}
+	// Suffix: the hub URL may carry a base path; dropping an entry too many only costs a token exchange.
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/auth/logout") && resp.StatusCode < 300 {
+		if session, _ := credentials(r); session != "" {
+			id.cache.remove(sha256.Sum256([]byte(session)))
+		}
+	}
+	return nil
 }
 
 // Telemetry tokens share the obs_ prefix but are not sessions (store.telemetryTokenPrefix).
@@ -205,6 +221,15 @@ func (c *jwtCache) get(key [32]byte, now time.Time) (string, bool) {
 	}
 	c.order.MoveToFront(e)
 	return ent.jwt, true
+}
+
+func (c *jwtCache) remove(key [32]byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok {
+		c.order.Remove(e)
+		delete(c.items, key)
+	}
 }
 
 func (c *jwtCache) add(key [32]byte, jwt string, until time.Time) {

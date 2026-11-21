@@ -72,6 +72,17 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
+		// ponytail: one session lookup per hub request so logout and revoke apply at once; 5b-2 moves this to an iam call/stream.
+		active, err := h.Store.SessionActive(r.Context(), p.Session)
+		if err != nil {
+			slog.Error("session lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !active {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		ctx := context.WithValue(r.Context(), principalKey{}, Principal{
 			User:    store.User{ID: p.User, Name: p.Name, PlatformAdmin: p.PlatformAdmin},
 			Session: store.Session{ID: p.Session, UserID: p.User, Kind: store.SessionKind(p.SessionKind), ExpiresAt: p.SessionExpires},
