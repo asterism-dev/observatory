@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -69,7 +70,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	ip, ua := RequestMeta(r)
 	http.SetCookie(w, h.cookie(oidcCookie, "", "/auth", -1))
 	fail := func(reason string) {
-		reason = store.SanitizeText(reason)
+		reason = textx.Sanitize(reason)
 		if err := h.Store.Audit(r.Context(), store.AuditEntry{
 			ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
 			IP: ip, UserAgent: ua, Details: map[string]any{"reason": reason},

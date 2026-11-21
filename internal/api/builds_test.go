@@ -174,7 +174,7 @@ func TestBuildRequiresRefUse(t *testing.T) {
 		t.Fatalf("build audit: %+v", es)
 	}
 	e.exec("DELETE FROM env_vars WHERE name = 'ORG_TOKEN'")
-	if _, err := e.sched.Finish(context.Background(), id, store.BuildCancelled, "", ""); err != nil {
+	if _, err := e.sched.Finish(context.Background(), id, store.BuildCancelled, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if rec := e.do("POST", buildsPath(org, img), aliceTok); rec.Code != 422 || !strings.Contains(rec.Body.String(), "no longer exists") {
@@ -428,7 +428,7 @@ func TestBuildLogFollowSSE(t *testing.T) {
 	if l := next(); l != "data: line two" {
 		t.Fatalf("second line %q", l)
 	}
-	if _, err := e.sched.Finish(context.Background(), b.ID, store.BuildFailed, "", "boom"); err != nil {
+	if _, err := e.sched.Finish(context.Background(), b.ID, store.BuildFailed, "", "boom", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"data: part", "event: end", "data: failed"} {
@@ -653,5 +653,26 @@ func TestQueuedBuildWaitsWhileHeld(t *testing.T) {
 	e.tick()
 	if b := e.build(id); b.State != store.BuildRunning {
 		t.Fatalf("released build state %s", b.State)
+	}
+}
+
+func TestBuildCancelAuditsInFinishTransaction(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.recipeImage(aliceTok, org, "tools", "")
+	id := e.startBuild(aliceTok, org, img)
+	boom := errors.New("boom")
+	if _, err := e.sched.Finish(context.Background(), id, store.BuildCancelled, "", "", func(*store.Store, store.ImageBuild) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("finish with failing hook: %v", err)
+	}
+	if b, err := e.store.ImageBuild(context.Background(), id); err != nil || b.State == store.BuildCancelled {
+		t.Fatalf("build after rolled back finish: %+v, %v", b, err)
+	}
+	if rec := e.do("POST", buildsPath(org, img)+"/"+id.String()+"/cancel", aliceTok); rec.Code != 200 {
+		t.Fatalf("cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit(store.ActionImageBuildCancel); len(es) != 1 || es[0].Details["buildId"] != id.String() {
+		t.Fatalf("cancel audit: %+v", es)
 	}
 }

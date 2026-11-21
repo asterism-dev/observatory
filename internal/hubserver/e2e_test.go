@@ -52,6 +52,8 @@ func TestIdentityEndToEnd(t *testing.T) {
 		"OBSERVATORY_GATEWAY_TOKEN":      strings.Repeat("g", 32),
 		"OBSERVATORY_STORAGE_TOKEN":      strings.Repeat("s", 32),
 		"OBSERVATORY_EDGE_TOKEN":         edgeTok,
+		"OBSERVATORY_NATS_URL":           "nats://unused",
+		"OBSERVATORY_NATS_TOKEN":         strings.Repeat("n", 32),
 		"OBSERVATORY_SERVICE_TOKENS":     "edge=" + edgeSvcTok + ",echo=" + echoTok,
 	}
 	cfg, err := loadConfig(func(k string) string { return env[k] })
@@ -156,7 +158,7 @@ func TestIdentityEndToEnd(t *testing.T) {
 	front := newEdge()
 	until(0, front)
 	hdr := <-echo.seen
-	if hdr.Get(edge.HeaderEdge) != "" || hdr.Get(edge.HeaderClientIP) != "" || strings.Contains(hdr.Get("Authorization"), session) {
+	if hdr.Get(edge.HeaderEdge) != "" || hdr.Get(edge.HeaderClientIP) != "127.0.0.1" || strings.Contains(hdr.Get("Authorization"), session) {
 		t.Fatalf("service saw edge %q, client ip %q, or the session token", hdr.Get(edge.HeaderEdge), hdr.Get(edge.HeaderClientIP))
 	}
 

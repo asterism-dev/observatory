@@ -73,8 +73,8 @@ func TestCreateOrgMakesCallerOwner(t *testing.T) {
 		t.Fatalf("audit: %+v", es)
 	}
 	// The new membership is visible to the enforcer without a manual reload.
-	if rec := e.do("GET", "/api/orgs/"+got.ID+"/audit", tok); rec.Code != 200 {
-		t.Fatalf("owner audit read: %d %s", rec.Code, rec.Body.String())
+	if !e.canReadAudit(u.ID, uuid.MustParse(got.ID)) {
+		t.Fatal("owner cannot read the audit trail")
 	}
 
 	for _, body := range []string{`{"name":"   "}`, `{"name":"` + strings.Repeat("x", 65) + `"}`, `{"name":"a\u0000b"}`, `{"name":"a\nb"}`, `{}`, `nope`} {
@@ -97,7 +97,7 @@ func TestOrgPermissionsByRole(t *testing.T) {
 	e.addMember(org, member, store.RoleMember)
 
 	memberPerms := []string{"telemetry.dashboards.get", "compute.disks.create", "secrets.variables.list", "secrets.variables.use", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.list", "secrets.integrations.use", "quota.limits.get", "iam.members.list", "network.networks.create", "network.networks.get", "network.networks.use", "compute.nodes.get", "compute.nodes.use", "iam.roles.list", "iam.teams.leave", "iam.teams.list", "compute.instances.create"}
-	adminPerms := []string{"audit.events.list", "telemetry.dashboards.create", "telemetry.dashboards.update", "telemetry.dashboards.get", "network.devices.delete", "network.devices.list", "compute.disks.create", "compute.disks.delete", "compute.disks.get", "compute.disks.update", "secrets.variables.delete", "secrets.variables.list", "secrets.variables.set", "secrets.variables.use", "build.builds.create", "artifacts.images.setDefault", "artifacts.images.update", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.delete", "secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.use", "quota.limits.get", "quota.limits.update", "telemetry.logEntries.list", "iam.invites.create", "iam.members.list", "iam.members.delete",
+	adminPerms := []string{"audit.events.list", "audit.settings.get", "audit.settings.update", "telemetry.dashboards.create", "telemetry.dashboards.update", "telemetry.dashboards.get", "network.devices.delete", "network.devices.list", "compute.disks.create", "compute.disks.delete", "compute.disks.get", "compute.disks.update", "secrets.variables.delete", "secrets.variables.list", "secrets.variables.set", "secrets.variables.use", "build.builds.create", "artifacts.images.setDefault", "artifacts.images.update", "artifacts.images.list", "artifacts.images.use", "secrets.integrations.delete", "secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.use", "quota.limits.get", "quota.limits.update", "telemetry.logEntries.list", "iam.invites.create", "iam.members.list", "iam.members.delete",
 		"network.networks.create", "network.networks.delete", "network.networks.get", "network.networks.use", "compute.nodes.create", "compute.nodes.delete", "compute.nodes.getMetrics", "compute.nodes.get", "compute.nodes.update", "compute.nodes.use", "iam.orgs.update",
 		"iam.roleBindings.manage", "iam.roles.list", "iam.roles.manage", "iam.teams.create", "iam.teams.delete", "iam.teams.leave", "iam.teams.manageMembers", "iam.teams.list", "iam.teams.update", "telemetry.tokens.create",
 		"compute.instances.create", "compute.instances.delete", "compute.instances.setDisks", "compute.instances.getMetrics", "compute.instances.setNetworks", "compute.instances.setPower", "compute.instances.get", "compute.instances.restore", "compute.instances.snapshot"}
@@ -159,10 +159,8 @@ func TestOrgNotMember404(t *testing.T) {
 	}
 	_, bobTok := e.user("bob")
 	org := e.createOrg(bobTok, "Bob Inc")
-	for _, path := range []string{"/api/orgs/" + org.String(), "/api/orgs/" + org.String() + "/audit"} {
-		if rec := e.do("GET", path, adminTok); rec.Code != 404 || !strings.Contains(rec.Body.String(), `"not found"`) {
-			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
-		}
+	if rec := e.do("GET", "/api/orgs/"+org.String(), adminTok); rec.Code != 404 || !strings.Contains(rec.Body.String(), `"not found"`) {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.send("PATCH", "/api/orgs/"+org.String(), adminTok, `{"name":"x"}`); rec.Code != 404 {
 		t.Fatalf("patch: %d", rec.Code)
@@ -212,58 +210,14 @@ func TestRenameOrg(t *testing.T) {
 	}
 }
 
-func TestOrgAuditScoped(t *testing.T) {
-	e := newEnv(t)
-	_, ownerTok := e.user("alice")
-	member, memberTok := e.user("bob")
-	org := e.createOrg(ownerTok, "Acme")
-	other := e.createOrg(ownerTok, "Other")
-	e.addMember(org, member, store.RoleMember)
-	if rec := e.send("PATCH", "/api/orgs/"+other.String(), ownerTok, `{"name":"Other 2"}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-
-	rec := e.do("GET", "/api/orgs/"+org.String()+"/audit?org="+other.String(), ownerTok)
-	if rec.Code != 200 {
-		t.Fatalf("owner: %d %s", rec.Code, rec.Body.String())
-	}
-	var page struct {
-		Entries []struct {
-			OrgID  string
-			Action string
-		}
-	}
-	decode(t, rec, &page)
-	if len(page.Entries) == 0 {
-		t.Fatalf("no entries: %s", rec.Body.String())
-	}
-	for _, en := range page.Entries {
-		if en.OrgID != org.String() {
-			t.Fatalf("foreign row: %s", rec.Body.String())
-		}
-	}
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/audit?limit=x", ownerTok); rec.Code != 400 {
-		t.Fatalf("bad filter: %d", rec.Code)
-	}
-
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/audit", memberTok); rec.Code != 403 {
-		t.Fatalf("member: %d", rec.Code)
-	}
-	es := e.audit("audit.events.list")
-	if len(es) != 1 || es[0].Result != store.ResultDenied || es[0].ActorID != member.ID.String() || *es[0].OrgID != org || es[0].Resource != "org/audit" {
-		t.Fatalf("denied audit: %+v", es)
-	}
-}
-
 func TestPermissionChangeIsImmediate(t *testing.T) {
 	e := newEnv(t)
 	_, ownerTok := e.user("alice")
-	member, memberTok := e.user("bob")
+	member, _ := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	path := "/api/orgs/" + org.String() + "/audit"
-	if rec := e.do("GET", path, memberTok); rec.Code != 403 {
-		t.Fatalf("before: %d", rec.Code)
+	if e.canReadAudit(member.ID, org) {
+		t.Fatal("member reads the audit trail before the grant")
 	}
 	var role uuid.UUID
 	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'auditor') RETURNING id`, org).Scan(&role); err != nil {
@@ -272,8 +226,8 @@ func TestPermissionChangeIsImmediate(t *testing.T) {
 	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/audit', 'audit.events.list')`, role)
 	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+member.ID.String(), role)
 	e.reload()
-	if rec := e.do("GET", path, memberTok); rec.Code != 200 {
-		t.Fatalf("after: %d %s", rec.Code, rec.Body.String())
+	if !e.canReadAudit(member.ID, org) {
+		t.Fatal("grant not applied")
 	}
 }
 
@@ -293,12 +247,12 @@ func TestCommitRejectsInvalidPolicy(t *testing.T) {
 	h := &api{store: e.store, z: e.z}
 	rec := httptest.NewRecorder()
 	ok := h.commit(rec, httptest.NewRequest("POST", "/", nil), func(tx *store.Store) error {
-		return tx.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorUser, ActorID: u.ID.String(), Action: "test:poison", Result: store.ResultAllowed})
+		return tx.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorUser, ActorID: u.ID.String(), Action: "test.poison", Result: store.ResultAllowed})
 	})
 	if ok || rec.Code != 400 || !strings.Contains(rec.Body.String(), `"invalid policy"`) || strings.Contains(rec.Body.String(), "bogus") {
 		t.Fatalf("commit: %v %d %s", ok, rec.Code, rec.Body.String())
 	}
-	if len(e.audit("test:poison")) != 0 {
+	if len(e.audit("test.poison")) != 0 {
 		t.Fatal("audit row of rolled back tx stored")
 	}
 	if e.z.Enforcer() != before {

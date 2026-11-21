@@ -264,15 +264,14 @@ func TestBindRoleAppliesImmediately(t *testing.T) {
 	member, memberTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	auditPath := "/api/orgs/" + org.String() + "/audit"
 	auditor := e.createRole(ownerTok, org, `{"name":"auditor","rules":[{"effect":"allow","object":"org/audit","action":"audit.events.list"}]}`)
 
-	if rec := e.do("GET", auditPath, memberTok); rec.Code != 403 {
-		t.Fatalf("before: %d", rec.Code)
+	if e.canReadAudit(member.ID, org) {
+		t.Fatal("member reads the audit trail before the bind")
 	}
 	binding := e.bind(ownerTok, org, authz.UserSubject(member.ID), auditor)
-	if rec := e.do("GET", auditPath, memberTok); rec.Code != 200 {
-		t.Fatalf("after bind: %d", rec.Code)
+	if !e.canReadAudit(member.ID, org) {
+		t.Fatal("bind not applied")
 	}
 	var list []struct {
 		ID      uuid.UUID
@@ -294,8 +293,8 @@ func TestBindRoleAppliesImmediately(t *testing.T) {
 	if rec := e.do("DELETE", bindingsPath(org)+"/"+binding.String(), ownerTok); rec.Code != 204 {
 		t.Fatalf("unbind: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := e.do("GET", auditPath, memberTok); rec.Code != 403 {
-		t.Fatalf("after unbind: %d", rec.Code)
+	if e.canReadAudit(member.ID, org) {
+		t.Fatal("unbind not applied")
 	}
 	if rec := e.do("DELETE", bindingsPath(org)+"/"+binding.String(), ownerTok); rec.Code != 404 {
 		t.Fatalf("unbind again: %d", rec.Code)
@@ -309,8 +308,8 @@ func TestBindRoleAppliesImmediately(t *testing.T) {
 		t.Fatalf("team member: %d", rec.Code)
 	}
 	e.bind(ownerTok, org, authz.TeamSubject(team), auditor)
-	if rec := e.do("GET", auditPath, memberTok); rec.Code != 200 {
-		t.Fatalf("via team: %d", rec.Code)
+	if !e.canReadAudit(member.ID, org) {
+		t.Fatal("team binding not applied")
 	}
 }
 
@@ -420,7 +419,7 @@ func TestWildcardDenyKeptAsWritten(t *testing.T) {
 	rec := e.send("POST", rolesPath(org), ownerTok, `{"name":"no teams","rules":[{"effect":"deny","object":"org/teams/*","action":"iam.teams.*"},{"effect":"allow","object":"org/audit","action":"audit.*"}]}`)
 	var created roleJSONT
 	decode(t, rec, &created)
-	if rec.Code != 201 || len(created.Rules) != 2 || created.Rules[0].Action != "iam.teams.*" || created.Rules[1].Action != "audit.events.list" {
+	if rec.Code != 201 || len(created.Rules) != 4 || created.Rules[0].Action != "iam.teams.*" || created.Rules[1].Action != "audit.events.list" || created.Rules[3].Action != "audit.settings.update" {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	e.bind(ownerTok, org, authz.UserSubject(admin.ID), created.ID)
@@ -487,15 +486,14 @@ func TestTeamDenyEscape(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, member, store.RoleMember)
-	auditPath := "/api/orgs/" + org.String() + "/audit"
 	denying := e.createRole(ownerTok, org, `{"name":"no audit","rules":[{"effect":"deny","object":"org/audit","action":"audit.events.list"}]}`)
 	team := e.createTeam(ownerTok, org, "restricted")
 	e.bind(ownerTok, org, authz.TeamSubject(team), denying)
 	if rec := e.send("PUT", teamMemberPath(org, team, admin), ownerTok, `{"admin":false}`); rec.Code != 204 {
 		t.Fatalf("add admin: %d", rec.Code)
 	}
-	if rec := e.do("GET", auditPath, adminTok); rec.Code != 403 {
-		t.Fatalf("deny applies: %d", rec.Code)
+	if e.canReadAudit(admin.ID, org) {
+		t.Fatal("deny not applied")
 	}
 
 	if rec := e.do("DELETE", teamMemberPath(org, team, admin), adminTok); rec.Code != 403 {
@@ -510,8 +508,8 @@ func TestTeamDenyEscape(t *testing.T) {
 	if es := e.audit(store.ActionTeamDelete); len(es) == 0 || es[0].Result != store.ResultDenied || es[0].ActorID != admin.ID.String() {
 		t.Fatalf("delete audit: %+v", es)
 	}
-	if rec := e.do("GET", auditPath, adminTok); rec.Code != 403 {
-		t.Fatalf("deny lifted: %d", rec.Code)
+	if e.canReadAudit(admin.ID, org) {
+		t.Fatal("deny lifted")
 	}
 
 	deleter := e.createRole(ownerTok, org, `{"name":"deleter","rules":[{"effect":"allow","object":"org/teams/*","action":"iam.teams.delete"}]}`)
@@ -526,8 +524,8 @@ func TestTeamDenyEscape(t *testing.T) {
 	if rec := e.do("DELETE", teamPath(org, team), ownerTok); rec.Code != 204 {
 		t.Fatalf("owner deletes: %d", rec.Code)
 	}
-	if rec := e.do("GET", auditPath, adminTok); rec.Code != 200 {
-		t.Fatalf("after owner delete: %d", rec.Code)
+	if !e.canReadAudit(admin.ID, org) {
+		t.Fatal("deny kept after owner delete")
 	}
 }
 
@@ -605,7 +603,7 @@ func TestNonAdminCannotAttachDenyViaParent(t *testing.T) {
 	if e.roleCount(org) != 4 {
 		t.Fatal("role created")
 	}
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/audit", e.session(admin)); rec.Code != 200 {
-		t.Fatalf("deny reached admin: %d", rec.Code)
+	if !e.canReadAudit(admin.ID, org) {
+		t.Fatal("deny reached admin")
 	}
 }

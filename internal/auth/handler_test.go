@@ -10,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestIdentityFrom(t *testing.T) {
@@ -73,6 +76,7 @@ func (f fakeAuth) VerifyCLIToken(ctx context.Context, rawIDToken, accessToken st
 
 type env struct {
 	t     *testing.T
+	pool  *pgxpool.Pool
 	store *store.Store
 	h     http.Handler
 	// header is added to every request, e.g. to arrive through the edge.
@@ -83,7 +87,8 @@ const edgeToken = "0123456789abcdef0123456789abcdef"
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	s := store.New(dbtest.New(t))
+	pool := dbtest.New(t)
+	s := store.New(pool)
 	h := &Handler{
 		Store:       s,
 		Auth:        fakeAuth{id: store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Alice"}, cliToken: "good"},
@@ -101,7 +106,7 @@ func newEnv(t *testing.T) *env {
 		}
 		_, _ = w.Write([]byte(p.User.Email))
 	})))
-	return &env{t: t, store: s, h: h.TrustEdge(mux)}
+	return &env{t: t, pool: pool, store: s, h: h.TrustEdge(mux)}
 }
 
 func (e *env) do(r *http.Request) *httptest.ResponseRecorder {
@@ -155,12 +160,8 @@ func (e *env) sessionCookie() *http.Cookie {
 
 func (e *env) actions(result store.Result) map[string]bool {
 	e.t.Helper()
-	entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{})
-	if err != nil {
-		e.t.Fatal(err)
-	}
 	out := map[string]bool{}
-	for _, en := range entries {
+	for _, en := range storetest.Audit(e.t, e.pool, "") {
 		if en.Result == result {
 			out[en.Action] = true
 		}
@@ -240,9 +241,9 @@ func TestCallbackIdPErrorIsSanitized(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?error=1" {
 		t.Fatalf("status %d %q", rec.Code, rec.Header().Get("Location"))
 	}
-	entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{})
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("entries %v, %v", entries, err)
+	entries := storetest.Audit(t, e.pool, "")
+	if len(entries) != 1 {
+		t.Fatalf("entries %v", entries)
 	}
 	reason, _ := entries[0].Details["reason"].(string)
 	if entries[0].Result != store.ResultFailed || reason != ("idp error: " + long)[:512] {
@@ -361,9 +362,9 @@ func TestAuditIPBehindEdge(t *testing.T) {
 			if rec := e.login("/"); rec.Code != http.StatusFound {
 				t.Fatalf("login: %d", rec.Code)
 			}
-			entries, err := e.store.AuditEntries(context.Background(), store.AuditFilter{Action: store.ActionAuthLogin})
-			if err != nil || len(entries) != 1 || entries[0].IP != tc.want {
-				t.Fatalf("audit ip: %+v, %v (want %s)", entries, err, tc.want)
+			entries := storetest.Audit(t, e.pool, store.ActionAuthLogin)
+			if len(entries) != 1 || entries[0].IP != tc.want {
+				t.Fatalf("audit ip: %+v (want %s)", entries, tc.want)
 			}
 		})
 	}

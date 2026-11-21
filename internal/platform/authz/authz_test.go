@@ -17,6 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	testv1 "github.com/asterism-dev/observatory/gen/go/observatory/test/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/test/v1/testv1connect"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
 	"github.com/golang-jwt/jwt/v5"
@@ -61,7 +62,11 @@ type echoServer struct {
 	testv1connect.UnimplementedEchoServiceHandler
 }
 
-func (echoServer) Echo(_ context.Context, r *connect.Request[testv1.EchoRequest]) (*connect.Response[testv1.EchoResponse], error) {
+// Echo answers "ip" with the client IP the interceptor put in the context.
+func (echoServer) Echo(ctx context.Context, r *connect.Request[testv1.EchoRequest]) (*connect.Response[testv1.EchoResponse], error) {
+	if r.Msg.GetText() == "ip" {
+		return connect.NewResponse(&testv1.EchoResponse{Text: identity.ClientIP(ctx)}), nil
+	}
 	return connect.NewResponse(&testv1.EchoResponse{Text: r.Msg.GetText()}), nil
 }
 func (echoServer) Peek(context.Context, *connect.Request[testv1.PeekRequest]) (*connect.Response[testv1.PeekResponse], error) {
@@ -261,6 +266,15 @@ func TestInterceptor(t *testing.T) {
 			t.Fatalf("text = %q", res.Msg.GetText())
 		}
 	})
+	t.Run("verified calls carry the edge's client ip", func(t *testing.T) {
+		req := withToken(f.token(t, f.member, true), &testv1.EchoRequest{Text: "ip"})
+		req.Header().Set(clientip.HeaderClientIP, "203.0.113.7")
+		res, err := f.echo.Echo(context.Background(), req)
+		wantCode(t, err, 0)
+		if res.Msg.GetText() != "203.0.113.7" {
+			t.Fatalf("client ip = %q", res.Msg.GetText())
+		}
+	})
 }
 
 func TestMemberRemovedViaStream(t *testing.T) {
@@ -326,8 +340,8 @@ func TestPlatformScopeUserObject(t *testing.T) {
 func TestResolveObjectRejectsBadAnnotations(t *testing.T) {
 	m := (&testv1.GetEchoRequest{Echo: uuid.NewString()}).ProtoReflect()
 	for _, pattern := range []string{"org/echoes/{missing}", "org/echoes/{echo", "org/echoes/echo}", "org/{{echo}}"} {
-		if _, err := resolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
-			t.Errorf("resolveObject(%q) err = %v, want Unimplemented", pattern, err)
+		if _, err := ResolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
+			t.Errorf("ResolveObject(%q) err = %v, want Unimplemented", pattern, err)
 		}
 	}
 }

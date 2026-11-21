@@ -9,6 +9,7 @@ deploy/dev/hub.env
 deploy/dev/registry-keys/
 deploy/dev/registry-certs/
 bin/
+.data/
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep

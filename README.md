@@ -27,6 +27,10 @@ An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -
 32 characters each; the gateway and the storage server authenticate to the hub with them; `make gateway-token
 storage-token` appends whichever is missing).
 
+`make run` stores its embedded event bus in `.data` (`OBSERVATORY_DATA_DIR`). To use a NATS server instead, run
+`make nats-up` (`nats-token` appends `OBSERVATORY_NATS_TOKEN` and `OBSERVATORY_NATS_URL` to `deploy/dev/hub.env`;
+`make nats-down` stops it). Audit events from the hub reach the audit service over it, see [docs/audit.md](docs/audit.md).
+
 `make run` starts `observatory serve all`: the edge (public entry point, web app) on `OBSERVATORY_EDGE_LISTEN`
 (default `:8090`) in front of the hub, which listens on `OBSERVATORY_HUB_LISTEN` (`:8091` with `make run`) for the
 gateway, the storage server and the registry; the edge answers `/internal/*` with 404. `make edge-token` appends

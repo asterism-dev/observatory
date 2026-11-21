@@ -38,8 +38,38 @@ linters:
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/edge
               desc: the hub must not depend on the edge; shared code belongs in internal/platform
+        audit:
+          files: ["**/internal/audit/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/audit
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - connectrpc.com/connect
+            - google.golang.org/protobuf
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/nats-io/nats.go
+        platform-test:
+          files: ["**/internal/platform/**/*_test.go"]
+          list-mode: strict
+          allow:
+            - github.com/asterism-dev/observatory/internal/db/dbtest
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - github.com/asterism-dev/observatory/internal/authz
+            - connectrpc.com/connect
+            - google.golang.org/protobuf
+            - github.com/golang-jwt/jwt/v5
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/pressly/goose/v3
+            - github.com/nats-io/nats.go
+            - github.com/nats-io/nats-server/v2
         platform:
-          files: ["**/internal/platform/**"]
+          files: ["**/internal/platform/**", "!$test"]
           list-mode: strict
           allow:
             - $gostd
@@ -50,6 +80,10 @@ linters:
             - google.golang.org/protobuf
             - github.com/golang-jwt/jwt/v5
             - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/pressly/goose/v3
+            - github.com/nats-io/nats.go
+            - github.com/nats-io/nats-server/v2
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/api
               desc: platform code must not import a service
@@ -72,5 +106,5 @@ linters:
   exclusions:
     rules:
       # ponytail: errcheck covers only the packages added with the edge; the older tree has ~700 findings to fix first.
-      - path-except: ^(internal/(edge|hubserver|platform)/|cmd/observatory/serve)
+      - path-except: ^(internal/(audit|edge|hubserver|platform)/|cmd/observatory/serve)
         linters: [errcheck]

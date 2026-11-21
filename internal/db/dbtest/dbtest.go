@@ -20,6 +20,21 @@ const envURL = "OBSERVATORY_TEST_DATABASE_URL"
 // New creates a migrated throwaway database and drops it when the test ends.
 func New(t testing.TB) *pgxpool.Pool {
 	t.Helper()
+	testURL := Empty(t)
+	if err := db.Migrate(context.Background(), testURL); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := db.Open(context.Background(), testURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// Empty creates an unmigrated throwaway database, drops it when the test ends and returns its URL.
+func Empty(t testing.TB) string {
+	t.Helper()
 	ctx := context.Background()
 
 	adminURL := os.Getenv(envURL)
@@ -48,11 +63,7 @@ func New(t testing.TB) *pgxpool.Pool {
 	u.Path = "/" + name
 	testURL := u.String()
 
-	var pool *pgxpool.Pool
 	t.Cleanup(func() {
-		if pool != nil {
-			pool.Close()
-		}
 		conn, err := pgx.Connect(ctx, adminURL)
 		if err != nil {
 			t.Errorf("connect for cleanup: %v", err)
@@ -71,12 +82,5 @@ func New(t testing.TB) *pgxpool.Pool {
 		}
 	})
 
-	if err := db.Migrate(ctx, testURL); err != nil {
-		t.Fatal(err)
-	}
-	pool, err = db.Open(ctx, testURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pool
+	return testURL
 }

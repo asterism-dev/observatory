@@ -8,7 +8,7 @@ usage: observatory <command> [args] [flags]
   help [noun]                         show this help
   ssh <vm> [--user dev] [-- args...]  ssh into a VM
   desktop <vm> [--user dev]           start the VM desktop and attach with xpra
-  serve edge|hub|all                  run observatory services
+  serve edge|hub|audit|all            run observatory services
 
 org:
   org list           list your orgs

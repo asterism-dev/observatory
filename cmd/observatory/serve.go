@@ -10,22 +10,27 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/audit"
 	"github.com/asterism-dev/observatory/internal/edge"
 	"github.com/asterism-dev/observatory/internal/hubserver"
+	"github.com/asterism-dev/observatory/internal/platform/bus"
 	svcrun "github.com/asterism-dev/observatory/internal/platform/run"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/web"
 )
 
 func serveCommands() []command {
-	return []command{{"serve", "edge|hub|all", "run observatory services", cmdServe}}
+	return []command{{"serve", "edge|hub|audit|all", "run observatory services", cmdServe}}
 }
 
 func cmdServe(c *cli, args []string) error {
-	if len(args) != 1 || (args[0] != "edge" && args[0] != "hub" && args[0] != "all") {
+	if len(args) != 1 || (args[0] != "edge" && args[0] != "hub" && args[0] != "audit" && args[0] != "all") {
 		return usagef("%s", usageLine("serve"))
 	}
 	ctx, stop := signal.NotifyContext(c.ctx, os.Interrupt, syscall.SIGTERM)
@@ -42,6 +47,28 @@ func cmdServe(c *cli, args []string) error {
 			return err
 		}
 		return hubserver.Run(ctx, c.getenv, ln)
+	case "audit":
+		cfg := auditConfig(c.getenv)
+		var missing []string
+		for k, v := range map[string]string{"OBSERVATORY_AUDIT_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_HUB_URL": cfg.HubURL,
+			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken} {
+			if v == "" {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 {
+			slices.Sort(missing)
+			return fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
+		}
+		var err error
+		if cfg.ServiceTokens, err = servicetoken.Parse(c.getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
+			return fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
+		}
+		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_AUDIT_LISTEN", ":8092"))
+		if err != nil {
+			return err
+		}
+		return audit.Run(ctx, cfg, ln)
 	case "edge":
 		var missing []string
 		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_SERVICE_TOKEN"} {
@@ -52,11 +79,15 @@ func cmdServe(c *cli, args []string) error {
 		if len(missing) > 0 {
 			return fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
 		}
+		services, err := edge.ParseServices(c.getenv("OBSERVATORY_EDGE_SERVICES"))
+		if err != nil {
+			return fmt.Errorf("OBSERVATORY_EDGE_SERVICES: %w", err)
+		}
 		ln, err := listenEdge(c.getenv)
 		if err != nil {
 			return err
 		}
-		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN"), ServiceToken: c.getenv("OBSERVATORY_SERVICE_TOKEN")}, ln)
+		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN"), ServiceToken: c.getenv("OBSERVATORY_SERVICE_TOKEN"), Services: services}, ln)
 	default:
 		ln, err := listenEdge(c.getenv)
 		if err != nil {
@@ -66,25 +97,68 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
-// serveAll runs the hub on a loopback port behind the edge on edgeLn, sharing edge and service tokens that live only in this process.
+// serveAll runs the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
 	token := rand.Text() + rand.Text()
 	serviceToken := rand.Text() + rand.Text()
+	auditToken := rand.Text() + rand.Text()
+	auditCfg := auditConfig(getenv)
+	auditCfg.ServiceToken = auditToken
+	if auditCfg.NATSURL == "" {
+		stop, err := embeddedNATS(ctx, getenv, &auditCfg)
+		if err != nil {
+			edgeLn.Close()
+			return err
+		}
+		defer stop()
+	}
 	hubEnv := func(k string) string {
 		switch k {
 		case "OBSERVATORY_EDGE_TOKEN":
 			return token
 		case "OBSERVATORY_SERVICE_TOKENS":
-			return "edge=" + serviceToken
+			return "edge=" + serviceToken + ",audit=" + auditToken
+		case "OBSERVATORY_NATS_URL":
+			return auditCfg.NATSURL
+		case "OBSERVATORY_NATS_TOKEN":
+			return auditCfg.NATSToken
 		}
 		return getenv(k)
 	}
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
+	auditSvc := svcrun.Service{Name: "audit", Run: func(ctx context.Context, ln net.Listener) error { return audit.Run(ctx, auditCfg, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
+		// All calls this before starting any service, so the audit service sees the hub URL.
+		auditCfg.HubURL = hubURL
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
 			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, ServiceToken: serviceToken, Services: services}, ln)
 		}}
-	}, []svcrun.Service{hub})
+	}, []svcrun.Service{hub, auditSvc})
+}
+
+func auditConfig(getenv func(string) string) audit.Config {
+	return audit.Config{
+		DatabaseURL:  envOr(getenv, "OBSERVATORY_AUDIT_DATABASE_URL", getenv("OBSERVATORY_DATABASE_URL")),
+		HubURL:       getenv("OBSERVATORY_HUB_URL"),
+		Issuer:       getenv("OBSERVATORY_PUBLIC_URL"),
+		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),
+		NATSURL:      getenv("OBSERVATORY_NATS_URL"),
+		NATSToken:    getenv("OBSERVATORY_NATS_TOKEN"),
+	}
+}
+
+// embeddedNATS starts an in-process bus for a single-process install under OBSERVATORY_DATA_DIR/nats; without a persistent directory, unconsumed events would be lost on restart.
+func embeddedNATS(ctx context.Context, getenv func(string) string, cfg *audit.Config) (func(), error) {
+	dataDir := getenv("OBSERVATORY_DATA_DIR")
+	if dataDir == "" {
+		return nil, errors.New("set OBSERVATORY_DATA_DIR for the embedded event bus, or OBSERVATORY_NATS_URL and OBSERVATORY_NATS_TOKEN for an external one")
+	}
+	url, natsToken, stop, err := bus.Embedded(ctx, filepath.Join(dataDir, "nats"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.NATSURL, cfg.NATSToken = url, natsToken
+	return stop, nil
 }
 
 func hubListen(getenv func(string) string, svc string) string {

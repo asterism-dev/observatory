@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
@@ -30,11 +31,14 @@ func (i *interceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if req.Spec().IsClient {
 			return next(ctx, req)
 		}
-		ctx, err := i.authorize(ctx, req)
+		authCtx, err := i.authorize(ctx, req)
+		if code := connect.CodeOf(err); code == connect.CodePermissionDenied || code == connect.CodeNotFound {
+			identity.MarkDenied(ctx)
+		}
 		if err != nil {
 			return nil, err
 		}
-		return next(ctx, req)
+		return next(authCtx, req)
 	}
 }
 
@@ -76,7 +80,8 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 		return nil, errBadAnnotation()
 	}
 	m := msg.ProtoReflect()
-	ctx = identity.WithPrincipal(ctx, p)
+	// Only now: the header is the edge's, and a verified JWT means the call came through it (or holds a leaked token).
+	ctx = identity.WithVerified(ctx, p, req.Header().Get(clientip.HeaderClientIP))
 	orgField := m.Descriptor().Fields().ByName("org")
 	if orgField == nil {
 		return ctx, platformScope(p, perm, m)
@@ -92,7 +97,7 @@ func (i *interceptor) authorize(ctx context.Context, req connect.AnyRequest) (co
 	if !snap.members[orgUser{org, p.User}] {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("not found"))
 	}
-	obj, err := resolveObject(perm.Object, m)
+	obj, err := ResolveObject(perm.Object, m)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +113,7 @@ func platformScope(p identity.Principal, perm permission.Permission, m protorefl
 		return nil
 	}
 	if strings.HasPrefix(perm.Object, "user:") {
-		obj, err := resolveObject(perm.Object, m)
+		obj, err := ResolveObject(perm.Object, m)
 		if err != nil {
 			return err
 		}

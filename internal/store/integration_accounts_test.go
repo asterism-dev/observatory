@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -71,7 +71,7 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 	mustCreateEnv(t, s, store.EnvVar{OrgID: org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeOrg, Name: "K", CreatedBy: uid, UpdatedBy: uid}, "v")
 	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
 	defer conn.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("../db/migrations"))
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}

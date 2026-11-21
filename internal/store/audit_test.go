@@ -8,74 +8,62 @@ import (
 
 	"github.com/google/uuid"
 
+	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
-func TestAuditFiltersAndPaging(t *testing.T) {
+func TestAuditWritesOutboxEvent(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	pool := dbtest.New(t)
+	s := store.New(pool)
 	org := uuid.New()
-	entries := []store.AuditEntry{
-		{ActorKind: store.ActorUser, ActorID: "a", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
-		{ActorKind: store.ActorUser, ActorID: "a", Action: store.ActionOrgCreate, OrgID: &org, Result: store.ResultAllowed, Details: map[string]any{"k": "v"}},
-		{ActorKind: store.ActorUser, ActorID: "b", Action: store.ActionAuthLogin, Result: store.ResultDenied},
-		{ActorKind: store.ActorSystem, ActorID: "b", Action: store.ActionAuditRead, Result: store.ResultFailed},
-		{ActorKind: store.ActorUser, ActorID: "a", Action: store.ActionAuthLogout, Result: store.ResultAllowed},
+	err := s.Audit(ctx, store.AuditEntry{ActorKind: store.ActorUser, ActorID: "a", OrgID: &org, Action: store.ActionMemberSetRole,
+		Resource: "org/members/x", Result: store.ResultDenied, IP: "203.0.113.7", UserAgent: "ua", Details: map[string]any{"role": "admin", "id": org, "n": 2}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, e := range entries {
-		if err := s.Audit(ctx, e); err != nil {
+	if err := s.Audit(ctx, store.AuditEntry{ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed}); err != nil {
+		t.Fatal(err)
+	}
+	var subjects []string
+	rows, err := pool.Query(ctx, "SELECT subject FROM outbox ORDER BY id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var subj string
+		if err := rows.Scan(&subj); err != nil {
 			t.Fatal(err)
 		}
+		subjects = append(subjects, subj)
 	}
-
-	count := func(f store.AuditFilter) int {
-		t.Helper()
-		got, err := s.AuditEntries(ctx, f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return len(got)
+	if want := []string{"events." + org.String() + ".iam.members.setRole", "events.platform.iam.sessions.create"}; strings.Join(subjects, " ") != strings.Join(want, " ") {
+		t.Fatalf("subjects %v, want %v", subjects, want)
 	}
-	if n := count(store.AuditFilter{ActorID: "a"}); n != 3 {
-		t.Fatalf("actor a: %d", n)
+	es := storetest.AuditEvents(t, pool)
+	if len(es) != 2 {
+		t.Fatalf("%d events", len(es))
 	}
-	if n := count(store.AuditFilter{Action: store.ActionAuthLogin}); n != 2 {
-		t.Fatalf("login: %d", n)
+	e := es[1]
+	if !e.GetAudit() || e.GetType() != store.ActionMemberSetRole || e.GetOrg() != org.String() || e.GetActor().GetKind() != eventsv1.ActorKind_ACTOR_KIND_USER ||
+		e.GetActor().GetId() != "a" || e.GetResource() != "org/members/x" || e.GetResult() != eventsv1.Result_RESULT_DENIED ||
+		e.GetClientIp() != "203.0.113.7" || e.GetUserAgent() != "ua" || e.GetTime() == nil || e.GetId() == "" {
+		t.Fatalf("event %v", e)
 	}
-	byOrg, _ := s.AuditEntries(ctx, store.AuditFilter{OrgID: &org})
-	if len(byOrg) != 1 || byOrg[0].Details["k"] != "v" || byOrg[0].OrgID == nil || *byOrg[0].OrgID != org {
-		t.Fatalf("org: %+v", byOrg)
+	if d := e.GetDetails().AsMap(); d["role"] != "admin" || d["id"] != org.String() || d["n"] != 2.0 {
+		t.Fatalf("details %v", d)
 	}
-
-	var ids []int64
-	var before int64
-	for {
-		page, err := s.AuditEntries(ctx, store.AuditFilter{Limit: 2, Before: before})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(page) == 0 {
-			break
-		}
-		for _, e := range page {
-			ids = append(ids, e.ID)
-		}
-		before = page[len(page)-1].ID
-	}
-	if len(ids) != 5 {
-		t.Fatalf("paged %d entries: %v", len(ids), ids)
-	}
-	for i := 1; i < len(ids); i++ {
-		if ids[i] >= ids[i-1] {
-			t.Fatalf("not newest-first without overlap: %v", ids)
-		}
+	if sys := es[0]; sys.GetActor().GetKind() != eventsv1.ActorKind_ACTOR_KIND_SYSTEM || sys.GetOrg() != "" || sys.GetResult() != eventsv1.Result_RESULT_FAILED {
+		t.Fatalf("system event %v", sys)
 	}
 }
 
 func TestAuditInRolledBackTxDisappears(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	pool := dbtest.New(t)
+	s := store.New(pool)
 	boom := errors.New("boom")
 	err := s.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.Audit(ctx, store.AuditEntry{ActorKind: store.ActorUser, ActorID: "a", Action: store.ActionAuthLogin, Result: store.ResultAllowed}); err != nil {
@@ -86,29 +74,15 @@ func TestAuditInRolledBackTxDisappears(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatal(err)
 	}
-	got, err := s.AuditEntries(ctx, store.AuditFilter{})
-	if err != nil || len(got) != 0 {
-		t.Fatalf("got %v, %v", got, err)
-	}
-}
-
-func TestSanitizeText(t *testing.T) {
-	for in, want := range map[string]string{
-		"Mozilla/5.0":            "Mozilla/5.0",
-		"a\x00b\nc\x7f":          "abc",
-		"bad\xffutf8":            "badutf8",
-		"Grüße":                  "Grüße",
-		strings.Repeat("ü", 300): strings.Repeat("ü", 256),
-	} {
-		if got := store.SanitizeText(in); got != want {
-			t.Errorf("SanitizeText(%q) = %q, want %q", in, got, want)
-		}
+	if got := storetest.Audit(t, pool, ""); len(got) != 0 {
+		t.Fatalf("got %v", got)
 	}
 }
 
 func TestAuditSanitizesFreeText(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	pool := dbtest.New(t)
+	s := store.New(pool)
 	long := strings.Repeat("x", 2000)
 	err := s.Audit(ctx, store.AuditEntry{
 		ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
@@ -117,12 +91,31 @@ func TestAuditSanitizesFreeText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.AuditEntries(ctx, store.AuditFilter{})
-	if err != nil || len(got) != 1 {
-		t.Fatalf("got %v, %v", got, err)
+	got := storetest.Audit(t, pool, "")
+	if len(got) != 1 {
+		t.Fatalf("got %v", got)
 	}
 	reason, _ := got[0].Details["reason"].(string)
 	if got[0].UserAgent != ("ua" + long)[:512] || reason != ("r" + long)[:512] {
 		t.Fatalf("not sanitized: ua %d bytes, reason %d bytes", len(got[0].UserAgent), len(reason))
+	}
+}
+
+func TestAuditRejectsUnknownActorKindOrResult(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	s := store.New(pool)
+	for _, e := range []store.AuditEntry{
+		{ActorKind: "", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
+		{ActorKind: "vm", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
+		{ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: ""},
+		{ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: "maybe"},
+	} {
+		if err := s.Audit(ctx, e); err == nil {
+			t.Errorf("%+v accepted", e)
+		}
+	}
+	if got := storetest.Audit(t, pool, ""); len(got) != 0 {
+		t.Fatalf("stored %v", got)
 	}
 }

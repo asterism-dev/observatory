@@ -6,6 +6,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestGuestMTUDefault(t *testing.T) {
@@ -34,8 +35,8 @@ func TestSetGuestMTURange(t *testing.T) {
 	if got, _ := s.GuestMTU(ctx); got != 1362 {
 		t.Fatalf("got %d", got)
 	}
-	es, err := s.AuditEntries(ctx, store.AuditFilter{Action: store.ActionPlatformGuestMTU})
-	if err != nil || len(es) != 1 || es[0].ActorID != u.ID.String() || es[0].Details["guestMTU"] != float64(1362) {
-		t.Fatalf("audit: %+v %v", es, err)
+	es := storetest.Audit(t, pool, store.ActionPlatformGuestMTU)
+	if len(es) != 1 || es[0].ActorID != u.ID.String() || es[0].Details["guestMTU"] != float64(1362) {
+		t.Fatalf("audit: %+v", es)
 	}
 }

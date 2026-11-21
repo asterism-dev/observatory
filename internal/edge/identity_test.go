@@ -250,8 +250,8 @@ func TestEdgeKeepsTrustedHeadersFromServices(t *testing.T) {
 	if code, _ := get(t, req); code != 200 {
 		t.Fatalf("status %d", code)
 	}
-	// Services must never learn the edge token, and a client-sent copy must not pass either.
-	if s := <-ch; len(s.header.Values(HeaderEdge)) != 0 || len(s.header.Values(HeaderClientIP)) != 0 {
+	// Services must never learn the edge token; the client IP is the edge's own, never the client's copy.
+	if s := <-ch; len(s.header.Values(HeaderEdge)) != 0 || len(s.header.Values(HeaderClientIP)) != 1 || s.header.Get(HeaderClientIP) != "127.0.0.1" {
 		t.Fatalf("service saw edge %q, client ip %q", s.header.Values(HeaderEdge), s.header.Values(HeaderClientIP))
 	}
 }

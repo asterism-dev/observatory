@@ -14,8 +14,8 @@ func errBadAnnotation() error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("method has no valid permission annotation"))
 }
 
-// resolveObject fills each {field} of pattern from a singular string field of m holding a canonical UUID.
-func resolveObject(pattern string, m protoreflect.Message) (string, error) {
+// ResolveObject fills each {field} of pattern from a singular string field of m holding a canonical UUID.
+func ResolveObject(pattern string, m protoreflect.Message) (string, error) {
 	var b strings.Builder
 	rest := pattern
 	for {

@@ -14,10 +14,15 @@ func proxy(target *url.URL, token string, withIdentity bool) http.Handler {
 			r.SetURL(target)
 			// Upstreams build public URLs and cookies from Host.
 			r.Out.Host = r.In.Host
-			r.Out.Header.Del(HeaderClientIP)
 			r.Out.Header.Del(HeaderEdge)
+			host, _, err := net.SplitHostPort(r.In.RemoteAddr)
+			if err != nil {
+				host = r.In.RemoteAddr
+			}
+			// Set, never added, so a client-sent copy cannot pass.
+			r.Out.Header.Set(HeaderClientIP, host)
 			if withIdentity {
-				// Services learn who the user is from the JWT alone; the edge token and client IP are for the hub only.
+				// Services learn who the user is from the JWT alone; the edge token is for the hub only.
 				r.Out.Header.Del("Cookie")
 				r.Out.Header.Del("Authorization")
 				// Set here rather than on the inbound request so a client's Connection header cannot strip it.
@@ -26,11 +31,6 @@ func proxy(target *url.URL, token string, withIdentity bool) http.Handler {
 				}
 				return
 			}
-			host, _, err := net.SplitHostPort(r.In.RemoteAddr)
-			if err != nil {
-				host = r.In.RemoteAddr
-			}
-			r.Out.Header.Set(HeaderClientIP, host)
 			r.Out.Header.Set(HeaderEdge, token)
 		},
 		FlushInterval: -1,

@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -63,7 +64,7 @@ func writeFieldError(w http.ResponseWriter, field, msg string) {
 // validDashboard writes a 400 naming the first bad field and returns the panels re-encoded without unknown keys.
 func validDashboard(w http.ResponseWriter, b *dashboardBody) (json.RawMessage, bool) {
 	b.Name = strings.TrimSpace(b.Name)
-	if n := utf8.RuneCountInString(b.Name); n < 1 || n > 100 || store.SanitizeText(b.Name) != b.Name {
+	if n := utf8.RuneCountInString(b.Name); n < 1 || n > 100 || textx.Sanitize(b.Name) != b.Name {
 		writeFieldError(w, "name", "must be 1–100 characters without control characters")
 		return nil, false
 	}
@@ -74,7 +75,7 @@ func validDashboard(w http.ResponseWriter, b *dashboardBody) (json.RawMessage, b
 	for i, p := range b.Panels {
 		field := fmt.Sprintf("panels[%d].", i)
 		switch {
-		case utf8.RuneCountInString(p.Title) > 100 || store.SanitizeText(p.Title) != p.Title:
+		case utf8.RuneCountInString(p.Title) > 100 || textx.Sanitize(p.Title) != p.Title:
 			writeFieldError(w, field+"title", "must be at most 100 characters without control characters")
 		case !slices.Contains(panelTypes, p.Type):
 			writeFieldError(w, field+"type", "must be one of "+strings.Join(panelTypes, ", "))

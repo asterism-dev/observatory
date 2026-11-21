@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package observatory.events.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Event is the envelope of every message on the event bus; its subject is events.<org or "platform">.<type>.
+message Event {
+  // id is a UUIDv7, so ids sort by creation time; consumers de-duplicate on it.
+  string id = 1;
+  google.protobuf.Timestamp time = 2;
+  // type names service, resource and verb, e.g. iam.members.delete.
+  string type = 3;
+  // org is a canonical UUID, empty for platform events.
+  string org = 4;
+  Actor actor = 5;
+  string resource = 6;
+  Result result = 7;
+  string client_ip = 8;
+  string user_agent = 9;
+  string request_id = 10;
+  google.protobuf.Struct details = 11;
+  // audit marks events the audit service records.
+  bool audit = 12;
+}
+
+message Actor {
+  ActorKind kind = 1;
+  string id = 2;
+}
+
+enum ActorKind {
+  ACTOR_KIND_UNSPECIFIED = 0;
+  ACTOR_KIND_USER = 1;
+  ACTOR_KIND_SERVICE = 2;
+  ACTOR_KIND_NODE = 3;
+  ACTOR_KIND_SYSTEM = 4;
+}
+
+enum Result {
+  RESULT_UNSPECIFIED = 0;
+  RESULT_ALLOWED = 1;
+  RESULT_DENIED = 2;
+  RESULT_FAILED = 3;
+}

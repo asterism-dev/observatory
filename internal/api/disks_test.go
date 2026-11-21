@@ -269,11 +269,7 @@ func TestDiskResponsesHaveNoKeys(t *testing.T) {
 		e.do("GET", vmsPath(org), tok).Body.String(),
 		e.do("GET", vmsPath(org)+"/"+v.ID, tok).Body.String(),
 	}
-	es, err := e.store.AuditEntries(context.Background(), store.AuditFilter{Limit: 200})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, en := range es {
+	for _, en := range e.audit("") {
 		b, _ := json.Marshal(en.Details)
 		bodies = append(bodies, string(b))
 	}

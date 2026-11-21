@@ -2,12 +2,12 @@ package db_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 )
 
@@ -16,7 +16,7 @@ func TestGuestImageMigrationRaisesUnprovisionedDisks(t *testing.T) {
 	pool := dbtest.New(t)
 	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
 	defer conn.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("migrations"))
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestMigration00017MarksExistingVMs(t *testing.T) {
 	pool := dbtest.New(t)
 	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
 	defer conn.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("migrations"))
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestMigration00018RoundTrip(t *testing.T) {
 	pool := dbtest.New(t)
 	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
 	defer conn.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("migrations"))
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, db.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}

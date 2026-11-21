@@ -18,10 +18,13 @@ services:
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
       OBSERVATORY_EDGE_HUB_URL: http://hub:8091
       OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_EDGE_SERVICES: audit=http://audit:8092
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     depends_on:
       hub:
+        condition: service_started
+      audit:
         condition: service_started
   # Listens on 8091 inside the compose network only: the edge and the internal callers (registry, gateway, storage) reach it there.
   hub:
@@ -37,7 +40,7 @@ services:
       OBSERVATORY_OIDC_CLI_CLIENT_ID: ${OBSERVATORY_OIDC_CLI_CLIENT_ID:?set OBSERVATORY_OIDC_CLI_CLIENT_ID in deploy/.env}
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
-      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env},audit=${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
       OBSERVATORY_REGISTRY_URL: http://registry:5000
       OBSERVATORY_REGISTRY_KEY_DIR: /keys
       OBSERVATORY_REGISTRY_CERT_DIR: /certs
@@ -45,6 +48,8 @@ services:
       OBSERVATORY_REGISTRY_CONFIG: /etc/distribution/config.yml
       OBSERVATORY_METRICS_URL: http://victoriametrics:8428
       OBSERVATORY_LOGS_URL: http://victorialogs:9428
+      OBSERVATORY_NATS_URL: nats://nats:4222
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
     volumes:
       - registry-keys:/keys
       - registry-certs:/certs
@@ -53,6 +58,26 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_started
+  # Stores the audit trail from the event bus and serves it on 8092 to the edge (/api/audit/v1/); not published.
+  audit:
+    <<: *observatory
+    command: ["audit"]
+    environment:
+      OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
+      OBSERVATORY_HUB_URL: http://hub:8091
+      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
+      OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_NATS_URL: nats://nats:4222
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      hub:
+        condition: service_started
   postgres:
     image: postgres:17.10-alpine
     restart: unless-stopped
@@ -67,6 +92,16 @@ services:
       retries: 10
     volumes:
       - postgres-data:/var/lib/postgresql/data
+  # Event bus; reached inside the compose network only.
+  nats:
+    image: nats:2.15.3-alpine
+    restart: unless-stopped
+    environment:
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+    # The shell refuses a short token before the server starts.
+    entrypoint: ["sh", "-c", '[ $${#OBSERVATORY_NATS_TOKEN} -ge 32 ] || { echo "OBSERVATORY_NATS_TOKEN must be at least 32 characters" >&2; exit 1; }; exec nats-server -js -sd /data --auth "$$OBSERVATORY_NATS_TOKEN"']
+    volumes:
+      - nats-data:/data
   # Reached only through the hub's /v2/ proxy; restarts until the hub has written its token certificate.
   registry:
     image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
@@ -188,6 +223,7 @@ services:
 
 volumes:
   postgres-data:
+  nats-data:
   registry-data:
   registry-keys:
   registry-certs:

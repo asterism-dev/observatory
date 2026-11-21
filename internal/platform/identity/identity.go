@@ -45,6 +45,48 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
+type clientIPKey struct{}
+
+// WithClientIP records the edge's client IP header of a call whose JWT verified.
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, clientIPKey{}, ip)
+}
+
+func ClientIP(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey{}).(string)
+	return ip
+}
+
+type Caller struct {
+	Principal Principal
+	ClientIP  string
+	Verified  bool
+	Denied    bool
+}
+
+type callerKey struct{}
+
+// WithCallerSlot lets an outer interceptor learn whom authz verified, also when authz then refuses the call.
+func WithCallerSlot(ctx context.Context) (context.Context, *Caller) {
+	c := &Caller{}
+	return context.WithValue(ctx, callerKey{}, c), c
+}
+
+// WithVerified stores p and the edge's client IP for handlers and fills an outer caller slot, if any.
+func WithVerified(ctx context.Context, p Principal, ip string) context.Context {
+	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
+		*c = Caller{Principal: p, ClientIP: ip, Verified: true}
+	}
+	return WithClientIP(WithPrincipal(ctx, p), ip)
+}
+
+// MarkDenied tells an outer caller slot that authorization, not the handler, refused the call.
+func MarkDenied(ctx context.Context) {
+	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
+		c.Denied = true
+	}
+}
+
 type claims struct {
 	jwt.RegisteredClaims
 	Session       string `json:"sid"`

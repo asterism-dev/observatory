@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package observatory.audit.v1;
+
+import "google/protobuf/timestamp.proto";
+import "observatory/events/v1/event.proto";
+import "observatory/v1/annotations.proto";
+
+// AuditService reads the audit trail, newest first.
+service AuditService {
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.events.list"
+      object: "org/audit"
+      kind: KIND_READ
+    };
+  }
+  // ListAllEvents covers every org and platform events; platform admins only.
+  rpc ListAllEvents(ListAllEventsRequest) returns (ListAllEventsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.events.list"
+      object: "platform/audit"
+      kind: KIND_READ
+    };
+  }
+  rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.settings.get"
+      object: "org/audit"
+      kind: KIND_READ
+    };
+  }
+  // UpdateSettings changes only the services listed; the others keep their setting.
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.settings.update"
+      object: "org/audit"
+      kind: KIND_WRITE
+    };
+  }
+  // GetPlatformSettings and UpdatePlatformSettings are for platform admins only.
+  rpc GetPlatformSettings(GetPlatformSettingsRequest) returns (GetPlatformSettingsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.settings.get"
+      object: "platform/audit"
+      kind: KIND_READ
+    };
+  }
+  rpc UpdatePlatformSettings(UpdatePlatformSettingsRequest) returns (UpdatePlatformSettingsResponse) {
+    option (observatory.v1.permission) = {
+      name: "audit.settings.update"
+      object: "platform/audit"
+      kind: KIND_WRITE
+    };
+  }
+}
+
+// AuditInternalService serves other services under /internal/audit/; callers authenticate with a service token.
+service AuditInternalService {
+  // GetDataEvents lists every org and service with data events on.
+  rpc GetDataEvents(GetDataEventsRequest) returns (GetDataEventsResponse);
+}
+
+// EventFilter fields are combined with AND; empty fields match everything.
+message EventFilter {
+  // actor_id matches the actor's id exactly.
+  string actor_id = 1;
+  // type matches the event type exactly, e.g. iam.members.delete.
+  string type = 2;
+  observatory.events.v1.Result result = 3;
+  // from is inclusive, to exclusive.
+  google.protobuf.Timestamp from = 4;
+  google.protobuf.Timestamp to = 5;
+}
+
+message ListEventsRequest {
+  string org = 1;
+  EventFilter filter = 2;
+  // page_size defaults to 50 and is capped at 200.
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListEventsResponse {
+  repeated observatory.events.v1.Event events = 1;
+  // next_page_token is empty on the last page.
+  string next_page_token = 2;
+}
+
+message ListAllEventsRequest {
+  EventFilter filter = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+  // filter_org limits the result to one org; not named org, which would make the method org-scoped.
+  string filter_org = 4;
+}
+
+message ListAllEventsResponse {
+  repeated observatory.events.v1.Event events = 1;
+  string next_page_token = 2;
+}
+
+message GetSettingsRequest {
+  string org = 1;
+}
+
+message GetSettingsResponse {
+  // data_events holds every service that records through the shared interceptor: true records its read calls too.
+  map<string, bool> data_events = 1;
+}
+
+message UpdateSettingsRequest {
+  string org = 1;
+  // data_events keys must be services that GetSettings lists; others are rejected.
+  map<string, bool> data_events = 2;
+}
+
+message UpdateSettingsResponse {
+  map<string, bool> data_events = 1;
+}
+
+message GetPlatformSettingsRequest {}
+
+message GetPlatformSettingsResponse {
+  // retention_days is how long audit events are kept, 30 to 3650 (default 365).
+  int32 retention_days = 1;
+}
+
+message UpdatePlatformSettingsRequest {
+  int32 retention_days = 1;
+}
+
+message UpdatePlatformSettingsResponse {
+  int32 retention_days = 1;
+}
+
+message GetDataEventsRequest {}
+
+message GetDataEventsResponse {
+  repeated DataEvents enabled = 1;
+}
+
+message DataEvents {
+  string org = 1;
+  string service = 2;
+}

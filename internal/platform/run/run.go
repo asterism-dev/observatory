@@ -18,7 +18,7 @@ type Service struct {
 	Run  func(ctx context.Context, ln net.Listener) error
 }
 
-// All binds every service, starts the edge on edgeLn last with their URLs, and stops all once any returns; on cancel the edge drains before the services stop.
+// All binds every service, calls edge with their URLs before starting any, starts the edge on edgeLn last, and stops all once any returns; on cancel the edge drains before the services stop.
 func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string]string, hubURL string) Service, svcs []Service) error {
 	lns := make([]net.Listener, 0, len(svcs))
 	services := make(map[string]string, len(svcs))
@@ -59,10 +59,11 @@ func All(ctx context.Context, edgeLn net.Listener, edge func(services map[string
 			cancelSvcs()
 		}()
 	}
+	edgeSvc := edge(services, hubURL)
 	for i, s := range svcs {
 		start(svcCtx, s, lns[i])
 	}
-	start(edgeCtx, edge(services, hubURL), edgeLn)
+	start(edgeCtx, edgeSvc, edgeLn)
 	var first error
 	for range len(svcs) + 1 {
 		if err := <-errs; err != nil && first == nil {

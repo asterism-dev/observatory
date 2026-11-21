@@ -16,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/fleet"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 	"github.com/asterism-dev/observatory/internal/version"
 )
 
@@ -167,10 +168,7 @@ func TestUpdateRunHappyPath(t *testing.T) {
 	if e.f.Updating(ns[0].ID) || e.f.Updating(ns[1].ID) {
 		t.Fatal("still updating after the run")
 	}
-	entries, err := e.s.AuditEntries(context.Background(), store.AuditFilter{Action: store.ActionNodeUpdate, OrgID: &e.org.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	entries := storetest.Audit(t, e.pool, store.ActionNodeUpdate)
 	if len(entries) != 2 {
 		t.Fatalf("%d audit entries", len(entries))
 	}
@@ -267,10 +265,7 @@ func TestUpdateFailsOnReport(t *testing.T) {
 	if _, ok := fleet.UpdateErr(e.f, ns[0].ID); ok {
 		t.Fatal("report kept after the node's update ended")
 	}
-	entries, err := e.s.AuditEntries(context.Background(), store.AuditFilter{Action: store.ActionNodeUpdate, OrgID: &e.org.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	entries := storetest.Audit(t, e.pool, store.ActionNodeUpdate)
 	if len(entries) != 1 || entries[0].Details["update"] != "failed" || entries[0].Details["reason"] != "apt failed" {
 		t.Fatalf("audit %+v", entries)
 	}

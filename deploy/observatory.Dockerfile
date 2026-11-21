@@ -30,12 +30,13 @@ RUN echo "$VERSION" > /guestboot/VERSION \
 FROM debian:trixie-slim
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && install -d -o 65532 /keys /certs
+    && install -d -o 65532 /keys /certs /var/lib/observatory
 COPY --from=build /observatory /usr/local/bin/observatory
 COPY --from=build /observatory-node /usr/local/lib/observatory/observatory-node
 COPY --from=build /guestboot.tar /usr/local/lib/observatory/guestboot.tar
 COPY --from=registry /bin/registry /usr/local/bin/registry
-ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar
+ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar \
+    OBSERVATORY_DATA_DIR=/var/lib/observatory
 USER 65532
 EXPOSE 8090 8091
 ENTRYPOINT ["observatory", "serve"]

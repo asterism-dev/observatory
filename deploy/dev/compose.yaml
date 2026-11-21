@@ -17,6 +17,24 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres-init.sql:/docker-entrypoint-initdb.d/observatory.sql:ro
+  # For services on the host (make nats-up).
+  nats:
+    image: nats:2.15.3-alpine
+    profiles: [nats]
+    restart: unless-stopped
+    environment:
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:-}
+    # make nats-token writes the token; the shell refuses a missing or short one before the server starts.
+    entrypoint: ["sh", "-c", '[ $${#OBSERVATORY_NATS_TOKEN} -ge 32 ] || { echo "OBSERVATORY_NATS_TOKEN must be at least 32 characters" >&2; exit 1; }; exec nats-server -js -sd /data -m 8222 --auth "$$OBSERVATORY_NATS_TOKEN"']
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    ports:
+      - "127.0.0.1:54222:4222"
+    volumes:
+      - nats-data:/data
   # For a hub on the host (make registry-up); restarts until the hub has written its token certificate.
   registry:
     image: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
@@ -108,6 +126,7 @@ services:
 
 volumes:
   postgres-data:
+  nats-data:
   registry-data:
   metrics-data:
   logs-data:

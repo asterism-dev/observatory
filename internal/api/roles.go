@@ -13,6 +13,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -119,7 +120,7 @@ func readRoleBody(w http.ResponseWriter, r *http.Request) (authz.CustomRole, boo
 		writeError(w, http.StatusBadRequest, "invalid name")
 		return authz.CustomRole{}, false
 	}
-	if store.SanitizeText(body.Description) != body.Description {
+	if textx.Sanitize(body.Description) != body.Description {
 		writeError(w, http.StatusBadRequest, "invalid description")
 		return authz.CustomRole{}, false
 	}

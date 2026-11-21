@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -81,6 +82,30 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 		}
 		app.ServeHTTP(w, r)
 	}), nil
+}
+
+var serviceName = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// ParseServices reads comma-separated name=url pairs into Config.Services; empty input yields an empty map.
+func ParseServices(env string) (map[string]string, error) {
+	services := map[string]string{}
+	if strings.TrimSpace(env) == "" {
+		return services, nil
+	}
+	for i, pair := range strings.Split(env, ",") {
+		name, raw, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || !serviceName.MatchString(name) {
+			return nil, fmt.Errorf("entry %d is not name=url with a lower-case name", i+1)
+		}
+		if _, err := parseUpstream(raw); err != nil {
+			return nil, fmt.Errorf("service %s url: %w", name, err)
+		}
+		if _, dup := services[name]; dup {
+			return nil, fmt.Errorf("duplicate service %q", name)
+		}
+		services[name] = raw
+	}
+	return services, nil
 }
 
 func parseUpstream(raw string) (*url.URL, error) {

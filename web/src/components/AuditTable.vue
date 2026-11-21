@@ -1,29 +1,25 @@
 <script setup lang="ts">
 import { Button, TextInput, type TableColumn } from '@asterism-dev/lumen'
+import type { MessageInitShape } from '@bufbuild/protobuf'
+import { timestampFromDate } from '@bufbuild/protobuf/wkt'
+import { Code, ConnectError } from '@connectrpc/connect'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api, ApiError } from '@/api'
+import { auditClient as client } from '@/composables/auditClient'
+import { toAuditRow, type AuditRow } from '@/composables/useAudit'
 import { useMe } from '@/composables/useMe'
+import type { EventFilterSchema } from '@/gen/observatory/audit/v1/audit_pb'
 import { DataTable, FilterBar, Tag } from '@/ui'
 
-interface Entry {
-  id: number
-  at: string
-  actorKind: string
-  actorId: string
-  orgId: string | null
-  action: string
-  resource: string
-  result: 'allowed' | 'denied' | 'failed'
-}
-
-const props = defineProps<{ source: string }>()
+// Without org the table shows the platform-wide trail.
+const props = defineProps<{ org?: string }>()
 const { t, d } = useI18n()
 const { expire } = useMe()
 
-const entries = ref<Entry[]>([])
-const next = ref<number | null>(null)
+
+const entries = ref<AuditRow[]>([])
+const next = ref('')
 const error = ref('')
 const actor = ref('')
 const action = ref('')
@@ -33,36 +29,36 @@ const to = ref('')
 const columns = computed<TableColumn[]>(() => [
   { key: 'at', label: t('audit.time') },
   { key: 'actorId', label: t('audit.actor') },
-  { key: 'orgId', label: t('audit.org') },
+  { key: 'org', label: t('audit.org') },
   { key: 'action', label: t('audit.action') },
   { key: 'resource', label: t('audit.resource') },
   { key: 'result', label: t('audit.result') },
 ])
 
-const tones = { allowed: 'success', denied: 'warning', failed: 'danger' } as const
+const tones = { allowed: 'success', denied: 'warning', failed: 'danger', '': undefined } as const
 
-let applied = new URLSearchParams()
+let applied: MessageInitShape<typeof EventFilterSchema> = {}
 
 async function load(more: boolean) {
   try {
-    const q = new URLSearchParams()
-    if (more) {
-      applied.forEach((v, k) => q.set(k, v))
-      if (next.value !== null) q.set('before', String(next.value))
-    } else {
-      if (actor.value) q.set('actor', actor.value)
-      if (action.value) q.set('action', action.value)
-      if (from.value) q.set('from', new Date(from.value).toISOString())
-      if (to.value) q.set('to', new Date(to.value).toISOString())
-    }
-    const res = await api<{ entries: Entry[]; next: number | null }>(`${props.source}?${q}`)
-    if (!more) applied = new URLSearchParams(q)
-    entries.value = more ? [...entries.value, ...res.entries] : res.entries
-    next.value = res.next
+    const filter = more
+      ? applied
+      : {
+          actorId: actor.value,
+          type: action.value,
+          from: from.value ? timestampFromDate(new Date(from.value)) : undefined,
+          to: to.value ? timestampFromDate(new Date(to.value)) : undefined,
+        }
+    const req = { filter, pageToken: more ? next.value : '' }
+    const res = props.org ? await client.listEvents({ ...req, org: props.org }) : await client.listAllEvents(req)
+    applied = filter
+    const rows = res.events.map(toAuditRow)
+    entries.value = more ? [...entries.value, ...rows] : rows
+    next.value = res.nextPageToken
     error.value = ''
   } catch (e) {
-    if (e instanceof ApiError && e.status === 401) return expire()
-    error.value = e instanceof Error ? e.message : String(e)
+    if (e instanceof ConnectError && e.code === Code.Unauthenticated) return expire()
+    error.value = e instanceof ConnectError ? e.rawMessage : e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -81,12 +77,12 @@ onMounted(() => load(false))
   </form>
   <p v-if="error" role="alert">{{ error }}</p>
   <DataTable :columns="columns" :rows="entries" row-key="id">
-    <template #cell-at="{ row }">{{ d(new Date(row.at), { dateStyle: 'short', timeStyle: 'medium' }) }}</template>
+    <template #cell-at="{ row }">{{ d(row.at, { dateStyle: 'short', timeStyle: 'medium' }) }}</template>
     <template #cell-actorId="{ row }"><span class="mono">{{ row.actorKind }}:{{ row.actorId }}</span></template>
-    <template #cell-orgId="{ row }"><span class="mono">{{ row.orgId ?? '' }}</span></template>
+    <template #cell-org="{ row }"><span class="mono">{{ row.org }}</span></template>
     <template #cell-action="{ row }"><span class="mono">{{ row.action }}</span></template>
-    <template #cell-result="{ row }"><Tag :tone="tones[row.result as Entry['result']]">{{ row.result }}</Tag></template>
+    <template #cell-result="{ row }"><Tag :tone="tones[row.result as AuditRow['result']]">{{ row.result }}</Tag></template>
     <template #empty>{{ t('audit.empty') }}</template>
   </DataTable>
-  <div v-if="next !== null"><Button @click="load(true)">{{ t('audit.loadMore') }}</Button></div>
+  <div v-if="next"><Button @click="load(true)">{{ t('audit.loadMore') }}</Button></div>
 </template>

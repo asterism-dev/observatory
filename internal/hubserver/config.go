@@ -32,6 +32,8 @@ type config struct {
 	MetricsURL, LogsURL string
 	// LogsRetention mirrors the log store's retention and bounds the logs explorer's time range.
 	LogsRetention time.Duration
+	// NATSURL and NATSToken reach the event bus the outbox relay publishes the hub's events to.
+	NATSURL, NATSToken string
 	// ServiceTokens maps service names to the tokens they call /internal/iam/ with; empty refuses every internal call.
 	ServiceTokens map[string]string
 }
@@ -64,6 +66,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	required(&cfg.GatewayToken, "OBSERVATORY_GATEWAY_TOKEN")
 	required(&cfg.StorageToken, "OBSERVATORY_STORAGE_TOKEN")
 	required(&cfg.EdgeToken, "OBSERVATORY_EDGE_TOKEN")
+	required(&cfg.NATSURL, "OBSERVATORY_NATS_URL")
+	required(&cfg.NATSToken, "OBSERVATORY_NATS_TOKEN")
 	secretsKey := getenv("OBSERVATORY_SECRETS_KEY")
 	if secretsKey == "" {
 		missing = append(missing, "OBSERVATORY_SECRETS_KEY")
@@ -80,6 +84,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if len(cfg.StorageToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_STORAGE_TOKEN must be at least %d characters", minTokenLen)
+	}
+	if len(cfg.NATSToken) < minTokenLen {
+		return config{}, fmt.Errorf("OBSERVATORY_NATS_TOKEN must be at least %d characters", minTokenLen)
 	}
 	if len(cfg.EdgeToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_EDGE_TOKEN must be at least %d characters", minTokenLen)
