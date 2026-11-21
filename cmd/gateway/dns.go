@@ -88,12 +88,13 @@ func (d *dnsServer) handle(network string, req []byte, upstream string, src neti
 	}
 	q := m.Questions[0]
 	name := strings.ToLower(q.Name.String())
-	if name != "internal." && !strings.HasSuffix(name, ".internal.") {
-		return forward(network, req, upstream)
-	}
 	v := d.viewFor(src)
+	// Forwarding for others would loop when the upstream (Docker's DNS) asks the gateway back: hub host resolving via a device.
 	if v == nil {
 		return reply(m, dnsmessage.RCodeRefused, nil, false)
+	}
+	if name != "internal." && !strings.HasSuffix(name, ".internal.") {
+		return forward(network, req, upstream)
 	}
 	ip, ok := v.records[name]
 	if !ok && !v.parents[name] {

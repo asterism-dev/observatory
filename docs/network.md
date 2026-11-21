@@ -110,8 +110,9 @@ On macOS:
   devices and the gateway. Port security pins every port to its MAC and IP.
 - A device reaches only its own org's router address (`<slice>.1`); ACLs on `ls-transit` drop the other orgs'.
 - DNS picks the view by source address: a device or a VM management address sees only its own org's names
-  (`<vm>.internal`, `<vm>.<network>.internal`); any other source gets REFUSED for `*.internal`. Other names are
-  forwarded upstream.
+  (`<vm>.internal`, `<vm>.<network>.internal`) and has other names forwarded upstream; any other source gets REFUSED
+  for every name. That includes the gateway itself, so when the hub host resolves through a device, Docker's DNS (the
+  gateway's upstream) moves on to the next server instead of looping back to the gateway.
 
 ## Networks
 
