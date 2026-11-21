@@ -26,6 +26,8 @@ const (
 	GuestMTU     = 1300
 	UnderlayPort = 51820
 	ClientsPort  = 51821
+	// NodeUnderlayPort is where nodes listen on wg-underlay for direct peers.
+	NodeUnderlayPort = 51822
 	// ControlPort is the gateway proxy that carries node control traffic over the underlay.
 	ControlPort = 8091
 	// Storage NBD exports listen on GatewayUnderlay, one port per attachment.

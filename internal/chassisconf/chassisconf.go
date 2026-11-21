@@ -15,7 +15,7 @@ const wgService = "wg-quick@wg-underlay"
 
 type Config struct {
 	Name, PrivateKey, Address, HubKey, Endpoint, SBRemote, CACert, Cert, KeyFile string
-	MTU                                                                          int
+	MTU, ListenPort                                                              int
 }
 
 func Apply(c Config, root string, run func(name string, args ...string) error) (changed bool, err error) {
@@ -28,13 +28,14 @@ func Apply(c Config, root string, run func(name string, args ...string) error) (
 Address = %s
 PrivateKey = %s
 MTU = %d
+ListenPort = %d
 
 [Peer]
 PublicKey = %s
 Endpoint = %s
 AllowedIPs = 10.198.0.0/16
 PersistentKeepalive = 25
-`, c.Address, c.PrivateKey, c.MTU, c.HubKey, c.Endpoint)
+`, c.Address, c.PrivateKey, c.MTU, c.ListenPort, c.HubKey, c.Endpoint)
 
 	wgChanged, err := writeIfChanged(filepath.Join(root, "etc/wireguard/wg-underlay.conf"), []byte(wg), 0o600)
 	if err != nil {

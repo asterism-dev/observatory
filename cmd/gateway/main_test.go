@@ -410,3 +410,16 @@ func TestGuardQuarantineRaces(t *testing.T) {
 		}
 	}
 }
+
+func TestEndpointsParse(t *testing.T) {
+	run := func(args ...string) (string, error) {
+		if strings.Join(args, " ") != "wg show wg-underlay endpoints" {
+			t.Fatalf("args %v", args)
+		}
+		return "keyA=\t(none)\nkeyB=\t203.0.113.5:40001\n", nil
+	}
+	got, err := endpoints(run, "wg-underlay")
+	if err != nil || len(got) != 1 || got["keyB="] != "203.0.113.5:40001" {
+		t.Fatalf("got %v %v", got, err)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -326,7 +327,7 @@ func clip(s string, n int) string {
 func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 	c := chassisconf.Config{
 		Name: a.NodeID, PrivateKey: a.ChassisPrivateKey, Address: u.Address, HubKey: u.HubKey, Endpoint: u.Endpoint,
-		SBRemote: u.SBRemote, CACert: u.CACert, Cert: u.Cert, KeyFile: a.OVNKeyFile, MTU: underlayMTU,
+		SBRemote: u.SBRemote, CACert: u.CACert, Cert: u.Cert, KeyFile: a.OVNKeyFile, MTU: underlayMTU, ListenPort: netaddr.NodeUnderlayPort,
 	}
 	a.chassisMu.Lock()
 	if a.chassisStopping {

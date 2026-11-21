@@ -148,3 +148,16 @@ func TestRunContextStopsOnCancel(t *testing.T) {
 		t.Fatalf("returned after %v", d)
 	}
 }
+
+func TestApplyWritesListenPort(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig()
+	c.ListenPort = 51822
+	if _, err := Apply(c, root, func(string, ...string) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	conf, _ := os.ReadFile(filepath.Join(root, "etc/wireguard/wg-underlay.conf"))
+	if !strings.Contains(string(conf), "ListenPort = 51822") {
+		t.Fatalf("conf:\n%s", conf)
+	}
+}

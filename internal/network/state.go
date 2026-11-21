@@ -22,6 +22,7 @@ type ChassisStatus struct {
 	IP            string
 	Registered    bool
 	LastHandshake *time.Time
+	Endpoint      string
 }
 
 type gatewayStatus struct {
@@ -167,6 +168,7 @@ func (h *Hub) SetStatus(ctx context.Context, st proto.GatewayStatus) error {
 		if t, ok := st.Handshakes[c.PublicKey]; ok && !t.IsZero() {
 			cs.LastHandshake = &t
 		}
+		cs.Endpoint = st.Endpoints[c.PublicKey]
 		next[c.NodeID] = cs
 	}
 	if len(st.Rebound) > 0 {
