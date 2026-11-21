@@ -1,3 +1,9 @@
+## v0.22.0 (2026-11-21)
+
+### Feat
+
+- **logs**: org-wide logs explorer with LogsQL queries (#43)
+
 ## v0.21.0 (2026-11-21)
 
 ### Feat
