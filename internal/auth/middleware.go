@@ -61,7 +61,8 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 		}
 		p, err := h.Verifier.Verify(r.Context(), strings.TrimSpace(raw))
 		if errors.Is(err, identity.ErrNoKey) {
-			slog.Warn("jwt verification: no matching key", "err", err)
+			// Anyone can send an unknown kid, so a Warn here would be an unauthenticated log flood.
+			slog.Debug("jwt verification: no matching key", "err", err)
 		}
 		// Tokens without sk/sx predate the hub seam and cannot fill the session the handlers rely on.
 		if err == nil && (p.SessionKind == "" || p.SessionExpires.IsZero()) {
