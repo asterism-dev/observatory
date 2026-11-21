@@ -46,7 +46,8 @@
     "images": "Images",
     "builders": "Builder VMs",
     "adminRegistry": "Registry",
-    "telemetry": "Telemetry"
+    "telemetry": "Telemetry",
+    "dashboards": "Dashboards"
   },
   "theme": {
     "system": "System",
@@ -927,5 +928,62 @@
     "done": "Done",
     "revokeTitle": "Revoke token?",
     "revokeBody": "Grafana datasources using {name} stop working immediately."
+  },
+  "dashboards": {
+    "subtitle": "Charts of your own metrics and the built-in VM and node usage, shared privately, with a team or the organization.",
+    "create": "New dashboard",
+    "createTitle": "New dashboard",
+    "name": "Name",
+    "visibility": "Visibility",
+    "empty": "No dashboards yet",
+    "emptyText": "A dashboard shows charts of metrics your VMs and apps send. Each viewer sees only data of VMs they may read.",
+    "search": "Search dashboards …",
+    "noMatch": "No matching dashboards.",
+    "panelCount": "no panels | 1 panel | {n} panels",
+    "edit": "Edit",
+    "save": "Save",
+    "delete": "Delete",
+    "deleteTitle": "Delete dashboard",
+    "deleteText": "Delete the dashboard “{name}” for everyone who can see it? This cannot be undone.",
+    "addPanel": "Add panel",
+    "editPanel": "Edit panel",
+    "removePanel": "Remove panel",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "panelTitle": "Title",
+    "type": "Type",
+    "unit": "Unit",
+    "width": "Width",
+    "query": "Query (MetricsQL)",
+    "queryPlaceholder": "sum by (status) (rate(orders_total[5m]))",
+    "queryHint": "Type part of a metric name for suggestions. Ctrl+Enter runs the query.",
+    "metricNames": "Metric names",
+    "run": "Run",
+    "apply": "Apply",
+    "types": {
+      "timeseries": "Time series",
+      "stat": "Stat"
+    },
+    "units": {
+      "none": "None",
+      "percent": "Percent (0–100)",
+      "bytes": "Bytes",
+      "bytes_per_second": "Bytes/s",
+      "seconds": "Seconds",
+      "requests_per_second": "Requests/s"
+    },
+    "widths": {
+      "half": "Half",
+      "full": "Full"
+    },
+    "noData": "No data in this range.",
+    "telemetryOff": "Telemetry is off on this hub, so there is no data to show.",
+    "moreSeries": "+{n} more series; sum() gives a total",
+    "noPanels": "No panels yet",
+    "noPanelsText": "Add a panel with a MetricsQL query. This example works without custom metrics: CPU cores used per VM.",
+    "addExample": "Add example panel",
+    "exampleTitle": "CPU cores by VM",
+    "conflict": "This dashboard was changed elsewhere. Reload to see the latest version; your unsaved edits are lost.",
+    "reload": "Reload"
   }
 }

@@ -2,7 +2,7 @@ export type Preset = '1h' | '6h' | '24h' | '7d'
 export const presets: Preset[] = ['1h', '6h', '24h', '7d']
 const presetHours: Record<Preset, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168 }
 
-export type Unit = '%' | 'By' | 'By/s'
+export type Unit = '%' | 'By' | 'By/s' | '1' | 's' | 'req/s'
 
 export interface Series {
   name: string
@@ -37,8 +37,30 @@ export function rangeFor(preset: Preset, now: Date) {
   return { from: new Date(now.getTime() - presetHours[preset] * 3600e3), to: now }
 }
 
+// 3 significant digits with an SI suffix: 0.0123, 12.3, 1.23 M.
+function compact(v: number) {
+  const suffixes = ['', ' k', ' M', ' G', ' T']
+  let i = 0
+  while (Math.abs(v) >= 1000 && i < suffixes.length - 1) {
+    v /= 1000
+    i++
+  }
+  return `${Number(v.toPrecision(3))}${suffixes[i]}`
+}
+
+function duration(v: number) {
+  const a = Math.abs(v)
+  if (a === 0 || a >= 3600) return a === 0 ? '0 s' : `${compact(v / 3600)} h`
+  if (a >= 60) return `${compact(v / 60)} min`
+  if (a >= 1) return `${compact(v)} s`
+  return a >= 1e-3 ? `${compact(v * 1e3)} ms` : `${compact(v * 1e6)} µs`
+}
+
 export function formatValue(v: number, unit: Unit) {
   if (unit === '%') return `${v.toFixed(1)} %`
+  if (unit === '1') return compact(v)
+  if (unit === 'req/s') return `${compact(v)} req/s`
+  if (unit === 's') return duration(v)
   const units = ['B', 'KB', 'MB', 'GB']
   let i = 0
   while (Math.abs(v) >= 1024 && i < units.length - 1) {

@@ -101,6 +101,9 @@ const (
 	ActionImageBuildCancel    = "image:build-cancel"
 	ActionGrafanaTokenCreate  = "telemetry_token:create"
 	ActionGrafanaTokenRevoke  = "telemetry_token:revoke"
+	ActionDashboardCreate     = "dashboard:create"
+	ActionDashboardUpdate     = "dashboard:update"
+	ActionDashboardDelete     = "dashboard:delete"
 )
 
 type AuditEntry struct {

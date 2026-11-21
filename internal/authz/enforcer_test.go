@@ -35,12 +35,12 @@ func TestBuiltinRoles(t *testing.T) {
 	memberPerms := []Permission{{"member:read", ObjMembers}, {"team:read", ObjTeams}, {"team:leave", ObjTeams + "/*"},
 		{"role:read", ObjRoles}, {"limit:read", ObjLimits}, {"env:list", ObjEnv}, {"env:use", ObjEnv},
 		{"integration:list", ObjIntegrations}, {"integration:use", ObjIntegrations},
-		{"image:list", ObjImages}, {"image:use", ObjImages},
+		{"image:list", ObjImages}, {"image:use", ObjImages}, {"dashboard:read", ObjDashboards},
 		{"node:read", ObjNodes}, {"node:read", ObjNodes + "/*"}, {"node:use", ObjNodes + "/*"}, {"vm:create", ObjVMs},
 		{"network:read", ObjNetworks}, {"network:create", ObjNetworks}, {"network:use", ObjNetworks + "/*"}, {"disk:create", ObjDisks}}
 	// No built-in role reaches other members' private env and integration scopes, connects to or forks VMs, or creates others' devices.
 	notBuiltin := func(p Permission) bool {
-		return p.Object == ObjUserEnv+"/*" || p.Object == ObjUserIntegrations+"/*" || p.Object == ObjUserImages+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
+		return p.Object == ObjUserEnv+"/*" || p.Object == ObjUserIntegrations+"/*" || p.Object == ObjUserImages+"/*" || p.Object == ObjUserDashboards+"/*" || p.Action == "vm:connect" || p.Action == "vm:fork" || p.Action == "device:create" || p.Action == "disk:use"
 	}
 	want := map[uuid.UUID]func(p Permission) bool{
 		owner:  func(p Permission) bool { return !notBuiltin(p) },
@@ -217,8 +217,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-29 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-29)
+	if got := ExpandActions("*"); len(got) != len(Catalog)-35 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-35)
 	}
 	want := []string{"team:read", "team:create", "team:update", "team:delete", "team:manage-members", "team:leave"}
 	if got := ExpandActions("team:*"); !reflect.DeepEqual(got, want) {
@@ -229,6 +229,9 @@ func TestExpandActions(t *testing.T) {
 	}
 	if got := ExpandActions("vm:*"); !reflect.DeepEqual(got, []string{"vm:create", "vm:read", "vm:power", "vm:delete", "vm:connect", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics"}) {
 		t.Errorf("vm:*: got %v", got)
+	}
+	if got := ExpandActions("dashboard:*"); !reflect.DeepEqual(got, []string{"dashboard:read", "dashboard:edit", "dashboard:create"}) {
+		t.Errorf("dashboard:*: got %v", got)
 	}
 	if got := ExpandActions("vm:ssh"); len(got) != 0 {
 		t.Errorf("unknown: got %v", got)
@@ -1084,6 +1087,41 @@ func TestPrivateImagesOnlyOwner(t *testing.T) {
 	checkImageRights(t, e, org, UserSubject(owner), UserImagesObject(member), nil)
 	checkImageRights(t, e, org, UserSubject(admin), UserImagesObject(member), nil)
 	checkImageRights(t, e, org, UserSubject(member), UserImagesObject(admin), nil)
+}
+
+func checkDashboardRights(t *testing.T, e *Enforcer, org uuid.UUID, sub, obj string, want ...string) {
+	t.Helper()
+	for _, act := range []string{"dashboard:read", "dashboard:edit", "dashboard:create"} {
+		if got := e.Allowed(sub, org, obj, act); got != slices.Contains(want, act) {
+			t.Errorf("%s on %s: got %v", act, obj, got)
+		}
+	}
+}
+
+func TestDashboardRights(t *testing.T) {
+	e, org, owner, admin, member, teamMember, teamMaint, team, otherTeam := imageEnforcer(t)
+	all := []string{"dashboard:read", "dashboard:edit", "dashboard:create"}
+	for _, u := range []uuid.UUID{owner, admin} {
+		checkDashboardRights(t, e, org, UserSubject(u), ObjDashboards, all...)
+		checkDashboardRights(t, e, org, UserSubject(u), TeamDashboardsObject(team), all...)
+		checkDashboardRights(t, e, org, UserSubject(u), TeamDashboardsObject(otherTeam), all...)
+	}
+	checkDashboardRights(t, e, org, UserSubject(member), ObjDashboards, "dashboard:read")
+	checkDashboardRights(t, e, org, UserSubject(member), TeamDashboardsObject(team))
+	checkDashboardRights(t, e, org, UserSubject(teamMember), TeamDashboardsObject(team), "dashboard:read", "dashboard:create")
+	checkDashboardRights(t, e, org, UserSubject(teamMember), TeamDashboardsObject(otherTeam))
+	checkDashboardRights(t, e, org, UserSubject(teamMaint), TeamDashboardsObject(team), all...)
+	checkDashboardRights(t, e, org, UserSubject(teamMaint), TeamDashboardsObject(otherTeam))
+	checkDashboardRights(t, e, org, UserSubject(teamMaint), ObjDashboards, "dashboard:read")
+}
+
+func TestPrivateDashboardsOnlyOwner(t *testing.T) {
+	e, org, owner, admin, member, _, _, _, _ := imageEnforcer(t)
+	all := []string{"dashboard:read", "dashboard:edit", "dashboard:create"}
+	checkDashboardRights(t, e, org, UserSubject(member), UserDashboardsObject(member), all...)
+	checkDashboardRights(t, e, org, UserSubject(owner), UserDashboardsObject(member))
+	checkDashboardRights(t, e, org, UserSubject(admin), UserDashboardsObject(member))
+	checkDashboardRights(t, e, org, UserSubject(member), UserDashboardsObject(admin))
 }
 
 func TestTelemetryTokenPermission(t *testing.T) {

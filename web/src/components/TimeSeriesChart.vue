@@ -62,9 +62,9 @@ function build() {
       legend: { live: false },
       scales: {
         x: { range: () => [props.from, props.to] },
-        y: { range: (_u, _min, max) => [0, props.max ?? (max > 0 ? max * 1.1 : 1)] },
+        y: { range: (_u, min, max) => [Math.min(0, min ?? 0), props.max ?? (max > 0 ? max * 1.1 : 1)] },
       },
-      axes: [axis, { ...axis, size: 70, incrs: props.unit === '%' ? undefined : byteIncrs, values: (_u, splits) => splits.map((v) => fmt(v)) }],
+      axes: [axis, { ...axis, size: 70, incrs: props.unit.startsWith('By') ? byteIncrs : undefined, values: (_u, splits) => splits.map((v) => fmt(v)) }],
       series: [{}, ...props.series.map((s, i) => ({ label: s.name, stroke: colors[i], width: 1.5, show: !hidden.has(s.name) }))],
       hooks: {
         setCursor: [showTip],

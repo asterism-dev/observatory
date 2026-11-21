@@ -42,6 +42,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `audit:read` | `org/audit` |
 | `env:list`, `env:set`, `env:delete`, `env:use` | `org/env`, `org/team-env/*`, `org/user-env/*` |
 | `integration:list`, `integration:set`, `integration:delete`, `integration:use` | `org/integrations`, `org/team-integrations/*`, `org/user-integrations/*` |
+| `dashboard:read`, `dashboard:edit`, `dashboard:create` | `org/dashboards`, `org/team-dashboards/*`, `org/user-dashboards/*` |
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use`, `node:metrics` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
@@ -67,6 +68,8 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `env:*` on `org/env` and `org/team-env/*` | | yes | yes |
 | `integration:list`, `integration:use` on `org/integrations` | yes | yes | yes |
 | `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
+| `dashboard:read` on `org/dashboards` | yes | yes | yes |
+| `dashboard:*` on `org/dashboards` and `org/team-dashboards/*` | | yes | yes |
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
 | `vm:metrics` on `org/vms/*` | | yes | yes |
@@ -160,6 +163,19 @@ as variables: the org (`org/integrations`), a team (`org/team-integrations/<team
   member's private scope.
 - Deny rules win as usual, e.g. `deny integration:set@org/user-integrations/*` ("no private integrations") or
   `deny integration:use@org/integrations` (org integrations reach no VM). All actions go through the escalation rule.
+
+## Dashboards
+
+Dashboards live in the same three scopes: the org (`org/dashboards`), a team (`org/team-dashboards/<team>`) and
+each member's private scope (`org/user-dashboards/<user>`).
+
+- `dashboard:read` shows a dashboard, `dashboard:create` creates one in (or moves one into) a scope, `dashboard:edit`
+  changes or deletes any dashboard of the scope.
+- Generated rules: the team subject gets `dashboard:read` and `dashboard:create` on its own object; team admins get
+  `dashboard:*` on it; every member gets `dashboard:*` on their own `org/user-dashboards/<user>`. No built-in role,
+  not even owner, covers another member's private scope.
+- A dashboard's creator may also edit it while it is in the org scope, or in a team scope while they are a member of
+  that team; this is checked by the API, not by a rule.
 
 ## Nodes and VMs
 
