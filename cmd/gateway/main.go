@@ -57,7 +57,17 @@ func main() {
 	}
 
 	dns := newDNSServer()
-	upstream := upstreamResolver()
+	upstreams := (&hostResolvers{files: []string{"/host/resolve/resolv.conf", "/host/resolv.conf"}}).get
+	if s := os.Getenv("OBSERVATORY_GATEWAY_DNS"); strings.TrimSpace(s) != "" {
+		list, err := parseUpstreams(s)
+		if err != nil {
+			log.Fatal(err)
+		}
+		logUpstreams(list)
+		upstreams = func() []string { return list }
+	} else {
+		upstreams()
+	}
 	listen := net.JoinHostPort(netaddr.GatewayDNS.String(), "53")
 	pc, err := net.ListenPacket("udp", listen)
 	if err != nil {
@@ -67,8 +77,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	go dns.serveUDP(pc, upstream)
-	go dns.serveTCP(tl, upstream)
+	go dns.serveUDP(pc, upstreams)
+	go dns.serveTCP(tl, upstreams)
 
 	hub, err := url.Parse(*hubURL)
 	if err != nil {
@@ -483,16 +493,6 @@ func observe(run runner) proto.GatewayStatus {
 		log.Print(err)
 	}
 	return s
-}
-
-func upstreamResolver() string {
-	b, _ := os.ReadFile("/etc/resolv.conf")
-	for _, line := range strings.Split(string(b), "\n") {
-		if f := strings.Fields(line); len(f) >= 2 && f[0] == "nameserver" {
-			return net.JoinHostPort(f[1], "53")
-		}
-	}
-	return "127.0.0.11:53"
 }
 
 func validateState(st proto.GatewayState) error {
