@@ -81,6 +81,8 @@ else
     vsctl --timeout=5 --if-exists del-port "$old"
   done
   ip link del gw0 2>/dev/null || true
+  # a crashed gateway leaves its host end behind while its old netns lives on; a leftover is harmless, so no exit
+  gateway -remove-host-veths /hostns/net || true
   # a unique host end, so a surviving earlier one cannot block the move; a veth, as vswitchd loses moved internal ports
   br=gw0b$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
   ip link add gw0 address 02:00:00:c7:00:02 type veth peer name "$br"

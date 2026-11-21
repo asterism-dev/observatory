@@ -37,7 +37,14 @@ const sslDir = "/var/lib/ovn/ssl"
 func main() {
 	hubURL := flag.String("hub", "http://127.0.0.1:8090", "hub base URL")
 	nbDB := flag.String("nb", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NB database")
+	hostVeths := flag.String("remove-host-veths", "", "remove earlier gateways' gw0b* links in the network namespace at this path, then exit")
 	flag.Parse()
+	if *hostVeths != "" {
+		if err := removeHostVeths(*hostVeths); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	log.Printf("%s %s", filepath.Base(os.Args[0]), version.Version)
 
 	token := os.Getenv("OBSERVATORY_GATEWAY_TOKEN")
