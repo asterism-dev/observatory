@@ -530,11 +530,21 @@ func TestServeAllRefusesEndedSessionsAtOnce(t *testing.T) {
 	if code := call("POST", "/auth/logout", web, true); code != http.StatusNoContent {
 		t.Fatalf("logout: %d", code)
 	}
+	if code := call("GET", "/api/iam/v1/me", web, true); code != http.StatusUnauthorized {
+		t.Fatalf("GetMe with the logged-out cookie: %d", code)
+	}
 	if code := call("GET", "/api/info", web, true); code != http.StatusUnauthorized {
 		t.Fatalf("/api/info with the logged-out cookie: %d", code)
 	}
 	if code := call("DELETE", "/api/iam/v1/me/sessions/"+otherSess.ID.String(), cli, false); code != http.StatusOK {
 		t.Fatalf("revoke: %d", code)
+	}
+	// The edge still caches this session's JWT, so the 401 must come from iam's own session check.
+	if code := run(c, []string{"whoami"}); code != 3 {
+		t.Fatalf("whoami with the revoked session: exit %d, stderr %q", code, stderr)
+	}
+	if code := call("GET", "/api/iam/v1/me", other, false); code != http.StatusUnauthorized {
+		t.Fatalf("GetMe with the revoked session: %d", code)
 	}
 	if code := call("GET", "/api/info", other, false); code != http.StatusUnauthorized {
 		t.Fatalf("/api/info with the revoked session: %d", code)

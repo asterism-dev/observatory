@@ -3,6 +3,8 @@ package iam
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -45,13 +47,30 @@ type server struct {
 
 // Handler serves IAMService under Prefix; writes record their own audit events inside their transaction.
 func Handler(d Deps) (http.Handler, error) {
-	path, h := iamv1connect.NewIAMServiceHandler(&server{Deps: d}, connect.WithInterceptors(
-		auditlog.Interceptors("iam", d.Verifier, d.Policy, d.Settings, d.Pool, auditlog.HandlerRecordsWrites())...))
+	interceptors := append(auditlog.Interceptors("iam", d.Verifier, d.Policy, d.Settings, d.Pool, auditlog.HandlerRecordsWrites()), sessionActive(d.Store))
+	path, h := iamv1connect.NewIAMServiceHandler(&server{Deps: d}, connect.WithInterceptors(interceptors...))
 	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h)})
 	if err != nil {
 		return nil, err
 	}
 	return http.StripPrefix(Prefix, rest.NoQuery(path, tc)), nil
+}
+
+// ponytail: one session lookup per call so logout and revoke apply at once, as in auth.Require; 5b-2 moves sessions into iam's own store.
+func sessionActive(s *store.Store) connect.UnaryInterceptorFunc {
+	return func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			active, err := s.SessionActive(ctx, caller(ctx).Session)
+			if err != nil {
+				slog.Error("session lookup", "err", err)
+				return nil, connect.NewError(connect.CodeInternal, errors.New("internal error"))
+			}
+			if !active {
+				return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("session ended"))
+			}
+			return next(ctx, req)
+		}
+	}
 }
 
 // caller is the principal the authz interceptor verified; every handler runs behind it.
