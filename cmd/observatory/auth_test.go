@@ -26,7 +26,7 @@ func readConfigFile(t *testing.T, c *cli) map[string]any {
 
 func TestOrgUseStoresID(t *testing.T) {
 	h := newFakeHub(t)
-	h.on("GET /api/me", 200, meTwoOrgsBody)
+	h.on(iamRPC+"GetMe", 200, meTwoOrgsBody)
 	c, stdout, _ := newTestCLI(t, h)
 	if code := run(c, []string{"org", "use", "orga"}); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -45,7 +45,7 @@ func TestOrgUseStoresID(t *testing.T) {
 
 func TestWhoami(t *testing.T) {
 	h := newFakeHub(t)
-	h.on("GET /api/me", 200, meTwoOrgsBody)
+	h.on(iamRPC+"GetMe", 200, meTwoOrgsBody)
 	c, stdout, _ := newTestCLI(t, h)
 	if err := saveConfig(c.cfgDir, config{Hub: h.URL, Token: "tok-test", ExpiresAt: testNow.Add(30 * 24 * time.Hour), Org: "o2"}); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestWhoami(t *testing.T) {
 	golden(t, "whoami.golden", stdout.String())
 
 	h401 := newFakeHub(t)
-	h401.on("GET /api/me", 401, `{"error":"unauthorized"}`)
+	h401.on(iamRPC+"GetMe", 401, `{"error":"unauthorized"}`)
 	c, _, stderr := newTestCLI(t, h401)
 	if code := run(c, []string{"whoami"}); code != 3 {
 		t.Fatalf("401: exit %d", code)
@@ -149,13 +149,12 @@ func TestLoginIgnoresCorruptConfig(t *testing.T) {
 func TestJSONPassThrough(t *testing.T) {
 	h := newFakeHub(t)
 	meOneOrg(h)
-	body := `{"id":"o1","name":"orga","personal":false,"role":"owner","permissions":["vm.create","vm.read"]}`
-	h.on("GET /api/orgs/o1", 200, body)
+	h.on(iamRPC+"GetOrg", 200, `{"org":{"id":"o1","name":"orga","role":"owner"},"permissions":["vm.create","vm.read"],"unknown":1}`)
 	c, stdout, _ := newTestCLI(t, h)
 	if code := run(c, []string{"org", "show", "--json"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	want := "{\n  \"id\": \"o1\",\n  \"name\": \"orga\",\n  \"personal\": false,\n  \"role\": \"owner\",\n  \"permissions\": [\n    \"vm.create\",\n    \"vm.read\"\n  ]\n}\n"
+	want := "{\n  \"org\": {\n    \"id\": \"o1\",\n    \"name\": \"orga\",\n    \"role\": \"owner\"\n  },\n  \"permissions\": [\n    \"vm.create\",\n    \"vm.read\"\n  ]\n}\n"
 	if stdout.String() != want {
 		t.Fatalf("got %q, want %q", stdout.String(), want)
 	}

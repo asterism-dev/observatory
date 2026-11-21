@@ -12,14 +12,14 @@ const (
 	varGH     = `{"id":"e3","name":"GH_TOKEN","kind":"secret","scope":"team","teamId":"t1","teamName":"backend","hosts":["api.github.com","github.com"],"updatedAt":"2026-11-10T09:00:00Z","updatedBy":{"id":"u2","name":"Grace Hopper"},"canEdit":true,"canDelete":true}`
 	varsBody  = `{"vars":[` + varFoo + `,` + varToken + `,` + varGH + `],"writableScopes":[{"scope":"org"},{"scope":"user"}]}`
 	envRoute  = "/api/orgs/o1/env"
-	teamsBody = `[{"id":"t1","name":"backend"}]`
+	teamsBody = `{"teams":[{"id":"t1","name":"backend"}]}`
 )
 
 func varHub(t *testing.T, vars string) (*fakeHub, *cli, func() string, func() string) {
 	h := newFakeHub(t)
 	meOneOrg(h)
 	h.on("GET "+envRoute, 200, vars)
-	h.on("GET /api/orgs/o1/teams", 200, teamsBody)
+	h.on(iamRPC+"ListTeams", 200, teamsBody)
 	c, out, errb := newTestCLI(t, h)
 	return h, c, out.String, errb.String
 }

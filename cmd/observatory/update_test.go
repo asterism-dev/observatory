@@ -232,7 +232,7 @@ func TestUpdateReadOnlyDir(t *testing.T) {
 func TestUpdateHintSkippedOnFailedCommand(t *testing.T) {
 	setVersion(t, "v0.3.0")
 	h := newFakeHub(t)
-	h.on("GET /api/me", 500, `{"error":"boom"}`)
+	h.on(iamRPC+"GetMe", 500, `{"error":"boom"}`)
 	c, _, stderr := newTestCLI(t, h)
 	releaseCLI(t, h, c, "v0.4.0", goodSums)
 	if code := run(c, []string{"whoami"}); code == 0 {

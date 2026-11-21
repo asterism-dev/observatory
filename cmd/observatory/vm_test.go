@@ -41,7 +41,7 @@ func TestVMShowGolden(t *testing.T) {
 
 func TestVMCreateBody(t *testing.T) {
 	h, c, _, _ := vmHub(t, oneNode)
-	h.on("GET /api/orgs/o1/teams", 200, `[{"id":"t1","name":"backend"}]`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[{"id":"t1","name":"backend"}]}`)
 	h.on("POST /api/orgs/o1/vms", 201, vmDev)
 	if code := run(c, []string{"vm", "create", "dev", "--team", "backend", "--cpus", "4", "--memory", "8G", "--disk", "30"}); code != 0 {
 		t.Fatal(code)
@@ -166,7 +166,7 @@ func TestVMRestartSequence(t *testing.T) {
 	}
 	var order []string
 	for _, r := range h.reqs {
-		if r.Path != "/api/me" && r.Path != "/api/orgs/o1/vms" {
+		if !strings.HasPrefix(r.Path, "/api/iam/") && r.Path != "/api/orgs/o1/vms" {
 			order = append(order, r.Method+" "+r.Path[strings.LastIndex(r.Path, "/")+1:])
 		}
 	}
@@ -181,7 +181,7 @@ func TestVMRestartSequence(t *testing.T) {
 		t.Fatal(code)
 	}
 	for _, r := range h2.reqs {
-		if r.Method == "POST" && !strings.HasSuffix(r.Path, "/start") {
+		if r.Method == "POST" && !strings.HasSuffix(r.Path, "/start") && !strings.HasSuffix(r.Path, "/GetMe") {
 			t.Errorf("unexpected %s", r.Path)
 		}
 	}

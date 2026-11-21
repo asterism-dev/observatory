@@ -9,50 +9,53 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 )
 
 func TestCallSendsBearerAndMapsErrors(t *testing.T) {
+	const infoBody = `{"docsURL":"https://docs","version":"1.0.0","latestVersion":"1.0.0"}`
 	h := newFakeHub(t)
-	h.on("GET /api/me", 200, meOneOrgBody)
-	h.on("POST /api/orgs", 400, `{"error":"invalid name"}`)
+	h.on("GET /api/info", 200, infoBody)
+	h.on("POST /api/orgs/o1/devices", 400, `{"error":"invalid name"}`)
 	c, _, _ := newTestCLI(t, h)
 
-	var me meJSON
-	if err := c.call("GET", "/api/me", nil, &me); err != nil {
+	var info struct{ Version string }
+	if err := c.call("GET", "/api/info", nil, &info); err != nil {
 		t.Fatal(err)
 	}
-	if me.User.Email != "ada@example.com" || len(me.Orgs) != 1 || me.Orgs[0].Role != "owner" {
-		t.Fatalf("decoded %+v", me)
+	if info.Version != "1.0.0" {
+		t.Fatalf("decoded %+v", info)
 	}
-	if got := h.calls("GET /api/me")[0].Auth; got != "Bearer tok-test" {
+	if got := h.calls("GET /api/info")[0].Auth; got != "Bearer tok-test" {
 		t.Fatalf("auth %q", got)
 	}
 
 	t.Setenv("OBSERVATORY_TOKEN", "env-tok")
 	var raw json.RawMessage
-	if err := c.call("GET", "/api/me", nil, &raw); err != nil {
+	if err := c.call("GET", "/api/info", nil, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.calls("GET /api/me")[1].Auth; got != "Bearer env-tok" {
+	if got := h.calls("GET /api/info")[1].Auth; got != "Bearer env-tok" {
 		t.Fatalf("auth %q, want env token", got)
 	}
-	if string(raw) != meOneOrgBody {
+	if string(raw) != infoBody {
 		t.Fatalf("raw %s", raw)
 	}
 
-	err := c.call("POST", "/api/orgs", map[string]string{"name": ""}, nil)
+	err := c.call("POST", "/api/orgs/o1/devices", map[string]string{"name": ""}, nil)
 	var ae *apiError
 	if !errors.As(err, &ae) || *ae != (apiError{Status: 400, Msg: "invalid name"}) {
 		t.Fatalf("got %#v", err)
 	}
-	if got := h.calls("POST /api/orgs")[0].Body; got != `{"name":""}` {
+	if got := h.calls("POST /api/orgs/o1/devices")[0].Body; got != `{"name":""}` {
 		t.Fatalf("body %q", got)
 	}
 
 	t.Setenv("OBSERVATORY_TOKEN", "")
 	c.cfg.Token = ""
 	n := len(h.reqs)
-	if err := c.call("GET", "/api/me", nil, nil); exitCode(err) != 3 {
+	if err := c.call("GET", "/api/info", nil, nil); exitCode(err) != 3 {
 		t.Fatalf("no token: exit %d (%v)", exitCode(err), err)
 	}
 	if len(h.reqs) != n {
@@ -84,24 +87,24 @@ const meTwoOrgsBody = `{"user":{"id":"u1","email":"ada@example.com","name":"Ada 
 
 func TestOrgSelectionPrecedence(t *testing.T) {
 	h := newFakeHub(t)
-	h.on("GET /api/me", 200, meTwoOrgsBody)
-	h.on("GET /api/orgs/o1", 200, `{"id":"o1","name":"orga","personal":false,"role":"owner","permissions":[]}`)
-	h.on("GET /api/orgs/o2", 200, `{"id":"o2","name":"orgc","personal":false,"role":"member","permissions":[]}`)
+	h.on(iamRPC+"GetMe", 200, meTwoOrgsBody)
+	h.on(iamRPC+"GetOrg", 200, `{"org":{"id":"o1","name":"orga","role":"owner"}}`)
 
 	shows := func(t *testing.T, c *cli, args ...string) string {
 		t.Helper()
-		before := len(h.calls("GET /api/orgs/o1")) + 2*len(h.calls("GET /api/orgs/o2"))
+		before := len(h.calls(iamRPC + "GetOrg"))
 		if code := run(c, append([]string{"org", "show"}, args...)); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
-		switch len(h.calls("GET /api/orgs/o1")) + 2*len(h.calls("GET /api/orgs/o2")) - before {
-		case 1:
-			return "o1"
-		case 2:
-			return "o2"
+		calls := h.calls(iamRPC + "GetOrg")
+		if len(calls) != before+1 {
+			t.Fatal("no org fetched")
 		}
-		t.Fatal("no org fetched")
-		return ""
+		var req struct{ Org string }
+		if err := json.Unmarshal([]byte(calls[before].Body), &req); err != nil {
+			t.Fatal(err)
+		}
+		return req.Org
 	}
 
 	c, _, stderr := newTestCLI(t, h)
@@ -113,7 +116,7 @@ func TestOrgSelectionPrecedence(t *testing.T) {
 			t.Errorf("stderr %q lacks %q", stderr.String(), s)
 		}
 	}
-	if n := len(h.calls("GET /api/orgs/o1")) + len(h.calls("GET /api/orgs/o2")); n != 0 {
+	if n := len(h.calls(iamRPC + "GetOrg")); n != 0 {
 		t.Fatalf("acted on an org without a choice")
 	}
 
@@ -146,14 +149,14 @@ func TestOrgSelectionPrecedence(t *testing.T) {
 	h1 := newFakeHub(t)
 	meOneOrg(h1)
 	c, _, _ = newTestCLI(t, h1)
-	if o, err := c.currentOrg(); err != nil || o.ID != "o1" {
+	if o, err := c.currentOrg(); err != nil || o.GetId() != "o1" {
 		t.Errorf("single org: %+v %v", o, err)
 	}
 	if p, err := c.orgPath("/vms"); err != nil || p != "/api/orgs/o1/vms" {
 		t.Errorf("orgPath %q %v", p, err)
 	}
-	if n := len(h1.calls("GET /api/me")); n != 1 {
-		t.Errorf("/api/me fetched %d times, want cached", n)
+	if n := len(h1.calls(iamRPC + "GetMe")); n != 1 {
+		t.Errorf("GetMe called %d times, want cached", n)
 	}
 }
 
@@ -229,11 +232,28 @@ func TestStoredTokenOnlyForItsHub(t *testing.T) {
 		t.Fatalf("stored token sent to another hub: %+v", b.reqs)
 	}
 
-	b.on("GET /api/me", 200, meOneOrgBody)
+	b.on(iamRPC+"GetMe", 200, meOneOrgBody)
 	c, _, _ = newTestCLI(t, a)
 	t.Setenv("OBSERVATORY_HUB", b.URL)
 	t.Setenv("OBSERVATORY_TOKEN", "env-tok")
-	if code := run(c, []string{"whoami"}); code != 0 || b.calls("GET /api/me")[0].Auth != "Bearer env-tok" {
+	if code := run(c, []string{"whoami"}); code != 0 || b.calls(iamRPC + "GetMe")[0].Auth != "Bearer env-tok" {
 		t.Fatalf("OBSERVATORY_TOKEN is not bound to the stored hub: exit %d", code)
+	}
+}
+
+func TestRPCErrorMessage(t *testing.T) {
+	h := newFakeHub(t)
+	h.on(iamRPC+"CreateOrg", 400, `{"code":"invalid_argument","message":"invalid name"}`)
+	h.on(iamRPC+"GetTeam", 404, `{"code":"not_found","message":"team not found"}`)
+	c, _, _ := newTestCLI(t, h)
+	err := c.rpc("CreateOrg", &iamv1.CreateOrgRequest{Name: ""}, &iamv1.CreateOrgResponse{})
+	if err == nil || err.Error() != "invalid name" || exitCode(err) != 1 {
+		t.Fatalf("got %v (exit %d)", err, exitCode(err))
+	}
+	if got := h.calls(iamRPC + "CreateOrg")[0]; got.Auth != "Bearer tok-test" || compactJSON(t, got.Body) != `{}` {
+		t.Fatalf("request %+v", got)
+	}
+	if err := c.rpc("GetTeam", &iamv1.GetTeamRequest{Org: "o1", Team: "t9"}, &iamv1.GetTeamResponse{}); err == nil || err.Error() != "team not found" || exitCode(err) != 5 {
+		t.Fatalf("got %v (exit %d)", err, exitCode(err))
 	}
 }

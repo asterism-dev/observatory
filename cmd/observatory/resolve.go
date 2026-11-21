@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"net/http"
 	"strings"
 )
 
@@ -60,19 +59,12 @@ func (c *cli) resolveScope(s scopeFlags) (apiScope string, teamID *string, err e
 	default:
 		return "", nil, usagef("unknown scope %q: use private, team or org", s.scope)
 	}
-	path, err := c.orgPath("/teams")
+	t, err := c.findTeam(s.team)
 	if err != nil {
 		return "", nil, err
 	}
-	var teams []ref
-	if err := c.call(http.MethodGet, path, nil, &teams); err != nil {
-		return "", nil, err
-	}
-	t, err := pick("team", s.team, teams)
-	if err != nil {
-		return "", nil, err
-	}
-	return "team", &t.ID, nil
+	id := t.GetId()
+	return "team", &id, nil
 }
 
 // ownerLabel names the owner of another member's VM or disk instead of calling it private.

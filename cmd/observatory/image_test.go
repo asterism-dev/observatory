@@ -81,7 +81,7 @@ func TestImageBuildFollowStreamsLog(t *testing.T) {
 
 func TestImageDefaultSet(t *testing.T) {
 	h, c, _, errb := imageHub(t)
-	h.on("GET /api/orgs/o1/teams", 200, `[{"id":"t1","name":"backend"}]`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[{"id":"t1","name":"backend"}]}`)
 	h.on("PUT /api/orgs/o1/image-defaults/team/t1", 204, "")
 	mustRun(t, c, errb, 0, "image", "default", "set", "team:backend", "backend/app:v1")
 	if got := h.calls("PUT /api/orgs/o1/image-defaults/team/t1")[0].Body; got != `{"ref":"backend/app:v1"}` {
@@ -111,7 +111,7 @@ func TestImageVisibilityConfirmsVersionDeletion(t *testing.T) {
 
 func TestRecipePushTarsDir(t *testing.T) {
 	h, c, _, errb := imageHub(t)
-	h.on("GET /api/orgs/o1/teams", 200, `[{"id":"t1","name":"backend"}]`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[{"id":"t1","name":"backend"}]}`)
 	var refsHeader, ctype string
 	var names []string
 	h.onFunc("PUT /api/orgs/o1/images/i-app/recipe", func(w http.ResponseWriter, r *http.Request) {

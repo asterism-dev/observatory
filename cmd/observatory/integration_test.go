@@ -21,7 +21,7 @@ func igHub(t *testing.T) (*fakeHub, *cli, func() string, func() string) {
 	h := newFakeHub(t)
 	meOneOrg(h)
 	h.on("GET "+igRoute, 200, igBody)
-	h.on("GET /api/orgs/o1/teams", 200, teamsBody)
+	h.on(iamRPC+"ListTeams", 200, teamsBody)
 	c, out, errb := newTestCLI(t, h)
 	return h, c, out.String, errb.String
 }

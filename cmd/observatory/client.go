@@ -11,6 +11,11 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 )
 
 const defaultHub = "http://localhost:8090"
@@ -148,49 +153,46 @@ func (c *cli) call(method, path string, body, into any) error {
 	return c.do(method, path, tok, body, into)
 }
 
-type orgJSON struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Personal bool   `json:"personal"`
-	Role     string `json:"role"`
+const iamService = "/api/iam/v1/observatory.iam.v1.IAMService/"
+
+// rpc calls an IAMService method with Connect's JSON protocol, so auth and errors work as for the REST routes.
+func (c *cli) rpc(method string, req, resp proto.Message) error {
+	body, err := protojson.Marshal(req)
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := c.call(http.MethodPost, iamService+method, json.RawMessage(body), &raw); err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	return protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(raw, resp)
 }
 
-type meJSON struct {
-	User struct {
-		ID            string `json:"id"`
-		Email         string `json:"email"`
-		Name          string `json:"name"`
-		PlatformAdmin bool   `json:"platformAdmin"`
-	} `json:"user"`
-	Orgs []orgJSON `json:"orgs"`
+// pj is the protojson form --json prints.
+func pj(m proto.Message) json.RawMessage {
+	b, _ := protojson.Marshal(m)
+	return b
 }
 
-func (c *cli) me(raw *json.RawMessage) (meJSON, error) {
-	var me meJSON
-	var b json.RawMessage
-	if err := c.call(http.MethodGet, "/api/me", nil, &b); err != nil {
-		return me, err
-	}
-	if raw != nil {
-		*raw = b
-	}
-	if err := json.Unmarshal(b, &me); err != nil {
-		return me, err
-	}
-	return me, nil
+func (c *cli) me() (*iamv1.GetMeResponse, error) {
+	me := &iamv1.GetMeResponse{}
+	return me, c.rpc("GetMe", &iamv1.GetMeRequest{}, me)
 }
 
-func findOrg(orgs []orgJSON, key string) (orgJSON, error) {
+func findOrg(orgs []*iamv1.OrgInfo, key string) (*iamv1.OrgInfo, error) {
 	for _, o := range orgs {
-		if o.ID == key {
+		if o.GetId() == key {
 			return o, nil
 		}
 	}
 	var ids []string
-	var found orgJSON
+	var found *iamv1.OrgInfo
 	for _, o := range orgs {
-		if o.Name == key {
-			found, ids = o, append(ids, o.ID)
+		if o.GetName() == key {
+			found, ids = o, append(ids, o.GetId())
 		}
 	}
 	switch len(ids) {
@@ -199,42 +201,42 @@ func findOrg(orgs []orgJSON, key string) (orgJSON, error) {
 	case 1:
 		return found, nil
 	}
-	return orgJSON{}, usagef("several orgs are named %q, pass the ID: %s", key, strings.Join(ids, ", "))
+	return nil, usagef("several orgs are named %q, pass the ID: %s", key, strings.Join(ids, ", "))
 }
 
 // pickOrg applies --org > OBSERVATORY_ORG > config > the only org.
-func (c *cli) pickOrg(me meJSON) (orgJSON, error) {
+func (c *cli) pickOrg(me *iamv1.GetMeResponse) (*iamv1.OrgInfo, error) {
 	for _, key := range []string{c.g.org, c.getenv("OBSERVATORY_ORG"), c.cfg.Org} {
 		if key != "" {
-			return findOrg(me.Orgs, key)
+			return findOrg(me.GetOrgs(), key)
 		}
 	}
-	switch len(me.Orgs) {
+	switch len(me.GetOrgs()) {
 	case 0:
-		return orgJSON{}, errors.New("you are not a member of any org, run observatory org create <name>")
+		return nil, errors.New("you are not a member of any org, run observatory org create <name>")
 	case 1:
-		return me.Orgs[0], nil
+		return me.GetOrgs()[0], nil
 	}
-	names := make([]string, len(me.Orgs))
-	for i, o := range me.Orgs {
-		names[i] = o.Name
+	names := make([]string, len(me.GetOrgs()))
+	for i, o := range me.GetOrgs() {
+		names[i] = o.GetName()
 	}
-	return orgJSON{}, usagef("several orgs; pass --org or run observatory org use <org>: %s", strings.Join(names, ", "))
+	return nil, usagef("several orgs; pass --org or run observatory org use <org>: %s", strings.Join(names, ", "))
 }
 
-func (c *cli) currentOrg() (orgJSON, error) {
+func (c *cli) currentOrg() (*iamv1.OrgInfo, error) {
 	if c.org != nil {
-		return *c.org, nil
+		return c.org, nil
 	}
-	me, err := c.me(nil)
+	me, err := c.me()
 	if err != nil {
-		return orgJSON{}, err
+		return nil, err
 	}
 	o, err := c.pickOrg(me)
 	if err != nil {
-		return o, err
+		return nil, err
 	}
-	c.org, c.userID = &o, me.User.ID
+	c.org, c.userID = o, me.GetUser().GetId()
 	return o, nil
 }
 
@@ -243,5 +245,5 @@ func (c *cli) orgPath(rest string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "/api/orgs/" + o.ID + rest, nil
+	return "/api/orgs/" + o.GetId() + rest, nil
 }

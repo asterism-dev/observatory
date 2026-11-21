@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/version"
 )
 
@@ -117,16 +118,15 @@ func cmdWhoami(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("whoami"), args, 0, 0); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	me, err := c.me(&raw)
+	me, err := c.me()
 	if err != nil {
 		return err
 	}
 	if c.g.json {
-		return c.printJSON(raw)
+		return c.printJSON(pj(me))
 	}
-	pairs := [][2]string{{"user", me.User.Name}, {"email", me.User.Email}}
-	if me.User.PlatformAdmin {
+	pairs := [][2]string{{"user", me.GetUser().GetName()}, {"email", me.GetUser().GetEmail()}}
+	if me.GetUser().GetPlatformAdmin() {
 		pairs = append(pairs, [2]string{"platform admin", "yes"})
 	}
 	if c.getenv("OBSERVATORY_TOKEN") != "" {
@@ -142,19 +142,19 @@ func cmdWhoami(c *cli, args []string) error {
 }
 
 // orgRows marks the current org with "*"; with no org chosen none is marked.
-func orgRows(c *cli, me meJSON) [][]string {
+func orgRows(c *cli, me *iamv1.GetMeResponse) [][]string {
 	cur, _ := c.pickOrg(me)
-	rows := make([][]string, 0, len(me.Orgs))
-	for _, o := range me.Orgs {
+	rows := make([][]string, 0, len(me.GetOrgs()))
+	for _, o := range me.GetOrgs() {
 		mark := ""
-		if o.ID == cur.ID {
+		if o.GetId() == cur.GetId() {
 			mark = "*"
 		}
-		name := o.Name
-		if o.Personal {
+		name := o.GetName()
+		if o.GetPersonal() {
 			name += " (personal)"
 		}
-		rows = append(rows, []string{mark, name, o.ID, o.Role})
+		rows = append(rows, []string{mark, name, o.GetId(), o.GetRole()})
 	}
 	return rows
 }
@@ -171,12 +171,11 @@ func cmdOrgList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("org list"), args, 0, 0); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	me, err := c.me(&raw)
+	me, err := c.me()
 	if err != nil {
 		return err
 	}
-	return c.emit(raw, []string{"", "name", "id", "role"}, orgRows(c, me))
+	return c.emit(pj(me), []string{"", "name", "id", "role"}, orgRows(c, me))
 }
 
 func cmdOrgUse(c *cli, args []string) error {
@@ -184,44 +183,38 @@ func cmdOrgUse(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	me, err := c.me(nil)
+	me, err := c.me()
 	if err != nil {
 		return err
 	}
-	o, err := findOrg(me.Orgs, pos[0])
+	o, err := findOrg(me.GetOrgs(), pos[0])
 	if err != nil {
 		return err
 	}
-	c.cfg.Org = o.ID
+	c.cfg.Org = o.GetId()
 	if err := saveConfig(c.cfgDir, c.cfg); err != nil {
 		return err
 	}
-	return c.done(nil, "Default org is now %s.", o.Name)
+	return c.done(nil, "Default org is now %s.", o.GetName())
 }
 
 func cmdOrgShow(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("org show"), args, 0, 0); err != nil {
 		return err
 	}
-	path, err := c.orgPath("")
+	cur, err := c.currentOrg()
 	if err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
+	res := &iamv1.GetOrgResponse{}
+	if err := c.rpc("GetOrg", &iamv1.GetOrgRequest{Org: cur.GetId()}, res); err != nil {
 		return err
 	}
-	var o struct {
-		orgJSON
-		Permissions []string `json:"permissions"`
-	}
-	if err := json.Unmarshal(raw, &o); err != nil {
-		return err
-	}
-	return c.emitKV(raw, [][2]string{
-		{"name", o.Name}, {"id", o.ID}, {"role", o.Role},
-		{"personal", strconv.FormatBool(o.Personal)},
-		{"permissions", strings.Join(o.Permissions, ", ")},
+	o := res.GetOrg()
+	return c.emitKV(pj(res), [][2]string{
+		{"name", o.GetName()}, {"id", o.GetId()}, {"role", o.GetRole()},
+		{"personal", strconv.FormatBool(o.GetPersonal())},
+		{"permissions", strings.Join(res.GetPermissions(), ", ")},
 	})
 }
 
@@ -230,15 +223,11 @@ func cmdOrgCreate(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, "/api/orgs", map[string]string{"name": pos[0]}, &raw); err != nil {
+	res := &iamv1.CreateOrgResponse{}
+	if err := c.rpc("CreateOrg", &iamv1.CreateOrgRequest{Name: pos[0]}, res); err != nil {
 		return err
 	}
-	var o orgJSON
-	if err := json.Unmarshal(raw, &o); err != nil {
-		return err
-	}
-	return c.done(raw, "Org %s created (%s).", o.Name, o.ID)
+	return c.done(pj(res), "Org %s created (%s).", res.GetOrg().GetName(), res.GetOrg().GetId())
 }
 
 func cmdOrgRename(c *cli, args []string) error {
@@ -246,15 +235,15 @@ func cmdOrgRename(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := c.orgPath("")
+	cur, err := c.currentOrg()
 	if err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPatch, path, map[string]string{"name": pos[0]}, &raw); err != nil {
+	res := &iamv1.UpdateOrgResponse{}
+	if err := c.rpc("UpdateOrg", &iamv1.UpdateOrgRequest{Org: cur.GetId(), Name: pos[0]}, res); err != nil {
 		return err
 	}
-	return c.done(raw, "Org renamed to %s.", pos[0])
+	return c.done(pj(res), "Org renamed to %s.", pos[0])
 }
 
 func cmdOrgAudit(c *cli, args []string) error {
@@ -270,7 +259,7 @@ func cmdOrgAudit(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	req := &auditv1.ListEventsRequest{Org: o.ID, PageSize: int32(min(max(*limit, 0), 200)), Filter: &auditv1.EventFilter{Type: *action, ActorId: *actor}}
+	req := &auditv1.ListEventsRequest{Org: o.GetId(), PageSize: int32(min(max(*limit, 0), 200)), Filter: &auditv1.EventFilter{Type: *action, ActorId: *actor}}
 	if *since > 0 {
 		req.Filter.From = timestamppb.New(c.now().Add(-*since))
 	}

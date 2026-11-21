@@ -18,6 +18,8 @@ import (
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -224,7 +226,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	}
 
 	invite := func(token string) int {
-		req, _ := http.NewRequest("POST", "http://"+edgeLn.Addr().String()+"/api/orgs/"+org.ID.String()+"/invites", strings.NewReader(`{"role":"member"}`))
+		req, _ := http.NewRequest("POST", "http://"+edgeLn.Addr().String()+"/api/iam/v1/orgs/"+org.ID.String()+"/invites", strings.NewReader(`{"role":"member"}`))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("X-Observatory", "1")
 		resp, err := client.Do(req)
@@ -234,7 +236,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-	if code := invite(session); code != http.StatusCreated {
+	if code := invite(session); code != http.StatusOK {
 		t.Fatalf("owner invite: %d", code)
 	}
 	if code := invite(bobSession); code != http.StatusForbidden {
@@ -328,6 +330,10 @@ func TestServeAllIAMBoundary(t *testing.T) {
 	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
 		t.Fatal(err)
 	}
+	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	node, enroll, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice.User.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -375,38 +381,81 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		return resp.StatusCode, string(body)
 	}
 
-	code, body := call("GET", "/api/me", aliceToken)
-	if code != http.StatusOK || !strings.Contains(body, `"name":"alice"`) {
-		t.Fatalf("/api/me with a CLI session: %d %s", code, body)
+	iam := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1")
+	me, err := iam.GetMe(ctx, bearer(&iamv1.GetMeRequest{}, aliceToken))
+	if err != nil || me.Msg.GetUser().GetName() != "alice" {
+		t.Fatalf("GetMe with a CLI session: %v %v", me, err)
 	}
 	// A non-session bearer is not swapped at the edge, so the 401 comes from the node auth in the hub.
 	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized || body != "Unauthorized\n" {
 		t.Fatalf("/api/nodes/health: %d %s", code, body)
 	}
+	// The query guard answers before authentication.
+	if code, body := call("GET", "/api/iam/v1/me?org=x", ""); code != http.StatusBadRequest {
+		t.Fatalf("REST query without a session: %d %s", code, body)
+	}
 
-	member := "/api/orgs/" + org.ID.String() + "/members/" + bob.User.ID.String()
-	if code, body := call("DELETE", member, aliceToken); code != http.StatusConflict {
-		t.Fatalf("remove a member that owns a VM: %d %s", code, body)
+	_, err = iam.DeleteMember(ctx, bearer(&iamv1.DeleteMemberRequest{Org: org.ID.String(), User: bob.User.ID.String()}, aliceToken))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("remove a member that owns a VM: %v", err)
 	}
 	if _, err := pool.Exec(ctx, "DELETE FROM vms WHERE id = $1", vm.ID); err != nil {
 		t.Fatal(err)
 	}
-	if code, body := call("DELETE", member, aliceToken); code != http.StatusNoContent {
-		t.Fatalf("remove the member after the VM is gone: %d %s", code, body)
+	member := "/api/iam/v1/orgs/" + org.ID.String() + "/members/"
+	if code, body := call("DELETE", member+bob.User.ID.String(), ""); code != http.StatusUnauthorized {
+		t.Fatalf("REST remove without a session: %d %s", code, body)
+	}
+	if code, body := call("DELETE", member+alice.User.ID.String(), bobToken); code != http.StatusForbidden {
+		t.Fatalf("REST remove by a member: %d %s", code, body)
+	}
+	if code, body := call("DELETE", member+bob.User.ID.String(), aliceToken); code != http.StatusOK {
+		t.Fatalf("REST remove by the owner: %d %s", code, body)
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	// The owner's removal is one allowed iam.members.delete event, which the hub's cleanup acts on.
+	auditClient := auditv1connect.NewAuditServiceClient(client, base+"/api/audit/v1")
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		var n int
 		if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", org.ID, bob.User.ID).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		if n == 0 {
+		var allowed, denied, events []*eventsv1.Event
+		resp, err := auditClient.ListEvents(ctx, bearer(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: store.ActionMemberRemove}}, aliceToken))
+		// Unavailable until the audit service has its first policy snapshot from the hub.
+		if err != nil && connect.CodeOf(err) != connect.CodeUnavailable {
+			t.Fatalf("audit through the edge: %v", err)
+		}
+		if err == nil {
+			events = resp.Msg.GetEvents()
+		}
+		for _, e := range events {
+			switch e.GetResult() {
+			case eventsv1.Result_RESULT_ALLOWED:
+				allowed = append(allowed, e)
+			case eventsv1.Result_RESULT_DENIED:
+				denied = append(denied, e)
+			}
+		}
+		if n == 0 && len(allowed) > 0 && len(denied) > 0 {
+			if len(allowed) != 1 || allowed[0].GetResource() != "org/members/"+bob.User.ID.String() || allowed[0].GetActor().GetId() != alice.User.ID.String() {
+				t.Fatalf("allowed iam.members.delete events %v", allowed)
+			}
+			if len(denied) != 1 || denied[0].GetActor().GetId() != bob.User.ID.String() {
+				t.Fatalf("denied iam.members.delete events %v", denied)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("bob's private env var survived his removal")
+			t.Fatalf("after the removal: %d private env vars of bob, allowed %v, denied %v", n, allowed, denied)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func bearer[T any](msg *T, token string) *connect.Request[T] {
+	req := connect.NewRequest(msg)
+	req.Header().Set("Authorization", "Bearer "+token)
+	return req
 }

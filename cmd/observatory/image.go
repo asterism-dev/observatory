@@ -940,7 +940,7 @@ func (c *cli) defaultPath(level string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return "/image-defaults/team/" + t.ID, nil
+		return "/image-defaults/team/" + t.GetId(), nil
 	}
 	return "", usagef("level must be org, user or team:<team>")
 }

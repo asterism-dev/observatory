@@ -95,7 +95,7 @@ func TestDiskDetachNotAttached(t *testing.T) {
 
 func TestDiskCreateBody(t *testing.T) {
 	h, c, _, errb := diskHub(t, vmOneDisk, true)
-	h.on("GET /api/orgs/o1/teams", 200, `[{"id":"t1","name":"backend"}]`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[{"id":"t1","name":"backend"}]}`)
 	h.on("POST /api/orgs/o1/disks", 201, diskB)
 	if code := run(c, []string{"disk", "create", "data", "--size", "50", "--team", "backend"}); code != 0 {
 		t.Fatal(code, errb())

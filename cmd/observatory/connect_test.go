@@ -58,7 +58,7 @@ func TestSSHExecArgs(t *testing.T) {
 		}
 	}
 	for _, r := range h.reqs {
-		if r.Method == "POST" || r.Method == "PUT" || r.Method == "DELETE" {
+		if (r.Method == "POST" && !strings.HasSuffix(r.Path, "/GetMe")) || r.Method == "PUT" || r.Method == "DELETE" {
 			t.Errorf("unexpected %s %s", r.Method, r.Path)
 		}
 	}
@@ -126,7 +126,7 @@ func TestDesktopRunsThenAttaches(t *testing.T) {
 func TestSSHKeyAdd(t *testing.T) {
 	h := newFakeHub(t)
 	c, _, _ := newTestCLI(t, h)
-	h.on("POST /api/me/ssh-keys", 201, `{"id":"k1","name":"ada@laptop","fingerprint":"SHA256:x","createdAt":"2026-11-19T13:00:00Z"}`)
+	h.on(iamRPC+"CreateSSHKey", 200, `{"key":{"id":"k1","name":"ada@laptop","fingerprint":"SHA256:x","createdAt":"2026-11-19T13:00:00Z"}}`)
 	ssh := filepath.Join(os.Getenv("HOME"), ".ssh")
 	if err := os.MkdirAll(ssh, 0o700); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestSSHKeyAdd(t *testing.T) {
 		t.Fatal(code)
 	}
 	want := `{"name":"ada@laptop","publicKey":"ssh-ed25519 AAAAC3 ada@laptop"}`
-	if got := h.calls("POST /api/me/ssh-keys")[0].Body; got != want {
+	if got := compactJSON(t, h.calls(iamRPC + "CreateSSHKey")[0].Body); got != want {
 		t.Errorf("body %s, want %s", got, want)
 	}
 
@@ -147,7 +147,7 @@ func TestSSHKeyAdd(t *testing.T) {
 	if err := os.WriteFile(priv, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nx\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := run(c, []string{"ssh-key", "add", priv}); code != 2 || len(h.calls("POST /api/me/ssh-keys")) != 1 {
+	if code := run(c, []string{"ssh-key", "add", priv}); code != 2 || len(h.calls(iamRPC+"CreateSSHKey")) != 1 {
 		t.Errorf("code %d", code)
 	}
 }
@@ -155,12 +155,12 @@ func TestSSHKeyAdd(t *testing.T) {
 func TestSSHKeyDeleteConfirms(t *testing.T) {
 	h := newFakeHub(t)
 	c, _, _ := newTestCLI(t, h)
-	h.on("GET /api/me/ssh-keys", 200, `[{"id":"k1","name":"laptop","fingerprint":"SHA256:x","createdAt":"2026-11-19T13:00:00Z"}]`)
-	h.on("DELETE /api/me/ssh-keys/k1", 204, "")
-	if code := run(c, []string{"ssh-key", "delete", "laptop"}); code != 2 || len(h.calls("DELETE /api/me/ssh-keys/k1")) != 0 {
+	h.on(iamRPC+"ListSSHKeys", 200, `{"keys":[{"id":"k1","name":"laptop","fingerprint":"SHA256:x","createdAt":"2026-11-19T13:00:00Z"}]}`)
+	h.on(iamRPC+"DeleteSSHKey", 200, `{}`)
+	if code := run(c, []string{"ssh-key", "delete", "laptop"}); code != 2 || len(h.calls(iamRPC+"DeleteSSHKey")) != 0 {
 		t.Fatalf("code %d", code)
 	}
-	if code := run(c, []string{"ssh-key", "delete", "laptop", "--yes"}); code != 0 || len(h.calls("DELETE /api/me/ssh-keys/k1")) != 1 {
+	if code := run(c, []string{"ssh-key", "delete", "laptop", "--yes"}); code != 0 || len(h.calls(iamRPC+"DeleteSSHKey")) != 1 || compactJSON(t, h.calls(iamRPC + "DeleteSSHKey")[0].Body) != `{"key":"k1"}` {
 		t.Errorf("code %d", code)
 	}
 }

@@ -1,14 +1,14 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
+
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 )
 
 func connectCommands() []command {
@@ -41,7 +41,7 @@ func (c *cli) sshHost(key string) (vmJSON, string, error) {
 }
 
 func (c *cli) warnNoDevice() {
-	me, err := c.me(nil)
+	me, err := c.me()
 	if err != nil {
 		return
 	}
@@ -54,11 +54,11 @@ func (c *cli) warnNoDevice() {
 		return
 	}
 	for _, d := range devices {
-		if d.Owner.ID == me.User.ID {
+		if d.Owner.ID == me.GetUser().GetId() {
 			return
 		}
 	}
-	fmt.Fprintf(c.stderr, "observatory: no device in org %s; run observatory device create <name> and import it\n", c.org.Name)
+	fmt.Fprintf(c.stderr, "observatory: no device in org %s; run observatory device create <name> and import it\n", c.org.GetName())
 }
 
 var validSSHUser = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}[$]?$`)
@@ -119,30 +119,19 @@ func cmdDesktop(c *cli, args []string) error {
 	return c.exec(xpra, []string{xpra, "attach", "ssh://" + target + "/100"}, os.Environ())
 }
 
-type sshKey struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Fingerprint string    `json:"fingerprint"`
-	CreatedAt   time.Time `json:"createdAt"`
-}
-
 func cmdSSHKeyList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("ssh-key list"), args, 0, 0); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodGet, "/api/me/ssh-keys", nil, &raw); err != nil {
+	res := &iamv1.IAMServiceListSSHKeysResponse{}
+	if err := c.rpc("ListSSHKeys", &iamv1.IAMServiceListSSHKeysRequest{}, res); err != nil {
 		return err
 	}
-	var keys []sshKey
-	if err := json.Unmarshal(raw, &keys); err != nil {
-		return err
+	rows := make([][]string, len(res.GetKeys()))
+	for i, k := range res.GetKeys() {
+		rows[i] = []string{k.GetId(), k.GetName(), k.GetFingerprint(), ago(c.now(), k.GetCreatedAt().AsTime())}
 	}
-	rows := make([][]string, len(keys))
-	for i, k := range keys {
-		rows[i] = []string{k.ID, k.Name, k.Fingerprint, ago(c.now(), k.CreatedAt)}
-	}
-	return c.emit(raw, []string{"id", "name", "fingerprint", "added"}, rows)
+	return c.emit(pj(res), []string{"id", "name", "fingerprint", "added"}, rows)
 }
 
 func cmdSSHKeyAdd(c *cli, args []string) error {
@@ -170,12 +159,11 @@ func cmdSSHKeyAdd(c *cli, args []string) error {
 			*name = f[2]
 		}
 	}
-	var raw json.RawMessage
-	body := map[string]string{"name": *name, "publicKey": key}
-	if err := c.call(http.MethodPost, "/api/me/ssh-keys", body, &raw); err != nil {
+	res := &iamv1.CreateSSHKeyResponse{}
+	if err := c.rpc("CreateSSHKey", &iamv1.CreateSSHKeyRequest{Name: *name, PublicKey: key}, res); err != nil {
 		return err
 	}
-	return c.done(raw, "added ssh key %s", *name)
+	return c.done(pj(res), "added ssh key %s", *name)
 }
 
 func defaultPublicKey(pos []string) (string, error) {
@@ -200,13 +188,13 @@ func cmdSSHKeyDelete(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	var keys []sshKey
-	if err := c.call(http.MethodGet, "/api/me/ssh-keys", nil, &keys); err != nil {
+	res := &iamv1.IAMServiceListSSHKeysResponse{}
+	if err := c.rpc("ListSSHKeys", &iamv1.IAMServiceListSSHKeysRequest{}, res); err != nil {
 		return err
 	}
-	refs := make([]ref, len(keys))
-	for i, k := range keys {
-		refs[i] = ref{k.ID, k.Name}
+	refs := make([]ref, len(res.GetKeys()))
+	for i, k := range res.GetKeys() {
+		refs[i] = ref{k.GetId(), k.GetName()}
 	}
 	r, err := pick("ssh key", pos[0], refs)
 	if err != nil {
@@ -215,7 +203,7 @@ func cmdSSHKeyDelete(c *cli, args []string) error {
 	if err := c.confirm(fmt.Sprintf("Delete ssh key %s?", r.Name)); err != nil {
 		return err
 	}
-	if err := c.call(http.MethodDelete, "/api/me/ssh-keys/"+r.ID, nil, nil); err != nil {
+	if err := c.rpc("DeleteSSHKey", &iamv1.DeleteSSHKeyRequest{Key: r.ID}, &iamv1.DeleteSSHKeyResponse{}); err != nil {
 		return err
 	}
 	return c.done(nil, "deleted ssh key %s", r.Name)

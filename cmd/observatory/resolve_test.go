@@ -25,7 +25,7 @@ func TestPick(t *testing.T) {
 func TestResolveScope(t *testing.T) {
 	h := newFakeHub(t)
 	meOneOrg(h)
-	h.on("GET /api/orgs/o1/teams", 200, `[{"id":"t1","name":"backend","memberCount":2}]`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[{"id":"t1","name":"backend","memberCount":2}]}`)
 	resolve := func(args ...string) (string, *string, error) {
 		c, _, _ := newTestCLI(t, h)
 		var s scopeFlags

@@ -18,9 +18,9 @@ const (
 func orgHub(t *testing.T) (*fakeHub, *cli, func() string, func() string) {
 	h := newFakeHub(t)
 	meOneOrg(h)
-	h.on("GET /api/orgs/o1/members", 200, `[`+memAda+`,`+memGrace+`]`)
-	h.on("GET /api/orgs/o1/teams", 200, `[`+teamBack+`]`)
-	h.on("GET /api/orgs/o1/roles", 200, `[`+roleBase+`,`+roleCust+`]`)
+	h.on(iamRPC+"ListMembers", 200, `{"members":[`+memAda+`,`+memGrace+`]}`)
+	h.on(iamRPC+"ListTeams", 200, `{"teams":[`+teamBack+`]}`)
+	h.on(iamRPC+"ListRoles", 200, `{"roles":[`+roleBase+`,`+roleCust+`]}`)
 	c, out, errb := newTestCLI(t, h)
 	return h, c, out.String, errb.String
 }
@@ -46,118 +46,131 @@ func TestMemberListGolden(t *testing.T) {
 
 func TestTeamAddMemberByEmail(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("PUT /api/orgs/o1/teams/t1/members/u1", 204, "")
+	h.on(iamRPC+"SetTeamMember", 200, `{}`)
 	mustRun(t, c, errb, 0, "team", "add", "backend", "ADA@example.com", "--admin")
-	if got := h.calls("PUT /api/orgs/o1/teams/t1/members/u1")[0].Body; got != `{"admin":true}` {
-		t.Errorf("body %s", got)
+	mustRun(t, c, errb, 0, "team", "add", "backend", "grace@example.com")
+	calls := h.calls(iamRPC + "SetTeamMember")
+	// admin is sent even when false, since the server refuses a missing one.
+	if a, b := compactJSON(t, calls[0].Body), compactJSON(t, calls[1].Body); a != `{"org":"o1","team":"t1","user":"u1","admin":true}` || b != `{"org":"o1","team":"t1","user":"u2","admin":false}` {
+		t.Errorf("bodies %s %s", a, b)
 	}
 }
 
 func TestTeamRemoveConfirms(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("DELETE /api/orgs/o1/teams/t1/members/u2", 204, "")
+	h.on(iamRPC+"RemoveTeamMember", 200, `{}`)
+	h.on(iamRPC+"LeaveTeam", 200, `{}`)
 	mustRun(t, c, errb, 2, "team", "remove", "backend", "Grace Hopper")
 	mustRun(t, c, errb, 0, "team", "remove", "backend", "grace@example.com", "-y")
+	if got := compactJSON(t, h.calls(iamRPC + "RemoveTeamMember")[0].Body); got != `{"org":"o1","team":"t1","user":"u2"}` {
+		t.Errorf("body %s", got)
+	}
+	mustRun(t, c, errb, 0, "team", "remove", "backend", "ada@example.com", "-y")
+	if got := h.calls(iamRPC + "LeaveTeam"); len(got) != 1 || compactJSON(t, got[0].Body) != `{"org":"o1","team":"t1"}` {
+		t.Errorf("removing yourself: %+v", got)
+	}
 }
 
 func TestMemberRoleBody(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("PATCH /api/orgs/o1/members/u2", 204, "")
+	h.on(iamRPC+"UpdateMember", 200, `{}`)
 	mustRun(t, c, errb, 2, "member", "role", "grace@example.com", "boss")
 	mustRun(t, c, errb, 0, "member", "role", "grace@example.com", "admin")
-	if got := h.calls("PATCH /api/orgs/o1/members/u2")[0].Body; got != `{"role":"admin"}` {
+	if got := compactJSON(t, h.calls(iamRPC + "UpdateMember")[0].Body); got != `{"org":"o1","user":"u2","role":"admin"}` {
 		t.Errorf("body %s", got)
 	}
 }
 
 func TestMemberRemoveConfirms(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("DELETE /api/orgs/o1/members/u2", 204, "")
+	h.on(iamRPC+"DeleteMember", 200, `{}`)
+	h.on(iamRPC+"LeaveOrg", 200, `{}`)
 	mustRun(t, c, errb, 2, "member", "remove", "u2")
-	if len(h.calls("DELETE /api/orgs/o1/members/u2")) != 0 {
-		t.Fatal("DELETE without confirmation")
+	if len(h.calls(iamRPC+"DeleteMember")) != 0 {
+		t.Fatal("DeleteMember without confirmation")
 	}
 	mustRun(t, c, errb, 0, "member", "remove", "u2", "--yes")
-}
-
-func TestInviteCreateAndAccept(t *testing.T) {
-	h, c, out, errb := orgHub(t)
-	h.on("POST /api/orgs/o1/invites", 201, `{"id":"i1","token":"tok123","url":"https://hub/invite/tok123","expiresAt":"2026-11-26T00:00:00Z"}`)
-	mustRun(t, c, errb, 0, "invite", "create", "--role", "admin")
-	if out() != "https://hub/invite/tok123\n" || h.calls("POST /api/orgs/o1/invites")[0].Body != `{"role":"admin"}` {
-		t.Errorf("stdout %q body %s", out(), h.calls("POST /api/orgs/o1/invites")[0].Body)
-	}
-}
-
-func TestInviteAcceptFromURL(t *testing.T) {
-	h, c, out, errb := orgHub(t)
-	h.on("POST /api/invites/accept", 200, `{"orgId":"o1","role":"member"}`)
-	c.stdin = strings.NewReader("https://hub/invite/tok123\n")
-	mustRun(t, c, errb, 0, "invite", "accept")
-	if got := h.calls("POST /api/invites/accept")[0].Body; got != `{"token":"tok123"}` {
+	if got := compactJSON(t, h.calls(iamRPC + "DeleteMember")[0].Body); got != `{"org":"o1","user":"u2"}` {
 		t.Errorf("body %s", got)
 	}
-	if out() != "Joined orga.\n" {
-		t.Errorf("stdout %q", out())
+	mustRun(t, c, errb, 0, "member", "remove", "u1", "--yes")
+	if got := h.calls(iamRPC + "LeaveOrg"); len(got) != 1 || compactJSON(t, got[0].Body) != `{"orgId":"o1"}` {
+		t.Errorf("removing yourself: %+v", got)
+	}
+}
+
+func TestInviteCreate(t *testing.T) {
+	h, c, out, errb := orgHub(t)
+	h.on(iamRPC+"CreateInvite", 200, `{"invite":{"id":"i1","role":"admin","expiresAt":"2026-11-26T00:00:00Z"},"token":"tok123","url":"https://hub/invite/tok123"}`)
+	mustRun(t, c, errb, 0, "invite", "create", "--role", "admin")
+	if body := compactJSON(t, h.calls(iamRPC + "CreateInvite")[0].Body); out() != "https://hub/invite/tok123\n" || body != `{"org":"o1","role":"admin"}` {
+		t.Errorf("stdout %q body %s", out(), body)
 	}
 }
 
 func TestInviteAcceptRejectsArgv(t *testing.T) {
 	h, c, _, errb := orgHub(t)
 	mustRun(t, c, errb, 2, "invite", "accept", "tok123")
-	if len(h.calls("POST /api/invites/accept")) != 0 {
+	if len(h.calls(iamRPC+"AcceptInvite")) != 0 {
 		t.Fatal("request sent")
 	}
 }
 
 func TestInviteAcceptFromStdin(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("POST /api/invites/accept", 200, `{"orgId":"o1","role":"member"}`)
+	h.on(iamRPC+"AcceptInvite", 200, `{"orgId":"o1","role":"member"}`)
 	c.stdin = strings.NewReader("tok456\n")
 	mustRun(t, c, errb, 0, "invite", "accept")
-	if got := h.calls("POST /api/invites/accept")[0].Body; got != `{"token":"tok456"}` {
+	if got := compactJSON(t, h.calls(iamRPC + "AcceptInvite")[0].Body); got != `{"token":"tok456"}` {
 		t.Errorf("body %s", got)
 	}
 }
 
 func TestRoleCreateFromFile(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("POST /api/orgs/o1/roles", 201, roleCust)
+	h.on(iamRPC+"CreateRole", 200, `{"role":`+roleCust+`}`)
 	dir := t.TempDir()
 	good, bad := filepath.Join(dir, "good.json"), filepath.Join(dir, "bad.json")
-	const body = `{"name":"viewer","description":"","rules":[{"effect":"allow","object":"org/vms","action":"compute.instances.get"}],"parents":[]}`
-	os.WriteFile(good, []byte(body+"\n"), 0o600)
+	// The output of role show --json, with fields the request does not have.
+	const file = `{"id":"r9","name":"viewer","description":"","builtin":false,"rules":[{"effect":"allow","object":"org/vms","action":"compute.instances.get"}],"parents":[]}`
+	os.WriteFile(good, []byte(file+"\n"), 0o600)
 	os.WriteFile(bad, []byte(`{"name":`), 0o600)
 	mustRun(t, c, errb, 2, "role", "create", "--file", bad)
-	if len(h.calls("POST /api/orgs/o1/roles")) != 0 {
+	if len(h.calls(iamRPC+"CreateRole")) != 0 {
 		t.Fatal("request sent for invalid JSON")
 	}
 	mustRun(t, c, errb, 0, "role", "create", "--file", good)
-	if got := h.calls("POST /api/orgs/o1/roles")[0].Body; got != body {
+	if got := compactJSON(t, h.calls(iamRPC + "CreateRole")[0].Body); got != `{"org":"o1","name":"viewer","rules":[{"effect":"allow","object":"org/vms","action":"compute.instances.get"}]}` {
 		t.Errorf("body %s", got)
 	}
 }
 
 func TestRoleUpdateAndDelete(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("PUT /api/orgs/o1/roles/r1", 200, roleCust)
-	h.on("DELETE /api/orgs/o1/roles/r1", 204, "")
+	h.on(iamRPC+"UpdateRole", 200, `{"role":`+roleCust+`}`)
+	h.on(iamRPC+"DeleteRole", 200, `{}`)
 	f := filepath.Join(t.TempDir(), "r.json")
 	os.WriteFile(f, []byte(`{"name":"viewer"}`), 0o600)
 	mustRun(t, c, errb, 0, "role", "update", "viewer", "--file", f)
+	if got := compactJSON(t, h.calls(iamRPC + "UpdateRole")[0].Body); got != `{"org":"o1","role":"r1","name":"viewer"}` {
+		t.Errorf("body %s", got)
+	}
 	mustRun(t, c, errb, 2, "role", "delete", "viewer")
 	mustRun(t, c, errb, 2, "role", "delete", "member", "--yes")
 	mustRun(t, c, errb, 0, "role", "delete", "viewer", "--yes")
+	if got := compactJSON(t, h.calls(iamRPC + "DeleteRole")[0].Body); got != `{"org":"o1","role":"r1"}` {
+		t.Errorf("body %s", got)
+	}
 }
 
 func TestBindingSubjectResolution(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("POST /api/orgs/o1/bindings", 201, `{"id":"b1","subject":"user:u1","roleId":"r1","createdAt":"2026-11-19T14:00:00Z"}`)
+	h.on(iamRPC+"CreateRoleBinding", 200, `{"binding":{"id":"b1","subject":"user:u1","roleId":"r1","createdAt":"2026-11-19T14:00:00Z"}}`)
 	mustRun(t, c, errb, 0, "binding", "add", "user:ada@example.com", "viewer")
 	mustRun(t, c, errb, 0, "binding", "add", "team:backend", "viewer")
-	calls := h.calls("POST /api/orgs/o1/bindings")
-	if calls[0].Body != `{"roleId":"r1","subject":"user:u1"}` || calls[1].Body != `{"roleId":"r1","subject":"team:t1"}` {
-		t.Errorf("bodies %s %s", calls[0].Body, calls[1].Body)
+	calls := h.calls(iamRPC + "CreateRoleBinding")
+	if a, b := compactJSON(t, calls[0].Body), compactJSON(t, calls[1].Body); a != `{"org":"o1","subject":"user:u1","roleId":"r1"}` || b != `{"org":"o1","subject":"team:t1","roleId":"r1"}` {
+		t.Errorf("bodies %s %s", a, b)
 	}
 }
 
@@ -189,12 +202,11 @@ func TestLimitShow(t *testing.T) {
 
 func TestSessionRevokeCurrentClearsToken(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("GET /api/me/sessions", 200, `[{"id":"s1","kind":"cli","userAgent":"observatory","ip":"10.0.0.1","lastUsedAt":"2026-11-19T14:00:00Z","expiresAt":"2026-12-19T14:00:00Z","current":true},{"id":"s2","kind":"web","userAgent":"Firefox","ip":"10.0.0.2","lastUsedAt":"2026-11-18T14:00:00Z","expiresAt":"2026-12-18T14:00:00Z","current":false}]`)
-	h.on("DELETE /api/me/sessions/s1", 204, "")
-	h.on("DELETE /api/me/sessions/s2", 204, "")
+	h.on(iamRPC+"ListSessions", 200, `{"sessions":[{"id":"s1","kind":"cli","userAgent":"observatory","ip":"10.0.0.1","lastUsedAt":"2026-11-19T14:00:00Z","expiresAt":"2026-12-19T14:00:00Z","current":true},{"id":"s2","kind":"web","userAgent":"Firefox","ip":"10.0.0.2","lastUsedAt":"2026-11-18T14:00:00Z","expiresAt":"2026-12-18T14:00:00Z"}]}`)
+	h.on(iamRPC+"RevokeSession", 200, `{}`)
 	mustRun(t, c, errb, 2, "session", "revoke", "s1")
 	mustRun(t, c, errb, 0, "session", "revoke", "s2", "-y")
-	if c.cfg.Token != "tok-test" {
+	if c.cfg.Token != "tok-test" || compactJSON(t, h.calls(iamRPC + "RevokeSession")[0].Body) != `{"session":"s2"}` {
 		t.Fatal("token cleared by revoking another session")
 	}
 	mustRun(t, c, errb, 5, "session", "revoke", "nope", "-y")
@@ -202,5 +214,29 @@ func TestSessionRevokeCurrentClearsToken(t *testing.T) {
 	cfg, err := loadConfig(c.cfgDir)
 	if err != nil || cfg.Token != "" || c.cfg.Token != "" {
 		t.Errorf("token not cleared: %+v %v", cfg, err)
+	}
+}
+
+func TestMemberListRPC(t *testing.T) {
+	h, c, out, errb := orgHub(t)
+	mustRun(t, c, errb, 0, "member", "list", "--json")
+	if got := compactJSON(t, h.calls(iamRPC + "ListMembers")[0].Body); got != `{"org":"o1"}` {
+		t.Errorf("body %s", got)
+	}
+	if got := compactJSON(t, out()); got != `{"members":[`+memAda+`,`+memGrace+`]}` {
+		t.Errorf("stdout %s", got)
+	}
+}
+
+func TestInviteAcceptRPC(t *testing.T) {
+	h, c, out, errb := orgHub(t)
+	h.on(iamRPC+"AcceptInvite", 200, `{"orgId":"o1","role":"member"}`)
+	c.stdin = strings.NewReader("https://hub/invite/tok123\n")
+	mustRun(t, c, errb, 0, "invite", "accept")
+	if got := compactJSON(t, h.calls(iamRPC + "AcceptInvite")[0].Body); got != `{"token":"tok123"}` {
+		t.Errorf("body %s", got)
+	}
+	if out() != "Joined orga.\n" {
+		t.Errorf("stdout %q", out())
 	}
 }

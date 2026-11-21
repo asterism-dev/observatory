@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -119,7 +120,19 @@ func newTestCLI(t *testing.T, h *fakeHub) (c *cli, stdout, stderr *bytes.Buffer)
 
 const meOneOrgBody = `{"user":{"id":"u1","email":"ada@example.com","name":"Ada Lovelace","platformAdmin":false},"orgs":[{"id":"o1","name":"orga","personal":false,"role":"owner"}]}`
 
-func meOneOrg(h *fakeHub) { h.on("GET /api/me", 200, meOneOrgBody) }
+const iamRPC = "POST /api/iam/v1/observatory.iam.v1.IAMService/"
+
+func meOneOrg(h *fakeHub) { h.on(iamRPC+"GetMe", 200, meOneOrgBody) }
+
+// compactJSON drops the whitespace protojson varies on purpose.
+func compactJSON(t *testing.T, s string) string {
+	t.Helper()
+	var b bytes.Buffer
+	if err := json.Compact(&b, []byte(s)); err != nil {
+		t.Fatalf("%v: %q", err, s)
+	}
+	return b.String()
+}
 
 func golden(t *testing.T, name, got string) {
 	t.Helper()

@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/term"
 
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/release"
 )
 
@@ -45,7 +46,7 @@ type cli struct {
 	g              globals
 	cfgDir         string
 	cfg            config
-	org            *orgJSON
+	org            *iamv1.OrgInfo
 	userID         string
 	warnedExpiry   bool
 	progressWhat   string

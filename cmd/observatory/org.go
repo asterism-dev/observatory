@@ -12,44 +12,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 )
 
-type memberJSON struct {
-	ID       string    `json:"id"`
-	Email    string    `json:"email"`
-	Name     string    `json:"name"`
-	Role     string    `json:"role"`
-	JoinedAt time.Time `json:"joinedAt"`
-}
-
-type teamJSON struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	MemberCount int       `json:"memberCount"`
-	CreatedAt   time.Time `json:"createdAt"`
-}
-
-type ruleJSON struct {
-	Effect string `json:"effect"`
-	Object string `json:"object"`
-	Action string `json:"action"`
-}
-
-type roleJSON struct {
-	ID          string     `json:"id"`
-	Key         string     `json:"key"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Builtin     bool       `json:"builtin"`
-	Rules       []ruleJSON `json:"rules"`
-	Parents     []string   `json:"parents"`
-}
-
-func (r roleJSON) ref() ref {
-	if r.Builtin {
-		return ref{r.Key, r.Name}
+func roleRef(r *iamv1.Role) ref {
+	if r.GetBuiltin() {
+		return ref{r.GetKey(), r.GetName()}
 	}
-	return ref{r.ID, r.Name}
+	return ref{r.GetId(), r.GetName()}
 }
 
 type limitsJSON struct {
@@ -109,6 +85,29 @@ func getList[T any](c *cli, rest string) ([]T, json.RawMessage, error) {
 	return l, raw, nil
 }
 
+func (c *cli) simpleCall(method, rest string, body any) error {
+	path, err := c.orgPath(rest)
+	if err != nil {
+		return err
+	}
+	return c.call(method, path, body, nil)
+}
+
+// orgRPC calls an org-scoped IAMService method on the current org, which every such request names in its org field.
+func (c *cli) orgRPC(method string, req, resp proto.Message) error {
+	o, err := c.currentOrg()
+	if err != nil {
+		return err
+	}
+	m := req.ProtoReflect()
+	f := m.Descriptor().Fields().ByName("org")
+	if f == nil {
+		return fmt.Errorf("%s: request has no org field", method)
+	}
+	m.Set(f, protoreflect.ValueOfString(o.GetId()))
+	return c.rpc(method, req, resp)
+}
+
 func findBy[T any](kind, key string, l []T, r func(T) ref) (T, error) {
 	refs := make([]ref, len(l))
 	for i, it := range l {
@@ -122,71 +121,80 @@ func findBy[T any](kind, key string, l []T, r func(T) ref) (T, error) {
 	return l[slices.IndexFunc(refs, func(x ref) bool { return x.ID == got.ID })], nil
 }
 
-func (c *cli) findMember(key string) (memberJSON, error) {
-	l, _, err := getList[memberJSON](c, "/members")
+func (c *cli) members() (*iamv1.ListMembersResponse, error) {
+	res := &iamv1.ListMembersResponse{}
+	return res, c.orgRPC("ListMembers", &iamv1.ListMembersRequest{}, res)
+}
+
+func (c *cli) teams() (*iamv1.IAMServiceListTeamsResponse, error) {
+	res := &iamv1.IAMServiceListTeamsResponse{}
+	return res, c.orgRPC("ListTeams", &iamv1.IAMServiceListTeamsRequest{}, res)
+}
+
+func (c *cli) roles() ([]*iamv1.Role, error) {
+	res := &iamv1.ListRolesResponse{}
+	err := c.orgRPC("ListRoles", &iamv1.ListRolesRequest{}, res)
+	return res.GetRoles(), err
+}
+
+func (c *cli) findMember(key string) (*iamv1.Member, error) {
+	res, err := c.members()
 	if err != nil {
-		return memberJSON{}, err
+		return nil, err
 	}
+	l := res.GetMembers()
 	for _, m := range l {
-		if m.ID == key {
+		if m.GetId() == key {
 			return m, nil
 		}
 	}
 	for _, m := range l {
-		if strings.EqualFold(m.Email, key) {
+		if strings.EqualFold(m.GetEmail(), key) {
 			return m, nil
 		}
 	}
-	return findBy("member", key, l, func(m memberJSON) ref { return ref{m.ID, m.Name} })
+	return findBy("member", key, l, func(m *iamv1.Member) ref { return ref{m.GetId(), m.GetName()} })
 }
 
-func (c *cli) findTeam(key string) (teamJSON, error) {
-	l, _, err := getList[teamJSON](c, "/teams")
+func (c *cli) findTeam(key string) (*iamv1.TeamInfo, error) {
+	res, err := c.teams()
 	if err != nil {
-		return teamJSON{}, err
+		return nil, err
 	}
-	return findBy("team", key, l, func(t teamJSON) ref { return ref{t.ID, t.Name} })
+	return findBy("team", key, res.GetTeams(), func(t *iamv1.TeamInfo) ref { return ref{t.GetId(), t.GetName()} })
 }
 
-func (c *cli) findRole(key string) (roleJSON, error) {
-	l, _, err := getList[roleJSON](c, "/roles")
+func (c *cli) findRole(key string) (*iamv1.Role, error) {
+	l, err := c.roles()
 	if err != nil {
-		return roleJSON{}, err
+		return nil, err
 	}
-	return findBy("role", key, l, roleJSON.ref)
+	return findBy("role", key, l, roleRef)
 }
 
-func (c *cli) customRole(key string) (roleJSON, error) {
+func (c *cli) customRole(key string) (*iamv1.Role, error) {
 	r, err := c.findRole(key)
-	if err == nil && r.Builtin {
-		return r, usagef("role %s is built in", r.Name)
+	if err == nil && r.GetBuiltin() {
+		return r, usagef("role %s is built in", r.GetName())
 	}
 	return r, err
 }
 
-func day(t time.Time) string { return t.Format("2006-01-02") }
-
-func (c *cli) simpleCall(method, rest string, body any) error {
-	path, err := c.orgPath(rest)
-	if err != nil {
-		return err
-	}
-	return c.call(method, path, body, nil)
-}
+func day(t *timestamppb.Timestamp) string { return t.AsTime().Format("2006-01-02") }
 
 func cmdTeamList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("team list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[teamJSON](c, "/teams")
+	res, err := c.teams()
 	if err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, t := range l {
-		rows[i] = []string{t.Name, fmt.Sprint(t.MemberCount), day(t.CreatedAt)}
+	rows := make([][]string, len(res.GetTeams()))
+	for i, t := range res.GetTeams() {
+		rows[i] = []string{t.GetName(), fmt.Sprint(t.GetMemberCount()), day(t.GetCreatedAt())}
 	}
-	return c.emit(raw, []string{"name", "members", "created"}, rows)
+	return c.emit(pj(res), []string{"name", "members", "created"}, rows)
 }
 
 func cmdTeamShow(c *cli, args []string) error {
@@ -198,37 +206,24 @@ func cmdTeamShow(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := c.orgPath("/teams/" + t.ID)
-	if err != nil {
-		return err
-	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
-		return err
-	}
-	var res struct {
-		Members []struct {
-			Name, Email string
-			Admin       bool
-		}
-	}
-	if err := json.Unmarshal(raw, &res); err != nil {
+	res := &iamv1.GetTeamResponse{}
+	if err := c.orgRPC("GetTeam", &iamv1.GetTeamRequest{Team: t.GetId()}, res); err != nil {
 		return err
 	}
 	if c.g.json {
-		return c.printJSON(raw)
+		return c.printJSON(pj(res))
 	}
-	if err := c.emitKV(nil, [][2]string{{"name", t.Name}, {"id", t.ID}}); err != nil {
+	if err := c.emitKV(nil, [][2]string{{"name", t.GetName()}, {"id", t.GetId()}}); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.stdout)
-	rows := make([][]string, len(res.Members))
-	for i, m := range res.Members {
+	rows := make([][]string, len(res.GetMembers()))
+	for i, m := range res.GetMembers() {
 		role := "member"
-		if m.Admin {
+		if m.GetAdmin() {
 			role = "admin"
 		}
-		rows[i] = []string{m.Name, m.Email, role}
+		rows[i] = []string{m.GetName(), m.GetEmail(), role}
 	}
 	return c.emit(nil, []string{"name", "email", "team role"}, rows)
 }
@@ -238,19 +233,11 @@ func cmdTeamCreate(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := c.orgPath("/teams")
-	if err != nil {
+	res := &iamv1.CreateTeamResponse{}
+	if err := c.orgRPC("CreateTeam", &iamv1.CreateTeamRequest{Name: pos[0]}, res); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, path, map[string]string{"name": pos[0]}, &raw); err != nil {
-		return err
-	}
-	var t teamJSON
-	if err := json.Unmarshal(raw, &t); err != nil {
-		return err
-	}
-	return c.done(raw, "Team %s created.", t.Name)
+	return c.done(pj(res), "Team %s created.", res.GetTeam().GetName())
 }
 
 func cmdTeamRename(c *cli, args []string) error {
@@ -262,10 +249,10 @@ func cmdTeamRename(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodPatch, "/teams/"+t.ID, map[string]string{"name": pos[1]}); err != nil {
+	if err := c.orgRPC("UpdateTeam", &iamv1.UpdateTeamRequest{Team: t.GetId(), Name: pos[1]}, &iamv1.UpdateTeamResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "Team %s renamed to %s.", t.Name, pos[1])
+	return c.done(nil, "Team %s renamed to %s.", t.GetName(), pos[1])
 }
 
 func cmdTeamDelete(c *cli, args []string) error {
@@ -277,23 +264,23 @@ func cmdTeamDelete(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.confirm(fmt.Sprintf("Delete team %s?", t.Name)); err != nil {
+	if err := c.confirm(fmt.Sprintf("Delete team %s?", t.GetName())); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/teams/"+t.ID, nil); err != nil {
+	if err := c.orgRPC("DeleteTeam", &iamv1.DeleteTeamRequest{Team: t.GetId()}, &iamv1.DeleteTeamResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "Team %s deleted.", t.Name)
+	return c.done(nil, "Team %s deleted.", t.GetName())
 }
 
-func teamMemberArgs(c *cli, fs *flag.FlagSet, args []string) (teamJSON, memberJSON, error) {
+func teamMemberArgs(c *cli, fs *flag.FlagSet, args []string) (*iamv1.TeamInfo, *iamv1.Member, error) {
 	pos, err := c.parse(fs, args, 2, 2)
 	if err != nil {
-		return teamJSON{}, memberJSON{}, err
+		return nil, nil, err
 	}
 	t, err := c.findTeam(pos[0])
 	if err != nil {
-		return t, memberJSON{}, err
+		return t, nil, err
 	}
 	m, err := c.findMember(pos[1])
 	return t, m, err
@@ -306,10 +293,10 @@ func cmdTeamAdd(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodPut, "/teams/"+t.ID+"/members/"+m.ID, map[string]bool{"admin": *admin}); err != nil {
+	if err := c.orgRPC("SetTeamMember", &iamv1.SetTeamMemberRequest{Team: t.GetId(), User: m.GetId(), Admin: admin}, &iamv1.SetTeamMemberResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "%s added to team %s.", m.Name, t.Name)
+	return c.done(nil, "%s added to team %s.", m.GetName(), t.GetName())
 }
 
 func cmdTeamRemove(c *cli, args []string) error {
@@ -317,28 +304,33 @@ func cmdTeamRemove(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.confirm(fmt.Sprintf("Remove %s from team %s?", m.Name, t.Name)); err != nil {
+	if err := c.confirm(fmt.Sprintf("Remove %s from team %s?", m.GetName(), t.GetName())); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/teams/"+t.ID+"/members/"+m.ID, nil); err != nil {
+	if m.GetId() == c.userID {
+		err = c.orgRPC("LeaveTeam", &iamv1.LeaveTeamRequest{Team: t.GetId()}, &iamv1.LeaveTeamResponse{})
+	} else {
+		err = c.orgRPC("RemoveTeamMember", &iamv1.RemoveTeamMemberRequest{Team: t.GetId(), User: m.GetId()}, &iamv1.RemoveTeamMemberResponse{})
+	}
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "%s removed from team %s.", m.Name, t.Name)
+	return c.done(nil, "%s removed from team %s.", m.GetName(), t.GetName())
 }
 
 func cmdMemberList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("member list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[memberJSON](c, "/members")
+	res, err := c.members()
 	if err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, m := range l {
-		rows[i] = []string{m.Name, m.Email, m.Role, day(m.JoinedAt)}
+	rows := make([][]string, len(res.GetMembers()))
+	for i, m := range res.GetMembers() {
+		rows[i] = []string{m.GetName(), m.GetEmail(), m.GetRole(), day(m.GetJoinedAt())}
 	}
-	return c.emit(raw, []string{"name", "email", "role", "joined"}, rows)
+	return c.emit(pj(res), []string{"name", "email", "role", "joined"}, rows)
 }
 
 func validOrgRole(role string) error {
@@ -360,10 +352,10 @@ func cmdMemberRole(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodPatch, "/members/"+m.ID, map[string]string{"role": pos[1]}); err != nil {
+	if err := c.orgRPC("UpdateMember", &iamv1.UpdateMemberRequest{User: m.GetId(), Role: pos[1]}, &iamv1.UpdateMemberResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "%s is now %s.", m.Name, pos[1])
+	return c.done(nil, "%s is now %s.", m.GetName(), pos[1])
 }
 
 func cmdMemberRemove(c *cli, args []string) error {
@@ -375,31 +367,33 @@ func cmdMemberRemove(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.confirm(fmt.Sprintf("Remove %s from the org?", m.Name)); err != nil {
+	if err := c.confirm(fmt.Sprintf("Remove %s from the org?", m.GetName())); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/members/"+m.ID, nil); err != nil {
+	if m.GetId() == c.userID {
+		err = c.rpc("LeaveOrg", &iamv1.LeaveOrgRequest{OrgId: c.org.GetId()}, &iamv1.LeaveOrgResponse{})
+	} else {
+		err = c.orgRPC("DeleteMember", &iamv1.DeleteMemberRequest{User: m.GetId()}, &iamv1.DeleteMemberResponse{})
+	}
+	if err != nil {
 		return err
 	}
-	return c.done(nil, "%s removed from the org.", m.Name)
+	return c.done(nil, "%s removed from the org.", m.GetName())
 }
 
 func cmdInviteList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("invite list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[struct {
-		ID, Role             string
-		CreatedAt, ExpiresAt time.Time
-	}](c, "/invites")
-	if err != nil {
+	res := &iamv1.ListInvitesResponse{}
+	if err := c.orgRPC("ListInvites", &iamv1.ListInvitesRequest{}, res); err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, v := range l {
-		rows[i] = []string{v.ID, v.Role, day(v.CreatedAt), day(v.ExpiresAt)}
+	rows := make([][]string, len(res.GetInvites()))
+	for i, v := range res.GetInvites() {
+		rows[i] = []string{v.GetId(), v.GetRole(), day(v.GetCreatedAt()), day(v.GetExpiresAt())}
 	}
-	return c.emit(raw, []string{"id", "role", "created", "expires"}, rows)
+	return c.emit(pj(res), []string{"id", "role", "created", "expires"}, rows)
 }
 
 func cmdInviteCreate(c *cli, args []string) error {
@@ -411,19 +405,11 @@ func cmdInviteCreate(c *cli, args []string) error {
 	if err := validOrgRole(*role); err != nil {
 		return err
 	}
-	path, err := c.orgPath("/invites")
-	if err != nil {
+	res := &iamv1.CreateInviteResponse{}
+	if err := c.orgRPC("CreateInvite", &iamv1.CreateInviteRequest{Role: *role}, res); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, path, map[string]string{"role": *role}, &raw); err != nil {
-		return err
-	}
-	var res struct{ URL string }
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return err
-	}
-	return c.done(raw, "%s", res.URL)
+	return c.done(pj(res), "%s", res.GetUrl())
 }
 
 func cmdInviteRevoke(c *cli, args []string) error {
@@ -434,7 +420,7 @@ func cmdInviteRevoke(c *cli, args []string) error {
 	if err := c.confirm(fmt.Sprintf("Revoke invite %s?", pos[0])); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/invites/"+pos[0], nil); err != nil {
+	if err := c.orgRPC("DeleteInvite", &iamv1.DeleteInviteRequest{Invite: pos[0]}, &iamv1.DeleteInviteResponse{}); err != nil {
 		return err
 	}
 	return c.done(nil, "Invite %s revoked.", pos[0])
@@ -456,42 +442,36 @@ func cmdInviteAccept(c *cli, args []string) error {
 	}
 	token = strings.TrimRight(token, "/")
 	token = token[strings.LastIndex(token, "/")+1:]
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, "/api/invites/accept", map[string]string{"token": token}, &raw); err != nil {
+	res := &iamv1.AcceptInviteResponse{}
+	if err := c.rpc("AcceptInvite", &iamv1.AcceptInviteRequest{Token: token}, res); err != nil {
 		return err
 	}
-	var res struct {
-		OrgID string `json:"orgId"`
-	}
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return err
-	}
-	name := res.OrgID
-	if me, err := c.me(nil); err == nil {
-		if i := slices.IndexFunc(me.Orgs, func(o orgJSON) bool { return o.ID == res.OrgID }); i >= 0 {
-			name = me.Orgs[i].Name
+	name := res.GetOrgId()
+	if me, err := c.me(); err == nil {
+		if o, err := findOrg(me.GetOrgs(), res.GetOrgId()); err == nil {
+			name = o.GetName()
 		}
 	}
-	return c.done(raw, "Joined %s.", name)
+	return c.done(pj(res), "Joined %s.", name)
 }
 
 func cmdRoleList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("role list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[roleJSON](c, "/roles")
-	if err != nil {
+	res := &iamv1.ListRolesResponse{}
+	if err := c.orgRPC("ListRoles", &iamv1.ListRolesRequest{}, res); err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, r := range l {
+	rows := make([][]string, len(res.GetRoles()))
+	for i, r := range res.GetRoles() {
 		kind := "custom"
-		if r.Builtin {
+		if r.GetBuiltin() {
 			kind = "built-in"
 		}
-		rows[i] = []string{r.Name, r.ref().ID, kind, fmt.Sprint(len(r.Rules))}
+		rows[i] = []string{r.GetName(), roleRef(r).ID, kind, fmt.Sprint(len(r.GetRules()))}
 	}
-	return c.emit(raw, []string{"name", "id", "kind", "rules"}, rows)
+	return c.emit(pj(res), []string{"name", "id", "kind", "rules"}, rows)
 }
 
 func cmdRoleShow(c *cli, args []string) error {
@@ -499,35 +479,27 @@ func cmdRoleShow(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	l, _, err := getList[roleJSON](c, "/roles")
-	if err != nil {
-		return err
-	}
-	r, err := findBy("role", pos[0], l, roleJSON.ref)
+	r, err := c.findRole(pos[0])
 	if err != nil {
 		return err
 	}
 	if c.g.json {
-		b, err := json.Marshal(r)
-		if err != nil {
-			return err
-		}
-		return c.printJSON(b)
+		return c.printJSON(pj(r))
 	}
-	pairs := [][2]string{{"name", r.Name}, {"id", r.ref().ID}}
-	if r.Description != "" {
-		pairs = append(pairs, [2]string{"description", r.Description})
+	pairs := [][2]string{{"name", r.GetName()}, {"id", roleRef(r).ID}}
+	if r.GetDescription() != "" {
+		pairs = append(pairs, [2]string{"description", r.GetDescription()})
 	}
-	if len(r.Parents) > 0 {
-		pairs = append(pairs, [2]string{"parents", strings.Join(r.Parents, ", ")})
+	if len(r.GetParents()) > 0 {
+		pairs = append(pairs, [2]string{"parents", strings.Join(r.GetParents(), ", ")})
 	}
 	if err := c.emitKV(nil, pairs); err != nil {
 		return err
 	}
 	fmt.Fprintln(c.stdout)
-	rows := make([][]string, len(r.Rules))
-	for i, x := range r.Rules {
-		rows[i] = []string{x.Effect, x.Object, x.Action}
+	rows := make([][]string, len(r.GetRules()))
+	for i, x := range r.GetRules() {
+		rows[i] = []string{x.GetEffect(), x.GetObject(), x.GetAction()}
 	}
 	return c.emit(nil, []string{"effect", "object", "action"}, rows)
 }
@@ -536,20 +508,21 @@ func cmdRoleCatalog(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("role catalog"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[struct{ Action, Object string }](c, "/catalog")
-	if err != nil {
+	res := &iamv1.ListCatalogResponse{}
+	if err := c.orgRPC("ListCatalog", &iamv1.ListCatalogRequest{}, res); err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, p := range l {
-		rows[i] = []string{p.Action, p.Object}
+	rows := make([][]string, len(res.GetEntries()))
+	for i, p := range res.GetEntries() {
+		rows[i] = []string{p.GetAction(), p.GetObject()}
 	}
-	return c.emit(raw, []string{"action", "object"}, rows)
+	return c.emit(pj(res), []string{"action", "object"}, rows)
 }
 
-func (c *cli) roleFile(file string) (json.RawMessage, error) {
+// roleFile reads a role (name, description, rules, parents) into req; other fields, such as those of role show --json, are ignored.
+func (c *cli) roleFile(file string, req proto.Message) error {
 	if file == "" {
-		return nil, usagef("--file is required")
+		return usagef("--file is required")
 	}
 	var b []byte
 	var err error
@@ -559,12 +532,12 @@ func (c *cli) roleFile(file string) (json.RawMessage, error) {
 		b, err = os.ReadFile(file)
 	}
 	if err != nil {
-		return nil, usagef("cannot read %s", file)
+		return usagef("cannot read %s", file)
 	}
-	if !json.Valid(b) {
-		return nil, usagef("%s is not valid JSON", file)
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(b, req); err != nil {
+		return usagef("%s is not a valid role: %v", file, err)
 	}
-	return b, nil
+	return nil
 }
 
 func cmdRoleCreate(c *cli, args []string) error {
@@ -573,23 +546,15 @@ func cmdRoleCreate(c *cli, args []string) error {
 	if _, err := c.parse(fs, args, 0, 0); err != nil {
 		return err
 	}
-	body, err := c.roleFile(*file)
-	if err != nil {
+	req := &iamv1.CreateRoleRequest{}
+	if err := c.roleFile(*file, req); err != nil {
 		return err
 	}
-	path, err := c.orgPath("/roles")
-	if err != nil {
+	res := &iamv1.CreateRoleResponse{}
+	if err := c.orgRPC("CreateRole", req, res); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, path, body, &raw); err != nil {
-		return err
-	}
-	var r roleJSON
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return err
-	}
-	return c.done(raw, "Role %s created.", r.Name)
+	return c.done(pj(res), "Role %s created.", res.GetRole().GetName())
 }
 
 func cmdRoleUpdate(c *cli, args []string) error {
@@ -599,18 +564,19 @@ func cmdRoleUpdate(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	body, err := c.roleFile(*file)
-	if err != nil {
+	req := &iamv1.UpdateRoleRequest{}
+	if err := c.roleFile(*file, req); err != nil {
 		return err
 	}
 	r, err := c.customRole(pos[0])
 	if err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodPut, "/roles/"+r.ID, body); err != nil {
+	req.Role = r.GetId()
+	if err := c.orgRPC("UpdateRole", req, &iamv1.UpdateRoleResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "Role %s updated.", r.Name)
+	return c.done(nil, "Role %s updated.", r.GetName())
 }
 
 func cmdRoleDelete(c *cli, args []string) error {
@@ -622,39 +588,36 @@ func cmdRoleDelete(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.confirm(fmt.Sprintf("Delete role %s?", r.Name)); err != nil {
+	if err := c.confirm(fmt.Sprintf("Delete role %s?", r.GetName())); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/roles/"+r.ID, nil); err != nil {
+	if err := c.orgRPC("DeleteRole", &iamv1.DeleteRoleRequest{Role: r.GetId()}, &iamv1.DeleteRoleResponse{}); err != nil {
 		return err
 	}
-	return c.done(nil, "Role %s deleted.", r.Name)
+	return c.done(nil, "Role %s deleted.", r.GetName())
 }
 
 func cmdBindingList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("binding list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := getList[struct {
-		ID, Subject, RoleID string
-		CreatedAt           time.Time
-	}](c, "/bindings")
+	res := &iamv1.ListRoleBindingsResponse{}
+	if err := c.orgRPC("ListRoleBindings", &iamv1.ListRoleBindingsRequest{}, res); err != nil {
+		return err
+	}
+	roles, err := c.roles()
 	if err != nil {
 		return err
 	}
-	roles, _, err := getList[roleJSON](c, "/roles")
-	if err != nil {
-		return err
-	}
-	rows := make([][]string, len(l))
-	for i, b := range l {
-		role := b.RoleID
-		if j := slices.IndexFunc(roles, func(r roleJSON) bool { return r.ID == b.RoleID }); j >= 0 {
-			role = roles[j].Name
+	rows := make([][]string, len(res.GetBindings()))
+	for i, b := range res.GetBindings() {
+		role := b.GetRoleId()
+		if j := slices.IndexFunc(roles, func(r *iamv1.Role) bool { return r.GetId() == b.GetRoleId() }); j >= 0 {
+			role = roles[j].GetName()
 		}
-		rows[i] = []string{b.ID, b.Subject, role, day(b.CreatedAt)}
+		rows[i] = []string{b.GetId(), b.GetSubject(), role, day(b.GetCreatedAt())}
 	}
-	return c.emit(raw, []string{"id", "subject", "role", "created"}, rows)
+	return c.emit(pj(res), []string{"id", "subject", "role", "created"}, rows)
 }
 
 func (c *cli) resolveSubject(s string) (string, error) {
@@ -662,10 +625,10 @@ func (c *cli) resolveSubject(s string) (string, error) {
 	switch kind {
 	case "user":
 		m, err := c.findMember(key)
-		return "user:" + m.ID, err
+		return "user:" + m.GetId(), err
 	case "team":
 		t, err := c.findTeam(key)
-		return "team:" + t.ID, err
+		return "team:" + t.GetId(), err
 	}
 	return s, nil
 }
@@ -683,15 +646,11 @@ func cmdBindingAdd(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := c.orgPath("/bindings")
-	if err != nil {
+	res := &iamv1.CreateRoleBindingResponse{}
+	if err := c.orgRPC("CreateRoleBinding", &iamv1.CreateRoleBindingRequest{Subject: subject, RoleId: r.GetId()}, res); err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, path, map[string]string{"subject": subject, "roleId": r.ID}, &raw); err != nil {
-		return err
-	}
-	return c.done(raw, "Bound %s to role %s.", pos[0], r.Name)
+	return c.done(pj(res), "Bound %s to role %s.", pos[0], r.GetName())
 }
 
 func cmdBindingDelete(c *cli, args []string) error {
@@ -702,7 +661,7 @@ func cmdBindingDelete(c *cli, args []string) error {
 	if err := c.confirm(fmt.Sprintf("Delete binding %s?", pos[0])); err != nil {
 		return err
 	}
-	if err := c.simpleCall(http.MethodDelete, "/bindings/"+pos[0], nil); err != nil {
+	if err := c.orgRPC("DeleteRoleBinding", &iamv1.DeleteRoleBindingRequest{Binding: pos[0]}, &iamv1.DeleteRoleBindingResponse{}); err != nil {
 		return err
 	}
 	return c.done(nil, "Binding %s deleted.", pos[0])
@@ -764,21 +723,21 @@ func cmdLimitShow(c *cli, args []string) error {
 	if !c.g.json {
 		names := map[string]string{}
 		if len(ol.Teams) > 0 {
-			ts, _, err := getList[teamJSON](c, "/teams")
+			res, err := c.teams()
 			if err != nil {
 				return err
 			}
-			for _, t := range ts {
-				names["team:"+t.ID] = t.Name
+			for _, t := range res.GetTeams() {
+				names["team:"+t.GetId()] = t.GetName()
 			}
 		}
 		if len(ol.Members) > 0 {
-			ms, _, err := getList[memberJSON](c, "/members")
+			res, err := c.members()
 			if err != nil {
 				return err
 			}
-			for _, m := range ms {
-				names["user:"+m.ID] = m.Name
+			for _, m := range res.GetMembers() {
+				names["user:"+m.GetId()] = m.GetName()
 			}
 		}
 		for _, s := range []struct {
@@ -843,13 +802,13 @@ func cmdLimitSet(c *cli, args []string) error {
 		if err != nil {
 			return err
 		}
-		scope = "team:" + t.ID
+		scope = "team:" + t.GetId()
 	case kind == "user" && key != "":
 		m, err := c.findMember(key)
 		if err != nil {
 			return err
 		}
-		scope = "user:" + m.ID
+		scope = "user:" + m.GetId()
 	default:
 		return usagef("scope must be org, team:<team> or user:<member>")
 	}
@@ -872,45 +831,28 @@ func cmdLimitSet(c *cli, args []string) error {
 	return c.done(nil, "Limits for %s set.", pos[0])
 }
 
-type sessionJSON struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	UserAgent  string    `json:"userAgent"`
-	IP         string    `json:"ip"`
-	LastUsedAt time.Time `json:"lastUsedAt"`
-	ExpiresAt  time.Time `json:"expiresAt"`
-	Current    bool      `json:"current"`
-}
-
-func (c *cli) sessions() ([]sessionJSON, json.RawMessage, error) {
-	var raw json.RawMessage
-	if err := c.call(http.MethodGet, "/api/me/sessions", nil, &raw); err != nil {
-		return nil, nil, err
-	}
-	var l []sessionJSON
-	if err := json.Unmarshal(raw, &l); err != nil {
-		return nil, nil, err
-	}
-	return l, raw, nil
+func (c *cli) sessions() (*iamv1.ListSessionsResponse, error) {
+	res := &iamv1.ListSessionsResponse{}
+	return res, c.rpc("ListSessions", &iamv1.ListSessionsRequest{}, res)
 }
 
 func cmdSessionList(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("session list"), args, 0, 0); err != nil {
 		return err
 	}
-	l, raw, err := c.sessions()
+	res, err := c.sessions()
 	if err != nil {
 		return err
 	}
-	rows := make([][]string, len(l))
-	for i, s := range l {
+	rows := make([][]string, len(res.GetSessions()))
+	for i, s := range res.GetSessions() {
 		mark := ""
-		if s.Current {
+		if s.GetCurrent() {
 			mark = "*"
 		}
-		rows[i] = []string{mark, s.ID, s.Kind, s.IP, s.UserAgent, ago(c.now(), s.LastUsedAt), s.ExpiresAt.In(c.now().Location()).Format("2006-01-02 15:04")}
+		rows[i] = []string{mark, s.GetId(), s.GetKind(), s.GetIp(), s.GetUserAgent(), ago(c.now(), s.GetLastUsedAt().AsTime()), s.GetExpiresAt().AsTime().In(c.now().Location()).Format("2006-01-02 15:04")}
 	}
-	return c.emit(raw, []string{"", "id", "kind", "ip", "user agent", "last used", "expires"}, rows)
+	return c.emit(pj(res), []string{"", "id", "kind", "ip", "user agent", "last used", "expires"}, rows)
 }
 
 func cmdSessionRevoke(c *cli, args []string) error {
@@ -918,24 +860,25 @@ func cmdSessionRevoke(c *cli, args []string) error {
 	if err != nil {
 		return err
 	}
-	l, _, err := c.sessions()
+	res, err := c.sessions()
 	if err != nil {
 		return err
 	}
-	i := slices.IndexFunc(l, func(s sessionJSON) bool { return s.ID == pos[0] })
+	i := slices.IndexFunc(res.GetSessions(), func(s *iamv1.Session) bool { return s.GetId() == pos[0] })
 	if i < 0 {
 		return notFoundf("session %q not found", pos[0])
 	}
+	current := res.GetSessions()[i].GetCurrent()
 	if err := c.confirm(fmt.Sprintf("Revoke session %s?", pos[0])); err != nil {
 		return err
 	}
-	if err := c.call(http.MethodDelete, "/api/me/sessions/"+pos[0], nil, nil); err != nil {
+	if err := c.rpc("RevokeSession", &iamv1.RevokeSessionRequest{Session: pos[0]}, &iamv1.RevokeSessionResponse{}); err != nil {
 		var ae *apiError
-		if !(l[i].Current && errors.As(err, &ae) && ae.Status == http.StatusUnauthorized) {
+		if !(current && errors.As(err, &ae) && ae.Status == http.StatusUnauthorized) {
 			return err
 		}
 	}
-	if l[i].Current {
+	if current {
 		c.cfg.Token, c.cfg.ExpiresAt = "", time.Time{}
 		if err := saveConfig(c.cfgDir, c.cfg); err != nil {
 			return err
