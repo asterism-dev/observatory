@@ -43,8 +43,26 @@ func main() {
 	d := storage.Dir{Path: *dir}
 	ex := &storage.Exports{Addr: *addr, KeyDir: *keyDir, Dir: d, Spawn: spawn}
 	hub := storage.Hub{URL: *hubURL, Token: token, HTTP: &http.Client{Timeout: 5 * time.Second}}
+	go watchNamespace()
 	// Exiting kills every nbdkit through Pdeathsig.
 	storage.Run(ctx, hub, d, ex, 2*time.Second)
+}
+
+// watchNamespace exits once the default route is gone: a crashed gateway restarts in a new netns, which only a restarted storage joins.
+func watchNamespace() {
+	if !defaultRoute() {
+		return
+	}
+	for range time.Tick(5 * time.Second) {
+		if !defaultRoute() {
+			log.Fatal("the gateway's network namespace is gone, exiting to rejoin its new one")
+		}
+	}
+}
+
+func defaultRoute() bool {
+	b, err := os.ReadFile("/proc/net/route")
+	return err != nil || storage.HasDefaultRoute(b)
 }
 
 func spawn(args []string) (func(), <-chan error, error) {

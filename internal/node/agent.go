@@ -153,9 +153,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	if a.ChassisKey != "" {
 		a.mesh = newMesh()
+		var u proto.Underlay
 		for {
-			err := a.refreshUnderlay(ctx)
-			if err == nil {
+			var err error
+			if u, err = a.fetchUnderlay(ctx); err == nil {
 				break
 			}
 			slog.Warn("underlay config failed", "err", err)
@@ -166,6 +167,8 @@ func (a *Agent) Run(ctx context.Context) error {
 			case <-time.After(reconnectDelay):
 			}
 		}
+		// A SYN sent before wg-underlay is up leaves with the LAN source address, which the gateway never answers.
+		a.startChassis(ctx, u)
 		go a.renewUnderlay(ctx)
 		go a.mesh.run(ctx)
 	}

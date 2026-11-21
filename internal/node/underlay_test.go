@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -67,4 +69,28 @@ func TestCertExpiresSoon(t *testing.T) {
 	if !certExpiresSoon("garbage", now) {
 		t.Error("unparseable cert should renew")
 	}
+}
+
+func TestAgentConnectsOnlyAfterChassisIsUp(t *testing.T) {
+	h := newFakeHub(t)
+	p := newFakeProvider()
+	p.block = make(chan struct{})
+	a := &Agent{HubURL: h.url(), controlBase: h.url(), Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p,
+		ChassisKey: "pub-key", ChassisCSR: "CSR PEM", ChassisPrivateKey: "priv-key", OVNKeyFile: "/vms/ovn-key.pem"}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	unblock := sync.OnceFunc(func() { close(p.block) })
+	t.Cleanup(unblock)
+	eventually(t, "chassis starting", func() bool { return len(p.gotChassis()) == 1 })
+	time.Sleep(200 * time.Millisecond)
+	h.mu.Lock()
+	early := slices.Contains(h.events, "connect")
+	h.mu.Unlock()
+	if early {
+		t.Fatal("dialed the hub before wg-underlay was up")
+	}
+	unblock()
+	eventually(t, "node online", func() bool { return len(h.registers()) > 0 })
 }
