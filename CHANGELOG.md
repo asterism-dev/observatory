@@ -1,3 +1,9 @@
+## v0.19.0 (2026-11-21)
+
+### Feat
+
+- **telemetry**: Grafana access with org tokens (#40)
+
 ## v0.18.0 (2026-11-21)
 
 ### Feat
