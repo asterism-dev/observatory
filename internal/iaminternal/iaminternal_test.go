@@ -27,3 +27,10 @@ func TestGetUsersLimit(t *testing.T) {
 		t.Fatalf("bad id: %v", err)
 	}
 }
+
+func TestListTeamsInvalidOrg(t *testing.T) {
+	_, err := Server{}.ListTeams(t.Context(), connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: "nope"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("ListTeams with a malformed org_id: %v", err)
+	}
+}

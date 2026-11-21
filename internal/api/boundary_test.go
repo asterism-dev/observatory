@@ -2,49 +2,49 @@ package api
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
 
+const storePkg = "github.com/asterism-dev/observatory/internal/store"
+
 var iamReads = map[string]bool{"Membership": true, "Members": true, "Memberships": true, "Teams": true, "Team": true,
-	"TeamMembers": true, "User": true, "Users": true, "SSHKeysOf": true, "SessionByToken": true}
+	"TeamMembers": true, "User": true, "Users": true, "UsersByID": true, "SSHKeysOf": true, "SessionByToken": true,
+	"Sessions": true, "Invites": true, "Org": true, "Orgs": true}
 
 // iamFiles may read IAM tables; for api.go only the listed functions may.
 var iamFiles = map[string][]string{"members.go": nil, "teams.go": nil, "roles.go": nil, "orgs.go": nil, "admin.go": nil, "sshkeys.go": nil, "api.go": {"me", "sessions"}}
 
 func TestNoIAMReadsOutsideIAMFiles(t *testing.T) {
-	for _, dir := range []string{".", "../fleet", "../network", "../images"} {
-		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-		if err != nil {
-			t.Fatal(err)
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "source", nil)
+	for _, dir := range []string{".", "../fleet", "../network", "../images", "../builds", "../disks"} {
+		files := parseDir(t, fset, dir)
+		info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
+		if _, err := (&types.Config{Importer: imp}).Check(dir, fset, files, info); err != nil {
+			t.Fatalf("type-check %s: %v", dir, err)
 		}
-		for _, path := range files {
-			if strings.HasSuffix(path, "_test.go") {
-				continue
-			}
-			allowed, listed := iamFiles[filepath.Base(path)]
+		for _, f := range files {
+			allowed, listed := iamFiles[filepath.Base(fset.Position(f.Pos()).Filename)]
 			if dir != "." {
 				allowed, listed = nil, false
 			}
 			if listed && allowed == nil {
 				continue
 			}
-			fset := token.NewFileSet()
-			f, err := parser.ParseFile(fset, path, nil, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
 			for _, d := range f.Decls {
 				if fn, ok := d.(*ast.FuncDecl); ok && slices.Contains(allowed, fn.Name.Name) {
 					continue
 				}
 				ast.Inspect(d, func(n ast.Node) bool {
-					if name, ok := iamRead(n); ok {
-						t.Errorf("%s: %s reads IAM data; ask the iam client or the policy", fset.Position(n.Pos()), name)
+					if sel, ok := n.(*ast.SelectorExpr); ok && isStoreIAMRead(info.Selections[sel]) {
+						t.Errorf("%s: store.%s reads IAM data; ask the iam client or the policy", fset.Position(sel.Pos()), sel.Sel.Name)
 					}
 					return true
 				})
@@ -53,22 +53,39 @@ func TestNoIAMReadsOutsideIAMFiles(t *testing.T) {
 	}
 }
 
-// iamRead matches x.Name(ctx, …) for a store-style IAM read; the enforcer's TeamMembers(org, team) takes no context.
-func iamRead(n ast.Node) (string, bool) {
-	call, ok := n.(*ast.CallExpr)
-	if !ok || len(call.Args) == 0 {
-		return "", false
+func parseDir(t *testing.T, fset *token.FileSet, dir string) []*ast.File {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !iamReads[sel.Sel.Name] {
-		return "", false
+	var files []*ast.File
+	for _, p := range paths {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, p, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
 	}
-	switch a := call.Args[0].(type) {
-	case *ast.Ident:
-		return sel.Sel.Name, a.Name == "ctx"
-	case *ast.CallExpr:
-		s, ok := a.Fun.(*ast.SelectorExpr)
-		return sel.Sel.Name, ok && (s.Sel.Name == "Context" || s.Sel.Name == "Background" || s.Sel.Name == "TODO")
+	return files
+}
+
+// isStoreIAMRead matches calls and method values alike: any selection of a denied method on *store.Store.
+func isStoreIAMRead(s *types.Selection) bool {
+	if s == nil || (s.Kind() != types.MethodVal && s.Kind() != types.MethodExpr) || !iamReads[s.Obj().Name()] {
+		return false
 	}
-	return "", false
+	recv := s.Obj().(*types.Func).Type().(*types.Signature).Recv()
+	if recv == nil {
+		return false
+	}
+	ptr, ok := recv.Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := ptr.Elem().(*types.Named)
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == storePkg && named.Obj().Name() == "Store"
 }
