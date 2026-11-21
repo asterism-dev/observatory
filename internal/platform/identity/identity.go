@@ -10,10 +10,12 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -22,6 +24,7 @@ const (
 	minRefreshGap   = 30 * time.Second
 	maxKeyAge       = 10 * time.Minute
 	maxJWKSBodySize = 1 << 20
+	fetchTimeout    = 5 * time.Second
 )
 
 type Principal struct {
@@ -47,23 +50,41 @@ type claims struct {
 	PlatformAdmin bool   `json:"pa"`
 }
 
-// Verifier validates identity JWTs against the hub's JWKS, caching keys between refreshes.
+type keySet struct {
+	keys      map[string]ed25519.PublicKey
+	fetchedAt time.Time
+}
+
+// Verifier validates identity JWTs against the hub's JWKS; HTTP never runs under a lock the verify path takes.
 type Verifier struct {
 	jwksURL, issuer, serviceToken string
 	client                        *http.Client
 	now                           func() time.Time
+	fetchTimeout                  time.Duration
+
+	set    atomic.Pointer[keySet]
+	flight singleflight.Group
 
 	mu          sync.Mutex
-	keys        map[string]ed25519.PublicKey
-	fetchedAt   time.Time
 	lastAttempt time.Time
 }
 
-func NewVerifier(jwksURL, issuer, serviceToken string, client *http.Client) *Verifier {
-	if client == nil {
-		client = http.DefaultClient
+func NewVerifier(jwksURL, issuer, serviceToken string, client *http.Client) (*Verifier, error) {
+	if jwksURL == "" || issuer == "" || serviceToken == "" {
+		return nil, errors.New("identity: jwks url, issuer and service token are required")
 	}
-	return &Verifier{jwksURL: jwksURL, issuer: issuer, serviceToken: serviceToken, client: client, now: time.Now}
+	if client == nil {
+		client = &http.Client{Timeout: fetchTimeout}
+	}
+	return &Verifier{jwksURL: jwksURL, issuer: issuer, serviceToken: serviceToken, client: client, now: time.Now, fetchTimeout: fetchTimeout}, nil
+}
+
+func canonicalUUID(s string) (uuid.UUID, error) {
+	id, err := uuid.Parse(s)
+	if err == nil && id.String() != s {
+		err = errors.New("not canonical")
+	}
+	return id, err
 }
 
 func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
@@ -86,11 +107,11 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 	if err != nil {
 		return Principal{}, fmt.Errorf("invalid token: %w", err)
 	}
-	user, err := uuid.Parse(c.Subject)
+	user, err := canonicalUUID(c.Subject)
 	if err != nil {
 		return Principal{}, errors.New("invalid token: bad sub")
 	}
-	sid, err := uuid.Parse(c.Session)
+	sid, err := canonicalUUID(c.Session)
 	if err != nil {
 		return Principal{}, errors.New("invalid token: bad sid")
 	}
@@ -98,23 +119,51 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	now := v.now()
-	key, known := v.keys[kid]
-	stale := now.Sub(v.fetchedAt) >= maxKeyAge
-	if (!known || stale) && now.Sub(v.lastAttempt) >= minRefreshGap {
-		v.lastAttempt = now
-		// A failed refresh keeps the cached keys so a hub outage does not log everyone out.
-		if keys, err := v.fetch(ctx); err == nil {
-			v.keys, v.fetchedAt = keys, now
-			key, known = keys[kid]
+	cur := v.set.Load()
+	if cur != nil {
+		if key, ok := cur.keys[kid]; ok {
+			if v.now().Sub(cur.fetchedAt) >= maxKeyAge {
+				v.refresh(ctx)
+			}
+			return key, nil
 		}
 	}
-	if !known {
-		return nil, errors.New("unknown kid")
+	if ch := v.refresh(ctx); ch != nil {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	return key, nil
+	if cur = v.set.Load(); cur != nil {
+		if key, ok := cur.keys[kid]; ok {
+			return key, nil
+		}
+	}
+	return nil, errors.New("unknown kid")
+}
+
+// refresh starts a shared fetch unless one ran within the last 30 s; the channel is nil when it was skipped.
+func (v *Verifier) refresh(ctx context.Context) <-chan singleflight.Result {
+	v.mu.Lock()
+	now := v.now()
+	if now.Sub(v.lastAttempt) < minRefreshGap {
+		v.mu.Unlock()
+		return nil
+	}
+	v.lastAttempt = now
+	v.mu.Unlock()
+	return v.flight.DoChan("jwks", func() (any, error) {
+		// Detached so one caller giving up does not fail the fetch the others share.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), v.fetchTimeout)
+		defer cancel()
+		keys, err := v.fetch(fctx)
+		if err != nil {
+			return nil, err
+		}
+		v.set.Store(&keySet{keys: keys, fetchedAt: v.now()})
+		return nil, nil
+	})
 }
 
 func (v *Verifier) fetch(ctx context.Context) (map[string]ed25519.PublicKey, error) {
@@ -133,7 +182,10 @@ func (v *Verifier) fetch(ctx context.Context) (map[string]ed25519.PublicKey, err
 	}
 	var set struct {
 		Keys []struct {
-			Kty, Crv, Kid, X string
+			Kty string `json:"kty"`
+			Crv string `json:"crv"`
+			Kid string `json:"kid"`
+			X   string `json:"x"`
 		} `json:"keys"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBodySize)).Decode(&set); err != nil {
@@ -149,6 +201,9 @@ func (v *Verifier) fetch(ctx context.Context) (map[string]ed25519.PublicKey, err
 			continue
 		}
 		keys[k.Kid] = ed25519.PublicKey(x)
+	}
+	if len(keys) == 0 {
+		return nil, errors.New("jwks: no usable keys")
 	}
 	return keys, nil
 }

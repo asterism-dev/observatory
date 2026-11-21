@@ -29,6 +29,7 @@ type fakeJWKS struct {
 	hits  atomic.Int32
 	srv   *httptest.Server
 	badAu atomic.Bool
+	block chan struct{}
 }
 
 func newFakeJWKS(t *testing.T) *fakeJWKS {
@@ -39,6 +40,16 @@ func newFakeJWKS(t *testing.T) *fakeJWKS {
 			f.badAu.Store(true)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		f.mu.Lock()
+		blk := f.block
+		f.mu.Unlock()
+		if blk != nil {
+			select {
+			case <-blk:
+			case <-r.Context().Done():
+				return
+			}
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -82,7 +93,11 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	f := &fixture{jwks: newFakeJWKS(t), now: time.Now(), user: uuid.New(), sess: uuid.New()}
 	f.key = f.jwks.addKey("k1")
-	f.v = NewVerifier(f.jwks.srv.URL, testIssuer, testToken, f.jwks.srv.Client())
+	v, err := NewVerifier(f.jwks.srv.URL, testIssuer, testToken, f.jwks.srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.v = v
 	f.v.now = func() time.Time { return f.now }
 	return f
 }
@@ -135,6 +150,11 @@ func TestVerifyRejects(t *testing.T) {
 			c["exp"] = f.now.Add(-time.Minute).Unix()
 			return sign(t, jwt.SigningMethodEdDSA, "k1", c, f.key)
 		},
+		"nbf only in future": func(f *fixture) string {
+			c := f.claims()
+			c["nbf"] = f.now.Add(time.Minute).Unix()
+			return sign(t, jwt.SigningMethodEdDSA, "k1", c, f.key)
+		},
 		"not yet valid": func(f *fixture) string {
 			c := f.claims()
 			c["nbf"] = f.now.Add(time.Minute).Unix()
@@ -160,6 +180,11 @@ func TestVerifyRejects(t *testing.T) {
 		"bad sub": func(f *fixture) string {
 			c := f.claims()
 			c["sub"] = "not-a-uuid"
+			return sign(t, jwt.SigningMethodEdDSA, "k1", c, f.key)
+		},
+		"non-canonical sub": func(f *fixture) string {
+			c := f.claims()
+			c["sub"] = "urn:uuid:" + f.user.String()
 			return sign(t, jwt.SigningMethodEdDSA, "k1", c, f.key)
 		},
 		"bad sid": func(f *fixture) string {
@@ -231,8 +256,11 @@ func TestOutageKeepsCachedKeys(t *testing.T) {
 	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
 		t.Fatalf("cached key must survive outage: %v", err)
 	}
-	if f.jwks.hits.Load() == base {
-		t.Fatal("stale cache was not refreshed")
+	for i := 0; f.jwks.hits.Load() == base; i++ {
+		if i > 200 {
+			t.Fatal("stale cache was not refreshed")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -244,5 +272,65 @@ func TestFromContext(t *testing.T) {
 	got, ok := FromContext(WithPrincipal(context.Background(), want))
 	if !ok || got != want {
 		t.Fatalf("got %+v %v", got, ok)
+	}
+}
+
+func TestNewVerifierRequiresConfig(t *testing.T) {
+	for _, a := range [][3]string{{"", "i", "t"}, {"u", "", "t"}, {"u", "i", ""}} {
+		if _, err := NewVerifier(a[0], a[1], a[2], nil); err == nil {
+			t.Fatalf("accepted %v", a)
+		}
+	}
+}
+
+func TestStaleKnownKidDoesNotWaitForBlockedJWKS(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatal(err)
+	}
+	f.v.fetchTimeout = 200 * time.Millisecond
+	blk := make(chan struct{})
+	f.jwks.mu.Lock()
+	f.jwks.block = blk
+	f.jwks.mu.Unlock()
+	t.Cleanup(func() { close(blk) })
+
+	f.now = f.now.Add(11 * time.Minute)
+	start := time.Now()
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Fatalf("stale known kid waited %v", d)
+	}
+
+	f.now = f.now.Add(time.Minute)
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	start = time.Now()
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "ghost", f.claims(), otherKey)); err == nil {
+		t.Fatal("unknown kid accepted")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("unknown kid waited %v", d)
+	}
+}
+
+func TestEmptyJWKSKeepsCache(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatal(err)
+	}
+	f.jwks.mu.Lock()
+	f.jwks.keys = map[string]ed25519.PublicKey{}
+	f.jwks.mu.Unlock()
+	f.now = f.now.Add(31 * time.Second)
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "ghost", f.claims(), otherKey)); err == nil {
+		t.Fatal("unknown kid accepted")
+	}
+	if _, err := f.v.Verify(ctx, sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatalf("cache dropped after empty JWKS: %v", err)
 	}
 }
