@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -88,10 +89,14 @@ func (d *dnsServer) handle(network string, req []byte, upstream string, src neti
 	}
 	q := m.Questions[0]
 	name := strings.ToLower(q.Name.String())
+	v := d.viewFor(src)
 	if name != "internal." && !strings.HasSuffix(name, ".internal.") {
+		// The gateway asking itself is its upstream (Docker's DNS) forwarding back when the hub host resolves via a device: a loop.
+		if v == nil && gatewayLocal(src) {
+			return reply(m, dnsmessage.RCodeRefused, nil, false)
+		}
 		return forward(network, req, upstream)
 	}
-	v := d.viewFor(src)
 	if v == nil {
 		return reply(m, dnsmessage.RCodeRefused, nil, false)
 	}
@@ -107,6 +112,14 @@ func (d *dnsServer) handle(network string, req []byte, upstream string, src neti
 		})
 	}
 	return reply(m, dnsmessage.RCodeSuccess, answers, true)
+}
+
+var gw0Addr = netip.MustParseAddr(gw0IP)
+
+// gatewayLocal reports a source in the gateway's own namespace; a local sender to 10.192.0.1 gets that address as its source.
+func gatewayLocal(src netip.Addr) bool {
+	src = src.Unmap()
+	return src.IsLoopback() || src == netaddr.GatewayDNS || src == netaddr.GatewayUnderlay || src == gw0Addr
 }
 
 func reply(req dnsmessage.Message, rcode dnsmessage.RCode, answers []dnsmessage.Resource, authoritative bool) ([]byte, error) {
