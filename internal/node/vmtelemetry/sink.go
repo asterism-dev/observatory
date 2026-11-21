@@ -158,6 +158,10 @@ func (c *slotConn) Close() error {
 
 // Register starts vmID with fresh limits when it boots; Emit and Serve accept a VM only from here until Forget.
 func (s *Sink) Register(vmID uuid.UUID) {
+	// A drop counter exported first at its first non-zero value is invisible to the hub's increase().
+	for _, kind := range []string{"logs", "series", "body"} {
+		s.dropped(vmID, kind, 0)
+	}
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -212,8 +216,11 @@ func NewLineBatch(emit func(records []*logspb.LogRecord)) *LineBatch {
 	return b
 }
 
-// Add queues line as a LineRecord; a full batch is emitted at once.
+// Add queues line as a LineRecord, unless it is blank (VictoriaLogs would store a placeholder message); a full batch is emitted at once.
 func (b *LineBatch) Add(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.recs = append(b.recs, LineRecord(line))

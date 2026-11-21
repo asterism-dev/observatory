@@ -555,6 +555,8 @@ func TestLineBatch(t *testing.T) {
 		t.Fatalf("full batches = %v", g)
 	}
 	eventually(t, "the rest after the interval", func() bool { return len(got()) == 3 })
+	b.Add("")
+	b.Add(" \t")
 	b.Add("last")
 	b.Close()
 	if g := got(); !reflect.DeepEqual(g, []int{MaxBatch, MaxBatch, 1, 1}) {

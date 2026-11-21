@@ -445,6 +445,16 @@ func (s *jailSock) close() {
 	s.dir = nil
 }
 
+// vmTelemetry returns the sink and VM ID for spawn id, or a nil sink when telemetry is off or id is no VM's, such as a template build's.
+func (p *Provider) vmTelemetry(id string) (*vmtelemetry.Sink, uuid.UUID) {
+	sink := p.telemetry.Load()
+	vmID, err := uuid.Parse(id)
+	if sink == nil || err != nil {
+		return nil, uuid.Nil
+	}
+	return sink, vmID
+}
+
 // spawnJailed starts Firecracker under the jailer; to boot, files holds the kernel, the initrd and then the drives.
 func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string, boot bool) (*linuxvm.Process, string, int, error) {
 	p.mu.Lock()
@@ -496,12 +506,9 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 	}
 	go node.ServeTokens(tokens, f.Spec.ID, p.token)
 	closeListeners := func() { tokens.Close() }
-	if sink := p.telemetry.Load(); sink != nil {
-		vmID, err := uuid.Parse(f.Spec.ID)
-		var telemetry net.Listener
-		if err == nil {
-			telemetry, err = listenGuestPort(dir, uid, node.TelemetryPort)
-		}
+	sink, vmID := p.vmTelemetry(f.Spec.ID)
+	if sink != nil {
+		telemetry, err := listenGuestPort(dir, uid, node.TelemetryPort)
 		if err != nil {
 			tokens.Close()
 			removeJail()
@@ -518,10 +525,8 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		ctx, stop := context.WithCancel(context.Background())
 		go func() { <-proc.Done(); stop() }()
 		go tailFCLog(ctx, fcLog, f.Spec.ID, f.Spec.Name)
-		if vmID, perr := uuid.Parse(f.Spec.ID); perr == nil {
-			if sink := p.telemetry.Load(); sink != nil {
-				go tailConsole(ctx, proc.Console, proc.Offset, vmID, sink.Emit)
-			}
+		if sink != nil {
+			go tailConsole(ctx, proc.Console, proc.Offset, vmID, sink.Emit)
 		}
 	}
 	// Without a management NIC the NAT address is the only one the VM has.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/node"
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
@@ -95,6 +99,19 @@ func TestFirecrackerListensTelemetryPort(t *testing.T) {
 	}
 	if sys := st.Sys().(*syscall.Stat_t); sys.Uid != 70007 || sys.Gid != 70007 || st.Mode().String() != "Srw-------" {
 		t.Fatalf("socket uid %d gid %d mode %s", sys.Uid, sys.Gid, st.Mode())
+	}
+}
+
+func TestTemplateBuildSkipsTelemetry(t *testing.T) {
+	p := &Provider{}
+	p.SetVMTelemetry(vmtelemetry.NewSink(vmtelemetry.NewForwarder("http://127.0.0.1:1", "", &http.Client{}), nil))
+	tpl := templateFile("0be042dc03957b1a", node.VMFile{Spec: proto.VMSpec{CPUs: 1, MemoryMB: 512}})
+	if sink, _ := p.vmTelemetry(tpl.Spec.ID); sink != nil {
+		t.Fatal("template build gets a telemetry sink")
+	}
+	vm := uuid.New()
+	if sink, id := p.vmTelemetry(vm.String()); sink == nil || id != vm {
+		t.Fatalf("VM sink %v id %s", sink, id)
 	}
 }
 

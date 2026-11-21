@@ -371,7 +371,8 @@ func (c *Client) VMLatest(ctx context.Context, org uuid.UUID, vms []uuid.UUID) (
 // VMDrops returns telemetry records the node dropped for the VM in [from, to], by kind.
 func (c *Client) VMDrops(ctx context.Context, org, vm uuid.UUID, from, to time.Time) (map[string]int64, error) {
 	window := max(int64(to.Sub(from).Seconds()), 1)
-	q := fmt.Sprintf(`sum by (kind) (increase(observatory_vm_telemetry_dropped_total{vm=%s,observatory_vm="",observatory_node!=""}[%ds]))`, strconv.Quote(vm.String()), window)
+	// increase_pure counts a counter that appears inside the window from 0: the node exports it only every 10 s, after drops may have begun.
+	q := fmt.Sprintf(`sum by (kind) (increase_pure(observatory_vm_telemetry_dropped_total{vm=%s,observatory_vm="",observatory_node!=""}[%ds]))`, strconv.Quote(vm.String()), window)
 	res, err := c.instant(ctx, org, q, to)
 	if err != nil {
 		return nil, err

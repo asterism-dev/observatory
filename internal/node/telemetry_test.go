@@ -532,15 +532,50 @@ func TestVMTelemetryDroppedCounter(t *testing.T) {
 				if m.Name != "observatory.vm.telemetry.dropped" {
 					continue
 				}
-				p := m.Data.(metricdata.Sum[int64]).DataPoints[0]
-				v, _ := p.Attributes.Value("vm")
-				k, _ := p.Attributes.Value("kind")
-				if p.Value < 1 || v.AsString() != vm.String() || k.AsString() != "logs" {
-					t.Fatalf("dropped = %+v", p)
+				for _, p := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					v, _ := p.Attributes.Value("vm")
+					k, _ := p.Attributes.Value("kind")
+					if v.AsString() == vm.String() && k.AsString() == "logs" && p.Value >= 1 {
+						return true
+					}
 				}
-				return true
 			}
 		}
 		return false
 	})
+}
+
+func TestVMTelemetryDroppedCounterStartsAtRegister(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	tel := &Telemetry{Meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")}
+	sink, fw, err := NewVMTelemetry("ws://127.0.0.1:1/api/nodes/connect", "cred", tel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	defer fw.Close(ctx)
+	vm := uuid.New()
+	sink.Register(vm)
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "observatory.vm.telemetry.dropped" {
+				continue
+			}
+			for _, p := range m.Data.(metricdata.Sum[int64]).DataPoints {
+				if v, _ := p.Attributes.Value("vm"); v.AsString() == vm.String() {
+					k, _ := p.Attributes.Value("kind")
+					got[k.AsString()] = p.Value
+				}
+			}
+		}
+	}
+	if len(got) != 3 || got["logs"] != 0 || got["series"] != 0 || got["body"] != 0 {
+		t.Fatalf("dropped after Register = %v, want logs, series and body at 0", got)
+	}
 }
