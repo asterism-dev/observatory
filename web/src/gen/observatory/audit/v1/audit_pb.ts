@@ -198,7 +198,7 @@ export const GetSettingsRequestSchema: GenMessage<GetSettingsRequest> = /*@__PUR
  */
 export type GetSettingsResponse = Message<"observatory.audit.v1.GetSettingsResponse"> & {
   /**
-   * data_events holds every service: true records its read calls too, not only writes and denials.
+   * data_events holds every service that records through the shared interceptor: true records its read calls too.
    *
    * @generated from field: map<string, bool> data_events = 1;
    */
@@ -222,7 +222,7 @@ export type UpdateSettingsRequest = Message<"observatory.audit.v1.UpdateSettings
   org: string;
 
   /**
-   * data_events keys must be service names (iam, quota, compute, network, artifacts, build, secrets, telemetry, audit).
+   * data_events keys must be services that GetSettings lists; others are rejected.
    *
    * @generated from field: map<string, bool> data_events = 2;
    */

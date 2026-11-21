@@ -322,9 +322,12 @@ so consumers must filter on `result` when they count what happened.
 
 Services other than the hub record their calls with a shared interceptor (`internal/platform/auditlog`): every write
 and every denial of a verified caller, and reads only where the org turned on data events for that service (org
-settings → Audit; `audit.settings.update`). The interceptor sits before authz in the chain, because authz ends a denied
-call before any inner interceptor runs; authz reports the verified caller back through the context. Calls without a
-verified identity are not recorded. A settings change publishes `audit.settings.changed`, and services reload without a
+settings → Audit; `audit.settings.update`). Every service must build its handler chain with
+`auditlog.Interceptors`, which puts the audit interceptor before authz, because authz ends a denied call before any
+inner interceptor runs; authz reports the verified caller and its own denials back through the context. Only authz
+denials are `denied`; a handler error (including not found) is `failed` and is recorded like any other call of its
+kind. Calls without a verified identity are not recorded. Data events are offered only for services that record
+through the interceptor (today `audit`); the list grows as services are extracted. A settings change publishes `audit.settings.changed`, and services reload without a
 restart.
 
 ## Not yet built

@@ -3,7 +3,6 @@ package auditlog
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -29,7 +28,12 @@ type interceptor struct {
 	pool     *pgxpool.Pool
 }
 
-// NewInterceptor records writes and denials of verified callers, and reads with data events on; it must come before authz in the chain, since authz stops denied calls before any inner interceptor.
+// Interceptors is the chain every service handler must use: auditing outside authz, since authz stops denied calls before any inner interceptor.
+func Interceptors(svc string, v *identity.Verifier, w *authz.Watcher, settings *Settings, pool *pgxpool.Pool) []connect.Interceptor {
+	return []connect.Interceptor{NewInterceptor(svc, settings, pool), authz.NewInterceptor(v, w)}
+}
+
+// NewInterceptor records writes and authz denials of verified callers, and reads with data events on; use it through Interceptors.
 func NewInterceptor(svc string, settings *Settings, pool *pgxpool.Pool) connect.Interceptor {
 	return &interceptor{svc: svc, settings: settings, pool: pool}
 }
@@ -74,8 +78,14 @@ func (i *interceptor) record(ctx context.Context, req connect.AnyRequest, caller
 			org = m.Get(fd).String()
 		}
 	}
-	res := result(callErr)
-	if !perm.Write && res != eventsv1.Result_RESULT_DENIED && !i.settings.DataEvents(org, i.svc) {
+	res := eventsv1.Result_RESULT_ALLOWED
+	switch {
+	case caller.Denied:
+		res = eventsv1.Result_RESULT_DENIED
+	case callErr != nil:
+		res = eventsv1.Result_RESULT_FAILED
+	}
+	if !perm.Write && !caller.Denied && !i.settings.DataEvents(org, i.svc) {
 		return
 	}
 	resource, err := authz.ResolveObject(perm.Object, m)
@@ -93,18 +103,4 @@ func (i *interceptor) record(ctx context.Context, req connect.AnyRequest, caller
 	if err := pgx.BeginFunc(ctx, i.pool, func(tx pgx.Tx) error { return outbox.Write(ctx, tx, e) }); err != nil {
 		slog.Error("audit event lost", "type", e.GetType(), "org", org, "actor", e.GetActor().GetId(), "err", err)
 	}
-}
-
-func result(err error) eventsv1.Result {
-	if err == nil {
-		return eventsv1.Result_RESULT_ALLOWED
-	}
-	var ce *connect.Error
-	if errors.As(err, &ce) {
-		switch ce.Code() {
-		case connect.CodePermissionDenied, connect.CodeNotFound, connect.CodeUnauthenticated:
-			return eventsv1.Result_RESULT_DENIED
-		}
-	}
-	return eventsv1.Result_RESULT_FAILED
 }

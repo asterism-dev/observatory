@@ -31,11 +31,14 @@ func (i *interceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if req.Spec().IsClient {
 			return next(ctx, req)
 		}
-		ctx, err := i.authorize(ctx, req)
+		authCtx, err := i.authorize(ctx, req)
+		if code := connect.CodeOf(err); code == connect.CodePermissionDenied || code == connect.CodeNotFound {
+			identity.MarkDenied(ctx)
+		}
 		if err != nil {
 			return nil, err
 		}
-		return next(ctx, req)
+		return next(authCtx, req)
 	}
 }
 

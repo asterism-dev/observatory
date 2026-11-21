@@ -105,13 +105,13 @@ message GetSettingsRequest {
 }
 
 message GetSettingsResponse {
-  // data_events holds every service: true records its read calls too, not only writes and denials.
+  // data_events holds every service that records through the shared interceptor: true records its read calls too.
   map<string, bool> data_events = 1;
 }
 
 message UpdateSettingsRequest {
   string org = 1;
-  // data_events keys must be service names (iam, quota, compute, network, artifacts, build, secrets, telemetry, audit).
+  // data_events keys must be services that GetSettings lists; others are rejected.
   map<string, bool> data_events = 2;
 }
 

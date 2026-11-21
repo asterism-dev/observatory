@@ -393,7 +393,7 @@ func (x *GetSettingsRequest) GetOrg() string {
 
 type GetSettingsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// data_events holds every service: true records its read calls too, not only writes and denials.
+	// data_events holds every service that records through the shared interceptor: true records its read calls too.
 	DataEvents    map[string]bool `protobuf:"bytes,1,rep,name=data_events,json=dataEvents,proto3" json:"data_events,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -439,7 +439,7 @@ func (x *GetSettingsResponse) GetDataEvents() map[string]bool {
 type UpdateSettingsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Org   string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
-	// data_events keys must be service names (iam, quota, compute, network, artifacts, build, secrets, telemetry, audit).
+	// data_events keys must be services that GetSettings lists; others are rejected.
 	DataEvents    map[string]bool `protobuf:"bytes,2,rep,name=data_events,json=dataEvents,proto3" json:"data_events,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

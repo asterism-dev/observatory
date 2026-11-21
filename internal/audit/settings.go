@@ -16,8 +16,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 )
 
-// services may have data events turned on per org.
-var services = []string{"iam", "quota", "compute", "network", "artifacts", "build", "secrets", "telemetry", "audit"}
+// services record through auditlog.Interceptors and so honour data events; add a service here once it is extracted.
+var services = []string{"audit"}
 
 const (
 	minRetentionDays = 30

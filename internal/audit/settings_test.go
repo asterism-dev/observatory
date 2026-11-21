@@ -59,16 +59,16 @@ func TestInterceptorRecordsWritesAndDenials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"compute": true})
+	got, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"audit": false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.GetDataEvents()) != len(services) || !got.GetDataEvents()["compute"] || got.GetDataEvents()["network"] {
+	if len(got.GetDataEvents()) != len(services) || got.GetDataEvents()["audit"] {
 		t.Fatalf("data events = %v", got.GetDataEvents())
 	}
 	f.waitRecorded(t, f.orgA, "audit.settings.update", f.admin, "allowed")
 
-	_, err = f.setDataEvents(t, f.member, f.orgA, map[string]bool{"compute": false})
+	_, err = f.setDataEvents(t, f.member, f.orgA, map[string]bool{"audit": true})
 	wantCode(t, err, connect.CodePermissionDenied)
 	f.waitRecorded(t, f.orgA, "audit.settings.update", f.member, "denied")
 
@@ -76,19 +76,40 @@ func TestInterceptorRecordsWritesAndDenials(t *testing.T) {
 	wantCode(t, err, connect.CodeNotFound)
 	f.waitRecorded(t, f.orgA, "audit.settings.get", f.outsider, "denied")
 
-	_, err = f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"nope": true})
+	// Services that do not record through the interceptor yet are not offered.
+	_, err = f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"compute": true})
 	wantCode(t, err, connect.CodeInvalidArgument)
 	f.waitRecorded(t, f.orgA, "audit.settings.update", f.admin, "failed")
 
-	resp, err := f.client.GetSettings(context.Background(), as(t, f, f.admin, false, &auditv1.GetSettingsRequest{Org: f.orgA}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !resp.Msg.GetDataEvents()["compute"] {
-		t.Fatalf("compute data events lost: %v", resp.Msg.GetDataEvents())
-	}
 	if _, err := f.client.GetSettings(context.Background(), as(t, f, f.member, false, &auditv1.GetSettingsRequest{Org: f.orgA})); connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("member GetSettings: %v", err)
+	}
+}
+
+func TestInterceptorSkipsUnverifiedCalls(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.list(t, f.admin, &auditv1.ListEventsRequest{Org: f.orgA}); err != nil {
+		t.Fatal(err)
+	}
+	for _, auth := range []string{"", "Bearer not-a-jwt"} {
+		r := connect.NewRequest(&auditv1.UpdateSettingsRequest{Org: f.orgA, DataEvents: map[string]bool{"audit": true}})
+		if auth != "" {
+			r.Header().Set("Authorization", auth)
+		}
+		_, err := f.client.UpdateSettings(context.Background(), r)
+		wantCode(t, err, connect.CodeUnauthenticated)
+	}
+	if _, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"audit": false}); err != nil {
+		t.Fatal(err)
+	}
+	// Events are stored in order, so once the admin's write is in, the earlier calls would be too.
+	f.waitRecorded(t, f.orgA, "audit.settings.update", f.admin, "allowed")
+	var n int
+	if err := f.store.pool.QueryRow(context.Background(), "SELECT count(*) FROM events WHERE type = 'audit.settings.update'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("%d update events stored, want only the admin's", n)
 	}
 }
 
@@ -147,17 +168,17 @@ func TestInternalDataEvents(t *testing.T) {
 	go func() { settings.Run(ctx, js.Conn()); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 
-	if _, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"compute": true}); err != nil {
+	if _, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"audit": true}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "remote settings follow the change", func() bool { return settings.DataEvents(f.orgA, "compute") })
-	if settings.DataEvents(f.orgA, "network") || settings.DataEvents(f.orgB, "compute") {
-		t.Fatal("data events on for an unchanged org or service")
+	waitFor(t, "remote settings follow the change", func() bool { return settings.DataEvents(f.orgA, "audit") })
+	if settings.DataEvents(f.orgB, "audit") {
+		t.Fatal("data events on for an unchanged org")
 	}
-	if _, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"compute": false}); err != nil {
+	if _, err := f.setDataEvents(t, f.admin, f.orgA, map[string]bool{"audit": false}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "remote settings follow the disable", func() bool { return !settings.DataEvents(f.orgA, "compute") })
+	waitFor(t, "remote settings follow the disable", func() bool { return !settings.DataEvents(f.orgA, "audit") })
 }
 
 func TestPlatformSettings(t *testing.T) {

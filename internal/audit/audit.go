@@ -84,7 +84,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	})
 
 	path, h := auditv1connect.NewAuditServiceHandler(&server{store: s},
-		connect.WithInterceptors(auditlog.NewInterceptor("audit", settings, pool), authz.NewInterceptor(v, w)))
+		connect.WithInterceptors(auditlog.Interceptors("audit", v, w, settings, pool)...))
 	mux := http.NewServeMux()
 	mux.Handle(prefix+path, http.StripPrefix(prefix, h))
 	ipath, ih := auditv1connect.NewAuditInternalServiceHandler(internal)

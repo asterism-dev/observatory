@@ -61,6 +61,7 @@ type Caller struct {
 	Principal Principal
 	ClientIP  string
 	Verified  bool
+	Denied    bool
 }
 
 type callerKey struct{}
@@ -77,6 +78,13 @@ func WithVerified(ctx context.Context, p Principal, ip string) context.Context {
 		*c = Caller{Principal: p, ClientIP: ip, Verified: true}
 	}
 	return WithClientIP(WithPrincipal(ctx, p), ip)
+}
+
+// MarkDenied tells an outer caller slot that authorization, not the handler, refused the call.
+func MarkDenied(ctx context.Context) {
+	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
+		c.Denied = true
+	}
 }
 
 type claims struct {
