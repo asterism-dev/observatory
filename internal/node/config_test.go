@@ -11,7 +11,7 @@ import (
 
 const fullConfig = `{
   "nodeId": "mac-mini-1",
-  "hub": {"url": "ws://hub:8080/api/nodes/connect", "credential": "t"},
+  "hub": {"url": "http://hub:8080", "credential": "t"},
   "provider": "vz",
   "paths": {"vms": "~/vmm/vms", "images": "/data/images"},
   "capacity": {"cpus": 6, "memoryMB": 12288},
@@ -33,7 +33,7 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	home, _ := os.UserHomeDir()
-	if c.NodeID != "mac-mini-1" || c.Hub.URL != "ws://hub:8080/api/nodes/connect" || c.Hub.Credential != "t" || c.Provider != "vz" ||
+	if c.NodeID != "mac-mini-1" || c.Hub.URL != "http://hub:8080" || c.Hub.Credential != "t" || c.Provider != "vz" ||
 		c.Paths.VMs != filepath.Join(home, "vmm/vms") || c.Paths.Images != "/data/images" || c.Capacity.CPUs != 6 || c.Capacity.MemoryMB != 12288 {
 		t.Fatalf("config = %+v", c)
 	}
@@ -48,7 +48,7 @@ func TestLoadConfigMissingRequired(t *testing.T) {
 		body := fullConfig
 		switch field {
 		case "hub.url":
-			body = strings.Replace(body, `"url": "ws://hub:8080/api/nodes/connect", `, "", 1)
+			body = strings.Replace(body, `"url": "http://hub:8080", `, "", 1)
 		case "hub.credential":
 			body = strings.Replace(body, `, "credential": "t"`, "", 1)
 		case "provider":
@@ -69,7 +69,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("memory detection is linux-only")
 	}
-	c, err := LoadConfig(writeConfig(t, `{"hub":{"url":"ws://h","credential":"t"},"provider":"vz","paths":{"vms":"/a","images":"/b"}}`))
+	c, err := LoadConfig(writeConfig(t, `{"hub":{"url":"http://h","credential":"t"},"provider":"vz","paths":{"vms":"/a","images":"/b"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestConfigPublicDropsCredential(t *testing.T) {
 	}
 	var got map[string]map[string]any
 	json.Unmarshal(pub, &got)
-	if _, ok := got["hub"]["credential"]; ok || got["hub"]["url"] != "ws://hub:8080/api/nodes/connect" || got["vz"]["imageURL"] != "https://example.com/img" {
+	if _, ok := got["hub"]["credential"]; ok || got["hub"]["url"] != "http://hub:8080" || got["vz"]["imageURL"] != "https://example.com/img" {
 		t.Fatalf("public = %s", pub)
 	}
 	if strings.Contains(string(pub), `"t"`) {
@@ -113,5 +113,12 @@ func TestDefaultMemoryMB(t *testing.T) {
 	}
 	if _, err := defaultMemoryMB(3922); !strings.Contains(err.Error(), "3922 MB") || !strings.Contains(err.Error(), "--memory-mb") {
 		t.Errorf("small host error does not name the RAM and the flag: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsConnectURL(t *testing.T) {
+	path := writeConfig(t, `{"hub":{"url":"ws://h/api/nodes/connect","credential":"t"},"provider":"vz","paths":{"vms":"/a","images":"/b"}}`)
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("ws:// hub.url accepted")
 	}
 }

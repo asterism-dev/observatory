@@ -1,7 +1,7 @@
 export interface NodeInfo {
   id: string
   name: string
-  state: 'pending' | 'online' | 'offline'
+  state: 'pending' | 'online' | 'underlay_down' | 'offline'
   version: string
   outdated: boolean
   hypervisor: { type: string; version: string } | null
@@ -38,7 +38,7 @@ export interface UpdateRun {
   nodes: { id: string; name: string; status: 'pending' | 'updating' | 'done' | 'failed' | 'skipped'; reason: string }[]
 }
 
-export const stateTones = { online: 'success', offline: 'danger', pending: 'warning' } as const
+export const stateTones = { online: 'success', offline: 'danger', pending: 'warning', underlay_down: 'warning' } as const
 
 export const gb = (mb: number) => (mb / 1024).toFixed(1)
 

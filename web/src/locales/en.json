@@ -356,8 +356,10 @@
     "states": {
       "pending": "Pending",
       "online": "Online",
+      "underlay_down": "Underlay down",
       "offline": "Offline"
     },
+    "underlayDownHelp": "The node reaches the hub only over HTTPS. VMs keep running; only updates are possible until the underlay is back.",
     "underlay": "Underlay address",
     "quarantined": "Quarantined",
     "outdated": "Outdated",

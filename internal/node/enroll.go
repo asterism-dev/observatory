@@ -12,14 +12,15 @@ import (
 
 // Enroll redeems a one-time enrollment token at the hub for the node id and credential.
 func Enroll(ctx context.Context, hubURL, token string, client *http.Client) (nodeID, credential string, err error) {
-	if _, err := connectURL(hubURL); err != nil {
+	hub, err := parseHubURL(hubURL)
+	if err != nil {
 		return "", "", err
 	}
 	body, err := json.Marshal(map[string]string{"token": token})
 	if err != nil {
 		return "", "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(hubURL, "/")+"/api/nodes/enroll", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hub+"/api/nodes/enroll", bytes.NewReader(body))
 	if err != nil {
 		return "", "", err
 	}

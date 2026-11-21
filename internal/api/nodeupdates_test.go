@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +13,12 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 // hubVersion goes before newEnv so the fleet's cleanup stops update runs before the version is restored.
@@ -50,23 +49,23 @@ func (e *env) onlineNodeConn(by store.User, org uuid.UUID, name, ver string, hv 
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	_, key, err := wgkey.Generate()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	ip, err := e.store.EnrollChassis(ctx, n.ID, key)
+	if err != nil {
+		e.t.Fatal(err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(e.api.fleet.ServeConnect))
 	e.t.Cleanup(srv.Close)
-	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}}})
+	h := http.Header{"Authorization": {"Bearer " + cred}, proto.HeaderGateway: {gatewayToken}, proto.HeaderUnderlayPeer: {ip.String()}}
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), &websocket.DialOptions{HTTPHeader: h})
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Client(websocket.NetConn(ctx, ws, websocket.MessageBinary), cfg)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { sess.Close() })
-	ctrl, err := sess.Open()
-	if err != nil {
-		e.t.Fatal(err)
-	}
+	e.t.Cleanup(func() { ws.CloseNow() })
+	ctrl := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	reg := proto.Register{NodeID: "x", Hostname: "h", CPUs: 4, MemoryMB: 4096, Version: ver, Hypervisor: hv}
 	if err := json.NewEncoder(ctrl).Encode(proto.Message{Type: "register", Register: &reg}); err != nil {
 		e.t.Fatal(err)

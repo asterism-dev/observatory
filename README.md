@@ -28,7 +28,8 @@ An existing `deploy/dev/hub.env` needs `OBSERVATORY_SECRETS_KEY=$(openssl rand -
 storage-token` appends whichever is missing).
 `OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.
 
-For VM networking and disks, start the WireGuard/OVN gateway and the storage server in Docker (they need
+Nodes need the WireGuard/OVN gateway: they reach the hub's control endpoint only through it, over the underlay.
+Start it, and the storage server for disks, in Docker (they need
 `OBSERVATORY_GATEWAY_TOKEN` and `OBSERVATORY_STORAGE_TOKEN`, added if missing, and reach the hub at `HUB_URL`, default
 `http://host.docker.internal:8090`):
 

@@ -117,7 +117,7 @@ func run() error {
 			}
 		}()
 	}
-	api.NodeEndpoints(mux, s, f)
+	api.NodeEndpoints(mux, s, f, nh)
 	api.OTLPEndpoints(mux, s, tc)
 	api.GatewayEndpoints(mux, nh)
 	dh := disks.New(s, cfg.StorageToken, f.NotifyOrg)

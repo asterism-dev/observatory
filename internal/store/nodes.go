@@ -161,6 +161,18 @@ func (s *Store) UpdateNodeInfo(ctx context.Context, id uuid.UUID, cpus, memoryMB
 	return nil
 }
 
+// SetNodeVersion stores the version a node reported on its emergency channel.
+func (s *Store) SetNodeVersion(ctx context.Context, id uuid.UUID, version string) error {
+	tag, err := s.q.Exec(ctx, "UPDATE nodes SET version = $2 WHERE id = $1", id, version)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) DeleteNode(ctx context.Context, org, id uuid.UUID) error {
 	tag, err := s.q.Exec(ctx, "DELETE FROM nodes WHERE id = $1 AND org_id = $2", id, org)
 	var pgErr *pgconn.PgError

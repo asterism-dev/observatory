@@ -29,12 +29,13 @@ and at least every 60 s. Every 10 s it reports device handshakes, chassis and cl
 |---|---|
 | UDP 51820 | `wg-underlay`, nodes (must be reachable from every node) |
 | UDP 51821 | `wg-clients`, devices (must be reachable from every device) |
+| TCP 8091 | node control proxy to the hub, bound to `10.198.0.1`, underlay only ([nodes.md](nodes.md#control-path)) |
 | TCP 6642 | southbound DB, SSL only, bound to `10.198.0.1` (inside the underlay) |
 | TCP 10810–11809 | storage NBD exports (TLS-PSK), bound to `10.198.0.1`, underlay only ([disks.md](disks.md)) |
 | UDP/TCP 53 | DNS on `10.192.0.1`, for devices and VM management NICs |
 
 The northbound DB listens on a unix socket only. On `wg-underlay` the gateway accepts only Geneve (UDP 6081), the
-southbound DB (TCP 6642), the storage exports (TCP 10810–11809) and rate-limited ICMP echo to `10.198.0.1`, so nodes can ping it for diagnostics. ICMP
+southbound DB (TCP 6642), the node control proxy (TCP 8091), the storage exports (TCP 10810–11809) and rate-limited ICMP echo to `10.198.0.1`, so nodes can ping it for diagnostics. ICMP
 between nodes is not forwarded.
 
 ### Running it
@@ -129,9 +130,10 @@ Nodes join over WireGuard (`wg-underlay`) to the gateway; see [nodes.md](nodes.m
   The chassis hostname, which a node sets itself, is never trusted.
 - A node caught holding the same port on two consecutive polls, where NB explicitly requests another chassis (or the
   port is a gateway port), is quarantined. Ports missing from NB (VM just deleted or created, network detached) are only
-  cleared. Quarantine means the gateway drops all its `wg-underlay` traffic
-  (in, out and forwarded, including Geneve and the southbound session from the gateway), the hub logs
-  `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub and lifted only when
+  cleared. Quarantine means the gateway drops all its `wg-underlay` traffic (in, out and forwarded, including Geneve
+  and the southbound session from the gateway) except TCP to `10.198.0.1:8091`, so the hub can still stop and delete its
+  VMs. The hub logs `gateway quarantined nodes` and the node shows as quarantined. The quarantine is stored on the hub
+  and lifted only when
   the node is re-enrolled (regenerate its credential, then re-install).
 - The gateway deletes southbound chassis rows of unknown and quarantined nodes, so a re-enrolled node registers afresh.
 - The gateway deletes `MAC_Binding` rows on `lr-gw` that do not match the address plan, within one poll.

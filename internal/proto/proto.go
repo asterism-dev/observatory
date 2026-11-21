@@ -170,8 +170,6 @@ type Register struct {
 	// Config is the node's config file with the hub credential removed; shown in the GUI only.
 	Config     json.RawMessage `json:"config,omitempty"`
 	Machine    *Machine        `json:"machine,omitempty"`
-	ChassisKey string          `json:"chassisKey,omitempty"`
-	ChassisCSR string          `json:"chassisCSR,omitempty"`
 	DisksInUse []string        `json:"disksInUse,omitempty"`
 	AppliedSeq uint64          `json:"appliedSeq,omitempty"` // seq of the last desired list the node fully reconciled
 	Version    string          `json:"version,omitempty"`
@@ -218,6 +216,21 @@ type ImageStatus struct {
 	RetryAt   *time.Time  `json:"retryAt,omitempty"`
 }
 
+type EmergencyReport struct {
+	Version     string `json:"version"`
+	Reason      string `json:"reason"`
+	UpdateError string `json:"updateError,omitempty"` // the previous poll's update failed
+}
+
+type EmergencyReply struct {
+	Update bool `json:"update"`
+}
+
+type UnderlayRequest struct {
+	ChassisKey string `json:"chassisKey"`
+	ChassisCSR string `json:"chassisCSR"`
+}
+
 // Underlay tells a node how to join the WireGuard underlay and reach the OVN southbound DB over SSL; Cert is the node's signed chassis cert.
 type Underlay struct {
 	Address  string `json:"address"`
@@ -239,6 +252,9 @@ type Machine struct {
 
 const ErrVMNotRunning = "vm not running"
 
+// MaxMessageBytes is the read limit for one control WebSocket message on both ends; the library default of 32 KiB is too small for full desired lists.
+const MaxMessageBytes = 1 << 20
+
 const (
 	MaxGuestProcesses = 500
 	MaxGuestCommand   = 512
@@ -255,12 +271,11 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
 	Status   *VMStatus `json:"status,omitempty"`
-	Underlay *Underlay `json:"underlay,omitempty"`
 	// Desired (type "desired") is the full VM list for the node; nil means no VMs.
 	Desired    []DesiredVM        `json:"desired,omitempty"`
 	DisksInUse []string           `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses

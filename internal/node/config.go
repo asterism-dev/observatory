@@ -49,6 +49,9 @@ func LoadConfig(path string) (Config, error) {
 			return c, fmt.Errorf("config: %s is required", field)
 		}
 	}
+	if c.Hub.URL, err = parseHubURL(c.Hub.URL); err != nil {
+		return c, fmt.Errorf("config: hub.url: %w", err)
+	}
 	home, _ := os.UserHomeDir()
 	c.Paths.VMs, c.Paths.Images = expandHome(c.Paths.VMs, home), expandHome(c.Paths.Images, home)
 	if c.NodeID == "" {

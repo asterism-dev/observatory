@@ -75,17 +75,17 @@ func (c *CA) CertPEM() string { return c.certPEM }
 func (c *CA) SignChassis(node uuid.UUID, csrPEM string) (string, error) {
 	b, _ := pem.Decode([]byte(csrPEM))
 	if b == nil || b.Type != "CERTIFICATE REQUEST" {
-		return "", errors.New("chassis csr: no PEM certificate request")
+		return "", fmt.Errorf("%w: no PEM certificate request", ErrUnderlayRequest)
 	}
 	csr, err := x509.ParseCertificateRequest(b.Bytes)
 	if err != nil {
-		return "", fmt.Errorf("chassis csr: %w", err)
+		return "", fmt.Errorf("%w: chassis csr: %w", ErrUnderlayRequest, err)
 	}
 	if err := csr.CheckSignature(); err != nil {
-		return "", fmt.Errorf("chassis csr: %w", err)
+		return "", fmt.Errorf("%w: chassis csr: %w", ErrUnderlayRequest, err)
 	}
 	if k, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok || k.Curve != elliptic.P256() {
-		return "", errors.New("chassis csr: key must be ECDSA P-256")
+		return "", fmt.Errorf("%w: chassis csr key must be ECDSA P-256", ErrUnderlayRequest)
 	}
 	tmpl, err := template(pkix.Name{CommonName: node.String()}, chassisValidity)
 	if err != nil {

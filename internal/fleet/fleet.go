@@ -45,10 +45,13 @@ type Fleet struct {
 	diskErrs     map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
 	retrying     map[uuid.UUID]bool              // orgs with a pending integrationRetry push
 	imageRetries map[uuid.UUID]imageRetry        // by node
+	emergency    map[uuid.UUID]emergencySeen     // node → its latest emergency report
+	emergencyUpd map[uuid.UUID]bool              // nodes an update run waits to hand an update to on their next emergency poll
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
 	updateTimeouts updateTimeouts
+	ping           struct{ every, timeout time.Duration }
 	betweenVMReads func() // test hook in vmsBack
 
 	registryHost string
@@ -66,7 +69,9 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 		return nil, err
 	}
 	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
+		emergency: map[uuid.UUID]emergencySeen{}, emergencyUpd: map[uuid.UUID]bool{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
+	f.ping.every, f.ping.timeout = 30*time.Second, 10*time.Second
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil
@@ -128,6 +133,25 @@ func (f *Fleet) Online(node uuid.UUID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.conns[node] != nil
+}
+
+type emergencySeen struct {
+	at      time.Time
+	version string
+}
+
+const emergencyWindow = 2 * time.Minute // two of the node's one-minute polls
+
+// UnderlayDown is true for a node without a control connection that sent an emergency report within emergencyWindow.
+func (f *Fleet) UnderlayDown(node uuid.UUID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.underlayDown(node)
+}
+
+func (f *Fleet) underlayDown(node uuid.UUID) bool {
+	e, ok := f.emergency[node]
+	return ok && f.conns[node] == nil && clock().Sub(e.at) < emergencyWindow
 }
 
 var (
@@ -240,16 +264,19 @@ func (f *Fleet) retryImages(node uuid.UUID, waiting bool) {
 	f.imageRetries[node] = r
 }
 
+// Disconnect also forgets the node's emergency report, so a deleted or re-enrolled node is never shown with stale state.
 func (f *Fleet) Disconnect(node uuid.UUID) {
 	f.mu.Lock()
 	c := f.conns[node]
 	delete(f.conns, node)
+	delete(f.emergency, node)
+	delete(f.emergencyUpd, node)
 	if c != nil {
 		f.dropDiskErrors(c, nil)
 	}
 	f.mu.Unlock()
 	if c != nil {
-		c.sess.Close()
+		c.ws.CloseNow()
 	}
 }
 
@@ -259,9 +286,10 @@ func (f *Fleet) attach(c *conn) {
 	old := f.conns[c.node]
 	c.since = time.Now()
 	f.conns[c.node] = c
+	delete(f.emergency, c.node) // a live connection supersedes the report, so a later gap is not underlay_down
 	f.mu.Unlock()
 	if old != nil {
-		old.sess.Close()
+		old.ws.CloseNow()
 	}
 }
 

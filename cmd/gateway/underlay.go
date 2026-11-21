@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -23,6 +25,7 @@ func underlayRules(s proto.GatewayState) string {
 		fmt.Fprintf(&sets, "\t\telements = { %s }\n", strings.Join(quarantine, ", "))
 	}
 	sets.WriteString("\t}\n")
+	gw, port := netaddr.GatewayUnderlay.String(), strconv.Itoa(netaddr.ControlPort)
 	n := 0
 	for _, o := range s.Orgs {
 		ips := byOrg[o.ID]
@@ -34,9 +37,13 @@ func underlayRules(s proto.GatewayState) string {
 		n++
 	}
 	return "table inet obs_underlay\ndelete table inet obs_underlay\ntable inet obs_underlay {\n" + sets.String() +
-		// A quarantined node gets nothing over the underlay, not even Geneve or the SB from the gateway itself.
-		"\tchain input {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tiifname \"wg-underlay\" ip saddr @quarantine drop\n\t}\n" +
-		"\tchain output {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop\n\t}\n" +
+		// A quarantined node gets nothing over the underlay except the control proxy, so it can still receive its update.
+		"\tchain input {\n\t\ttype filter hook input priority 0; policy accept;\n" +
+		"\t\tiifname \"wg-underlay\" ip saddr @quarantine ip daddr " + gw + " tcp dport " + port + " accept\n" +
+		"\t\tiifname \"wg-underlay\" ip saddr @quarantine drop\n\t}\n" +
+		"\tchain output {\n\t\ttype filter hook output priority 0; policy accept;\n" +
+		"\t\toifname \"wg-underlay\" ip daddr @quarantine ip saddr " + gw + " tcp sport " + port + " ct state established accept\n" +
+		"\t\toifname \"wg-underlay\" ip daddr @quarantine drop\n\t}\n" +
 		"\tchain forward {\n\t\ttype filter hook forward priority 0; policy accept;\n" +
 		"\t\tiifname \"wg-underlay\" ip saddr @quarantine drop\n\t\toifname \"wg-underlay\" ip daddr @quarantine drop\n" + rules.String() +
 		"\t\tiifname \"wg-underlay\" drop\n\t}\n}\n"

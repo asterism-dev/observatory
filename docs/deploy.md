@@ -7,8 +7,8 @@ Zitadel stack in `deploy/idp/`.
 
 ## Requirements
 
-- A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch` and `wireguard`
-  modules (the stack loads them).
+- A Linux amd64 host with Docker and the Compose plugin; the kernel must provide the `openvswitch`, `wireguard` and
+  `xt_connlimit` modules (the stack loads them).
 - Open ports: TCP 8090 (plain HTTP) or 80 and 443 (`tls` profile), and UDP 51820 and 51821 (nodes and devices);
   with the bundled login service also TCP 8080.
 
@@ -54,8 +54,9 @@ self-registration in the login service (or keep it unreachable) until then.
 | `--profile tls up` | `OBSERVATORY_TLS=internal`, same domain and URL | certificate from Caddy's own CA, no public DNS needed |
 
 With the `tls` profile set `OBSERVATORY_HTTP_PORT=127.0.0.1:8090`: Docker's published ports bypass host firewalls
-such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090 and
-keep websockets (`/api/nodes/connect`) working.
+such as ufw, so port 8090 would otherwise stay reachable without TLS. Behind your own proxy, forward to port 8090. Nodes
+open their control connection through the gateway, not through the proxy (it is refused there); they use the public
+URL only for enrollment, their underlay config and the emergency channel.
 
 ## Trusting the internal CA
 

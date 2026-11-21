@@ -4,7 +4,7 @@ export interface DashboardInput {
   me: string
   canCreateNode: boolean
   // null: the list answered 403.
-  nodes: { state: 'pending' | 'online' | 'offline' }[] | null
+  nodes: { state: 'pending' | 'online' | 'underlay_down' | 'offline' }[] | null
   sshKeys: number
   devices: { owner: { id: string }; lastHandshake: string | null }[] | null
   vms: { name: string; state: string }[] | null

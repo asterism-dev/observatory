@@ -184,6 +184,12 @@ $SUDO systemctl enable observatory-node >/dev/null 2>&1
 marker=''
 $SUDO systemctl restart observatory-node
 
+# An update may run in emergency mode with the underlay down; the hub sees completion in the version the node reports.
+if [ -n "$UPDATE" ]; then
+	say "node $result; the hub marks it done once it reports the new version"
+	exit 0
+fi
+
 node_journal() {
 	if [ -n "$cursor" ]; then
 		$SUDO journalctl -u observatory-node --after-cursor "$cursor" "$@" 2>/dev/null
@@ -201,4 +207,4 @@ while [ $i -lt 30 ]; do
 	sleep 1
 done
 node_journal -n 20 -o cat >&2 || true
-die "the node did not connect to $HUB within 30 s (journalctl -u observatory-node); the service keeps retrying, re-run the installer after fixing the cause"
+die "the node did not connect to $HUB through the gateway within 30 s; it needs UDP 51820 out to the gateway host for the underlay (journalctl -u observatory-node); the service keeps retrying, re-run the installer after fixing the cause"

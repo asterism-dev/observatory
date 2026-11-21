@@ -29,7 +29,7 @@ func startEnv(t *testing.T, prep func(a *Agent, p *fakeProvider)) *testEnv {
 	t.Helper()
 	h := newFakeHub(t)
 	p := newFakeProvider()
-	a := &Agent{HubURL: h.url(), Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: h.url(), controlBase: h.url(), Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
 	if prep != nil {
 		prep(a, p)
 	}
@@ -152,7 +152,7 @@ func TestAgentWithChangedNodeIDKeepsVMs(t *testing.T) {
 	<-env.runDone
 
 	p := newFakeProvider()
-	a := &Agent{HubURL: env.agent.HubURL, Credential: "tok", NodeID: "renamed", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: env.agent.HubURL, controlBase: env.agent.controlBase, Credential: "tok", NodeID: "renamed", VMsDir: env.agent.VMsDir, CPUs: 4, MemoryMB: 8192, Provider: p}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
@@ -201,10 +201,10 @@ func TestAgentBootsFromCacheWithoutHub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
+	unreachable := "http://" + ln.Addr().String()
 	ln.Close()
 	p := newFakeProvider()
-	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: unreachable, controlBase: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
 	stopped := cachedVM("s1", "sleepy")
 	stopped.Power = proto.PowerStopped
 	SaveVM(a.VMsDir, cachedVM("g1", "good"))
@@ -293,10 +293,10 @@ func TestRestartResumesHibernated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
+	unreachable := "http://" + ln.Addr().String()
 	ln.Close()
 	p := newFakeProvider()
-	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
+	a := &Agent{HubURL: unreachable, controlBase: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192, Provider: p}
 	state := saveHibernated(t, a, cachedVM("g1", "good"))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -313,7 +313,7 @@ func TestRestartResumesHibernated(t *testing.T) {
 
 func TestAgentStartsChassisOnUnderlay(t *testing.T) {
 	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisPrivateKey, a.OVNKeyFile = "pub-key", "priv-key", "/vms/ovn-key.pem"
+		a.ChassisKey, a.ChassisCSR, a.ChassisPrivateKey, a.OVNKeyFile = "pub-key", "CSR PEM", "priv-key", "/vms/ovn-key.pem"
 	})
 	eventually(t, "chassis started", func() bool { return len(env.provider.gotChassis()) > 0 })
 	if n := len(env.provider.gotChassis()); n != 1 {
@@ -324,15 +324,6 @@ func TestAgentStartsChassisOnUnderlay(t *testing.T) {
 	if c.Name != "n1" || c.PrivateKey != "priv-key" || c.Address != u.Address || c.HubKey != u.HubKey || c.SBRemote != u.SBRemote ||
 		c.Endpoint != u.Endpoint || c.CACert != u.CACert || c.Cert != u.Cert || c.KeyFile != "/vms/ovn-key.pem" || c.MTU != 1420 {
 		t.Fatalf("chassis = %+v", c)
-	}
-}
-
-func TestRegisterCarriesChassis(t *testing.T) {
-	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisCSR = "pub-key", "CSR PEM"
-	})
-	if r := env.hub.registers()[0]; r.ChassisKey != "pub-key" || r.ChassisCSR != "CSR PEM" {
-		t.Fatalf("register = %+v", r)
 	}
 }
 
@@ -461,7 +452,7 @@ func TestAgentRebuildAfterDirMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := env.agent
-	restarted := &Agent{HubURL: old.HubURL, Credential: old.Credential, NodeID: old.NodeID, VMsDir: old.VMsDir, CPUs: old.CPUs, MemoryMB: old.MemoryMB, Provider: env.provider}
+	restarted := &Agent{HubURL: old.HubURL, controlBase: old.controlBase, Credential: old.Credential, NodeID: old.NodeID, VMsDir: old.VMsDir, CPUs: old.CPUs, MemoryMB: old.MemoryMB, Provider: env.provider}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { restarted.Run(ctx); close(done) }()
@@ -810,10 +801,10 @@ func TestPrepareRejectsLegacyVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unreachable := "ws://" + ln.Addr().String() + "/api/nodes/connect"
+	unreachable := "http://" + ln.Addr().String()
 	ln.Close()
 	p := newFakeProvider()
-	a := &Agent{HubURL: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192,
+	a := &Agent{HubURL: unreachable, controlBase: unreachable, Credential: "tok", NodeID: "n1", VMsDir: t.TempDir(), CPUs: 4, MemoryMB: 8192,
 		Provider: &imageProvider{fakeProvider: p, initial: proto.ImageStatus{Version: testImage, State: proto.ImageReady}}}
 	stock, built, unprepared, current := cachedVM("l1", "stock"), cachedVM("l2", "built"), cachedVM("l3", "unprepared"), cachedVM("n1", "current")
 	built.Image = "2026.11.1-aaaaaaaa"
@@ -894,5 +885,26 @@ func TestNodeBoundsGuestProcesses(t *testing.T) {
 	eventually(t, "error reply", func() bool { return len(env.hub.processReplies()) == 2 })
 	if r := env.hub.processReplies()[1]; len(r.Error) != 256 || r.Processes != nil {
 		t.Fatalf("error reply: %d bytes, %d entries", len(r.Error), len(r.Processes))
+	}
+}
+
+func TestControlAnswersPingsDuringBlockedReconcile(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	block := make(chan struct{})
+	env.provider.mu.Lock()
+	env.provider.killBlock = block
+	env.provider.mu.Unlock()
+	t.Cleanup(func() { close(block) })
+	env.hub.delete(vm.ID)
+	eventually(t, "kill blocked", func() bool { return slices.Contains(env.provider.gotEvents(), "kill-blocked") })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := env.hub.ping(ctx); err != nil {
+		t.Fatalf("ping during a blocked reconcile: %v", err)
+	}
+	if n := len(env.hub.registers()); n != 1 {
+		t.Fatalf("reconnected: %d registers", n)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
@@ -49,14 +47,15 @@ var (
 )
 
 type Agent struct {
+	// HubURL is the hub's public base URL for HTTPS calls; control traffic goes over the underlay instead.
 	HubURL, Credential, NodeID, VMsDir string
 	CPUs, MemoryMB                     int
 	Provider                           Provider
 	Config                             json.RawMessage
 	Machine                            *proto.Machine
-	ChassisKey                         string // public, sent in Register
+	ChassisKey                         string // public, sent with the underlay request
 	ChassisPrivateKey                  string
-	ChassisCSR                         string // OVN client cert request, sent in Register
+	ChassisCSR                         string // OVN client cert request, sent with the underlay request
 	OVNKeyFile                         string
 	Version                            string
 	Updater                            Updater
@@ -70,6 +69,11 @@ type Agent struct {
 	unsentUpdate *proto.UpdateReport // guarded by mu
 
 	diskRefresh time.Duration // zero means defaultDiskRefresh
+	controlBase string        // empty means the gateway's control proxy on the underlay
+
+	healthErr       atomic.Value // string: the last failed health check, sent as the emergency reason
+	emergencyUpdErr string       // guarded by mu; a failed emergency update, sent with the next poll
+	underlayCert    string       // guarded by mu
 
 	chassisMu       sync.Mutex
 	chassisPending  *chassisconf.Config // newest config not yet applied; older ones are superseded
@@ -143,6 +147,23 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.restoreAll(ctx); err != nil {
 		return err
 	}
+	if a.ChassisKey != "" {
+		for {
+			err := a.refreshUnderlay(ctx)
+			if err == nil {
+				break
+			}
+			slog.Warn("underlay config failed", "err", err)
+			select {
+			case <-ctx.Done():
+				a.stopAll()
+				return ctx.Err()
+			case <-time.After(reconnectDelay):
+			}
+		}
+		go a.renewUnderlay(ctx)
+	}
+	go a.newHealthMonitor().run(ctx)
 	for {
 		if err := a.connect(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("hub connection failed", "err", err)
@@ -174,23 +195,16 @@ func (a *Agent) restoreAll(ctx context.Context) error {
 }
 
 func (a *Agent) connect(ctx context.Context) error {
-	c, _, err := websocket.Dial(ctx, a.HubURL, &websocket.DialOptions{
+	u := a.controlURL("/api/nodes/connect")
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(u, "http"), &websocket.DialOptions{
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + a.Credential}},
 	})
 	if err != nil {
 		return err
 	}
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Client(websocket.NetConn(ctx, c, websocket.MessageBinary), cfg)
-	if err != nil {
-		return err
-	}
-	defer sess.Close()
-	ctrl, err := sess.Open()
-	if err != nil {
-		return err
-	}
+	defer c.CloseNow()
+	c.SetReadLimit(proto.MaxMessageBytes)
+	ctrl := websocket.NetConn(ctx, c, websocket.MessageBinary)
 
 	var encMu sync.Mutex
 	enc := proto.NewEncoder(ctrl)
@@ -212,7 +226,7 @@ func (a *Agent) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("connected to hub", "hub", a.HubURL)
+	slog.Info("connected to hub", "hub", u)
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
 	defer func() {
@@ -222,31 +236,53 @@ func (a *Agent) connect(ctx context.Context) error {
 		a.mu.Unlock()
 	}()
 
+	// The reader never waits on a slow reconcile, so it keeps answering the hub's pings; the worker keeps message order.
+	msgs := make(chan proto.Message, 64)
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		for m := range msgs {
+			// A stopping node drains the queue without acting on it.
+			if ctx.Err() == nil {
+				a.handle(ctx, m, send)
+			}
+		}
+	}()
+	defer func() {
+		close(msgs)
+		<-handled
+	}()
 	dec := json.NewDecoder(ctrl)
 	for {
 		var m proto.Message
 		if err := dec.Decode(&m); err != nil {
 			return err
 		}
-		switch {
-		case m.Type == "desired":
-			a.reconcile(ctx, m.Seq, m.Desired)
-		case m.Type == "processes" && m.ReqID != "":
-			go func() { _ = send(a.processes(ctx, m)) }()
-		case m.Type == "underlay" && m.Underlay != nil:
-			go a.startChassis(ctx, *m.Underlay)
-		case m.Type == "update":
-			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
-			a.runUpdate(ctx, func(m proto.Message) error {
-				a.mu.Lock()
-				defer a.mu.Unlock()
-				if a.send != nil && a.send(m) == nil {
-					return nil
-				}
-				a.unsentUpdate = m.Update
-				return errors.New("not connected, sending after the next register")
-			})
+		select {
+		case msgs <- m:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+	}
+}
+
+func (a *Agent) handle(ctx context.Context, m proto.Message, send func(proto.Message) error) {
+	switch {
+	case m.Type == "desired":
+		a.reconcile(ctx, m.Seq, m.Desired)
+	case m.Type == "processes" && m.ReqID != "":
+		go func() { _ = send(a.processes(ctx, m)) }()
+	case m.Type == "update":
+		// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
+		a.runUpdate(ctx, func(m proto.Message) error {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.send != nil && a.send(m) == nil {
+				return nil
+			}
+			a.unsentUpdate = m.Update
+			return errors.New("not connected, sending after the next register")
+		})
 	}
 }
 
@@ -319,7 +355,7 @@ func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 }
 
 func (a *Agent) registerMsg() *proto.Register {
-	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
+	reg := &proto.Register{NodeID: a.NodeID, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
 		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version, Image: a.image}
 	reg.Hostname, _ = os.Hostname()
 	if h, ok := a.Provider.(interface{ Hypervisor() proto.Hypervisor }); ok {

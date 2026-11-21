@@ -3,25 +3,22 @@ package fleet
 import (
 	"cmp"
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
-	"github.com/hashicorp/yamux"
 
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// desiredRetry is how long a node waits for another desired list or underlay after building one failed.
+// desiredRetry is how long a node waits for another desired list after building one failed.
 var desiredRetry = 5 * time.Second
 
 // integrationRetry is how long the hub waits before pushing again to an org whose integrations failed to resolve.
@@ -30,15 +27,9 @@ var integrationRetry = time.Minute
 // imageRetryMin doubles up to imageRetryMax between pushes to a node with VMs whose image is not prepared yet, each with a fresh pull token.
 var imageRetryMin, imageRetryMax = 30 * time.Second, 5 * time.Minute
 
-// The chassis cert is re-signed from the node's start-up CSR when less than underlayRenewBefore is left, checked every underlayCheck.
-var (
-	underlayCheck       = 24 * time.Hour
-	underlayRenewBefore = 30 * 24 * time.Hour
-)
-
 type conn struct {
 	node, org uuid.UUID
-	sess      *yamux.Session
+	ws        *websocket.Conn
 	vms       map[string]bool            // IDs of the VMs in the last desired list; guarded by Fleet.mu
 	accounts  map[string]map[string]bool // account IDs by integration ID in the last desired list; guarded by Fleet.mu
 	// wake holds at most one pending push; the list is built when sent, so the latest state always wins.
@@ -60,17 +51,100 @@ func (c *conn) kick() {
 	}
 }
 
-// ServeConnect accepts a node: WebSocket → yamux, the first node-opened stream is the control stream and must start with register.
-func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
+// underlayNode returns the Bearer credential's node, but only for a request the gateway's control proxy forwarded from that node's underlay address; otherwise a status to refuse with.
+func (f *Fleet) underlayNode(r *http.Request) (store.Node, int) {
+	if f.net == nil {
+		return store.Node{}, http.StatusServiceUnavailable
+	}
+	if !f.net.TokenOK(r.Header.Get(proto.HeaderGateway)) {
+		return store.Node{}, http.StatusUnauthorized
+	}
 	cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	node, err := f.store.NodeByCredential(r.Context(), cred)
 	if !ok || errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return store.Node{}, http.StatusUnauthorized
+	}
+	if err != nil {
+		slog.Error("node auth", "err", err)
+		return store.Node{}, http.StatusInternalServerError
+	}
+	// The proxy stamps an empty peer when it cannot parse the remote address; that never matches.
+	peer, err := netip.ParseAddr(r.Header.Get(proto.HeaderUnderlayPeer))
+	if err != nil || !node.UnderlayIP.IsValid() || peer.Unmap() != node.UnderlayIP {
+		slog.Warn("node control from wrong underlay peer", "node", node.ID)
+		return store.Node{}, http.StatusForbidden
+	}
+	return node, http.StatusOK
+}
+
+// ServeHealth answers a node's health check over the underlay.
+func (f *Fleet) ServeHealth(w http.ResponseWriter, r *http.Request) {
+	_, status := f.underlayNode(r)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+const maxVersionLen = 64
+
+// ServeEmergency takes a node's emergency poll over the public HTTPS URL while its underlay is down; the reply hands over an update an update run waits to deliver.
+func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
+	cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	node, err := f.store.NodeByCredential(r.Context(), cred)
+	if !ok || errors.Is(err, store.ErrNotFound) {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 	if err != nil {
 		slog.Error("node auth", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	var rep proto.EmergencyReport
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rep); err != nil || len(rep.Version) > maxVersionLen {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	// Without a connection no register stores the version, so a node updated here would otherwise stay outdated.
+	if rep.Version != "" && rep.Version != node.Version {
+		if err := f.store.SetNodeVersion(r.Context(), node.ID, rep.Version); err != nil {
+			slog.Error("store emergency version", "node", node.ID, "err", err)
+		}
+	}
+	f.mu.Lock()
+	// A node polling here has no working control path, so a connection still attached is half-open.
+	stale := f.conns[node.ID]
+	if stale != nil {
+		delete(f.conns, node.ID)
+		f.dropDiskErrors(stale, nil)
+	}
+	if !f.underlayDown(node.ID) {
+		slog.Warn("node underlay down", "node", node.ID, "reason", rep.Reason)
+	}
+	f.emergency[node.ID] = emergencySeen{at: clock(), version: rep.Version}
+	if rep.UpdateError != "" {
+		slog.Warn("node update failed", "node", node.ID, "err", rep.UpdateError)
+		f.updateErrs[node.ID] = rep.UpdateError
+	}
+	reply := proto.EmergencyReply{Update: f.emergencyUpd[node.ID]}
+	delete(f.emergencyUpd, node.ID)
+	f.mu.Unlock()
+	if stale != nil {
+		stale.ws.CloseNow()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(reply)
+}
+
+// ServeConnect accepts a node through the gateway's control proxy: one WebSocket carrying JSON messages, starting with register.
+func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
+	node, status := f.underlayNode(r)
+	if status != http.StatusOK {
+		http.Error(w, http.StatusText(status), status)
 		return
 	}
 	// The hijacked connection would otherwise keep the server's per-request deadlines.
@@ -81,19 +155,11 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	defer ws.CloseNow()
+	ws.SetReadLimit(proto.MaxMessageBytes)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
-	sess, err := yamux.Server(websocket.NetConn(ctx, ws, websocket.MessageBinary), cfg)
-	if err != nil {
-		return
-	}
-	defer sess.Close()
-	ctrl, err := sess.Accept()
-	if err != nil {
-		return
-	}
+	ctrl := websocket.NetConn(ctx, ws, websocket.MessageBinary)
 	dec := json.NewDecoder(ctrl)
 	var m proto.Message
 	if err := dec.Decode(&m); err != nil || m.Type != "register" || m.Register == nil {
@@ -104,7 +170,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
-	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
+	c := &conn{node: node.ID, org: node.OrgID, ws: ws, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
 		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}}
 	for _, st := range m.Register.VMs {
 		c.seen[st.ID] = true
@@ -113,12 +179,14 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	defer f.detach(c)
 	defer f.failSnapshots(node.ID)
 	// A Disconnect racing with this handshake ran before attach; recheck so a revoked credential never stays connected.
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if _, err := f.store.NodeByCredential(ctx, cred); err != nil {
 		return
 	}
 	slog.Info("node connected", "node", node.ID, "vms", len(m.Register.VMs))
 	defer slog.Info("node disconnected", "node", node.ID)
-	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), node, *m.Register)
+	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), *m.Register)
+	go f.pingLoop(ctx, node.ID, ws)
 	c.kick()
 	for {
 		var m proto.Message
@@ -220,58 +288,44 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 	return nil
 }
 
-// pushLoop is the connection's only writer, so a slow node blocks nothing but itself.
-// node comes from the credential, never from reg, so a node can only get a chassis cert for itself.
-func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node store.Node, reg proto.Register) {
-	chassis := f.net != nil && reg.ChassisKey != "" && reg.ChassisCSR != ""
-	var certExpiry, lastErrLog time.Time
-	renew := time.NewTicker(underlayCheck)
-	defer renew.Stop()
-	// Only a failed write ends the loop; without an underlay the node still runs, and the next check retries.
-	sendUnderlay := func() error {
-		u, expiry, err := f.underlay(ctx, node, reg)
-		if err != nil {
-			// The short retry would otherwise log every few seconds.
-			if time.Since(lastErrLog) >= 5*time.Minute {
-				slog.Error("node underlay", "node", node.ID, "err", err)
-				lastErrLog = time.Now()
-			}
-			if certExpiry.IsZero() {
-				renew.Reset(desiredRetry)
-			}
-			return nil
-		}
-		certExpiry = expiry
-		renew.Reset(underlayCheck)
-		return enc.Encode(proto.Message{Type: "underlay", Underlay: u})
-	}
-	if chassis {
-		if err := sendUnderlay(); err != nil {
-			c.sess.Close()
-			return
-		}
-	}
+// pingLoop closes ws once the node stops answering pings; nothing else notices a half-open connection.
+func (f *Fleet) pingLoop(ctx context.Context, node uuid.UUID, ws *websocket.Conn) {
+	t := time.NewTicker(f.ping.every)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-renew.C:
-			if chassis && time.Until(certExpiry) < underlayRenewBefore {
-				if err := sendUnderlay(); err != nil {
-					c.sess.Close()
-					return
-				}
+		case <-t.C:
+		}
+		pctx, cancel := context.WithTimeout(ctx, f.ping.timeout)
+		err := ws.Ping(pctx)
+		cancel()
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("node control ping failed", "node", node, "err", err)
 			}
-			continue
+			ws.CloseNow()
+			return
+		}
+	}
+}
+
+// pushLoop is the connection's only writer, so a slow node blocks nothing but itself.
+func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg proto.Register) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
 		case <-c.update:
 			if err := enc.Encode(proto.Message{Type: "update"}); err != nil {
-				c.sess.Close()
+				c.ws.CloseNow()
 				return
 			}
 			continue
 		case m := <-c.requests:
 			if err := enc.Encode(m); err != nil {
-				c.sess.Close()
+				c.ws.CloseNow()
 				return
 			}
 			continue
@@ -309,24 +363,8 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			}
 		}
 		if err := enc.Encode(proto.Message{Type: "desired", Desired: desired, Seq: seq}); err != nil {
-			c.sess.Close()
+			c.ws.CloseNow()
 			return
 		}
 	}
-}
-
-func (f *Fleet) underlay(ctx context.Context, node store.Node, reg proto.Register) (*proto.Underlay, time.Time, error) {
-	u, err := f.net.Underlay(ctx, node, reg.ChassisKey, reg.ChassisCSR)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	b, _ := pem.Decode([]byte(u.Cert))
-	if b == nil {
-		return nil, time.Time{}, errors.New("chassis cert is not PEM")
-	}
-	cert, err := x509.ParseCertificate(b.Bytes)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	return u, cert.NotAfter, nil
 }
