@@ -369,3 +369,151 @@ func TestReconcileNBRemovesStaleGatewayChassis(t *testing.T) {
 		}
 	}
 }
+
+func quarantinedGatewayNode() (proto.GatewayState, map[string]string) {
+	st, out := twoOrgs()
+	st.GatewayChassis = proto.GatewayChassisRef{Name: nodeA, IP: "10.198.0.11"}
+	st.Chassis = []proto.GatewayChassis{
+		{NodeID: nodeA, OrgID: orgA, IP: "10.198.0.11", Quarantined: true},
+		{NodeID: nodeB, OrgID: orgB, IP: "10.198.0.21"},
+	}
+	return st, out
+}
+
+func dropACLs(tx []string) []string {
+	var acls []string
+	for _, c := range tx {
+		if strings.HasPrefix(c, "acl-add ") && strings.Contains(c, " 1003 ") {
+			acls = append(acls, c)
+		}
+	}
+	return acls
+}
+
+func TestQuarantinedGatewayNodeVMPortsDropped(t *testing.T) {
+	st, out := quarantinedGatewayNode()
+	st.Orgs[1].Ports = append(st.Orgs[1].Ports, proto.GatewayPort{Name: "vmb2-mgmt", MAC: "02:0a:40:10:00:0b", IP: "10.64.16.11", Chassis: nodeA})
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	mgmtA, mgmtB, net := "ls-mgmt-"+orgA, "ls-mgmt-"+orgB, "ls-net-"+netA
+	want := []string{
+		"acl-add " + mgmtA + ` from-lport 1003 inport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + mgmtA + ` to-lport 1003 outport == {"vma-mgmt", "vma2-mgmt"} drop`,
+		"acl-add " + net + ` from-lport 1003 inport == {"vma-net"} drop`,
+		"acl-add " + net + ` to-lport 1003 outport == {"vma-net"} drop`,
+		"acl-add " + mgmtB + ` from-lport 1003 inport == {"vmb2-mgmt"} drop`,
+		"acl-add " + mgmtB + ` to-lport 1003 outport == {"vmb2-mgmt"} drop`,
+	}
+	if got := dropACLs(f.tx(t)); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("drop ACLs:\n%s", strings.Join(got, "\n"))
+	}
+	a := f.txWith(t, "--may-exist ls-add "+mgmtA)
+	for _, c := range []string{"acl-del " + mgmtA, "acl-del " + net, want[0], want[2]} {
+		if !has(a, c) {
+			t.Errorf("org A transaction missing %q", c)
+		}
+	}
+
+	st.Chassis[0].Quarantined = false
+	f = &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	tx := f.tx(t)
+	if got := dropACLs(tx); len(got) != 0 {
+		t.Errorf("drop ACLs after quarantine lifted: %v", got)
+	}
+	for _, sw := range []string{mgmtA, mgmtB, net} {
+		if !has(tx, "acl-del "+sw) {
+			t.Errorf("drop ACLs of %s not cleared", sw)
+		}
+	}
+}
+
+func TestQuarantinedGatewayNodeGatewayPortsUntouched(t *testing.T) {
+	st, out := quarantinedGatewayNode()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-" + nodeA + "\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	quarantined := f.txWith(t, "--may-exist lr-add lr-gw")
+	st.Chassis[0].Quarantined = false
+	f2 := &fakeRun{out: out}
+	if err := reconcileNB(f2.run, st); err != nil {
+		t.Fatal(err)
+	}
+	if healthy := f2.txWith(t, "--may-exist lr-add lr-gw"); !slices.Equal(quarantined, healthy) {
+		t.Errorf("hub transaction changed by quarantine:\n%s\nvs\n%s", strings.Join(quarantined, "\n"), strings.Join(healthy, "\n"))
+	}
+	for _, c := range f.tx(t) {
+		if strings.Contains(c, " 1003 ") && (strings.Contains(c, "gw0") || strings.Contains(c, "transit")) || strings.Contains(c, "lrp-del-gateway-chassis") {
+			t.Errorf("gateway port touched: %s", c)
+		}
+	}
+	run := func(args ...string) (string, error) {
+		if strings.Join(args, " ") == "ovn-sbctl --bare --columns=name list chassis" {
+			return nodeA + "\n" + nodeB + "\n", nil
+		}
+		if args[1] == "chassis-del" {
+			t.Errorf("deleted chassis %s", args[2])
+		}
+		return "", nil
+	}
+	st.Chassis[0].Quarantined = true
+	if err := cleanChassis(run, st); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuarantinedOtherNodeUnchanged(t *testing.T) {
+	for _, gateway := range []proto.GatewayChassisRef{hubGW, {Name: nodeA, IP: "10.198.0.11"}} {
+		st, out := quarantinedGatewayNode()
+		st.GatewayChassis = gateway
+		st.Chassis[0].Quarantined, st.Chassis[1].Quarantined = false, true
+		f := &fakeRun{out: out}
+		if err := reconcileNB(f.run, st); err != nil {
+			t.Fatal(err)
+		}
+		if got := dropACLs(f.tx(t)); len(got) != 0 {
+			t.Errorf("%s: drop ACLs for a quarantined non-gateway node: %v", gateway.Name, got)
+		}
+		if r := underlayRules(st); !strings.Contains(r, "set quarantine {\n\t\ttype ipv4_addr\n\t\telements = { 10.198.0.21 }\n\t}") {
+			t.Errorf("%s: node B not in the quarantine set:\n%s", gateway.Name, r)
+		}
+		var deleted []string
+		run := func(args ...string) (string, error) {
+			if strings.Join(args, " ") == "ovn-sbctl --bare --columns=name list chassis" {
+				return nodeA + "\n" + nodeB + "\n", nil
+			}
+			deleted = append(deleted, strings.Join(args, " "))
+			return "", nil
+		}
+		if err := cleanChassis(run, st); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(deleted, []string{"ovn-sbctl chassis-del " + nodeB}) {
+			t.Errorf("%s: chassis deletes %v", gateway.Name, deleted)
+		}
+	}
+}
+
+func TestReconcileNBKeepsForeignGatewayChassisRows(t *testing.T) {
+	st, out := twoOrgs()
+	out["ovn-nbctl --bare --columns=name list gateway_chassis"] = "lrp-transit-garbage\nlrp-transit-" + strings.ToUpper(nodeA) + "\nlrp-transit-{" + nodeB + "}\nlrp-transit-" + nodeA + "\n"
+	f := &fakeRun{out: out}
+	if err := reconcileNB(f.run, st); err != nil {
+		t.Fatal(err)
+	}
+	var del []string
+	for _, cmd := range f.tx(t) {
+		if d, ok := strings.CutPrefix(cmd, "lrp-del-gateway-chassis lrp-transit "); ok {
+			del = append(del, d)
+		}
+	}
+	if !slices.Equal(del, []string{nodeA}) {
+		t.Errorf("deleted %v, want only the canonical %s", del, nodeA)
+	}
+}

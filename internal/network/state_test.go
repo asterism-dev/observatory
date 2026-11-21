@@ -616,6 +616,31 @@ func TestStateGatewayChassisNode(t *testing.T) {
 	}
 }
 
+func TestStateQuarantinedGatewayNode(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{f.nodeA.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	c := cfg
+	c.GatewayNode = f.nodeA
+	h, err := network.Load(ctx, f.s, f.z, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := h.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(st.Chassis, func(c proto.GatewayChassis) bool { return c.NodeID == f.nodeA.String() })
+	if i < 0 || !st.Chassis[i].Quarantined {
+		t.Fatalf("quarantined gateway node not in chassis: %+v", st.Chassis)
+	}
+	if want := (proto.GatewayChassisRef{Name: f.nodeA.String(), IP: st.Chassis[i].IP}); st.GatewayChassis != want {
+		t.Fatalf("gateway chassis %+v, want %+v", st.GatewayChassis, want)
+	}
+}
+
 func TestStateWarnsOnceWhileGatewayNodeHasNoChassis(t *testing.T) {
 	f := newFixture(t)
 	var logs bytes.Buffer

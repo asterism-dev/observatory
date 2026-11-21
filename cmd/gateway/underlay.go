@@ -17,7 +17,8 @@ func underlayRules(s proto.GatewayState) string {
 	var quarantine []string
 	for _, c := range s.Chassis {
 		byOrg[c.OrgID] = append(byOrg[c.OrgID], c.IP)
-		if c.Quarantined {
+		// A quarantined gateway node keeps its underlay for the gateway ports; its VMs are cut by ACLs instead.
+		if c.Quarantined && c.NodeID != s.GatewayChassis.Name {
 			quarantine = append(quarantine, c.IP)
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
@@ -197,7 +199,7 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 	}
 	// A former gateway chassis at the same priority would leave the active one to chance.
 	for n := range gcs {
-		if ch, ok := strings.CutPrefix(n, "lrp-transit-"); ok && ch != s.GatewayChassis.Name {
+		if ch, ok := strings.CutPrefix(n, "lrp-transit-"); ok && ch != s.GatewayChassis.Name && isChassisName(ch) {
 			hub = append(hub, []string{"lrp-del-gateway-chassis", "lrp-transit", ch})
 		}
 	}
@@ -205,8 +207,14 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		return errors.Join(append(errs, err)...)
 	}
 
+	cut := ""
+	for _, c := range s.Chassis {
+		if c.NodeID == s.GatewayChassis.Name && c.Quarantined {
+			cut = c.NodeID
+		}
+	}
 	for _, o := range s.Orgs {
-		cmds, err := orgCmds(o, s.GuestMTU, pgs[pgName(o.ID)], dhcpRow)
+		cmds, err := orgCmds(o, s.GuestMTU, pgs[pgName(o.ID)], cut, dhcpRow)
 		if err == nil {
 			err = tx(cmds)
 		}
@@ -215,6 +223,31 @@ func reconcileNB(run runner, s proto.GatewayState) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// isChassisName limits stale gateway chassis deletes to names this gateway can have set: hub-gw or a node UUID.
+func isChassisName(name string) bool {
+	id, err := uuid.Parse(name)
+	return name == "hub-gw" || err == nil && id.String() == name
+}
+
+// cutPortACLs drop all traffic of the quarantined gateway node's VM ports on sw; acl-del clears them once it is lifted.
+func cutPortACLs(sw, chassis string, ports []proto.GatewayPort) [][]string {
+	var cut []string
+	for _, p := range ports {
+		if chassis != "" && p.Chassis == chassis {
+			cut = append(cut, fmt.Sprintf("%q", p.Name))
+		}
+	}
+	acls := [][]string{{"acl-del", sw}}
+	if len(cut) == 0 {
+		return acls
+	}
+	set := "{" + strings.Join(cut, ", ") + "}"
+	// 1003 beats the port group's allow ACLs at 1002.
+	return append(acls,
+		[]string{"acl-add", sw, "from-lport", "1003", "inport == " + set, "drop"},
+		[]string{"acl-add", sw, "to-lport", "1003", "outport == " + set, "drop"})
 }
 
 // transitACLs let a device reach only its own org's router address; lr-gw would answer on all of them.
@@ -245,7 +278,7 @@ func transitACLs(s proto.GatewayState) [][]string {
 }
 
 // orgCmds is one org's transaction, so a new port is never visible without port security, port group membership and the default-drop ACLs.
-func orgCmds(o proto.GatewayOrg, mtu int, pgExists bool, dhcpRow func(cidr, tag string) (string, error)) ([][]string, error) {
+func orgCmds(o proto.GatewayOrg, mtu int, pgExists bool, cutChassis string, dhcpRow func(cidr, tag string) (string, error)) ([][]string, error) {
 	slice, err := parseSubnet(o.Slice)
 	if err != nil {
 		return nil, err
@@ -291,6 +324,7 @@ func orgCmds(o proto.GatewayOrg, mtu int, pgExists bool, dhcpRow func(cidr, tag 
 		cmds = append(cmds, []string{"clear", "port_group", pg, "ports"})
 	}
 	cmds = append(cmds, orgACLs(pg, router, o.Ports)...)
+	cmds = append(cmds, cutPortACLs(sw, cutChassis, o.Ports)...)
 
 	for _, n := range o.Networks {
 		subnet, err := parseSubnet(n.Subnet)
@@ -310,6 +344,7 @@ func orgCmds(o proto.GatewayOrg, mtu int, pgExists bool, dhcpRow func(cidr, tag 
 		for _, p := range n.Ports {
 			addPort(nsw, ndhcp, p)
 		}
+		cmds = append(cmds, cutPortACLs(nsw, cutChassis, n.Ports)...)
 	}
 	return cmds, nil
 }
