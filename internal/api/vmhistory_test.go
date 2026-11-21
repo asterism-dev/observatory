@@ -79,7 +79,7 @@ func TestSetDeleteAfter(t *testing.T) {
 	if rec := e.send("PUT", path, tok, `{"deleteAfter":"3m"}`); rec.Code != 400 {
 		t.Fatalf("3m: %d", rec.Code)
 	}
-	if es := e.audit("vm:delete-after"); len(es) != 2 || es[0].Details["deleteAt"] != nil || es[1].Details["deleteAt"] == nil {
+	if es := e.audit("compute.instances.setDeleteAfter"); len(es) != 2 || es[0].Details["deleteAt"] != nil || es[1].Details["deleteAt"] == nil {
 		t.Fatalf("audit: %+v", es)
 	}
 }

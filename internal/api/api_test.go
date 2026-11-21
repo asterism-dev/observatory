@@ -200,7 +200,7 @@ func TestSessionsListAndRevoke(t *testing.T) {
 	if rec := e.do("DELETE", "/api/me/sessions/"+other, tok1); rec.Code != 204 {
 		t.Fatalf("revoke other: %d", rec.Code)
 	}
-	if es := e.audit("session:revoke"); len(es) != 1 || es[0].Resource != "session/"+other || es[0].ActorID != u.ID.String() {
+	if es := e.audit("iam.sessions.revoke"); len(es) != 1 || es[0].Resource != "session/"+other || es[0].ActorID != u.ID.String() {
 		t.Fatalf("audit: %+v", es)
 	}
 	if rec := e.do("GET", "/api/me", tok2); rec.Code != 401 {
@@ -299,5 +299,20 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/me", nil))
 	if rec.Code != 401 {
 		t.Fatalf("/api/me unauthenticated: %d", rec.Code)
+	}
+}
+
+func TestAuditFilterByNewAction(t *testing.T) {
+	e := newEnv(t)
+	_, adminTok := e.user("alice")
+	for _, a := range []string{store.ActionVMDeleteAfter, store.ActionAuthLogin} {
+		if err := e.store.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorSystem, Action: a, Result: store.ResultAllowed}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var page struct{ Entries []struct{ Action string } }
+	decode(t, e.do("GET", "/api/admin/audit?action=compute.instances.setDeleteAfter", adminTok), &page)
+	if len(page.Entries) != 1 || page.Entries[0].Action != "compute.instances.setDeleteAfter" {
+		t.Fatalf("filter: %+v", page.Entries)
 	}
 }

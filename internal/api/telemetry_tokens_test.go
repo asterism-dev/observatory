@@ -73,7 +73,7 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 		t.Fatalf("admin with deny: %d %s", rec.Code, rec.Body.String())
 	}
 	es := e.audit(store.ActionGrafanaTokenCreate)
-	if len(es) != 2 {
+	if len(es) != 4 {
 		t.Fatalf("denied audits: %d", len(es))
 	}
 	for _, a := range es {

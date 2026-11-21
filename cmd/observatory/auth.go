@@ -257,7 +257,7 @@ func cmdOrgRename(c *cli, args []string) error {
 func cmdOrgAudit(c *cli, args []string) error {
 	fs := c.flags("org audit")
 	limit := fs.Int("limit", 0, "at most `N` entries (hub default 50, max 200)")
-	action := fs.String("action", "", "only this action, e.g. vm:delete")
+	action := fs.String("action", "", "only this action, e.g. compute.instances.delete")
 	actor := fs.String("actor", "", "only this actor `ID`")
 	since := fs.Duration("since", 0, "only entries newer than this, e.g. 24h")
 	if _, err := c.parse(fs, args, 0, 0); err != nil {

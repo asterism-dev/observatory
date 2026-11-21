@@ -112,7 +112,7 @@ func TestNodeLifecycleAndAudit(t *testing.T) {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 
-	for _, action := range []string{"compute.nodes.create", "compute.nodes.update", "node:enroll", "node:revoke", "compute.nodes.delete"} {
+	for _, action := range []string{"compute.nodes.create", "compute.nodes.update", "compute.nodes.enroll", "compute.nodes.revokeCredential", "compute.nodes.delete"} {
 		es := e.audit(action)
 		if len(es) == 0 {
 			t.Fatalf("no %s audit row", action)
@@ -125,7 +125,7 @@ func TestNodeLifecycleAndAudit(t *testing.T) {
 			}
 		}
 	}
-	if es := e.audit("node:enroll"); es[0].ActorKind != store.ActorNode || es[0].ActorID != c.Node.ID {
+	if es := e.audit("compute.nodes.enroll"); es[0].ActorKind != store.ActorNode || es[0].ActorID != c.Node.ID {
 		t.Fatalf("enroll actor: %+v", es[0])
 	}
 }
@@ -138,7 +138,7 @@ func TestRegeneratePendingNodeAuditedAsUpdate(t *testing.T) {
 	if rec := e.do("POST", nodesPath(org)+"/"+c.Node.ID+"/credential", tok); rec.Code != 200 {
 		t.Fatalf("credential: %d %s", rec.Code, rec.Body.String())
 	}
-	if es := e.audit("node:revoke"); len(es) != 0 {
+	if es := e.audit("compute.nodes.revokeCredential"); len(es) != 0 {
 		t.Fatalf("pending node audited as revoke: %+v", es)
 	}
 	if es := e.audit("compute.nodes.update"); len(es) != 1 || es[0].Details["regenerated"] != true {

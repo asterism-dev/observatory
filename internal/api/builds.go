@@ -310,7 +310,7 @@ func (h *api) listBuilderVMs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !privileged(m.Role) {
-		h.auditDenied(r, m.Org.ID, authz.ObjVMs, "vm:builders")
+		h.auditDenied(r, m.Org.ID, authz.ObjVMs, "build.builders.list")
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}

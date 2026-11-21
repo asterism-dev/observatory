@@ -405,7 +405,12 @@ func TestDashboardMoveToPrivateCreatorOnly(t *testing.T) {
 	if code != 200 || got.Scope != "user" || *got.OwnerID != bob.ID {
 		t.Fatalf("creator moves to private: %d %+v", code, got)
 	}
-	es := e.audit(store.ActionDashboardUpdate)
+	var es []store.AuditEntry
+	for _, a := range e.audit(store.ActionDashboardUpdate) {
+		if a.Result == store.ResultAllowed {
+			es = append(es, a)
+		}
+	}
 	if len(es) != 1 || es[0].Details["fromScope"] != "team" || es[0].Details["fromOwnerId"] != team.String() || es[0].Details["scope"] != "user" {
 		t.Fatalf("move audit: %+v", es)
 	}
