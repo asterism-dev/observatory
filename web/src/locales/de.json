@@ -47,7 +47,8 @@
     "builders": "Builder-VMs",
     "adminRegistry": "Registry",
     "telemetry": "Telemetrie",
-    "dashboards": "Dashboards"
+    "dashboards": "Dashboards",
+    "logs": "Logs"
   },
   "theme": {
     "system": "System",
@@ -985,5 +986,43 @@
     "exampleTitle": "CPU-Kerne pro VM",
     "conflict": "Dieses Dashboard wurde anderswo geändert. Lade neu, um die aktuelle Fassung zu sehen; deine ungespeicherten Änderungen gehen verloren.",
     "reload": "Neu laden"
+  },
+  "logs": {
+    "subtitle": "Alle Logs deiner Organisation durchsuchen, auch die gelöschter VMs, Nodes und Images.",
+    "tab": {
+      "groups": "Gruppen",
+      "query": "Abfrage"
+    },
+    "kind": {
+      "all": "Alle",
+      "vm": "VMs",
+      "node": "Nodes",
+      "image": "Builds"
+    },
+    "search": "Nach Namen filtern",
+    "deleted": "gelöscht",
+    "noMatch": "Keine Loggruppen gefunden.",
+    "empty": "Noch keine Logs",
+    "emptyText": "Logs von VMs, Nodes und Image-Builds erscheinen hier, sobald sie gemeldet werden.",
+    "forbidden": "Kein Zugriff",
+    "forbiddenText": "Für die Logs der Organisation brauchst du die Berechtigung logs:read.",
+    "streamCount": "keine Streams | {n} Stream | {n} Streams",
+    "lastEntry": "letzter Eintrag {at}",
+    "lastEntryLabel": "Letzter Eintrag",
+    "stream": "Stream",
+    "streams": "Streams",
+    "build": "Build",
+    "noStreams": "Keine Streams.",
+    "groupGone": "Für diese Gruppe wurden keine Logs gefunden; sie sind evtl. abgelaufen.",
+    "range": "Zeitraum",
+    "groupsPick": "Gruppen",
+    "picked": "{n} ausgewählt",
+    "pickedNone": "Keine ausgewählt: die ganze Organisation wird durchsucht.",
+    "query": "Abfrage (LogsQL)",
+    "run": "Ausführen",
+    "result": "Ergebnis ({n})",
+    "noRows": "Keine Zeilen.",
+    "retention": "Logs werden so lange aufbewahrt, wie der Speicher sie hält, standardmäßig 14 Tage.",
+    "openIn": "In Logs öffnen"
   }
 }

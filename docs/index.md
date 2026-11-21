@@ -21,6 +21,7 @@ their own machine through WireGuard, with `ssh dev@<vm>.internal`.
 | understand how VMs reach each other and you | [Network](network.md) |
 | see what nodes report | [Telemetry](telemetry.md) |
 | chart your own metrics in the hub | [Dashboards](dashboards.md) |
+| browse and search your logs | [Logs](logs.md) |
 | read telemetry from your own Grafana | [Grafana](grafana.md) |
 
 The first person to log in to a new hub becomes its platform admin. Releases, binaries and container images are on
