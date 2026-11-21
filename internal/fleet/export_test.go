@@ -12,12 +12,10 @@ import (
 )
 
 var (
-	DesiredRetry        = &desiredRetry
-	IntegrationRetry    = &integrationRetry
-	ImageRetryMin       = &imageRetryMin
-	UnderlayCheck       = &underlayCheck
-	UnderlayRenewBefore = &underlayRenewBefore
-	Clock               = &clock
+	DesiredRetry     = &desiredRetry
+	IntegrationRetry = &integrationRetry
+	ImageRetryMin    = &imageRetryMin
+	Clock            = &clock
 )
 
 func SetUpdateTimeouts(f *Fleet, back, vms, poll time.Duration) {

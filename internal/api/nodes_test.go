@@ -2,16 +2,25 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
+	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 func nodesPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/nodes" }
@@ -45,7 +54,7 @@ func tokenOf(cmd string) string { return cmd[strings.LastIndex(cmd, " ")+1:] }
 
 func (e *env) enroll(token string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	NodeEndpoints(mux, e.store, e.newFleet())
+	NodeEndpoints(mux, e.store, e.newFleet(), e.net)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/nodes/enroll", strings.NewReader(`{"token":"`+token+`"}`)))
 	return rec
@@ -289,5 +298,99 @@ func TestNodeJSONOutdated(t *testing.T) {
 		if n.Outdated != want {
 			t.Errorf("node version %q: outdated %v, want %v", v, n.Outdated, want)
 		}
+	}
+}
+
+func chassisCSR(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
+}
+
+func (e *env) underlay(credential, key, csr string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(proto.UnderlayRequest{ChassisKey: key, ChassisCSR: csr})
+	mux := http.NewServeMux()
+	NodeEndpoints(mux, e.store, e.newFleet(), e.net)
+	req := httptest.NewRequest("POST", "/api/nodes/underlay", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+credential)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func (e *env) credentialFor(tok string, org uuid.UUID, name string) (id, credential string) {
+	e.t.Helper()
+	c := e.createNode(tok, org, name)
+	rec := e.enroll(tokenOf(c.InstallCommand))
+	var got struct{ Credential string }
+	decode(e.t, rec, &got)
+	return c.Node.ID, got.Credential
+}
+
+func TestNodeUnderlayEndpoint(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	_, cred := e.credentialFor(tok, org, "n1")
+	_, key, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first, second proto.Underlay
+	rec := e.underlay(cred, key, chassisCSR(t))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	decode(t, rec, &first)
+	if !netaddr.UnderlayPool.Contains(netip.MustParsePrefix(first.Address).Addr()) || first.SBRemote != "ssl:10.198.0.1:6642" || first.Cert == "" || first.CACert == "" {
+		t.Fatalf("%+v", first)
+	}
+	decode(t, e.underlay(cred, key, chassisCSR(t)), &second)
+	if second.Address != first.Address {
+		t.Fatalf("address changed: %s -> %s", first.Address, second.Address)
+	}
+}
+
+func TestNodeUnderlayEndpointAllowsQuarantined(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id, cred := e.credentialFor(tok, org, "n1")
+	node, _ := uuid.Parse(id)
+	if _, err := e.store.QuarantineNodes(context.Background(), []uuid.UUID{node}); err != nil {
+		t.Fatal(err)
+	}
+	_, key, _ := wgkey.Generate()
+	if rec := e.underlay(cred, key, chassisCSR(t)); rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNodeUnderlayEndpointRejectsBadCredential(t *testing.T) {
+	e := newEnv(t)
+	_, key, _ := wgkey.Generate()
+	if rec := e.underlay(uuid.NewString()+".wrong", key, chassisCSR(t)); rec.Code != 401 {
+		t.Fatalf("%d", rec.Code)
+	}
+}
+
+func TestNodeUnderlayEndpointRejectsInvalidInput(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	_, cred := e.credentialFor(tok, org, "n1")
+	_, key, _ := wgkey.Generate()
+	if rec := e.underlay(cred, "bogus", chassisCSR(t)); rec.Code != 400 {
+		t.Fatalf("bad key: %d", rec.Code)
+	}
+	if rec := e.underlay(cred, key, "not a csr"); rec.Code != 400 {
+		t.Fatalf("bad csr: %d", rec.Code)
 	}
 }

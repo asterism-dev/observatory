@@ -29,21 +29,23 @@ type hubVM struct {
 }
 
 type fakeHub struct {
-	mu       sync.Mutex
-	srv      *httptest.Server
-	vmsByID  map[string]*hubVM
-	regs     []proto.Register
-	auth     []string
-	conn     *json.Encoder
-	sess     *yamux.Session // guarded by connMu
-	connMu   sync.Mutex
-	seq      uint64
-	nextID   int
-	underlay *proto.Underlay
-	cpus     int // CPUs of VMs from create; zero means 1
-	images   []proto.ImageStatus
-	updates  []proto.UpdateReport
-	replies  []proto.Message // type "processes"
+	mu           sync.Mutex
+	srv          *httptest.Server
+	vmsByID      map[string]*hubVM
+	regs         []proto.Register
+	auth         []string
+	conn         *json.Encoder
+	sess         *yamux.Session // guarded by connMu
+	connMu       sync.Mutex
+	seq          uint64
+	nextID       int
+	underlay     *proto.Underlay
+	events       []string // "underlay" and "connect" in arrival order
+	underlayReqs []proto.UnderlayRequest
+	cpus         int // CPUs of VMs from create; zero means 1
+	images       []proto.ImageStatus
+	updates      []proto.UpdateReport
+	replies      []proto.Message // type "processes"
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -57,9 +59,27 @@ func (h *fakeHub) url() string {
 	return "ws" + strings.TrimPrefix(h.srv.URL, "http") + "/api/nodes/connect"
 }
 
+func (h *fakeHub) serveUnderlay(w http.ResponseWriter, req *http.Request) {
+	var body proto.UnderlayRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil || req.Header.Get("Authorization") != "Bearer tok" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.mu.Lock()
+	h.events = append(h.events, "underlay")
+	h.underlayReqs = append(h.underlayReqs, body)
+	h.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(h.underlay)
+}
+
 func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/api/nodes/underlay" {
+		h.serveUnderlay(w, req)
+		return
+	}
 	h.mu.Lock()
 	h.auth = append(h.auth, req.Header.Get("Authorization"))
+	h.events = append(h.events, "connect")
 	h.mu.Unlock()
 	if req.Header.Get("Authorization") != "Bearer tok" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -106,9 +126,6 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 	h.conn, h.sess = enc, sess
 	h.connMu.Unlock()
 	h.push()
-	if m.Register.ChassisKey != "" {
-		h.send(proto.Message{Type: "underlay", Underlay: h.underlay})
-	}
 	for {
 		var m proto.Message
 		if err := dec.Decode(&m); err != nil {

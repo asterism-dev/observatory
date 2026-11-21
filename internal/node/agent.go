@@ -54,9 +54,9 @@ type Agent struct {
 	Provider                           Provider
 	Config                             json.RawMessage
 	Machine                            *proto.Machine
-	ChassisKey                         string // public, sent in Register
+	ChassisKey                         string // public, sent with the underlay request
 	ChassisPrivateKey                  string
-	ChassisCSR                         string // OVN client cert request, sent in Register
+	ChassisCSR                         string // OVN client cert request, sent with the underlay request
 	OVNKeyFile                         string
 	Version                            string
 	Updater                            Updater
@@ -76,6 +76,7 @@ type Agent struct {
 	chassisRunning  bool
 	chassisStopping bool
 	chassisWG       sync.WaitGroup
+	underlayCert    string // only touched by Run, then renewUnderlay
 
 	reconcileMu sync.Mutex
 
@@ -142,6 +143,22 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	if err := a.restoreAll(ctx); err != nil {
 		return err
+	}
+	if a.ChassisKey != "" {
+		for {
+			err := a.refreshUnderlay(ctx)
+			if err == nil {
+				break
+			}
+			slog.Warn("underlay config failed", "err", err)
+			select {
+			case <-ctx.Done():
+				a.stopAll()
+				return ctx.Err()
+			case <-time.After(reconnectDelay):
+			}
+		}
+		go a.renewUnderlay(ctx)
 	}
 	for {
 		if err := a.connect(ctx); err != nil && ctx.Err() == nil {
@@ -233,8 +250,6 @@ func (a *Agent) connect(ctx context.Context) error {
 			a.reconcile(ctx, m.Seq, m.Desired)
 		case m.Type == "processes" && m.ReqID != "":
 			go func() { _ = send(a.processes(ctx, m)) }()
-		case m.Type == "underlay" && m.Underlay != nil:
-			go a.startChassis(ctx, *m.Underlay)
 		case m.Type == "update":
 			// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
 			a.runUpdate(ctx, func(m proto.Message) error {
@@ -319,7 +334,7 @@ func (a *Agent) startChassis(ctx context.Context, u proto.Underlay) {
 }
 
 func (a *Agent) registerMsg() *proto.Register {
-	reg := &proto.Register{NodeID: a.NodeID, ChassisKey: a.ChassisKey, ChassisCSR: a.ChassisCSR, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
+	reg := &proto.Register{NodeID: a.NodeID, Provider: a.Provider.Name(), CPUs: a.CPUs, MemoryMB: a.MemoryMB, Config: a.Config, Machine: a.Machine,
 		DisksInUse: a.disksInUse(), AppliedSeq: a.appliedSeq, Version: a.Version, Image: a.image}
 	reg.Hostname, _ = os.Hostname()
 	if h, ok := a.Provider.(interface{ Hypervisor() proto.Hypervisor }); ok {

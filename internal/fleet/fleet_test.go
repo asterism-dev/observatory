@@ -3,12 +3,9 @@ package fleet_test
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -43,7 +40,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
-	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
 type env struct {
@@ -199,19 +195,6 @@ func (e *env) register(cred string, reg proto.Register) *fakeNode {
 	return n
 }
 
-func chassisCSR(t *testing.T) string {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "spoofed"}}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
-}
-
 func (n *fakeNode) send(m proto.Message) {
 	n.t.Helper()
 	if err := n.enc.Encode(m); err != nil {
@@ -233,14 +216,11 @@ func (n *fakeNode) next() proto.Message {
 	return proto.Message{}
 }
 
-// desired skips underlay messages.
+// desired returns the next desired message.
 func (n *fakeNode) desired() proto.Message {
 	n.t.Helper()
 	for {
 		m := n.next()
-		if m.Type == "underlay" {
-			continue
-		}
 		if m.Type != "desired" {
 			n.t.Fatalf("got %q message", m.Type)
 		}
@@ -637,113 +617,6 @@ func TestDesiredCarriesNICs(t *testing.T) {
 			t.Errorf("NIC %+v has gateway port %+v (found %v)", nic, p, ok)
 		}
 	}
-}
-
-func TestUnderlayOnRegister(t *testing.T) {
-	e := newEnv(t)
-	n, cred := e.node(e.org.ID, "n")
-	e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
-	_, pub, err := wgkey.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
-	m := node.next()
-	if m.Type != "underlay" || m.Underlay == nil {
-		t.Fatalf("first message %q", m.Type)
-	}
-	if cn := certCN(t, m.Underlay.Cert); cn != n.ID.String() {
-		t.Errorf("cert CN = %q, want %s", cn, n.ID)
-	}
-	if m.Underlay.CACert == "" || m.Underlay.Address == "" {
-		t.Errorf("incomplete underlay %+v", m.Underlay)
-	}
-	if m := node.next(); m.Type != "desired" {
-		t.Fatalf("second message %q", m.Type)
-	}
-	node.sess.Close()
-	waitFor(t, func() bool { return !e.f.Online(n.ID) })
-
-	for _, reg := range []proto.Register{{}, {ChassisKey: pub}, {ChassisCSR: chassisCSR(t)}, {ChassisKey: "bogus", ChassisCSR: chassisCSR(t)}} {
-		node := e.register(cred, reg)
-		if m := node.next(); m.Type != "desired" {
-			t.Errorf("register %+v: first message %q", reg, m.Type)
-		}
-		node.sess.Close()
-		waitFor(t, func() bool { return !e.f.Online(n.ID) })
-	}
-}
-
-func TestUnderlayRenewed(t *testing.T) {
-	check, before := *fleet.UnderlayCheck, *fleet.UnderlayRenewBefore
-	*fleet.UnderlayCheck, *fleet.UnderlayRenewBefore = 50*time.Millisecond, 400*24*time.Hour
-	t.Cleanup(func() { *fleet.UnderlayCheck, *fleet.UnderlayRenewBefore = check, before })
-	e := newEnv(t)
-	n, cred := e.node(e.org.ID, "n")
-	_, pub, err := wgkey.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
-	first := node.next()
-	if first.Type != "underlay" {
-		t.Fatalf("first message %q", first.Type)
-	}
-	for {
-		m := node.next()
-		if m.Type != "underlay" {
-			continue
-		}
-		if m.Underlay.Cert == first.Underlay.Cert || certCN(t, m.Underlay.Cert) != n.ID.String() {
-			t.Fatalf("renewed cert not fresh or wrong CN")
-		}
-		return
-	}
-}
-
-func TestUnderlayRetriedAfterFailure(t *testing.T) {
-	old := *fleet.DesiredRetry
-	*fleet.DesiredRetry = 50 * time.Millisecond
-	t.Cleanup(func() { *fleet.DesiredRetry = old })
-	ctx := context.Background()
-	e := newEnv(t)
-	_, cred := e.node(e.org.ID, "n")
-	other, _ := e.node(e.org.ID, "other")
-	_, pub, err := wgkey.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Another node holding the key makes enrollment fail until it lets go.
-	if _, err := e.s.EnrollChassis(ctx, other.ID, pub); err != nil {
-		t.Fatal(err)
-	}
-	node := e.register(cred, proto.Register{ChassisKey: pub, ChassisCSR: chassisCSR(t)})
-	if m := node.next(); m.Type != "desired" {
-		t.Fatalf("first message %q", m.Type)
-	}
-	_, otherPub, err := wgkey.Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := e.s.EnrollChassis(ctx, other.ID, otherPub); err != nil {
-		t.Fatal(err)
-	}
-	for m := node.next(); m.Type != "underlay"; m = node.next() {
-	}
-}
-
-func certCN(t *testing.T, certPEM string) string {
-	t.Helper()
-	b, _ := pem.Decode([]byte(certPEM))
-	if b == nil {
-		t.Fatal("no PEM cert")
-	}
-	c, err := x509.ParseCertificate(b.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c.Subject.CommonName
 }
 
 // readyDisk creates a disk of the owner that the storage server already has, attached to v at /data.

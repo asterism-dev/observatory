@@ -102,14 +102,16 @@ func loadWG(ctx context.Context, s *store.Store, name string) (wgKeys, error) {
 	return wgKeys{string(priv), pub}, nil
 }
 
+var ErrUnderlayRequest = errors.New("invalid underlay request")
+
 // Underlay signs the node's chassis CSR and enrolls its WireGuard key; nodes send a fresh CSR on every start.
 func (h *Hub) Underlay(ctx context.Context, n store.Node, chassisKey, csrPEM string) (*proto.Underlay, error) {
 	if !wgkey.Valid(chassisKey) {
-		return nil, errors.New("chassis key is not a WireGuard public key")
+		return nil, fmt.Errorf("%w: chassis key is not a WireGuard public key", ErrUnderlayRequest)
 	}
 	cert, err := h.ca.SignChassis(n.ID, csrPEM)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrUnderlayRequest, err)
 	}
 	ip, err := h.store.EnrollChassis(ctx, n.ID, chassisKey)
 	if err != nil {

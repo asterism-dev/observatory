@@ -313,7 +313,7 @@ func TestRestartResumesHibernated(t *testing.T) {
 
 func TestAgentStartsChassisOnUnderlay(t *testing.T) {
 	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisPrivateKey, a.OVNKeyFile = "pub-key", "priv-key", "/vms/ovn-key.pem"
+		a.ChassisKey, a.ChassisCSR, a.ChassisPrivateKey, a.OVNKeyFile = "pub-key", "CSR PEM", "priv-key", "/vms/ovn-key.pem"
 	})
 	eventually(t, "chassis started", func() bool { return len(env.provider.gotChassis()) > 0 })
 	if n := len(env.provider.gotChassis()); n != 1 {
@@ -324,15 +324,6 @@ func TestAgentStartsChassisOnUnderlay(t *testing.T) {
 	if c.Name != "n1" || c.PrivateKey != "priv-key" || c.Address != u.Address || c.HubKey != u.HubKey || c.SBRemote != u.SBRemote ||
 		c.Endpoint != u.Endpoint || c.CACert != u.CACert || c.Cert != u.Cert || c.KeyFile != "/vms/ovn-key.pem" || c.MTU != 1420 {
 		t.Fatalf("chassis = %+v", c)
-	}
-}
-
-func TestRegisterCarriesChassis(t *testing.T) {
-	env := startEnv(t, func(a *Agent, _ *fakeProvider) {
-		a.ChassisKey, a.ChassisCSR = "pub-key", "CSR PEM"
-	})
-	if r := env.hub.registers()[0]; r.ChassisKey != "pub-key" || r.ChassisCSR != "CSR PEM" {
-		t.Fatalf("register = %+v", r)
 	}
 }
 

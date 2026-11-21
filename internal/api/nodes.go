@@ -11,6 +11,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
@@ -248,7 +249,7 @@ func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
 }
 
 // NodeEndpoints registers the routes nodes call themselves; they authenticate with enroll tokens or credentials, not sessions.
-func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet) {
+func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet, nh *network.Hub) {
 	mux.HandleFunc("GET /api/nodes/connect", f.ServeConnect)
 	mux.HandleFunc("POST /api/nodes/enroll", func(w http.ResponseWriter, r *http.Request) {
 		var body struct{ Token string }
@@ -276,5 +277,35 @@ func NodeEndpoints(mux *http.ServeMux, s *store.Store, f *fleet.Fleet) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"nodeId": n.ID.String(), "credential": credential})
+	})
+	mux.HandleFunc("POST /api/nodes/underlay", func(w http.ResponseWriter, r *http.Request) {
+		if nh == nil {
+			writeError(w, http.StatusServiceUnavailable, "network is not configured")
+			return
+		}
+		cred, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		node, err := s.NodeByCredential(r.Context(), cred)
+		if !ok || errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err != nil {
+			serverError(w, "node auth", err)
+			return
+		}
+		var body proto.UnderlayRequest
+		if !readJSON(w, r, &body) {
+			return
+		}
+		u, err := nh.Underlay(r.Context(), node, body.ChassisKey, body.ChassisCSR)
+		if errors.Is(err, network.ErrUnderlayRequest) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err != nil {
+			serverError(w, "node underlay", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
 	})
 }
