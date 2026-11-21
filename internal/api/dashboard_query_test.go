@@ -317,8 +317,11 @@ func TestDashboardQueryErrors(t *testing.T) {
 		t.Fatalf("redirect: %d %s", rec.Code, rec.Body.String())
 	}
 	d.api.telemetry = nil
-	if rec := d.query(d.aliceTok, `{"query":"up"}`); rec.Code != 404 {
-		t.Fatalf("telemetry off: %d", rec.Code)
+	for _, rec := range []*httptest.ResponseRecorder{d.query(d.aliceTok, `{"query":"up"}`), d.do("GET", dashboardsPath(d.org)+"/metric-names", d.aliceTok)} {
+		decode(t, rec, &e)
+		if rec.Code != 404 || e.Error != "telemetry is off" {
+			t.Fatalf("telemetry off: %d %s", rec.Code, rec.Body.String())
+		}
 	}
 }
 

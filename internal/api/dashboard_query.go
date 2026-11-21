@@ -60,7 +60,7 @@ func (h *api) dashboardScope(r *http.Request, org uuid.UUID) (telemetry.Scope, e
 // dashboardRequest resolves the org, applies the caller's rate limit and computes their scope; it writes errors itself.
 func (h *api) dashboardRequest(w http.ResponseWriter, r *http.Request) (org uuid.UUID, scope telemetry.Scope, ok bool) {
 	if h.telemetry == nil {
-		writeError(w, http.StatusNotFound, "not found")
+		writeError(w, http.StatusNotFound, "telemetry is off")
 		return org, scope, false
 	}
 	m, ok := h.orgFromPath(w, r)
