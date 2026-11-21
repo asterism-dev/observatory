@@ -85,6 +85,7 @@ func (h *api) createDevice(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "device key", err)
 		return
 	}
+	// ponytail: a removal and its purge landing between authorize and commit leave an ex-member's device; recheck membership in the tx once iam can be asked there.
 	d := store.Device{OrgID: m.OrgID, UserID: p.User.ID, Name: name, PublicKey: pub}
 	var slice string
 	if !h.commit(w, r, func(tx *store.Store) error {

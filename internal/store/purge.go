@@ -60,8 +60,15 @@ func (s *Store) purgeScoped(ctx context.Context, org uuid.UUID, scope EnvScope, 
 	return err
 }
 
-// DeleteSessionCredentials drops the registry credentials issued to a session.
+// DeleteSessionCredentials drops the registry credentials of an ended session and refuses new ones for it.
 func (s *Store) DeleteSessionCredentials(ctx context.Context, session uuid.UUID) error {
-	_, err := s.q.Exec(ctx, "DELETE FROM registry_credentials WHERE session_id = $1", session)
-	return err
+	return s.InTx(ctx, func(tx *Store) error {
+		if _, err := tx.q.Exec(ctx, `
+			INSERT INTO registry_revoked_sessions (session_id, expires_at) VALUES ($1, now() + make_interval(secs => $2))
+			ON CONFLICT DO NOTHING`, session, revokedSessionRetention.Seconds()); err != nil {
+			return err
+		}
+		_, err := tx.q.Exec(ctx, "DELETE FROM registry_credentials WHERE session_id = $1", session)
+		return err
+	})
 }

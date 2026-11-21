@@ -222,11 +222,15 @@ func TestMigration00036BackfillsRegistryCredentials(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 36); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	var n int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM registry_credentials").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("credentials after the backfill: %d %v, want only the live session's", n, err)
+	}
 	var hash []byte
 	var got string
 	var tail bool
 	if err := pool.QueryRow(ctx, "SELECT secret_hash, user_id, session_expires_at > now() + interval '23 hours' FROM registry_credentials").Scan(&hash, &got, &tail); err != nil {
-		t.Fatalf("expected exactly the live session's credential: %v", err)
+		t.Fatal(err)
 	}
 	if string(hash) != "\x01" || got != user || !tail {
 		t.Fatalf("credential %x user %s (want %s) session expiry carried %v", hash, got, user, tail)

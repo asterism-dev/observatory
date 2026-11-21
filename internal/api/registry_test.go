@@ -319,6 +319,22 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 	}
 }
 
+func TestRegistryCredentialRefusedAfterSessionRevokeEvent(t *testing.T) {
+	e := newEnv(t)
+	alice, _ := e.user("alice")
+	cli := e.cliSession(alice)
+	var session uuid.UUID
+	if err := e.pool.QueryRow(t.Context(), "SELECT id FROM sessions WHERE user_id = $1 AND kind = 'cli'", alice.ID).Scan(&session); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.DeleteSessionCredentials(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.do("POST", "/api/registry/credentials", cli); rec.Code != 401 {
+		t.Fatalf("credential for a revoked session: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProxyStreamsBlob(t *testing.T) {
 	e := newEnv(t)
 	const size = 1 << 30

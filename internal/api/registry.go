@@ -239,6 +239,10 @@ func (h *api) createRegistryCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, expires, err := h.store.CreateRegistryCredential(r.Context(), p.User.ID, p.Session.ID, p.Session.ExpiresAt, registryCredentialTTL)
+	if errors.Is(err, store.ErrSessionRevoked) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	if err != nil {
 		serverError(w, "registry credential", err)
 		return
