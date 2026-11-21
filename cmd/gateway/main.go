@@ -44,6 +44,8 @@ func main() {
 	if token == "" {
 		log.Fatal("OBSERVATORY_GATEWAY_TOKEN is not set")
 	}
+	localChassis := os.Getenv("OBSERVATORY_GATEWAY_CHASSIS")
+	warnedChassis := ""
 
 	run := func(args ...string) (string, error) {
 		if args[0] == "ovn-nbctl" {
@@ -174,6 +176,11 @@ func main() {
 			continue
 		}
 		dns.setViews(st.Orgs, st.Devices)
+		if n := st.GatewayChassis.Name; chassisMismatch(localChassis, n) && n != warnedChassis {
+			log.Printf("warning: the hub names gateway chassis %s, but this gateway runs with OBSERVATORY_GATEWAY_CHASSIS=%q; "+
+				"device traffic stays down until OBSERVATORY_GATEWAY_NODE is the same for hub and gateway", n, localChassis)
+			warnedChassis = n
+		}
 
 		reboundMu.Lock()
 		gateway.set(st.GatewayChassis.Name)
@@ -191,6 +198,14 @@ func main() {
 			}
 		}
 	}
+}
+
+// chassisMismatch reports a hub-sent gateway chassis that this container's mode does not provide.
+func chassisMismatch(local, name string) bool {
+	if local == "" {
+		local = "hub-gw"
+	}
+	return name != local
 }
 
 // gatewayNames is the gateway chassis the guard checks against; after a switch the former one stays exempt from claims

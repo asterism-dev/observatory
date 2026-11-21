@@ -556,3 +556,19 @@ func TestEndpointsParse(t *testing.T) {
 		t.Fatalf("got %v %v", got, err)
 	}
 }
+
+func TestChassisMismatch(t *testing.T) {
+	for _, c := range []struct {
+		local, name string
+		want        bool
+	}{
+		{"", "hub-gw", false},
+		{"", nodeA, true},
+		{nodeA, nodeA, false},
+		{nodeA, "hub-gw", true},
+	} {
+		if got := chassisMismatch(c.local, c.name); got != c.want {
+			t.Errorf("chassisMismatch(%q, %q) = %v, want %v", c.local, c.name, got, c.want)
+		}
+	}
+}
