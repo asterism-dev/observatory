@@ -3,7 +3,8 @@
 A dashboard is a page of charts built from the metrics in the hub's store: the built-in VM and node usage
 ([Telemetry](telemetry.md)) and whatever your apps send to their VM's local endpoint
 ([guest.md](guest.md#sending-telemetry-from-apps)). Open *Dashboards* in the web app's navigation. Telemetry must be on;
-without a metrics store the panels show an error.
+while it is off, dashboards can still be created and edited, but their panels say that telemetry is off (the query and
+metric-name endpoints answer 404 `telemetry is off`).
 
 ## Scopes: who sees and edits a dashboard
 
@@ -105,7 +106,8 @@ sort_desc(histogram_quantile(0.95, sum by (le, observatory_vm_name) (rate(http_r
 
 Two people editing the same dashboard do not overwrite each other: if it changed since you opened the editor, saving
 fails with "changed elsewhere" and you reload to see the other version. Creating, changing and deleting dashboards is
-recorded in the audit log (`dashboard:create`, `dashboard:update`, `dashboard:delete`).
+recorded in the audit log (`dashboard:create`, `dashboard:update`, `dashboard:delete`); an update that moves a dashboard
+to another scope also records where it came from (`fromScope`, `fromOwnerId`).
 
 ## API
 
