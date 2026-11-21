@@ -30,7 +30,8 @@ func TestServeEdgeRequiresConfig(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k] }
 	if code := run(c, []string{"serve", "edge"}); code != 1 ||
-		!strings.Contains(stderr.String(), "OBSERVATORY_EDGE_TOKEN") || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_HUB_URL") {
+		!strings.Contains(stderr.String(), "OBSERVATORY_EDGE_TOKEN") || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_HUB_URL") ||
+		!strings.Contains(stderr.String(), "OBSERVATORY_SERVICE_TOKEN") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
@@ -103,6 +104,8 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
 		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
 		"OBSERVATORY_HUB_LISTEN":         "127.0.0.1:0",
+		// Invalid on purpose: serve all must replace it with the tokens it generates, or the hub would refuse to start.
+		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)

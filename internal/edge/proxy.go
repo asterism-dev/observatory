@@ -8,7 +8,7 @@ import (
 )
 
 // proxy forwards to target unchanged except for the trusted headers, which only the edge may set.
-func proxy(target *url.URL, token string) http.Handler {
+func proxy(target *url.URL, token string, withIdentity bool) http.Handler {
 	return &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
@@ -22,6 +22,14 @@ func proxy(target *url.URL, token string) http.Handler {
 			}
 			r.Out.Header.Set(HeaderClientIP, host)
 			r.Out.Header.Set(HeaderEdge, token)
+			if withIdentity {
+				r.Out.Header.Del("Cookie")
+				r.Out.Header.Del("Authorization")
+				// Set here rather than on the inbound request so a client's Connection header cannot strip it.
+				if jwt, ok := r.In.Context().Value(jwtKey{}).(string); ok {
+					r.Out.Header.Set("Authorization", "Bearer "+jwt)
+				}
+			}
 		},
 		FlushInterval: -1,
 	}

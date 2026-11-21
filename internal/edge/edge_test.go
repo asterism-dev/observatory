@@ -14,7 +14,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef"
+const (
+	testToken        = "0123456789abcdef0123456789abcdef"
+	testServiceToken = "fedcba9876543210fedcba9876543210"
+)
 
 var assets = fstest.MapFS{
 	"index.html":  {Data: []byte("<html>spa</html>")},
@@ -40,7 +43,7 @@ func recorder(t *testing.T, name string) (*httptest.Server, chan seen) {
 
 func newEdge(t *testing.T, hubURL string, services map[string]string) *httptest.Server {
 	t.Helper()
-	h, err := New(Config{HubURL: hubURL, Token: testToken, Services: services}, assets)
+	h, err := New(Config{HubURL: hubURL, Token: testToken, ServiceToken: testServiceToken, Services: services}, assets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +87,11 @@ func TestEdgeRoutesToHub(t *testing.T) {
 }
 
 func TestEdgeRoutesToService(t *testing.T) {
-	hub, _ := recorder(t, "hub")
+	hub, _, _ := issuingHub(t, http.StatusOK)
 	iam, ch := recorder(t, "iam")
 	edge := newEdge(t, hub.URL, map[string]string{"iam": iam.URL})
 	req, _ := http.NewRequest("GET", edge.URL+"/api/iam/v1/x", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
 	if code, body := get(t, req); code != 200 || body != "iam" {
 		t.Fatalf("%d %q", code, body)
 	}
@@ -249,9 +253,10 @@ func TestEdgeServesSPA(t *testing.T) {
 
 func TestNewRejectsBadConfig(t *testing.T) {
 	for name, cfg := range map[string]Config{
-		"missing hub": {Token: testToken},
-		"short token": {HubURL: "http://hub", Token: "short"},
-		"bad service": {HubURL: "http://hub", Token: testToken, Services: map[string]string{"iam": "::"}},
+		"missing hub":         {Token: testToken, ServiceToken: testServiceToken},
+		"short token":         {HubURL: "http://hub", Token: "short", ServiceToken: testServiceToken},
+		"short service token": {HubURL: "http://hub", Token: testToken, ServiceToken: "short"},
+		"bad service":         {HubURL: "http://hub", Token: testToken, ServiceToken: testServiceToken, Services: map[string]string{"iam": "::"}},
 	} {
 		if _, err := New(cfg, assets); err == nil {
 			t.Fatalf("%s: want error", name)

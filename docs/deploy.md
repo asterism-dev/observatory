@@ -58,10 +58,14 @@ Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory ser
 - `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by both: the edge sends it with
   each request, and the hub takes the client IP from the edge's header only when the token matches, otherwise the
   connection's address. Changing it needs both services restarted.
+- `OBSERVATORY_EDGE_SERVICE_TOKEN` (`openssl rand -hex 32`, at least 32 characters, different from the edge token) is the
+  edge's service token: the hub gets it as `OBSERVATORY_SERVICE_TOKENS=edge=<token>`, the edge as
+  `OBSERVATORY_SERVICE_TOKEN`, and the edge uses it to exchange the user's session for a short-lived signed identity token
+  on requests to extracted services (`/api/<service>/v1/`). Changing it needs both services restarted.
 
 The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
 `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
-when other containers must call the hub, and keep that port off public networks) in one process, with an edge token generated
+when other containers must call the hub, and keep that port off public networks) in one process, with the edge and service tokens generated
 per start.
 
 ## Serving modes
