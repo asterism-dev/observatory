@@ -1,4 +1,4 @@
-.PHONY: dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap hub cli web test run node
+.PHONY: gen gen-check lint dev-up dev-down gateway-token storage-token gateway-up gateway-down registry-env registry-up registry-down telemetry-env telemetry-up telemetry-down idp-up idp-down idp-bootstrap hub cli web test run node
 
 dev-up:
 	docker compose -f deploy/dev/compose.yaml up -d --wait
@@ -65,3 +65,14 @@ run:
 
 node:
 	GOOS=linux GOARCH=amd64 go build -o bin/observatory-node-linux-amd64 ./cmd/node
+
+gen:
+	npm --prefix web ci
+	go tool buf generate
+
+gen-check: gen
+	git diff --exit-code -- gen web/src/gen
+	test -z "$$(git ls-files --others --exclude-standard -- gen web/src/gen)"
+
+lint:
+	go tool buf lint

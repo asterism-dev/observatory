@@ -41,6 +41,21 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - run: npm --prefix web ci
+      - run: make gen-check
+      - run: go tool buf lint
+      # Compares against the fetched base branch; skipped until the base ships a buf.yaml.
+      - env:
+          BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=$auth" fetch --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+          if git cat-file -e "refs/remotes/origin/$BASE_REF:buf.yaml" 2>/dev/null; then
+            go tool buf breaking --against ".git#ref=refs/remotes/origin/$BASE_REF,depth=1"
+          else
+            echo "base $BASE_REF has no buf.yaml, skipping buf breaking"
+          fi
       - run: go vet ./...
       - run: go test ./...
       - run: node --test web/src/composables/*.test.ts

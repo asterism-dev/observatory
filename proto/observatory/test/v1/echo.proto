@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package observatory.test.v1;
+
+import "observatory/v1/annotations.proto";
+
+message EchoRequest {
+  string text = 1;
+}
+
+message EchoResponse {
+  string text = 1;
+}
+
+service EchoService {
+  rpc Echo(EchoRequest) returns (EchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.create"
+      object: "org/echoes"
+      kind: KIND_WRITE
+    };
+  }
+}
