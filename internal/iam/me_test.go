@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -73,7 +74,15 @@ func TestListAndRevokeSessions(t *testing.T) {
 		t.Fatalf("current flags: %+v", list)
 	}
 
+	otherID := uuid.MustParse(other)
+	if _, _, err := e.store.CreateRegistryCredential(context.Background(), u.ID, otherID, time.Now().Add(time.Hour), time.Hour); err != nil {
+		t.Fatal(err)
+	}
 	must[iamv1.RevokeSessionResponse](t)(e.client.RevokeSession(context.Background(), req(tok1, &iamv1.RevokeSessionRequest{Session: other})))
+	var creds int
+	if err := e.pool.QueryRow(context.Background(), `SELECT count(*) FROM registry_credentials WHERE session_id = $1`, otherID).Scan(&creds); err != nil || creds != 0 {
+		t.Fatalf("registry credentials left: %d %v", creds, err)
+	}
 	if es := e.audit(store.ActionSessionRevoke); len(es) != 1 || es[0].Resource != "session/"+other || es[0].ActorID != u.ID.String() || es[0].Result != store.ResultAllowed {
 		t.Fatalf("audit: %+v", es)
 	}

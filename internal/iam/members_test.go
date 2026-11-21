@@ -246,15 +246,46 @@ func TestDeleteMemberOwningVM(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.resources.setOwner(authz.UserSubject(bob.ID), true)
 
+	before := len(e.audit(""))
+	e.takeNotified()
 	err := e.deleteMember(ownerTok, org, bob)
 	wantCode(t, err, connect.CodeFailedPrecondition)
 	if err.(*connect.Error).Message() != store.ErrOwnsResources.Error() {
 		t.Fatalf("message: %v", err)
 	}
 	wantCode(t, e.leaveOrg(bobTok, org), connect.CodeFailedPrecondition)
+	if n := len(e.audit("")); n != before {
+		t.Fatalf("audit events written: %d -> %d", before, n)
+	}
+	if n := e.takeNotified(); len(n) != 0 {
+		t.Fatalf("notified %v", n)
+	}
 	e.resources.setOwner(authz.UserSubject(bob.ID), false)
 	if err := e.deleteMember(ownerTok, org, bob); err != nil {
 		t.Fatalf("remove after VM deleted: %v", err)
+	}
+}
+
+// The last-owner guard is still reachable through DeleteMember for a non-owner holding setRole and delete.
+func TestDeleteMemberLastOwner(t *testing.T) {
+	e := newEnv(t)
+	owner, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", authz.ObjMembers, store.ActionMemberSetRole)
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", authz.ObjMembers, store.ActionMemberRemove)
+
+	err := e.deleteMember(bobTok, org, owner)
+	wantCode(t, err, connect.CodeFailedPrecondition)
+	if err.(*connect.Error).Message() != store.ErrLastOwner.Error() {
+		t.Fatalf("message: %v", err)
+	}
+	if e.role(org, owner) != store.RoleOwner {
+		t.Fatal("last owner removed")
+	}
+	if es := e.audit(store.ActionMemberRemove); len(es) != 0 {
+		t.Fatalf("audit: %+v", es)
 	}
 }
 
