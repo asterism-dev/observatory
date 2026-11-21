@@ -1,0 +1,14 @@
+# Starts what Docker's own restore could not: gateway and storage fail if they start before netns (docs/deploy.md).
+[Unit]
+Description=Start the observatory hub containers in dependency order
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# The project name is fixed in compose.yaml, so no compose file or checkout path is needed.
+ExecStart=/usr/bin/docker compose -p observatory-hub start
+
+[Install]
+# Also runs again whenever docker.service starts, not only at boot.
+WantedBy=docker.service
