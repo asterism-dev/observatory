@@ -10,10 +10,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/netaddr"
 )
 
-const maxCandidates = 8
-
-var cgnat = netip.MustParsePrefix("100.64.0.0/10")
-
 func validEndpoint(s string) (netip.AddrPort, bool) {
 	ap, err := netip.ParseAddrPort(s)
 	if err != nil || ap.Port() == 0 || !netaddr.DirectEndpointAddr(ap.Addr()) {
@@ -22,9 +18,9 @@ func validEndpoint(s string) (netip.AddrPort, bool) {
 	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), true
 }
 
-// validCandidates keeps the usable, distinct entries of a node-reported list on the node port, at most maxCandidates.
+// validCandidates keeps the usable, distinct entries of a node-reported list on the node port, at most netaddr.MaxCandidates.
 func validCandidates(in []string) []string {
-	out := make([]string, 0, min(len(in), maxCandidates))
+	out := make([]string, 0, min(len(in), netaddr.MaxCandidates))
 	for _, s := range in {
 		ap, ok := validEndpoint(s)
 		if !ok || ap.Port() != netaddr.NodeUnderlayPort {
@@ -35,7 +31,7 @@ func validCandidates(in []string) []string {
 			continue
 		}
 		out = append(out, s)
-		if len(out) == maxCandidates {
+		if len(out) == netaddr.MaxCandidates {
 			break
 		}
 	}
@@ -60,10 +56,10 @@ func (f *Fleet) Candidates(node uuid.UUID) []string {
 	if !ok || slices.Contains(list, observed) {
 		return list
 	}
-	list = list[:min(len(list), maxCandidates-1)] // room for the observed endpoint, which is never the one dropped
+	list = list[:min(len(list), netaddr.MaxCandidates-1)] // room for the observed endpoint, which is never the one dropped
 	at := slices.IndexFunc(list, func(s string) bool {
 		ap, err := netip.ParseAddrPort(s)
-		return err == nil && cgnat.Contains(ap.Addr())
+		return err == nil && netaddr.CGNAT.Contains(ap.Addr())
 	})
 	if at < 0 {
 		at = len(list)

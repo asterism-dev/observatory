@@ -294,8 +294,9 @@ type Message struct {
 }
 
 const (
-	TypePeers = "peers"
-	TypePaths = "paths"
+	TypePeers      = "peers"
+	TypePaths      = "paths"
+	TypeCandidates = "candidates"
 )
 
 // Peers is the full set of same-org nodes a node may reach directly, sorted by NodeID.

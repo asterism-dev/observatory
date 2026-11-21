@@ -12,12 +12,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
-const maxCandidates = 8
-
-var (
-	skipIfacePrefixes = []string{"docker", "br-", "veth", "ovs-", "genev_sys_", "vmm0", "wg-underlay"}
-	cgnat             = netip.MustParsePrefix("100.64.0.0/10")
-)
+var skipIfacePrefixes = []string{"docker", "br-", "veth", "ovs-", "genev_sys_", "vmm0", "wg-underlay"}
 
 // candidates lists the node's reachable underlay endpoints: private LAN first, then public, then CGNAT/VPN.
 func candidates(ifaces []net.Interface, addrs func(net.Interface) ([]net.Addr, error), port int) []string {
@@ -46,7 +41,7 @@ func candidates(ifaces []net.Interface, addrs func(net.Interface) ([]net.Addr, e
 			ip = ip.Unmap()
 			rank := 1
 			switch {
-			case cgnat.Contains(ip) || strings.HasPrefix(ifc.Name, "tailscale"):
+			case netaddr.CGNAT.Contains(ip) || strings.HasPrefix(ifc.Name, "tailscale"):
 				rank = 2
 			case ip.IsPrivate():
 				rank = 0
@@ -55,9 +50,9 @@ func candidates(ifaces []net.Interface, addrs func(net.Interface) ([]net.Addr, e
 		}
 	}
 	slices.SortStableFunc(found, func(a, b ranked) int { return a.rank - b.rank })
-	out := make([]string, 0, min(len(found), maxCandidates))
+	out := make([]string, 0, min(len(found), netaddr.MaxCandidates))
 	for _, r := range found {
-		if len(out) < maxCandidates && !slices.Contains(out, r.ep) {
+		if len(out) < netaddr.MaxCandidates && !slices.Contains(out, r.ep) {
 			out = append(out, r.ep)
 		}
 	}
@@ -82,7 +77,7 @@ func (a *Agent) candidatesLoop(ctx context.Context) {
 			a.mu.Lock()
 			send := a.send
 			a.mu.Unlock()
-			if send != nil && send(proto.Message{Type: "candidates", Candidates: cur}) == nil {
+			if send != nil && send(proto.Message{Type: proto.TypeCandidates, Candidates: cur}) == nil {
 				last = cur
 			}
 		}

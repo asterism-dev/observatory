@@ -2512,7 +2512,7 @@ func TestFleetStoresCandidates(t *testing.T) {
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
 	node := e.connect(cred)
-	node.send(proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822", "10.198.0.20:51822", "100.101.1.2:51822"}})
+	node.send(proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822", "10.198.0.20:51822", "100.101.1.2:51822"}})
 	chassis, err := e.s.Chassis(ctx)
 	if err != nil || len(chassis) != 1 {
 		t.Fatalf("chassis = %v %v", chassis, err)
@@ -2537,7 +2537,7 @@ func TestFleetObservedEndpointKeptAtCap(t *testing.T) {
 	for i := 1; i <= 8; i++ {
 		eight = append(eight, fmt.Sprintf("192.168.1.%d:51822", i))
 	}
-	e.connect(cred).send(proto.Message{Type: "candidates", Candidates: eight})
+	e.connect(cred).send(proto.Message{Type: proto.TypeCandidates, Candidates: eight})
 	chassis, _ := e.s.Chassis(ctx)
 	key := chassis[0].PublicKey
 	waitFor(t, func() bool { return len(e.f.Candidates(n.ID)) == 8 })
@@ -2564,7 +2564,7 @@ func TestFleetUnchangedCandidatesDoNotPush(t *testing.T) {
 	b := e.connect(credB)
 	a.desired()
 	b.desired()
-	msg := proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822"}}
+	msg := proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822"}}
 	a.send(msg)
 	b.next()
 	a.send(msg)
@@ -2672,7 +2672,7 @@ func TestPeersPushedOnCandidateChange(t *testing.T) {
 	a.nextPeers()
 	b := e.connect(cred2)
 	b.nextPeers()
-	b.send(proto.Message{Type: "candidates", Candidates: []string{"192.168.1.5:51822"}})
+	b.send(proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822"}})
 	if got := a.nextPeers(); len(got.Peers) != 1 || !slices.Equal(got.Peers[0].Candidates, []string{"192.168.1.5:51822"}) {
 		t.Fatalf("after candidates = %+v", got)
 	}

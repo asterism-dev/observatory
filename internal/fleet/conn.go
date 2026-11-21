@@ -230,7 +230,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			// Old nodes still send these; VM usage now comes from the telemetry store.
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
-		case m.Type == "candidates":
+		case m.Type == proto.TypeCandidates:
 			valid := validCandidates(m.Candidates)
 			f.mu.Lock()
 			changed := !slices.Equal(f.candidates[node.ID], valid)

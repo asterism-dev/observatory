@@ -18,6 +18,8 @@ var (
 	Transit         = netip.MustParsePrefix("10.199.0.0/30")
 	AutoNetworks    = netip.MustParsePrefix("10.210.0.0/16")
 	NATNet          = netip.MustParsePrefix("192.168.64.0/24")
+	// CGNAT holds carrier-grade NAT and VPN (e.g. Tailscale) addresses, the last resort for direct paths.
+	CGNAT = netip.MustParsePrefix("100.64.0.0/10")
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 	// UnderlayMTU is the nodes' wg-underlay MTU; Geneve inside it costs GeneveOverhead.
 	UnderlayMTU    = 1420
 	GeneveOverhead = 58
+	MaxCandidates  = 8
 	// NodeUnderlayPort is where nodes listen on wg-underlay for direct peers.
 	NodeUnderlayPort = 51822
 	// ControlPort is the gateway proxy that carries node control traffic over the underlay.
