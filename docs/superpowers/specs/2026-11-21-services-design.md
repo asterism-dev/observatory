@@ -158,6 +158,12 @@ fit under build.
 
 ### Action catalog
 
+- **Permission names are `service.resource.verb`** (user decision), e.g. `logging.logEntries.list`,
+  `compute.instances.start`, `compute.disks.attach`, `iam.roles.update`, `audit.settings.update`: service as in the
+  service table, resource in lowerCamelCase plural, verb in lowerCamelCase (`get`, `list`, `create`, `update`,
+  `delete`, plus domain verbs such as `start`, `stop`, `connect`, `attach`). Built-in role defaults, custom rules,
+  object patterns in grants and the audit trail all use these names; the 0.x `noun:verb` actions (`vm:power`, …) are
+  replaced, no aliases (fresh install).
 - Each service defines its actions next to its API: every RPC carries a proto annotation with its action, object
   pattern and kind (write or read). The same annotation drives the permission check, the audit interceptor and the
   catalog *(our call)*.
@@ -177,9 +183,11 @@ Like a cloud audit trail (user decision):
   old and new role). Events go through the outbox and the bus to the audit service, which stores them append-only in
   its own Postgres database.
 - **Data events** (read calls) are off by default and can be switched on per org and per service by org admins with a
-  new action `audit:configure` on `org/audit`. The platform admin sets retention and may cap what orgs can enable
+    new permission `audit.settings.update` on `org/audit`. The platform admin sets retention and may cap what orgs can
+  enable
   *(our call)*.
-- `audit:read` per org and platform-wide audit for platform admins stay as today; the GUI filters by principal, action,
+- `audit.events.list` per org and platform-wide audit for platform admins stay as today; the GUI filters by principal,
+  action,
   object, time and result.
 - Later, over the bus: streaming to a SIEM (user subscription), export into buckets.
 
