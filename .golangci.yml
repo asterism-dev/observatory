@@ -24,17 +24,14 @@ linters:
       rules:
         edge:
           files: ["**/internal/edge/**"]
-          deny:
-            - pkg: github.com/asterism-dev/observatory/internal/hubserver
-              desc: the edge talks to the hub over HTTP only
-            - pkg: github.com/asterism-dev/observatory/internal/api
-              desc: hub package
-            - pkg: github.com/asterism-dev/observatory/internal/store
-              desc: hub package
-            - pkg: github.com/asterism-dev/observatory/internal/fleet
-              desc: hub package
-            - pkg: github.com/asterism-dev/observatory/internal/network
-              desc: hub package
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/edge
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - github.com/asterism-dev/observatory/web
+            - github.com/coder/websocket
         hubserver:
           files: ["**/internal/hubserver/**"]
           deny:
@@ -42,10 +39,32 @@ linters:
               desc: the hub must not depend on the edge; shared code belongs in internal/platform
         platform:
           files: ["**/internal/platform/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - google.golang.org/protobuf
           deny:
-            - pkg: github.com/asterism-dev/observatory/internal/edge
+            - pkg: github.com/asterism-dev/observatory/internal/api
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/store
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/fleet
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/network
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/db
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/auth
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/authz
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/registry
               desc: platform code must not import a service
             - pkg: github.com/asterism-dev/observatory/internal/hubserver
+              desc: platform code must not import a service
+            - pkg: github.com/asterism-dev/observatory/internal/edge
               desc: platform code must not import a service
   exclusions:
     rules:
