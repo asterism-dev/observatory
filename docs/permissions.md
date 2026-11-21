@@ -339,8 +339,8 @@ member rejoins in between, only what predates the removal is purged.
 - Events stay on the bus for 7 days; cleanup that is delayed longer is lost.
 - Deleting a manifest (image cleanup) is best effort; a failure leaves a registry blob until garbage collection.
 - Deleting an org or a user does not clean up hub rows yet and leaves orphans until the iam service is extracted.
-- Registry credentials end with the session that issued them: after a logout or revoke the registry refuses them,
-  even before the credential's own expiry.
+- Registry credentials end with the session that issued them: the registry refuses them once the session is revoked
+  or expired, even before the credential's own expiry.
 
 ## Audit
 

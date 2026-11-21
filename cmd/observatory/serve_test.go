@@ -123,7 +123,7 @@ func TestServeHubListensOnHubListen(t *testing.T) {
 	}
 }
 
-func serveAllEnv(t *testing.T, pool *pgxpool.Pool, edgeLn net.Listener) (map[string]string, string) {
+func serveAllEnv(t *testing.T, pool *pgxpool.Pool, edgeLn net.Listener) map[string]string {
 	t.Helper()
 	idp := httptest.NewServer(nil)
 	t.Cleanup(idp.Close)
@@ -152,7 +152,7 @@ func serveAllEnv(t *testing.T, pool *pgxpool.Pool, edgeLn net.Listener) (map[str
 		// Invalid on purpose: serve all must replace it with the tokens it generates, or the hub would refuse to start.
 		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}
-	return env, env["OBSERVATORY_SECRETS_KEY"]
+	return env
 }
 
 // TestServeAllRecordsClientIPThroughEdge runs the real edge, hub, bus and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
@@ -162,7 +162,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 		t.Skipf("no IPv6 loopback: %v", err)
 	}
 	pool := dbtest.New(t)
-	env, _ := serveAllEnv(t, pool, edgeLn)
+	env := serveAllEnv(t, pool, edgeLn)
 	// Created before start: the hub loads its policy snapshot then and is not told about later direct writes.
 	s := store.New(pool)
 	alice, err := s.Login(t.Context(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
@@ -298,8 +298,8 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	pool := dbtest.New(t)
-	env, masterKey := serveAllEnv(t, pool, edgeLn)
-	master, err := seal.ParseKey(masterKey)
+	env := serveAllEnv(t, pool, edgeLn)
+	master, err := seal.ParseKey(env["OBSERVATORY_SECRETS_KEY"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,6 +343,11 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var envRows int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", org.ID, bob.User.ID).Scan(&envRows); err != nil || envRows != 1 {
+		t.Fatalf("bob's env var rows before removal: %d, %v", envRows, err)
+	}
+
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
@@ -375,7 +380,7 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		t.Fatalf("/api/me with a CLI session: %d %s", code, body)
 	}
 	// A non-session bearer is not swapped at the edge, so the 401 comes from the node auth in the hub.
-	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized {
+	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized || body != "Unauthorized\n" {
 		t.Fatalf("/api/nodes/health: %d %s", code, body)
 	}
 
