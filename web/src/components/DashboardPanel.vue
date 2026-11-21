@@ -37,14 +37,14 @@ async function load() {
       const first = res.series[0]
       stat.value =
         first && first.value !== null
-          ? { value: formatValue(first.value, unit.value), label: res.series.length > 1 ? (legendLabels([first.labels])[0] ?? '') : '', more: res.series.length - 1 }
+          ? { value: formatValue(first.value, unit.value), label: res.series.length > 1 ? (legendLabels([first.labels], props.panel)[0] ?? '') : '', more: res.series.length - 1 }
           : null
     } else {
       const body = { query, from: props.from.toISOString(), to: props.to.toISOString(), step: stepFor(props.from, props.to) }
       const res = await post<RangeResult>(body)
       if (n !== seq) return
       t0.value = res.t
-      series.value = toSeries(res)
+      series.value = toSeries(res, props.panel)
     }
     error.value = ''
   } catch (e) {

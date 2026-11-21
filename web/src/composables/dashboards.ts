@@ -48,30 +48,31 @@ export const newPanel = (query = ''): Panel => ({ title: '', type: 'timeseries',
 
 const hiddenLabels = new Set(['__name__', 'observatory_org', 'observatory_node', 'observatory_vm', 'observatory_vm_name'])
 const MAX_LABEL = 60
+const MAX_QUERY_LABEL = 40
 
-function legendLabel(labels: Record<string, string>) {
+function legendLabel(labels: Record<string, string>, panel: Pick<Panel, 'title' | 'query'>) {
   const parts = Object.keys(labels)
     .filter((k) => !hiddenLabels.has(k))
     .sort()
     .map((k) => `${k}=${labels[k]}`)
   if (labels.observatory_vm_name) parts.unshift(labels.observatory_vm_name)
-  const s = parts.join(' ') || labels.__name__ || 'value'
+  const s = parts.join(' ') || panel.title || labels.__name__ || panel.query.trim().slice(0, MAX_QUERY_LABEL)
   return s.length > MAX_LABEL ? `${s.slice(0, MAX_LABEL - 1)}…` : s
 }
 
 // Charts key lines by name, so series that differ only in hidden labels get a suffix.
-export function legendLabels(labels: Record<string, string>[]) {
+export function legendLabels(labels: Record<string, string>[], panel: Pick<Panel, 'title' | 'query'>) {
   const seen = new Map<string, number>()
   return labels.map((l) => {
-    const base = legendLabel(l)
+    const base = legendLabel(l, panel)
     const n = (seen.get(base) ?? 0) + 1
     seen.set(base, n)
     return n === 1 ? base : `${base} #${n}`
   })
 }
 
-export function toSeries(r: RangeResult): Series[] {
-  const names = legendLabels(r.series.map((s) => s.labels))
+export function toSeries(r: RangeResult, panel: Pick<Panel, 'title' | 'query'>): Series[] {
+  const names = legendLabels(r.series.map((s) => s.labels), panel)
   return r.series.map((s, i) => ({ name: names[i] ?? '', values: s.values }))
 }
 

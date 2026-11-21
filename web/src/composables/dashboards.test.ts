@@ -19,16 +19,19 @@ test('formatValue covers the panel units', () => {
 })
 
 test('legendLabels prefers the VM name, hides internal labels and stays unique', () => {
+  const panel = { title: '', query: 'up' }
   const labels = legendLabels([
     { __name__: 'orders_total', observatory_org: 'o', observatory_vm: 'v1', observatory_vm_name: 'vm01', status: '200' },
     { observatory_node: 'n1' },
     { observatory_node: 'n2' },
     { observatory_vm_name: 'vm02' },
     { b: '2', a: '1' },
-  ])
-  assert.deepEqual(labels, ['vm01 status=200', 'value', 'value #2', 'vm02', 'a=1 b=2'])
-  assert.equal(legendLabels([{ __name__: 'up' }])[0], 'up')
-  assert.equal(legendLabels([{ path: 'x'.repeat(100) }])[0]?.length, 60)
+  ], panel)
+  assert.deepEqual(labels, ['vm01 status=200', 'up', 'up #2', 'vm02', 'a=1 b=2'])
+  assert.equal(legendLabels([{ __name__: 'cpu' }], panel)[0], 'cpu')
+  assert.equal(legendLabels([{ __name__: 'cpu' }], { title: 'CPU', query: 'q' })[0], 'CPU')
+  assert.equal(legendLabels([{}], { title: '', query: ` ${'q'.repeat(100)}` })[0]?.length, 40)
+  assert.equal(legendLabels([{ path: 'x'.repeat(100) }], panel)[0]?.length, 60)
 })
 
 test('stepFor picks a round step for about 300 points', () => {
@@ -64,7 +67,7 @@ test('panelError mirrors the API validation', () => {
 })
 
 test('toSeries names series and keeps the time axis', () => {
-  const s = toSeries({ t: [1, 2], series: [{ labels: { observatory_vm_name: 'vm01' }, values: [1, null] }] })
+  const s = toSeries({ t: [1, 2], series: [{ labels: { observatory_vm_name: 'vm01' }, values: [1, null] }] }, { title: '', query: 'up' })
   assert.deepEqual(s, [{ name: 'vm01', values: [1, null] }])
 })
 
