@@ -46,6 +46,7 @@
     "images": "Images",
     "builders": "Builder-VMs",
     "adminRegistry": "Registry",
+    "adminNetwork": "Netzwerk",
     "telemetry": "Telemetrie",
     "dashboards": "Dashboards",
     "logs": "Logs"
@@ -361,6 +362,15 @@
     },
     "underlayDownHelp": "Die Node erreicht den Hub nur über HTTPS. VMs laufen weiter; bis das Underlay wieder steht, sind nur Updates möglich.",
     "underlay": "Underlay-Adresse",
+    "paths": "Wege",
+    "pathPeer": "Node",
+    "pathMode": "Weg",
+    "pathEndpoint": "Endpoint",
+    "pathMtu": "MTU",
+    "pathWarning": "Warnung",
+    "pathDirect": "Direkt",
+    "pathRelay": "Relay",
+    "pathFragmented": "Pakete zu dieser Node werden fragmentiert. Empfohlene Gast-MTU: {mtu}.",
     "quarantined": "Unter Quarantäne",
     "outdated": "Veraltet",
     "outdatedHint": "Der Hub läuft auf {hub}; führe den Installationsbefehl erneut aus, um diesen Node zu aktualisieren.",
@@ -877,6 +887,11 @@
     },
     "logTruncated": "— gekürzt, lade das vollständige Log herunter —",
     "logStreamFailed": "Das Live-Log konnte nicht geladen werden. Lade die Seite neu oder das Log herunter."
+  },
+  "adminNetwork": {
+    "title": "Netzwerk",
+    "guestMtu": "Gast-MTU",
+    "guestMtuHint": "MTU der VM-Netzwerkschnittstellen und Device-Configs. Gilt für VMs beim nächsten Start oder bei der nächsten DHCP-Verlängerung und für neu heruntergeladene Device-Configs."
   },
   "registryGC": {
     "title": "Registry-Bereinigung",

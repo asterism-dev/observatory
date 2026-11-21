@@ -230,3 +230,16 @@ func TestDeviceDuplicateName(t *testing.T) {
 		t.Fatalf("empty: %d", rec.Code)
 	}
 }
+
+func TestDeviceConfigUsesGuestMTU(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	if err := e.store.SetGuestMTU(t.Context(), 1250, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, config := e.createDevice(tok, org, "laptop")
+	if !strings.Contains(config, "\nMTU = 1250\n") {
+		t.Fatalf("config:\n%s", config)
+	}
+}

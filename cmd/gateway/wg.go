@@ -61,3 +61,17 @@ func handshakes(run runner, iface string) (map[string]time.Time, error) {
 	}
 	return res, nil
 }
+
+func endpoints(run runner, iface string) (map[string]string, error) {
+	out, err := run("wg", "show", iface, "endpoints")
+	if err != nil {
+		return nil, err
+	}
+	res := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] != "(none)" {
+			res[f[0]] = f[1]
+		}
+	}
+	return res, nil
+}

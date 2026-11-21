@@ -20,6 +20,7 @@ export interface NodeInfo {
   canTelemetry: boolean
   underlay: { ip: string; registered: boolean; lastHandshake: string | null } | null
   quarantined: boolean
+  paths: NodePath[]
   image: {
     state: 'pulling' | 'ready' | 'failed'
     version: string
@@ -27,6 +28,17 @@ export interface NodeInfo {
     error?: string
     retryAt?: string
   } | null
+}
+
+export interface NodePath {
+  node: string
+  nodeName: string
+  mode: 'direct' | 'relay'
+  endpoint?: string
+  mtu: number
+  handshake: string | null
+  warning: boolean
+  recommendedGuestMTU?: number
 }
 
 export interface UpdateRun {

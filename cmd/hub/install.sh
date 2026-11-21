@@ -139,6 +139,20 @@ table ip vmm {
     iifname "vmm0" ip daddr 10.198.0.0/16 drop
   }
 }
+table inet obs_underlay_node {}
+flush table inet obs_underlay_node
+table inet obs_underlay_node {
+  # Direct peers bypass the gateway's filter, so other nodes reach only Geneve and ping; the gateway (SB, NBD, control) stays trusted
+  chain input {
+    type filter hook input priority 0;
+    iifname != "wg-underlay" accept
+    ip saddr 10.198.0.1 accept
+    ct state established,related accept
+    udp dport 6081 accept
+    icmp type echo-request accept
+    drop
+  }
+}
 NFT
 grep -qs 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf ||
 	echo 'include "/etc/nftables.d/*.nft"' | $SUDO tee -a /etc/nftables.conf >/dev/null

@@ -271,7 +271,7 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates", "paths" (node→hub), "peers" (hub→node), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -288,6 +288,36 @@ type Message struct {
 	VM         string             `json:"vm,omitempty"`         // type "processes"
 	Processes  []GuestProcess     `json:"processes,omitempty"`  // type "processes" reply
 	Error      string             `json:"error,omitempty"`      // type "processes" reply
+	Candidates []string           `json:"candidates,omitempty"` // type "candidates": the node's underlay endpoints as ip:port
+	Peers      *Peers             `json:"peers,omitempty"`
+	Paths      []PathStatus       `json:"paths,omitempty"` // type "paths": how the node reaches each peer node
+}
+
+const (
+	TypePeers      = "peers"
+	TypePaths      = "paths"
+	TypeCandidates = "candidates"
+)
+
+// Peers is the full set of same-org nodes a node may reach directly, sorted by NodeID.
+type Peers struct {
+	Peers []Peer `json:"peers"`
+}
+
+type Peer struct {
+	NodeID     string   `json:"nodeId"`
+	PublicKey  string   `json:"publicKey"`
+	Address    string   `json:"address"` // underlay IP without prefix
+	Candidates []string `json:"candidates,omitempty"`
+}
+
+// PathStatus is how a node currently reaches one peer node.
+type PathStatus struct {
+	NodeID    string     `json:"nodeId"`
+	Mode      string     `json:"mode"` // "direct" or "relay"
+	Endpoint  string     `json:"endpoint,omitempty"`
+	MTU       int        `json:"mtu,omitempty"` // largest IP packet the direct path passes; 0 when unknown
+	Handshake *time.Time `json:"handshake,omitempty"`
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

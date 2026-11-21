@@ -107,6 +107,11 @@ func (h *api) createDevice(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	guestMTU, err := h.store.GuestMTU(r.Context())
+	if err != nil {
+		serverError(w, "guest mtu", err)
+		return
+	}
 	config := fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = %s/32
@@ -118,7 +123,7 @@ PublicKey = %s
 Endpoint = %s
 AllowedIPs = %s, %s/32
 PersistentKeepalive = 25
-`, priv, d.IP, netaddr.GatewayDNS, netaddr.GuestMTU, h.network.ClientsPublicKey(), h.network.ClientsEndpoint(), slice, netaddr.GatewayDNS)
+`, priv, d.IP, netaddr.GatewayDNS, guestMTU, h.network.ClientsPublicKey(), h.network.ClientsEndpoint(), slice, netaddr.GatewayDNS)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{"device": h.deviceJSON(d, p.User.Name, true), "config": config})
 }

@@ -3,7 +3,9 @@ package fleet_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/json"
@@ -81,6 +83,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.Close)
+	h.OnChange(f.NotifyOrg)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
 	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
@@ -143,10 +146,11 @@ func (e *env) envVar(name, value string) store.EnvVar {
 }
 
 type fakeNode struct {
-	t    *testing.T
-	ws   *websocket.Conn
-	enc  *json.Encoder
-	msgs chan proto.Message
+	t     *testing.T
+	ws    *websocket.Conn
+	enc   *json.Encoder
+	msgs  chan proto.Message
+	peers chan proto.Peers // peers pushes, kept apart so tests about other messages don't see them
 }
 
 // underlayHeaders are what the gateway's control proxy sends for a request from peer.
@@ -172,7 +176,7 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 		return nil, resp, err
 	}
 	ctrl := websocket.NetConn(context.Background(), ws, websocket.MessageBinary)
-	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16)}
+	n := &fakeNode{t: e.t, ws: ws, enc: json.NewEncoder(ctrl), msgs: make(chan proto.Message, 16), peers: make(chan proto.Peers, 16)}
 	go func() {
 		defer close(n.msgs)
 		dec := json.NewDecoder(ctrl)
@@ -180,6 +184,10 @@ func (e *env) dialWith(h http.Header) (*fakeNode, *http.Response, error) {
 			var m proto.Message
 			if dec.Decode(&m) != nil {
 				return
+			}
+			if m.Type == proto.TypePeers && m.Peers != nil {
+				n.peers <- *m.Peers
+				continue
 			}
 			n.msgs <- m
 		}
@@ -2498,5 +2506,269 @@ func TestPingFailureClosesConnection(t *testing.T) {
 	waitFor(t, func() bool { return !e.f.Online(n.ID) })
 	if !e.f.Online(healthy.ID) {
 		t.Fatal("ping dropped a connection that answers")
+	}
+}
+
+func TestFleetStoresCandidates(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	node := e.connect(cred)
+	node.send(proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822", "10.198.0.20:51822", "100.101.1.2:51822"}})
+	chassis, err := e.s.Chassis(ctx)
+	if err != nil || len(chassis) != 1 {
+		t.Fatalf("chassis = %v %v", chassis, err)
+	}
+	st := proto.GatewayStatus{Endpoints: map[string]string{chassis[0].PublicKey: "203.0.113.5:40001"}}
+	if err := e.h.SetStatus(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"192.168.1.5:51822", "203.0.113.5:40001", "100.101.1.2:51822"}
+	waitFor(t, func() bool { return slices.Equal(e.f.Candidates(n.ID), want) })
+	e.f.Disconnect(n.ID)
+	if got := e.f.Candidates(n.ID); !slices.Equal(got, []string{"203.0.113.5:40001"}) {
+		t.Fatalf("after disconnect: %v", got)
+	}
+}
+
+func TestFleetObservedEndpointKeptAtCap(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	n, cred := e.node(e.org.ID, "n")
+	var eight []string
+	for i := 1; i <= 8; i++ {
+		eight = append(eight, fmt.Sprintf("192.168.1.%d:51822", i))
+	}
+	e.connect(cred).send(proto.Message{Type: proto.TypeCandidates, Candidates: eight})
+	chassis, _ := e.s.Chassis(ctx)
+	key := chassis[0].PublicKey
+	waitFor(t, func() bool { return len(e.f.Candidates(n.ID)) == 8 })
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "203.0.113.5:40001"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := e.f.Candidates(n.ID)
+	if len(got) != 8 || got[7] != "203.0.113.5:40001" {
+		t.Fatalf("got %v", got)
+	}
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "10.198.0.9:1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.f.Candidates(n.ID); slices.Contains(got, "10.198.0.9:1") || len(got) != 8 {
+		t.Fatalf("invalid observed endpoint kept: %v", got)
+	}
+}
+
+func TestFleetUnchangedCandidatesDoNotPush(t *testing.T) {
+	e := newEnv(t)
+	_, credA := e.node(e.org.ID, "a")
+	_, credB := e.node(e.org.ID, "b")
+	a := e.connect(credA)
+	b := e.connect(credB)
+	a.desired()
+	b.desired()
+	msg := proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822"}}
+	a.send(msg)
+	b.next()
+	a.send(msg)
+	select {
+	case m := <-b.msgs:
+		t.Fatalf("push after unchanged candidates: %q", m.Type)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func (n *fakeNode) nextPeers() proto.Peers {
+	n.t.Helper()
+	select {
+	case p := <-n.peers:
+		return p
+	case <-time.After(5 * time.Second):
+		n.t.Fatal("no peers message")
+	}
+	return proto.Peers{}
+}
+
+func (n *fakeNode) noPeers() {
+	n.t.Helper()
+	select {
+	case p := <-n.peers:
+		n.t.Fatalf("unexpected peers push: %+v", p)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func peerIDs(p proto.Peers) []string {
+	out := []string{}
+	for _, x := range p.Peers {
+		out = append(out, x.NodeID)
+	}
+	return out
+}
+
+func TestPeersSameOrgOnly(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, cred2 := e.node(e.org.ID, "n2")
+	_, cred3 := e.node(orgB.ID, "n3")
+	a := e.connect(cred1)
+	p := a.nextPeers()
+	if len(p.Peers) != 1 || p.Peers[0].NodeID != n2.ID.String() || p.Peers[0].Address != n2.UnderlayIP.String() || p.Peers[0].PublicKey == "" {
+		t.Fatalf("n1 peers = %+v", p)
+	}
+	b := e.connect(cred2)
+	if got := b.nextPeers(); len(got.Peers) != 1 || got.Peers[0].NodeID == n2.ID.String() {
+		t.Fatalf("n2 peers = %+v", got)
+	}
+	if got := e.connect(cred3).nextPeers(); len(got.Peers) != 0 {
+		t.Fatalf("n3 sees another org: %+v", got)
+	}
+}
+
+func TestPeersExcludeQuarantined(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	n3, _ := e.node(e.org.ID, "n3")
+	a := e.connect(cred1)
+	if got := peerIDs(a.nextPeers()); len(got) != 2 {
+		t.Fatalf("before = %v", got)
+	}
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{n2.ID.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := peerIDs(a.nextPeers()); !slices.Equal(got, []string{n3.ID.String()}) {
+		t.Fatalf("after quarantine = %v", got)
+	}
+}
+
+func TestPeersAfterReenroll(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.nextPeers()
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Quarantined: []string{n2.ID.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := peerIDs(a.nextPeers()); len(got) != 0 {
+		t.Fatalf("after quarantine = %v", got)
+	}
+	tok, err := e.s.RegenerateNodeCredential(ctx, e.org.ID, n2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2, _, err = e.s.EnrollNode(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := wgkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, csrKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.h.Underlay(ctx, n2, key, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.nextPeers(); len(got.Peers) != 1 || got.Peers[0].NodeID != n2.ID.String() || got.Peers[0].PublicKey != key {
+		t.Fatalf("after re-enroll = %+v, want n2 with key %s", got, key)
+	}
+}
+
+func TestPeersExcludeDeleted(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	if got := peerIDs(a.nextPeers()); len(got) != 1 {
+		t.Fatalf("before = %v", got)
+	}
+	if err := e.s.DeleteNode(ctx, e.org.ID, n2.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.f.NotifyOrg(e.org.ID)
+	if got := peerIDs(a.nextPeers()); len(got) != 0 {
+		t.Fatalf("after delete = %v", got)
+	}
+}
+
+func TestPeersPushedOnCandidateChange(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	n2, cred2 := e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.nextPeers()
+	b := e.connect(cred2)
+	b.nextPeers()
+	b.send(proto.Message{Type: proto.TypeCandidates, Candidates: []string{"192.168.1.5:51822"}})
+	if got := a.nextPeers(); len(got.Peers) != 1 || !slices.Equal(got.Peers[0].Candidates, []string{"192.168.1.5:51822"}) {
+		t.Fatalf("after candidates = %+v", got)
+	}
+	chassis, err := e.s.Chassis(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := chassis[slices.IndexFunc(chassis, func(c store.Chassis) bool { return c.NodeID == n2.ID })].PublicKey
+	if err := e.h.SetStatus(ctx, proto.GatewayStatus{Endpoints: map[string]string{key: "203.0.113.5:40001"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.nextPeers(); len(got.Peers) != 1 || !slices.Equal(got.Peers[0].Candidates, []string{"192.168.1.5:51822", "203.0.113.5:40001"}) {
+		t.Fatalf("after observed endpoint = %+v", got)
+	}
+}
+
+func TestPeersNotResentWhenUnchanged(t *testing.T) {
+	e := newEnv(t)
+	_, cred1 := e.node(e.org.ID, "n1")
+	e.node(e.org.ID, "n2")
+	a := e.connect(cred1)
+	a.desired()
+	a.nextPeers()
+	e.f.NotifyOrg(e.org.ID)
+	a.desired()
+	a.noPeers()
+}
+
+func TestFleetStoresValidPaths(t *testing.T) {
+	e := newEnv(t)
+	n1, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	other := newEnv(t)
+	foreign, _ := other.node(other.org.ID, "x")
+	a := e.connect(cred1)
+	a.nextPeers()
+	hs := time.Unix(1_800_000_000, 0)
+	paths := []proto.PathStatus{
+		{NodeID: n2.ID.String(), Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &hs},
+		{NodeID: foreign.ID.String(), Mode: "direct", MTU: 1420},
+		{NodeID: n1.ID.String(), Mode: "relay"},
+		{NodeID: n2.ID.String(), Mode: "bogus"},
+		{NodeID: n2.ID.String(), Mode: "relay", MTU: 100},
+		{NodeID: n2.ID.String(), Mode: "direct", Endpoint: "nope"},
+		{NodeID: "not-a-uuid", Mode: "relay"},
+	}
+	a.send(proto.Message{Type: "paths", Paths: paths})
+	waitFor(t, func() bool { return len(e.f.Paths(n1.ID)) > 0 })
+	got := e.f.Paths(n1.ID)
+	if len(got) != 1 || got[0].NodeID != n2.ID.String() || got[0].MTU != 1420 || got[0].Endpoint != "192.168.1.5:51822" {
+		t.Fatalf("paths = %+v", got)
+	}
+	e.f.Disconnect(n1.ID)
+	if got := e.f.Paths(n1.ID); len(got) != 0 {
+		t.Fatalf("after disconnect: %+v", got)
 	}
 }

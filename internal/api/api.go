@@ -90,6 +90,8 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
 	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
 	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)
+	mux.HandleFunc("GET /api/admin/network", h.adminGetNetwork)
+	mux.HandleFunc("PUT /api/admin/network", h.adminSetNetwork)
 	mux.HandleFunc("GET /api/admin/registry-gc", h.adminRegistryGC)
 	mux.HandleFunc("POST /api/admin/registry-gc", h.adminRunRegistryGC)
 	mux.HandleFunc("POST /api/orgs", h.createOrg)

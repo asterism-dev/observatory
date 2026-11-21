@@ -10,6 +10,8 @@ import (
 	"net/netip"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/proto"
@@ -40,7 +42,11 @@ type Hub struct {
 	sbCert   string
 	sbKey    string
 	status   gatewayStatus
+	onChange func(org uuid.UUID)
 }
+
+// OnChange sets fn to run when an org's peer sets may have changed; call it before the hub serves.
+func (h *Hub) OnChange(fn func(org uuid.UUID)) { h.onChange = fn }
 
 // Load reads the hub's sealed network secrets, generating each on first start.
 func Load(ctx context.Context, s *store.Store, z *authz.Service, c Config) (*Hub, error) {
@@ -117,6 +123,7 @@ func (h *Hub) Underlay(ctx context.Context, n store.Node, chassisKey, csrPEM str
 	if err != nil {
 		return nil, err
 	}
+	h.changed(n.OrgID) // the key may be new, and a re-enrolled node is no longer quarantined
 	return &proto.Underlay{
 		Address:  netip.PrefixFrom(ip, netaddr.UnderlayPool.Bits()).String(),
 		HubKey:   h.underlay.pub,

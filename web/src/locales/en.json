@@ -46,6 +46,7 @@
     "images": "Images",
     "builders": "Builder VMs",
     "adminRegistry": "Registry",
+    "adminNetwork": "Network",
     "telemetry": "Telemetry",
     "dashboards": "Dashboards",
     "logs": "Logs"
@@ -361,6 +362,15 @@
     },
     "underlayDownHelp": "The node reaches the hub only over HTTPS. VMs keep running; only updates are possible until the underlay is back.",
     "underlay": "Underlay address",
+    "paths": "Paths",
+    "pathPeer": "Node",
+    "pathMode": "Path",
+    "pathEndpoint": "Endpoint",
+    "pathMtu": "MTU",
+    "pathWarning": "Warning",
+    "pathDirect": "Direct",
+    "pathRelay": "Relay",
+    "pathFragmented": "Packets to this node are fragmented. Recommended guest MTU: {mtu}.",
     "quarantined": "Quarantined",
     "outdated": "Outdated",
     "outdatedHint": "The hub runs {hub}; re-run the install command to update this node.",
@@ -877,6 +887,11 @@
     },
     "logTruncated": "— truncated, download for the full log —",
     "logStreamFailed": "The live log could not be loaded. Reload the page or download the log."
+  },
+  "adminNetwork": {
+    "title": "Network",
+    "guestMtu": "Guest MTU",
+    "guestMtuHint": "MTU for VM network interfaces and device configs. Applies to VMs on their next start or DHCP lease renewal and to newly downloaded device configs."
   },
   "registryGC": {
     "title": "Registry cleanup",

@@ -249,8 +249,15 @@ type NetSnapshot struct {
 
 func (s *Store) Chassis(ctx context.Context) ([]Chassis, error) { return readChassis(ctx, s.q) }
 
-func readChassis(ctx context.Context, q querier) ([]Chassis, error) {
-	rows, err := q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip, quarantined FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL ORDER BY id")
+// OrgChassis is Chassis limited to the org's nodes.
+func (s *Store) OrgChassis(ctx context.Context, org uuid.UUID) ([]Chassis, error) {
+	return queryChassis(ctx, s.q, "AND org_id = $1", org)
+}
+
+func readChassis(ctx context.Context, q querier) ([]Chassis, error) { return queryChassis(ctx, q, "") }
+
+func queryChassis(ctx context.Context, q querier, filter string, args ...any) ([]Chassis, error) {
+	rows, err := q.Query(ctx, "SELECT id, org_id, chassis_key, underlay_ip, quarantined FROM nodes WHERE chassis_key IS NOT NULL AND underlay_ip IS NOT NULL "+filter+" ORDER BY id", args...)
 	if err != nil {
 		return nil, err
 	}

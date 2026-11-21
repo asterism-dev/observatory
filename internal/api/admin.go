@@ -195,3 +195,41 @@ func (h *api) adminRunRegistryGC(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, h.registryGC.Status())
 }
+
+func (h *api) adminGetNetwork(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlatformAdmin(w, r, store.ActionAdminRead, "admin/network") {
+		return
+	}
+	mtu, err := h.store.GuestMTU(r.Context())
+	if err != nil {
+		serverError(w, "guest mtu", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"guestMTU": mtu})
+}
+
+func (h *api) adminSetNetwork(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlatformAdmin(w, r, store.ActionPlatformGuestMTU, "admin/network") {
+		return
+	}
+	var body struct {
+		GuestMTU *int `json:"guestMTU"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.GuestMTU == nil {
+		writeError(w, http.StatusBadRequest, "guestMTU is required")
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	if err := h.store.SetGuestMTU(r.Context(), *body.GuestMTU, p.User.ID); err != nil {
+		if errors.Is(err, store.ErrGuestMTURange) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		serverError(w, "set guest mtu", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"guestMTU": *body.GuestMTU})
+}

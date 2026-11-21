@@ -472,6 +472,11 @@ func observe(run runner) proto.GatewayStatus {
 			s.Handshakes[k] = v
 		}
 	}
+	eps, err := endpoints(run, "wg-underlay")
+	if err != nil {
+		log.Print(err)
+	}
+	s.Endpoints = eps
 	if out, err := run("ovn-sbctl", "--bare", "--columns=name", "find", "chassis"); err == nil {
 		s.Chassis = strings.Fields(out)
 	} else {

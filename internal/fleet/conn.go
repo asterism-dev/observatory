@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +44,7 @@ type conn struct {
 	// requests hands hub→node requests to pushLoop; their replies go to pending by ReqID, guarded by Fleet.mu.
 	requests chan proto.Message
 	pending  map[string]chan proto.Message
+	peers    *proto.Peers // last peer set sent; only pushLoop touches it
 }
 
 func (c *conn) kick() {
@@ -227,6 +230,17 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			// Old nodes still send these; VM usage now comes from the telemetry store.
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
+		case m.Type == proto.TypeCandidates:
+			valid := validCandidates(m.Candidates)
+			f.mu.Lock()
+			changed := !slices.Equal(f.candidates[node.ID], valid)
+			f.candidates[node.ID] = valid
+			f.mu.Unlock()
+			if changed {
+				f.NotifyOrg(node.OrgID)
+			}
+		case m.Type == proto.TypePaths:
+			f.storePaths(ctx, node, m.Paths)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		case m.Type == "image" && m.Image != nil:
@@ -366,5 +380,19 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, reg pr
 			c.ws.CloseNow()
 			return
 		}
+		peers, err := f.peers(ctx, c.org, c.node)
+		if err != nil {
+			slog.Error("build peer set", "node", c.node, "err", err)
+			time.AfterFunc(desiredRetry, c.kick)
+			continue
+		}
+		if c.peers != nil && reflect.DeepEqual(*c.peers, peers) {
+			continue
+		}
+		if err := enc.Encode(proto.Message{Type: proto.TypePeers, Peers: &peers}); err != nil {
+			c.ws.CloseNow()
+			return
+		}
+		c.peers = &peers
 	}
 }

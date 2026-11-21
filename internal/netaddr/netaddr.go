@@ -18,14 +18,23 @@ var (
 	Transit         = netip.MustParsePrefix("10.199.0.0/30")
 	AutoNetworks    = netip.MustParsePrefix("10.210.0.0/16")
 	NATNet          = netip.MustParsePrefix("192.168.64.0/24")
+	// CGNAT holds carrier-grade NAT and VPN (e.g. Tailscale) addresses, the last resort for direct paths.
+	CGNAT = netip.MustParsePrefix("100.64.0.0/10")
 )
 
 const (
-	SliceBits    = 20
-	HostOffset   = 10
-	GuestMTU     = 1300
-	UnderlayPort = 51820
-	ClientsPort  = 51821
+	SliceBits       = 20
+	HostOffset      = 10
+	DefaultGuestMTU = 1300
+	UnderlayPort    = 51820
+	ClientsPort     = 51821
+	// UnderlayMTU is the nodes' wg-underlay MTU; Geneve inside it costs GeneveOverhead.
+	UnderlayMTU       = 1420
+	GeneveOverhead    = 58
+	WireGuardOverhead = 80
+	MaxCandidates     = 8
+	// NodeUnderlayPort is where nodes listen on wg-underlay for direct peers.
+	NodeUnderlayPort = 51822
 	// ControlPort is the gateway proxy that carries node control traffic over the underlay.
 	ControlPort = 8091
 	// Storage NBD exports listen on GatewayUnderlay, one port per attachment.
@@ -129,4 +138,14 @@ func MAC(ip netip.Addr) string {
 
 func StorageURL(port int, diskID string) string {
 	return fmt.Sprintf("nbd://%s:%d/%s", GatewayUnderlay, port, diskID)
+}
+
+// DirectEndpointAddr reports whether a is a plausible peer-reachable address: no zone, loopback, link-local, multicast, unspecified or platform-reserved range.
+func DirectEndpointAddr(a netip.Addr) bool {
+	if a.Zone() != "" {
+		return false
+	}
+	a = a.Unmap()
+	return a.IsValid() && !a.IsLoopback() && !a.IsLinkLocalUnicast() && !a.IsLinkLocalMulticast() && !a.IsMulticast() && !a.IsUnspecified() &&
+		!slices.ContainsFunc(reserved, func(p netip.Prefix) bool { return p.Contains(a) })
 }

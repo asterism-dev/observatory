@@ -12,6 +12,7 @@ have nodes.
 - Root, or a user with `sudo`.
 - The hub's public URL (`http(s)://host[:port]`) reachable from the host, and internet access for packages, Firecracker and the guest image (`ghcr.io`).
 - Outbound UDP to the gateway on port 51820 (the WireGuard underlay, see [network.md](network.md)).
+- Optional: inbound UDP 51822 from the other nodes of the org, for direct paths. Without it traffic uses the gateway.
 - The `nbd` kernel module (standard on Debian and Ubuntu kernels) for disks attached from the storage server.
 - RAM: without `--memory-mb` the node offers the host's RAM minus 4 GB to VMs. On a host with 4 GB or less the
   node refuses to start; pass `--memory-mb` there.
@@ -62,6 +63,8 @@ underlay config and the emergency channel, never for the control connection.
   `/etc/nftables.conf`; the `nftables` service is enabled. Other tables (e.g. Docker's) are left alone.
   The same table drops traffic from `vmm0` to the underlay (`10.198.0.0/16`), so VMs cannot reach the gateway's
   services (southbound DB, storage exports) or other nodes through their node.
+- **Underlay firewall:** table `inet obs_underlay_node` in the same file admits on `wg-underlay` everything from the
+  gateway (`10.198.0.1`), established traffic, Geneve (UDP 6081) and ICMP echo from other nodes, and drops the rest.
 - **Docker hosts:** the service adds `DOCKER-USER` rules accepting traffic from and back to `vmm0`, so Docker's
   forward policy does not block the VMs.
 - **Node binary** in `/usr/local/bin/observatory-node`, config in `/etc/observatory-node/node.json` (mode 0600, holds
@@ -80,6 +83,15 @@ address in `10.198.0.0/16` and returns the underlay config. The node then writes
   the WireGuard key is `/var/lib/observatory-node/vms/chassis.key`;
 - the OVS `system-id` (the node id), `ovn-remote=ssl:10.198.0.1:6642`, Geneve encapsulation over the underlay address,
   and restarts `ovn-controller` when this changes.
+
+The node also listens on `wg-underlay` UDP 51822 for direct peers of its org ([network.md](network.md#direct-paths)).
+On `wg-underlay` the firewall table `inet obs_underlay_node` admits Geneve (UDP 6081), ICMP echo and established
+traffic from peers and everything from `10.198.0.1`, so a direct peer never reaches the node's host services.
+
+The node page lists a Paths table: per peer node the path (direct or relay), the endpoint, the path MTU and a
+fragmentation warning with the recommended guest MTU when the guest MTU plus 138 exceeds it. Path MTU is probed in the
+background; failed probes are retried after 10 min. The guest MTU is a platform setting
+([network.md](network.md#guest-mtu)).
 
 Each VM's management and network NICs are taps on `br-int`. The chassis cert is valid for one year; the hub renews
 it while the node is connected once less than 30 days are left.

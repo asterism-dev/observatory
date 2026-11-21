@@ -12,6 +12,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
+	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -41,6 +42,27 @@ type nodeJSON struct {
 	Updatable        bool               `json:"updatable"`
 	Updating         bool               `json:"updating"`
 	UpdatePausesOnly bool               `json:"updatePausesOnly"`
+	Paths            []pathJSON         `json:"paths"`
+}
+
+type pathJSON struct {
+	Node                uuid.UUID  `json:"node"`
+	NodeName            string     `json:"nodeName"`
+	Mode                string     `json:"mode"`
+	Endpoint            string     `json:"endpoint,omitempty"`
+	MTU                 int        `json:"mtu"`
+	Handshake           *time.Time `json:"handshake"`
+	Warning             bool       `json:"warning"`
+	RecommendedGuestMTU int        `json:"recommendedGuestMTU,omitempty"`
+}
+
+const tunnelOverhead = netaddr.GeneveOverhead + netaddr.WireGuardOverhead
+
+func pathWarning(guestMTU, pathMTU int) (warn bool, recommended int) {
+	if pathMTU <= 0 || guestMTU+tunnelOverhead <= pathMTU {
+		return false, 0
+	}
+	return true, (pathMTU - tunnelOverhead) / 10 * 10
 }
 
 type underlayJSON struct {
@@ -73,6 +95,32 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 			j.State = "underlay_down"
 		default:
 			j.State = "offline"
+		}
+	}
+	paths := h.fleet.Paths(n.ID)
+	j.Paths = []pathJSON{}
+	if len(paths) > 0 {
+		// ponytail: one extra node query per node with paths; cache names if lists grow large.
+		peers, err := h.store.Nodes(r.Context(), n.OrgID)
+		if err != nil {
+			return nodeJSON{}, err
+		}
+		names := map[string]string{}
+		for _, p := range peers {
+			names[p.ID.String()] = p.Name
+		}
+		guestMTU, err := h.store.GuestMTU(r.Context())
+		if err != nil {
+			return nodeJSON{}, err
+		}
+		for _, p := range paths {
+			id, err := uuid.Parse(p.NodeID)
+			name, same := names[p.NodeID]
+			if err != nil || !same {
+				continue
+			}
+			warn, rec := pathWarning(guestMTU, p.MTU)
+			j.Paths = append(j.Paths, pathJSON{Node: id, NodeName: name, Mode: p.Mode, Endpoint: p.Endpoint, MTU: p.MTU, Handshake: p.Handshake, Warning: warn, RecommendedGuestMTU: rec})
 		}
 	}
 	if cs, ok := h.network.ChassisStatus(n.ID); ok {
@@ -250,6 +298,7 @@ func (h *api) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.fleet.Disconnect(n.ID)
+	h.fleet.NotifyOrg(n.OrgID) // drops the node from the org's peer sets
 	w.WriteHeader(http.StatusNoContent)
 }
 

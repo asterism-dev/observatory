@@ -552,3 +552,36 @@ func BenchmarkState(b *testing.B) {
 		}
 	}
 }
+
+func TestSetStatusRecordsEndpoint(t *testing.T) {
+	f := newFixture(t)
+	var chA proto.GatewayChassis
+	for _, c := range f.state().Chassis {
+		if c.NodeID == f.nodeA.String() {
+			chA = c
+		}
+	}
+	st := proto.GatewayStatus{Endpoints: map[string]string{chA.PublicKey: "203.0.113.5:40001"}}
+	if err := f.h.SetStatus(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := f.h.ChassisStatus(f.nodeA); cs.Endpoint != "203.0.113.5:40001" {
+		t.Fatalf("endpoint %q", cs.Endpoint)
+	}
+	if cs, _ := f.h.ChassisStatus(f.nodeB); cs.Endpoint != "" {
+		t.Fatalf("node B endpoint %q", cs.Endpoint)
+	}
+}
+
+func TestGatewayStateUsesGuestMTU(t *testing.T) {
+	f := newFixture(t)
+	if got := f.state().GuestMTU; got != netaddr.DefaultGuestMTU {
+		t.Fatalf("default %d", got)
+	}
+	if err := f.s.SetGuestMTU(context.Background(), 1200, f.owner); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state().GuestMTU; got != 1200 {
+		t.Fatalf("got %d", got)
+	}
+}

@@ -61,8 +61,10 @@ type GatewayNetwork struct {
 // GatewayStatus is what the gateway observes: handshakes by peer public key, chassis registered in the SB and ports whose foreign binding it cleared.
 type GatewayStatus struct {
 	Handshakes map[string]time.Time `json:"handshakes"`
-	Chassis    []string             `json:"chassis"`
-	Rebound    []string             `json:"rebound"`
+	// Endpoints maps underlay peer public keys to their observed ip:port.
+	Endpoints map[string]string `json:"endpoints"`
+	Chassis   []string          `json:"chassis"`
+	Rebound   []string          `json:"rebound"`
 	// Quarantined lists nodes caught holding a port bound to another node.
 	Quarantined []string `json:"quarantined"`
 	Version     string   `json:"version"`
