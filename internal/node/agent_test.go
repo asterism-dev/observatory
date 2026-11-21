@@ -842,3 +842,57 @@ func TestPrepareRejectsLegacyVM(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeHandlesProcessesRequest(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	env.hub.send(proto.Message{Type: "processes", ReqID: "r1", VM: vm.ID})
+	env.hub.send(proto.Message{Type: "processes", ReqID: "r2", VM: "nope"})
+	eventually(t, "replies", func() bool { return len(env.hub.processReplies()) == 2 })
+	for _, r := range env.hub.processReplies() {
+		switch r.ReqID {
+		case "r1":
+			if r.Error != "" || r.VM != vm.ID || len(r.Processes) != 1 || r.Processes[0].Command != "/sbin/init" {
+				t.Fatalf("r1 = %+v", r)
+			}
+		case "r2":
+			if r.Error != proto.ErrVMNotRunning || r.Processes != nil {
+				t.Fatalf("r2 = %+v", r)
+			}
+		default:
+			t.Fatalf("reply %+v", r)
+		}
+	}
+}
+
+func TestNodeBoundsGuestProcesses(t *testing.T) {
+	env := startEnv(t, nil)
+	vm := env.hub.create("dev")
+	eventually(t, "running", func() bool { v, _ := env.hub.vm(vm.ID); return v.State == proto.StateRunning })
+	ps := make([]proto.GuestProcess, 600)
+	for i := range ps {
+		ps[i] = proto.GuestProcess{PID: i, Command: strings.Repeat("c", 4000), User: strings.Repeat("u", 100), State: strings.Repeat("s", 20)}
+	}
+	env.provider.mu.Lock()
+	env.provider.processes = ps
+	env.provider.mu.Unlock()
+	env.hub.send(proto.Message{Type: "processes", ReqID: "big", VM: vm.ID})
+	eventually(t, "reply", func() bool { return len(env.hub.processReplies()) == 1 })
+	r := env.hub.processReplies()[0]
+	if len(r.Processes) != 500 {
+		t.Fatalf("%d entries", len(r.Processes))
+	}
+	if p := r.Processes[0]; len(p.Command) != 512 || len(p.User) != 64 || len(p.State) != 8 {
+		t.Fatalf("entry sizes %d/%d/%d", len(p.Command), len(p.User), len(p.State))
+	}
+
+	env.provider.mu.Lock()
+	env.provider.processesErr = errors.New(strings.Repeat("e", 1000))
+	env.provider.mu.Unlock()
+	env.hub.send(proto.Message{Type: "processes", ReqID: "err", VM: vm.ID})
+	eventually(t, "error reply", func() bool { return len(env.hub.processReplies()) == 2 })
+	if r := env.hub.processReplies()[1]; len(r.Error) != 256 || r.Processes != nil {
+		t.Fatalf("error reply: %d bytes, %d entries", len(r.Error), len(r.Processes))
+	}
+}

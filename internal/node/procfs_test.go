@@ -3,6 +3,8 @@ package node
 import (
 	"strings"
 	"testing"
+
+	"github.com/asterism-dev/observatory/internal/sysstat"
 )
 
 func TestParseOSRelease(t *testing.T) {
@@ -33,19 +35,6 @@ intr 114930548 113199788 3 0 5 263 0 4 [... lots more numbers ...]
 ctxt 1990473
 `
 
-func TestParseCPUTimes(t *testing.T) {
-	got, err := parseCPUTimes(strings.NewReader(statFixture))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := got["cpu"]; ok || len(got) != 2 {
-		t.Fatalf("aggregate line must be ignored: %v", got)
-	}
-	if got["cpu0"]["user"] != 12.34 || got["cpu0"]["steal"] != 0.05 || got["cpu1"]["idle"] != 113127.82 {
-		t.Fatalf("got %v", got)
-	}
-}
-
 const meminfoFixture = `MemTotal:       16384000 kB
 MemFree:         2048000 kB
 MemAvailable:    9000000 kB
@@ -56,28 +45,6 @@ SwapTotal:       2097152 kB
 SwapFree:        1048576 kB
 SReclaimable:     256000 kB
 `
-
-func TestParseMemInfo(t *testing.T) {
-	used, cached, free, swapUsed, swapFree, err := parseMemInfo(strings.NewReader(meminfoFixture))
-	if err != nil {
-		t.Fatal(err)
-	}
-	kb := int64(1024)
-	if used != (16384000-2048000-512000-4096000-256000)*kb || cached != (4096000+256000)*kb || free != 2048000*kb ||
-		swapUsed != 1048576*kb || swapFree != 1048576*kb {
-		t.Fatalf("got %d %d %d %d %d", used, cached, free, swapUsed, swapFree)
-	}
-	if _, _, _, _, _, err := parseMemInfo(strings.NewReader("")); err == nil {
-		t.Fatal("empty meminfo must fail")
-	}
-}
-
-func TestParseLoadAvg(t *testing.T) {
-	l1, l5, l15, err := parseLoadAvg(strings.NewReader("0.52 0.58 0.59 2/467 12345\n"))
-	if err != nil || l1 != 0.52 || l5 != 0.58 || l15 != 0.59 {
-		t.Fatalf("got %v %v %v %v", l1, l5, l15, err)
-	}
-}
 
 const netDevFixture = `Inter-|   Receive                                                |  Transmit
  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
@@ -95,8 +62,8 @@ gre_sys: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 wg-underlay: 10 1 0 0 0 0 0 0 20 2 0 0 0 0 0 0
 `
 
-func TestParseNetDevSkipsLoTapsAndOVS(t *testing.T) {
-	got, err := parseNetDev(strings.NewReader(netDevFixture))
+func TestSkipNetDevice(t *testing.T) {
+	got, err := sysstat.NetDev(strings.NewReader(netDevFixture), skipNetDevice)
 	if err != nil {
 		t.Fatal(err)
 	}

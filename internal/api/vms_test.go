@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -554,37 +553,6 @@ func TestStartWakesSuspended(t *testing.T) {
 	}
 	if got, _ := e.store.VM(context.Background(), org, vid); got.WakeSeq != 2 {
 		t.Fatalf("running start must not bump wake_seq: %d", got.WakeSeq)
-	}
-}
-
-func TestMetricsAPIRequiresRead(t *testing.T) {
-	e := newEnv(t)
-	_, tok := e.user("alice")
-	bob, bobTok := e.user("bob")
-	org := e.createOrg(tok, "Acme")
-	e.addMember(org, bob, store.RoleMember)
-	node := e.enrolledNode(tok, org, "n1")
-	v := e.createVM(tok, org, vmBody("a", userOwner(), node))
-	path := vmsPath(org) + "/" + v.ID + "/metrics"
-	if rec := e.do("GET", path, bobTok); rec.Code != 403 {
-		t.Fatalf("member without vm:read: %d", rec.Code)
-	}
-	nodeID := uuid.MustParse(node)
-	e.api.fleet.NoteMetrics(context.Background(), nodeID, []proto.VMMetrics{{ID: v.ID, CPUPercent: 12.5, MemTotalMB: 400, MemUsedMB: 100}})
-	rec := e.do("GET", path, tok)
-	var got struct {
-		Samples []struct {
-			At                    time.Time
-			CPUPercent            float64
-			MemTotalMB, MemUsedMB int
-		}
-	}
-	decode(t, rec, &got)
-	if rec.Code != 200 || len(got.Samples) != 1 || got.Samples[0].CPUPercent != 12.5 || got.Samples[0].MemTotalMB != 400 || got.Samples[0].MemUsedMB != 100 || got.Samples[0].At.IsZero() {
-		t.Fatalf("owner: %d %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"cpuPercent"`) || !strings.Contains(rec.Body.String(), `"memTotalMB"`) {
-		t.Fatalf("json names: %s", rec.Body.String())
 	}
 }
 

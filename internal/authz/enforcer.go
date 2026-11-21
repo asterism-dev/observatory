@@ -152,11 +152,11 @@ func New(p Policy) (*Enforcer, error) {
 		}
 		switch {
 		case vm.UserID != nil:
-			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:connect", "vm:snapshot", "vm:restore", "vm:fork")
+			grant(UserSubject(*vm.UserID), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:connect", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics")
 		case vm.TeamID != nil:
-			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect", "vm:snapshot")
+			grant(TeamSubject(*vm.TeamID), "vm:read", "vm:power", "vm:connect", "vm:snapshot", "vm:metrics")
 			for _, admin := range teamAdmins[*vm.TeamID] {
-				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork")
+				grant(UserSubject(admin), "vm:read", "vm:power", "vm:delete", "vm:network", "vm:disks", "vm:snapshot", "vm:restore", "vm:fork", "vm:metrics")
 			}
 		}
 	}

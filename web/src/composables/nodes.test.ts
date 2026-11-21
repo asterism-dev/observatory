@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import de from '../locales/de.json' with { type: 'json' }
 import en from '../locales/en.json' with { type: 'json' }
-import { deletionLabel, imageLine, lifetime, type NodeInfo } from './nodes.ts'
+import { deletionLabel, imageLine, lifetime, liveUsage, type NodeInfo, type VmInfo } from './nodes.ts'
 
 type Image = NonNullable<NodeInfo['image']>
 const translator = (messages: typeof en) => (key: string, params: Record<string, unknown> = {}) => {
@@ -44,4 +44,13 @@ test('deletion label says deleting once the time has passed', () => {
   assert.equal(deletionLabel(new Date(now - 120000).toISOString(), translator(en), 'en', now), 'Deleting…')
   assert.equal(deletionLabel(new Date(now - 120000).toISOString(), translator(de), 'de', now), 'Wird gelöscht…')
   assert.equal(deletionLabel(new Date(now + 2 * 3600000).toISOString(), translator(en), 'en', now), 'deleted in 2 hours')
+})
+
+test('liveUsage turns fresh usage into percentages and drops stale usage', () => {
+  const now = Date.UTC(2026, 10, 20, 12, 0)
+  const usage = { at: new Date(now - 10000).toISOString(), cpuPercent: 42, memUsedMB: 512, memTotalMB: 2048, diskUsedMB: 2560, diskTotalMB: 10240 }
+  assert.deepEqual(liveUsage({ usage } as VmInfo, now), { cpu: 42, mem: 25, dsk: 25 })
+  assert.deepEqual(liveUsage({ usage: { ...usage, memTotalMB: 0, diskTotalMB: 0 } } as VmInfo, now), { cpu: 42, mem: null, dsk: null })
+  assert.deepEqual(liveUsage({ usage: { ...usage, at: new Date(now - 60000).toISOString() } } as VmInfo, now), { cpu: null, mem: null, dsk: null })
+  assert.deepEqual(liveUsage({} as VmInfo, now), { cpu: null, mem: null, dsk: null })
 })

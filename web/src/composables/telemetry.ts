@@ -12,7 +12,12 @@ export interface Series {
 export interface Usage {
   t: number[]
   charts: Partial<Record<'cpu' | 'mem' | 'disk' | 'net', Series[]>>
+  dropped?: Dropped
 }
+
+export type Dropped = Record<'logs' | 'series' | 'body', number>
+
+export const droppedTotal = (d: Dropped | undefined) => (d ? d.logs + d.series + d.body : 0)
 
 // now: the range ends at the current time and moves with it.
 export type UsageRange = { from: Date; to: Date; now: boolean }
@@ -21,11 +26,12 @@ export interface LogLine {
   time: string
   level: string
   source: string
+  stream?: string
   msg: string
   fields: Record<string, unknown>
 }
 
-export type LogFilter = { from: Date; to: Date; q: string; level: string; source: string; fields: Record<string, string> }
+export type LogFilter = { from: Date; to: Date; q: string; level: string; source?: string; stream?: string; fields: Record<string, string> }
 
 export function rangeFor(preset: Preset, now: Date) {
   return { from: new Date(now.getTime() - presetHours[preset] * 3600e3), to: now }
@@ -47,6 +53,7 @@ export function logParams(f: LogFilter) {
   if (f.q) p.set('q', f.q)
   if (f.level) p.set('level', f.level)
   if (f.source) p.set('source', f.source)
+  if (f.stream) p.set('stream', f.stream)
   for (const [k, v] of Object.entries(f.fields)) p.append('field', `${k}:${v}`)
   return p
 }

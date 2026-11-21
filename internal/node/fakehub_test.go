@@ -41,9 +41,9 @@ type fakeHub struct {
 	nextID   int
 	underlay *proto.Underlay
 	cpus     int // CPUs of VMs from create; zero means 1
-	metrics  []proto.Message
 	images   []proto.ImageStatus
 	updates  []proto.UpdateReport
+	replies  []proto.Message // type "processes"
 }
 
 func newFakeHub(t *testing.T) *fakeHub {
@@ -114,11 +114,6 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 		if err := dec.Decode(&m); err != nil {
 			return
 		}
-		if m.Type == "metrics" {
-			h.mu.Lock()
-			h.metrics = append(h.metrics, m)
-			h.mu.Unlock()
-		}
 		if m.Type == "image" && m.Image != nil {
 			h.mu.Lock()
 			h.images = append(h.images, *m.Image)
@@ -127,6 +122,11 @@ func (h *fakeHub) serve(w http.ResponseWriter, req *http.Request) {
 		if m.Type == "update" && m.Update != nil {
 			h.mu.Lock()
 			h.updates = append(h.updates, *m.Update)
+			h.mu.Unlock()
+		}
+		if m.Type == "processes" {
+			h.mu.Lock()
+			h.replies = append(h.replies, m)
 			h.mu.Unlock()
 		}
 		if m.Type == "status" && m.Status != nil {
@@ -232,6 +232,12 @@ func (h *fakeHub) vms() []hubVM {
 		out = append(out, *vm)
 	}
 	return out
+}
+
+func (h *fakeHub) processReplies() []proto.Message {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.replies)
 }
 
 func (h *fakeHub) registers() []proto.Register {

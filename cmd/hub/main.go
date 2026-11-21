@@ -199,7 +199,7 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, cfg confi
 	} else {
 		slog.Info("builder image", "ref", builder)
 	}
-	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, f.DropMetrics)
+	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online)
 	sched.Size = cfg.BuilderSize
 	return sched
 }

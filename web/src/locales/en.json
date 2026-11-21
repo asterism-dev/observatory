@@ -472,6 +472,7 @@
     "connect": "Connect",
     "tabs": {
       "overview": "Overview",
+      "metrics": "Metrics",
       "networking": "Networking",
       "snapshots": "Snapshots",
       "disks": "Disks",
@@ -624,14 +625,13 @@
     "cpu": "CPU",
     "none": "No data yet. Metrics appear while the VM is running.",
     "stale": "Not running, no current values.",
-    "noRam": "RAM statistics are available after the next cold boot.",
     "live": "Live",
     "window": "Resource usage · last {n} min",
     "ago": "{n} min ago",
     "now": "now",
     "mem": "MEM",
     "dsk": "DSK",
-    "diskHint": "DSK is the host disk footprint of the VM: allocated blocks of its root disk image, including the guest image it was created from. It runs higher than df inside the VM."
+    "diskHint": "DSK is the used space of the root filesystem inside the VM, like df /."
   },
   "telemetry": {
     "usage": "Usage",
@@ -643,18 +643,22 @@
       "net": "Network"
     },
     "noData": "No data in this range. A node sends usage data every 10 seconds once it runs a version with telemetry.",
+    "noDataVm": "No data in this range. A VM sends usage data every 10 seconds while it runs; VMs started before the node got telemetry send none until their next boot.",
     "zoomHint": "Drag across a graph to zoom, double-click to reset. Click a legend entry to hide its line.",
     "search": "Search …",
     "level": "Level",
     "source": "Source",
+    "stream": "Stream",
     "allLevels": "All levels",
     "allSources": "All sources",
+    "allStreams": "All streams",
     "live": "Live",
     "paused": "Paused",
     "noLines": "No matching log lines.",
     "filterBy": "Filter by this field",
     "removeFilter": "Remove filter",
-    "streamFailed": "Live log stream stopped. Reload the page to resume."
+    "streamFailed": "Live log stream stopped. Reload the page to resume.",
+    "dropped": "The node dropped data of this VM in this range because it exceeded its limits: {logs} log lines, {series} metric series, {body} oversized requests."
   },
   "snapshots": {
     "section": "Snapshots",
@@ -890,5 +894,16 @@
       "closed": "Pushes blocked, waiting out issued tokens",
       "collecting": "Cleaning up"
     }
+  },
+  "processes": {
+    "title": "Processes",
+    "pid": "PID",
+    "command": "Command",
+    "cpu": "CPU % / core",
+    "memory": "Memory",
+    "user": "User",
+    "empty": "No processes.",
+    "notRunning": "VM not running. The process list is shown while it runs.",
+    "cpuHint": "CPU % is per core: 100 % is one fully used core, so a process using several cores can exceed 100 %."
   }
 }

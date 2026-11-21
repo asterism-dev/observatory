@@ -243,7 +243,7 @@ func TestVMJSON(t *testing.T) {
 
 func TestVMMetricsEgressIntegrations(t *testing.T) {
 	h, c, out, _ := vmHub(t, oneNode)
-	h.on("GET /api/orgs/o1/vms/v1/metrics", 200, `{"samples":[{"at":"2026-11-19T14:00:00Z","cpuPercent":12.4,"memTotalMB":4096,"memUsedMB":1536}]}`)
+	h.on("GET /api/orgs/o1/vms/v1", 200, `{"id":"v1","name":"dev","usage":{"at":"2026-11-19T14:00:00Z","cpuPercent":12.4,"memUsedMB":1536,"memTotalMB":4096,"diskUsedMB":5120,"diskTotalMB":10240}}`)
 	h.on("GET /api/orgs/o1/vms/v1/egress", 200, `{"secrets":2,"hosts":["api.example.com"],"caNotAfter":null,"trustChanged":false}`)
 	h.on("GET /api/orgs/o1/vms/v1/integrations", 200, `{"integrations":[{"kind":"github","scope":"team","teamName":"backend","mode":"proxy"},{"kind":"claude"}]}`)
 	for _, sub := range []string{"metrics", "egress", "integrations"} {
@@ -251,7 +251,7 @@ func TestVMMetricsEgressIntegrations(t *testing.T) {
 			t.Fatalf("%s: %d", sub, code)
 		}
 	}
-	for _, want := range []string{"12%", "1.5 GB / 4 GB", "api.example.com", "team backend", "claude"} {
+	for _, want := range []string{"12%", "1.5 GB / 4 GB", "5 GB / 10 GB", "api.example.com", "team backend", "claude"} {
 		if !strings.Contains(out(), want) {
 			t.Errorf("missing %q in\n%s", want, out())
 		}

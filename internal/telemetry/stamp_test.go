@@ -164,3 +164,29 @@ func TestStampNilResource(t *testing.T) {
 	StampLogs(l, testID)
 	requireIdentity(t, l.ResourceLogs[1].Resource)
 }
+
+func TestStampVMIdentity(t *testing.T) {
+	id := testID
+	id.VMID, id.VMName, id.Stream = uuid.MustParse("33333333-3333-3333-3333-333333333333"), "vm01", "app"
+	sender := func() *resourcepb.Resource {
+		return &resourcepb.Resource{Attributes: []*commonpb.KeyValue{str("observatory.vm", "evil"), str("observatory.stream", "console"), str("service.name", "orders")}}
+	}
+	l := &collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{Resource: sender()}}}
+	StampLogs(l, id)
+	if got := l.ResourceLogs[0].Resource.Attributes; len(got) != 7 {
+		t.Fatalf("logs attrs: %v", got)
+	}
+	m := attrMap(t, l.ResourceLogs[0].Resource.Attributes)
+	if m["observatory.vm"] != id.VMID.String() || m["observatory.vm_name"] != "vm01" || m["observatory.stream"] != "app" || m["observatory.node"] != id.NodeID.String() || m["service.name"] != "orders" {
+		t.Fatalf("logs: %v", m)
+	}
+	mr := &colmetricspb.ExportMetricsServiceRequest{ResourceMetrics: []*metricspb.ResourceMetrics{{Resource: sender()}}}
+	StampMetrics(mr, id)
+	if got := mr.ResourceMetrics[0].Resource.Attributes; len(got) != 6 {
+		t.Fatalf("metrics attrs: %v", got)
+	}
+	m = attrMap(t, mr.ResourceMetrics[0].Resource.Attributes)
+	if m["observatory.vm"] != id.VMID.String() || m["observatory.vm_name"] != "vm01" || m["observatory.stream"] != "" {
+		t.Fatalf("metrics: %v", m)
+	}
+}

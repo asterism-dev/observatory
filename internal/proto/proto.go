@@ -237,16 +237,25 @@ type Machine struct {
 	MemoryMB  int    `json:"memoryMB,omitempty"`
 }
 
-// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image" and "usage" (node→hub).
-// VMMetrics is one sample of a running VM; MemTotalMB 0 means the VM has no balloon statistics.
-type VMMetrics struct {
-	ID         string  `json:"id"`
+const ErrVMNotRunning = "vm not running"
+
+const (
+	MaxGuestProcesses = 500
+	MaxGuestCommand   = 512
+)
+
+// GuestProcess is one entry of a VM's live process list; CPUPercent is percent of one core (like top), so it can exceed 100 on several cores.
+type GuestProcess struct {
+	PID        int     `json:"pid"`
+	PPID       int     `json:"ppid"`
+	User       string  `json:"user"`
+	Command    string  `json:"command"`
+	State      string  `json:"state"`
 	CPUPercent float64 `json:"cpuPercent"`
-	MemTotalMB int     `json:"memTotalMB"`
-	MemUsedMB  int     `json:"memUsedMB"`
-	DiskUsedMB int     `json:"diskUsedMB"` // allocated host blocks of the root disk image
+	RSSBytes   int64   `json:"rssBytes"`
 }
 
+// Message types: "register" (node→hub), "desired"/"underlay" (hub→node), "status", "disks", "metrics", "image", "usage" (node→hub), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -257,10 +266,13 @@ type Message struct {
 	DisksInUse []string           `json:"disksInUse,omitempty"` // type "disks": every disk ID a local VM still uses
 	Seq        uint64             `json:"seq,omitempty"`        // type "desired": increases with every list sent to the node
 	AppliedSeq uint64             `json:"appliedSeq,omitempty"` // type "disks": seq of the last desired list the node fully reconciled
-	Metrics    []VMMetrics        `json:"metrics,omitempty"`    // type "metrics": one sample per running VM
 	Image      *ImageStatus       `json:"image,omitempty"`      // type "image": the guest image changed state
 	Update     *UpdateReport      `json:"update,omitempty"`     // type "update": an update attempt failed
 	Usage      []UsageObservation `json:"usage,omitempty"`      // type "usage": Claude usage the node's egress proxies saw
+	ReqID      string             `json:"reqId,omitempty"`      // type "processes"
+	VM         string             `json:"vm,omitempty"`         // type "processes"
+	Processes  []GuestProcess     `json:"processes,omitempty"`  // type "processes" reply
+	Error      string             `json:"error,omitempty"`      // type "processes" reply
 }
 
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }

@@ -48,6 +48,9 @@ type conn struct {
 	done   <-chan struct{}
 	since  time.Time       // when attached; guarded by Fleet.mu
 	seen   map[string]bool // IDs of VMs with a status on this connection; guarded by Fleet.mu
+	// requests hands hub→node requests to pushLoop; their replies go to pending by ReqID, guarded by Fleet.mu.
+	requests chan proto.Message
+	pending  map[string]chan proto.Message
 }
 
 func (c *conn) kick() {
@@ -101,7 +104,8 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Error("node register", "node", node.ID, "err", err)
 		return
 	}
-	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{}}
+	c := &conn{node: node.ID, org: node.OrgID, sess: sess, wake: make(chan struct{}, 1), update: make(chan struct{}), done: ctx.Done(), seen: map[string]bool{},
+		requests: make(chan proto.Message), pending: map[string]chan proto.Message{}}
 	for _, st := range m.Register.VMs {
 		c.seen[st.ID] = true
 	}
@@ -141,8 +145,18 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			f.mu.Lock()
 			f.updateErrs[node.ID] = cmp.Or(m.Update.Error, "update failed")
 			f.mu.Unlock()
+		case m.Type == "processes":
+			f.mu.Lock()
+			reply := c.pending[m.ReqID]
+			f.mu.Unlock()
+			if reply != nil {
+				select {
+				case reply <- m:
+				default:
+				}
+			}
 		case m.Type == "metrics":
-			f.NoteMetrics(ctx, node.ID, m.Metrics)
+			// Old nodes still send these; VM usage now comes from the telemetry store.
 		case m.Type == "usage":
 			f.NoteUsage(ctx, node, m.Usage)
 		case m.Type == "disks":
@@ -251,6 +265,12 @@ func (f *Fleet) pushLoop(ctx context.Context, c *conn, enc *json.Encoder, node s
 			continue
 		case <-c.update:
 			if err := enc.Encode(proto.Message{Type: "update"}); err != nil {
+				c.sess.Close()
+				return
+			}
+			continue
+		case m := <-c.requests:
+			if err := enc.Encode(m); err != nil {
 				c.sess.Close()
 				return
 			}

@@ -35,25 +35,39 @@ type nodeQuery struct {
 
 // $node and $step are substituted per request; label names follow VictoriaMetrics' Prometheus naming of OTel metrics.
 var nodeQueries = map[string]nodeQuery{
-	"cpu":  {`sum by (state) (rate(system_cpu_time_seconds_total{observatory_node="$node",state=~"user|system|iowait"}[$step])) / scalar(count(count by (cpu) (system_cpu_time_seconds_total{observatory_node="$node"}))) * 100`, []string{"state"}},
-	"mem":  {`sum by (state) (system_memory_usage_bytes{observatory_node="$node",state=~"used|cached"})`, []string{"state"}},
-	"disk": {`100 * system_filesystem_usage_bytes{observatory_node="$node"} / system_filesystem_limit_bytes{observatory_node="$node"}`, []string{"mountpoint"}},
-	"net":  {`sum by (device, direction) (rate(system_network_io_bytes_total{observatory_node="$node"}[$step]))`, []string{"device", "direction"}},
+	"cpu":  {`sum by (state) (rate(system_cpu_time_seconds_total{observatory_node="$node",observatory_vm="",state=~"user|system|iowait"}[$step])) / scalar(count(count by (cpu) (system_cpu_time_seconds_total{observatory_node="$node",observatory_vm=""}))) * 100`, []string{"state"}},
+	"mem":  {`sum by (state) (system_memory_usage_bytes{observatory_node="$node",observatory_vm="",state=~"used|cached"})`, []string{"state"}},
+	"disk": {`100 * system_filesystem_usage_bytes{observatory_node="$node",observatory_vm=""} / system_filesystem_limit_bytes{observatory_node="$node",observatory_vm=""}`, []string{"mountpoint"}},
+	"net":  {`sum by (device, direction) (rate(system_network_io_bytes_total{observatory_node="$node",observatory_vm=""}[$step]))`, []string{"device", "direction"}},
 }
 
 func usageStep(from, to time.Time) time.Duration {
 	return max(to.Sub(from)/300, 10*time.Second).Truncate(time.Second)
 }
 
+const nodeScope = `observatory_node="$node",observatory_vm=""`
+
 func (c *Client) NodeUsage(ctx context.Context, org, node uuid.UUID, from, to time.Time) (Usage, error) {
+	return c.usage(ctx, org, "observatory_node", node, from, to)
+}
+
+func (c *Client) VMUsage(ctx context.Context, org, vm uuid.UUID, from, to time.Time) (Usage, error) {
+	return c.usage(ctx, org, "observatory_vm", vm, from, to)
+}
+
+func (c *Client) usage(ctx context.Context, org uuid.UUID, label string, id uuid.UUID, from, to time.Time) (Usage, error) {
 	step := fmt.Sprintf("%ds", int64(usageStep(from, to).Seconds()))
-	expand := strings.NewReplacer("$node", node.String(), "$step", step)
+	expand := strings.NewReplacer("$node", id.String(), "$step", step)
+	scope := nodeScope
+	if label != "observatory_node" {
+		scope = label + `="$node"`
+	}
 	points := map[string][]map[int64]float64{}
 	names := map[string][]string{}
 	stamps := map[int64]bool{}
 	for chart, nq := range nodeQueries {
 		form := url.Values{
-			"query":       {expand.Replace(nq.expr)},
+			"query":       {expand.Replace(strings.ReplaceAll(nq.expr, nodeScope, scope))},
 			"start":       {strconv.FormatInt(from.Unix(), 10)},
 			"end":         {strconv.FormatInt(to.Unix(), 10)},
 			"step":        {step},
@@ -119,9 +133,10 @@ func (c *Client) NodeUsage(ctx context.Context, org, node uuid.UUID, from, to ti
 }
 
 type LogQuery struct {
-	Org, Node           uuid.UUID
+	Org, Node, VM       uuid.UUID
 	From, To            time.Time
 	Text, Level, Source string
+	Stream              string
 	Fields              map[string]string
 	Limit               int
 }
@@ -130,6 +145,7 @@ type LogLine struct {
 	Time   time.Time      `json:"time"`
 	Level  string         `json:"level"`
 	Source string         `json:"source"`
+	Stream string         `json:"stream,omitempty"`
 	Msg    string         `json:"msg"`
 	Fields map[string]any `json:"fields"`
 }
@@ -148,6 +164,9 @@ func buildLogsQL(q LogQuery) string {
 	}
 	if sev, ok := severityText[q.Level]; ok {
 		parts = append(parts, `"severity_text":=`+strconv.Quote(sev))
+	}
+	if q.Stream != "" {
+		parts = append(parts, `"observatory.stream":=`+strconv.Quote(q.Stream))
 	}
 	if q.Source != "" {
 		parts = append(parts, "source:="+strconv.Quote(q.Source))
@@ -194,8 +213,15 @@ func (c *Client) TailLogs(ctx context.Context, q LogQuery, emit func(LogLine) er
 }
 
 func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q LogQuery, form url.Values, emit func(LogLine) error) error {
+	if (q.Node == uuid.Nil) == (q.VM == uuid.Nil) {
+		return errors.New("telemetry: log query needs exactly one of node or vm")
+	}
+	scope := " observatory.node:=" + strconv.Quote(q.Node.String()) + ` observatory.vm:=""`
+	if q.VM != uuid.Nil {
+		scope = " observatory.vm:=" + strconv.Quote(q.VM.String())
+	}
 	form.Set("query", buildLogsQL(q))
-	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+" observatory.node:="+strconv.Quote(q.Node.String()))
+	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+scope)
 	resp, err := c.postForm(ctx, hc, c.LogsURL+path, form)
 	if resp != nil {
 		defer resp.Body.Close()
@@ -225,10 +251,10 @@ func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q
 
 func toLogLine(rec map[string]string) LogLine {
 	t, _ := time.Parse(time.RFC3339Nano, rec["_time"])
-	l := LogLine{Time: t, Level: strings.ToLower(rec["severity_text"]), Source: rec["source"], Msg: rec["_msg"], Fields: map[string]any{}}
+	l := LogLine{Time: t, Level: strings.ToLower(rec["severity_text"]), Source: rec["source"], Stream: rec["observatory.stream"], Msg: rec["_msg"], Fields: map[string]any{}}
 	for k, v := range rec {
 		switch k {
-		case "_time", "_msg", "_stream", "_stream_id", "severity_text", "source":
+		case "_time", "_msg", "_stream", "_stream_id", "severity_text", "source", "observatory.stream":
 		default:
 			l.Fields[k] = v
 		}
@@ -243,4 +269,119 @@ func (c *Client) postForm(ctx context.Context, hc *http.Client, target string, f
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return c.do(hc, req)
+}
+
+type VMNow struct {
+	At                                                         time.Time
+	CPUPercent                                                 float64
+	MemUsedBytes, MemTotalBytes, DiskUsedBytes, DiskTotalBytes int64
+}
+
+type instantSample struct {
+	Metric map[string]string `json:"metric"`
+	Value  [2]any            `json:"value"`
+}
+
+func (c *Client) instant(ctx context.Context, org uuid.UUID, query string, at time.Time) ([]instantSample, error) {
+	form := url.Values{
+		"query":       {query},
+		"time":        {strconv.FormatInt(at.Unix(), 10)},
+		"extra_label": {"observatory_org=" + org.String()},
+	}
+	resp, err := c.postForm(ctx, c.httpClient(), c.MetricsURL+"/api/v1/query", form)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Data struct {
+			Result []instantSample `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("%w: decode query: %v", ErrStore, err)
+	}
+	return body.Data.Result, nil
+}
+
+func (s instantSample) number() (float64, time.Time, bool) {
+	ts, _ := s.Value[0].(float64)
+	str, _ := s.Value[1].(string)
+	v, err := strconv.ParseFloat(str, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, time.Time{}, false
+	}
+	return v, time.Unix(int64(ts), 0), true
+}
+
+// VMLatest returns the newest values per VM; VMs without data are absent.
+func (c *Client) VMLatest(ctx context.Context, org uuid.UUID, vms []uuid.UUID) (map[uuid.UUID]VMNow, error) {
+	out := map[uuid.UUID]VMNow{}
+	if len(vms) == 0 {
+		return out, nil
+	}
+	ids := make([]string, len(vms))
+	for i, vm := range vms {
+		ids[i] = vm.String()
+	}
+	sel := `observatory_vm=~"` + strings.Join(ids, "|") + `"`
+	cpu := `system_cpu_time_seconds_total{` + sel + `}`
+	metrics := []struct {
+		query string
+		set   func(*VMNow, float64)
+	}{
+		{`100 * sum by (observatory_vm) (rate(system_cpu_time_seconds_total{` + sel + `,state=~"user|system|iowait"}[1m])) / count by (observatory_vm) (count by (observatory_vm, cpu) (` + cpu + `))`, func(n *VMNow, v float64) { n.CPUPercent = v }},
+		{`sum by (observatory_vm) (system_memory_usage_bytes{` + sel + `,state="used"})`, func(n *VMNow, v float64) { n.MemUsedBytes = int64(v) }},
+		{`sum by (observatory_vm) (system_memory_usage_bytes{` + sel + `,state=~"used|cached|free"})`, func(n *VMNow, v float64) { n.MemTotalBytes = int64(v) }},
+		{`sum by (observatory_vm) (system_filesystem_usage_bytes{` + sel + `,mountpoint="/"})`, func(n *VMNow, v float64) { n.DiskUsedBytes = int64(v) }},
+		{`sum by (observatory_vm) (system_filesystem_limit_bytes{` + sel + `,mountpoint="/"})`, func(n *VMNow, v float64) { n.DiskTotalBytes = int64(v) }},
+	}
+	now := time.Now()
+	for _, m := range metrics {
+		res, err := c.instant(ctx, org, m.query, now)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range res {
+			vm, err := uuid.Parse(r.Metric["observatory_vm"])
+			v, _, ok := r.number()
+			if err != nil || !ok {
+				continue
+			}
+			n := out[vm]
+			m.set(&n, v)
+			out[vm] = n
+		}
+	}
+	stamps, err := c.instant(ctx, org, `max by (observatory_vm) (timestamp(system_memory_usage_bytes{`+sel+`,state="used"}))`, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range stamps {
+		vm, perr := uuid.Parse(r.Metric["observatory_vm"])
+		v, _, ok := r.number()
+		if n, found := out[vm]; perr == nil && ok && found {
+			n.At = time.Unix(int64(v), 0)
+			out[vm] = n
+		}
+	}
+	return out, nil
+}
+
+// VMDrops returns telemetry records the node dropped for the VM in [from, to], by kind.
+func (c *Client) VMDrops(ctx context.Context, org, vm uuid.UUID, from, to time.Time) (map[string]int64, error) {
+	window := max(int64(to.Sub(from).Seconds()), 1)
+	// increase_pure counts a counter that appears inside the window from 0: the node exports it only every 10 s, after drops may have begun.
+	q := fmt.Sprintf(`sum by (kind) (increase_pure(observatory_vm_telemetry_dropped_total{vm=%s,observatory_vm="",observatory_node!=""}[%ds]))`, strconv.Quote(vm.String()), window)
+	res, err := c.instant(ctx, org, q, to)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	for _, r := range res {
+		if v, _, ok := r.number(); ok {
+			out[r.Metric["kind"]] = int64(math.Round(v))
+		}
+	}
+	return out, nil
 }

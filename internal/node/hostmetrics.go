@@ -10,6 +10,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/sys/unix"
+
+	"github.com/asterism-dev/observatory/internal/sysstat"
 )
 
 var (
@@ -87,7 +89,7 @@ func (a *Agent) RegisterHostMetrics(m metric.Meter, mounts []string) error {
 	}
 
 	_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
-		if cpus, ok := readProcFile("stat", func(f *os.File) (map[string]map[string]float64, error) { return parseCPUTimes(f) }); ok {
+		if cpus, ok := readProcFile("stat", func(f *os.File) (map[string]map[string]float64, error) { return sysstat.CPUTimes(f) }); ok {
 			for c, states := range cpus {
 				for s, secs := range states {
 					o.ObserveFloat64(cpu, secs, metric.WithAttributes(attribute.String("cpu", c), attribute.String("state", s)))
@@ -95,7 +97,7 @@ func (a *Agent) RegisterHostMetrics(m metric.Meter, mounts []string) error {
 			}
 		}
 		if l, ok := readProcFile("loadavg", func(f *os.File) ([3]float64, error) {
-			l1, l5, l15, err := parseLoadAvg(f)
+			l1, l5, l15, err := sysstat.LoadAvg(f)
 			return [3]float64{l1, l5, l15}, err
 		}); ok {
 			for i, g := range load {
@@ -103,8 +105,8 @@ func (a *Agent) RegisterHostMetrics(m metric.Meter, mounts []string) error {
 			}
 		}
 		if v, ok := readProcFile("meminfo", func(f *os.File) ([5]int64, error) {
-			used, cached, free, swapUsed, swapFree, err := parseMemInfo(f)
-			return [5]int64{used, cached, free, swapUsed, swapFree}, err
+			m, err := sysstat.MemInfo(f)
+			return [5]int64{m.Used, m.Cached, m.Free, m.SwapUsed, m.SwapFree}, err
 		}); ok {
 			state := func(s string) metric.MeasurementOption { return metric.WithAttributes(attribute.String("state", s)) }
 			o.ObserveInt64(mem, v[0], state("used"))
@@ -113,14 +115,14 @@ func (a *Agent) RegisterHostMetrics(m metric.Meter, mounts []string) error {
 			o.ObserveInt64(paging, v[3], state("used"))
 			o.ObserveInt64(paging, v[4], state("free"))
 		}
-		if devs, ok := readProcFile("net/dev", func(f *os.File) (map[string][2]int64, error) { return parseNetDev(f) }); ok {
+		if devs, ok := readProcFile("net/dev", func(f *os.File) (map[string][2]int64, error) { return sysstat.NetDev(f, skipNetDevice) }); ok {
 			for d, b := range devs {
 				o.ObserveInt64(netIO, b[0], metric.WithAttributes(attribute.String("device", d), attribute.String("direction", "receive")))
 				o.ObserveInt64(netIO, b[1], metric.WithAttributes(attribute.String("device", d), attribute.String("direction", "transmit")))
 			}
 		}
 		for _, mp := range uniqueMounts(mounts) {
-			used, total, err := filesystemUsage(mp)
+			used, total, err := sysstat.FilesystemUsage(mp)
 			if err != nil {
 				continue
 			}

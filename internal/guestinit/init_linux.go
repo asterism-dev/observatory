@@ -23,10 +23,11 @@ const rootDevice = "/dev/vda"
 func Run() error {
 	// Registered first so a signal during boot is not lost; with ctrl-alt-del off the kernel sends PID 1 SIGINT instead of rebooting hard.
 	if err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_CAD_OFF); err != nil {
-		fmt.Fprintln(os.Stderr, "init: disable ctrl-alt-del:", err)
+		logf("init: disable ctrl-alt-del: %v", err)
 	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGHUP)
+	telemetry = newSink(dialTelemetry)
 
 	if err := mountBase(); err != nil {
 		return err
@@ -43,7 +44,7 @@ func Run() error {
 		return err
 	}
 	if err := growFS(rootDevice, newRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "init: grow root filesystem:", err)
+		logf("init: grow root filesystem: %v", err)
 	}
 	if err := switchRoot(newRoot); err != nil {
 		return err
@@ -52,10 +53,10 @@ func Run() error {
 	// Kept open: StartImage detaches this /proc, and shutdown still needs our mountinfo.
 	proc, err := os.Open("/proc")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: open /proc:", err)
+		logf("init: open /proc: %v", err)
 	}
 	agent := newAgent(root)
-	go func() { fmt.Fprintln(os.Stderr, "init: agent:", agent.listen()) }()
+	go func() { logf("init: agent: %v", agent.listen()) }()
 	var hostKeys []ssh.Signer
 	runSteps([]bootStep{
 		{"dev", root.EnsureDev},
@@ -71,15 +72,39 @@ func Run() error {
 	agent.setSeedKeys(seed.SSHKeys)
 	env := agent.applyEnv(seed)
 
+	// cmd.log survives reboots: the service log starts at what this boot adds.
+	var cmdLogStart int64
+	if fi, err := os.Stat(serviceLog); err == nil {
+		cmdLogStart = fi.Size()
+	}
+	stopReceiver, err := startReceiver(context.Background(), telemetry, "127.0.0.1:14318")
+	if err != nil {
+		logf("init: otlp receiver: %v", err)
+	} else {
+		defer stopReceiver()
+	}
 	// Without the image the guest still serves SSH port forwarding and the agent, so a failed start is not fatal.
 	img, err := StartImage(root, seed.Image, env)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: image:", err)
+		logf("init: image: %v", err)
+	} else {
+		// In the image's PID namespace and exec cgroup, the image's journalctl cannot reach the init and dies with the image.
+		go followServiceLog(context.Background(), telemetry, root.systemd() != "", img.Exec, cmdLogStart)
 	}
+	mounts := []string{"/"}
+	for _, d := range seed.Disks {
+		mounts = append(mounts, root.join(d.MountPath))
+	}
+	// After StartImage, /proc is the image's procfs.
+	go runUsage(context.Background(), telemetry, newUsage("/proc", mounts, time.Now()))
 	agent.SetSSH(startSSH(root, agent, hostKeys, img))
 	// Before SetReady: takeoff reads agent.Sync and StopDesktop, and none is served until ready.
 	startIntegrations(root, agent, img)
 	agent.StopDesktop = startDesktop(root, agent, devSpawn(root, img))
+	// Also before SetReady: the agent's ops read /proc and /sys, and the node snapshots a template as soon as ping answers.
+	if !waitImageMounts("/proc", "/sys", imageMountsTimeout) {
+		logf("init: the image did not mount /proc and /sys within %s", imageMountsTimeout)
+	}
 	agent.SetReady()
 	go announceReadyWhenAddressed(seed.NICs)
 
@@ -95,6 +120,25 @@ func Run() error {
 		shutdown(img, proc, img.shutdownCmd())
 	}
 	return nil
+}
+
+const imageMountsTimeout = 10 * time.Second
+
+// waitImageMounts waits until proc and sys are procfs and sysfs again: StartImage detaches the init's, and the image mounts its own in the shared mount namespace.
+func waitImageMounts(proc, sys string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !hasFSType(proc, unix.PROC_SUPER_MAGIC) || !hasFSType(sys, unix.SYSFS_MAGIC) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return true
+}
+
+func hasFSType(path string, magic int64) bool {
+	var st unix.Statfs_t
+	return unix.Statfs(path, &st) == nil && int64(st.Type) == magic
 }
 
 // startIntegrations syncs at boot, every 5 minutes and on takeoff; claude runs inside the image as dev.
@@ -125,7 +169,7 @@ func devSpawn(root Root, img *Image) func(*exec.Cmd) error {
 func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHServer {
 	l, err := net.Listen("tcp", ":22")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "init: ssh:", err)
+		logf("init: ssh: %v", err)
 		return nil
 	}
 	srv := &SSHServer{
@@ -147,7 +191,7 @@ func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHSe
 		Root: root,
 	}
 	go func() {
-		fmt.Fprintln(os.Stderr, "init: ssh:", srv.Serve(l))
+		logf("init: ssh: %v", srv.Serve(l))
 	}()
 	return srv
 }
@@ -155,7 +199,7 @@ func startSSH(root Root, agent *Agent, hostKeys []ssh.Signer, img *Image) *SSHSe
 // announceReadyWhenAddressed writes the ready marker once the primary NIC has an IPv4 address, giving up after 300 s like /run/vmm-ready.sh did.
 func announceReadyWhenAddressed(nics []proto.GuestNIC) {
 	if len(nics) > 0 && !waitIPv4(nics[0].Name, 300*time.Second) {
-		fmt.Fprintln(os.Stderr, "init: primary NIC got no IPv4 address, not reporting ready")
+		logf("init: primary NIC got no IPv4 address, not reporting ready")
 		return
 	}
 	for _, path := range []string{"/dev/hvc0", "/dev/ttyS0"} {
@@ -183,14 +227,14 @@ func shutdown(img *Image, proc *os.File, cmd int) {
 		img.Stop(imageStopTimeout)
 	}
 	if err := unmountAll(proc); err != nil {
-		fmt.Fprintln(os.Stderr, "init:", err)
+		consolef("init: %v", err)
 	}
 	if err := syscall.Mount("", "/", "", syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
-		fmt.Fprintln(os.Stderr, "init: remount / read-only:", err)
+		consolef("init: remount / read-only: %v", err)
 	}
 	syscall.Sync()
 	if err := syscall.Reboot(cmd); err != nil {
-		fmt.Fprintln(os.Stderr, "init: reboot:", err)
+		consolef("init: reboot: %v", err)
 	}
 }
 

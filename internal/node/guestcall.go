@@ -6,14 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/asterism-dev/observatory/internal/proto"
 )
 
 const GuestAgentPort = 1050
+
+// maxGuestReply bounds what a guest, which root inside the VM controls, can make the node read.
+const maxGuestReply = 1 << 20
 
 // GuestRequest is one guest agent call; it never carries keys or variables, the guest reads those from its seed.
 type GuestRequest struct {
@@ -25,11 +31,12 @@ type GuestRequest struct {
 	Certs map[string]string `json:"certs,omitempty"`
 }
 
-// GuestReply is the agent's answer; Version is set on ping.
+// GuestReply is the agent's answer; Version is set on ping, Processes on processes.
 type GuestReply struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error"`
-	Version string `json:"version"`
+	OK        bool                 `json:"ok"`
+	Error     string               `json:"error"`
+	Version   string               `json:"version"`
+	Processes []proto.GuestProcess `json:"processes"`
 }
 
 // CallGuest sends req to the guest agent through Firecracker's vsock uds and waits for its reply.
@@ -55,7 +62,7 @@ func CallGuest(ctx context.Context, uds string, req GuestRequest) (GuestReply, e
 	if _, err := fmt.Fprintf(c, "CONNECT %d\n", GuestAgentPort); err != nil {
 		return GuestReply{}, err
 	}
-	r := bufio.NewReader(c)
+	r := bufio.NewReader(io.LimitReader(c, maxGuestReply))
 	line, err := r.ReadString('\n')
 	if err != nil {
 		return GuestReply{}, fmt.Errorf("guest agent: %w", errors.Join(ctx.Err(), err))

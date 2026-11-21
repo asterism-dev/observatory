@@ -3,58 +3,57 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
-import { gb, type VmInfo } from '@/composables/nodes'
+import { gb, liveUsage, type VmInfo } from '@/composables/nodes'
+import type { Series, Usage } from '@/composables/telemetry'
 import { Card, Section } from '@/ui'
-
-interface Sample {
-  at: string
-  cpuPercent: number
-  memTotalMB: number
-  memUsedMB: number
-  diskUsedMB: number
-}
 
 const props = defineProps<{ orgId: string; vm: VmInfo }>()
 const { t } = useI18n()
-const samples = ref<Sample[]>([])
+const usage = ref<Usage | null>(null)
 const error = ref('')
 
 const W = 300
 const H = 100
+const windowMs = 10 * 60e3
 const now = ref(Date.now())
-const last = computed(() => samples.value.at(-1))
-const live = computed(() => !!last.value && now.value - Date.parse(last.value.at) < 30000)
-const minutes = computed(() => {
-  const first = samples.value[0]
-  return first && last.value && first !== last.value ? Math.max(1, Math.round((Date.parse(last.value.at) - Date.parse(first.at)) / 60000)) : 0
-})
+const last = computed(() => props.vm.usage)
+const live = computed(() => liveUsage(props.vm, now.value).cpu !== null)
 
-function line(values: number[], max: number) {
-  if (values.length < 2 || !max) return ''
-  return values.map((v, i) => `${((i / (values.length - 1)) * W).toFixed(1)},${(H - (Math.min(v, max) / max) * (H - 2) - 1).toFixed(1)}`).join(' ')
+// Sums the series per timestamp, as cpu comes split by state.
+function line(series: Series[] | undefined, max: number) {
+  const ts = usage.value?.t ?? []
+  if (!series?.length || !max) return ''
+  const from = now.value - windowMs
+  const points: string[] = []
+  ts.forEach((at, i) => {
+    const vals = series.map((s) => s.values[i]).filter((v): v is number => v != null)
+    if (!vals.length) return
+    const v = vals.reduce((a, b) => a + b, 0)
+    points.push(`${(((at * 1000 - from) / windowMs) * W).toFixed(1)},${(H - (Math.min(v, max) / max) * (H - 2) - 1).toFixed(1)}`)
+  })
+  return points.length > 1 ? points.join(' ') : ''
 }
-const pct = (v: number, max: number) => (max ? (v / max) * 100 : null)
 
 const cards = computed(() => {
-  const s = samples.value
   const l = last.value
-  const diskMB = props.vm.diskGB * 1024
+  const p = liveUsage(props.vm, now.value)
+  const c = usage.value?.charts
   return [
-    { key: 'cpu', label: t('usage.cpu'), detail: l ? `${((l.cpuPercent / 100) * props.vm.cpus).toFixed(1)} / ${props.vm.cpus} vCPU` : '', percent: l ? l.cpuPercent : null, points: line(s.map((x) => x.cpuPercent), 100) },
-    l?.memTotalMB
-      ? { key: 'mem', label: t('usage.mem'), detail: `${gb(l.memUsedMB)} / ${gb(l.memTotalMB)} GB`, percent: pct(l.memUsedMB, l.memTotalMB), points: line(s.map((x) => x.memUsedMB), l.memTotalMB) }
-      : { key: 'mem', label: t('usage.mem'), detail: l ? t('usage.noRam') : '', percent: null, points: '' },
-    { key: 'dsk', label: t('usage.dsk'), detail: l ? `${gb(l.diskUsedMB)} / ${props.vm.diskGB} GB` : '', percent: l ? pct(l.diskUsedMB, diskMB) : null, points: line(s.map((x) => x.diskUsedMB), diskMB) },
+    { key: 'cpu', label: t('usage.cpu'), detail: l ? `${((l.cpuPercent / 100) * props.vm.cpus).toFixed(1)} / ${props.vm.cpus} vCPU` : '', percent: p.cpu, points: line(c?.cpu, 100) },
+    { key: 'mem', label: t('usage.mem'), detail: l ? `${gb(l.memUsedMB)} / ${gb(l.memTotalMB)} GB` : '', percent: p.mem, points: line(c?.mem?.filter((s) => s.name === 'used'), (l?.memTotalMB ?? 0) * 2 ** 20) },
+    { key: 'dsk', label: t('usage.dsk'), detail: l ? `${gb(l.diskUsedMB)} / ${gb(l.diskTotalMB)} GB` : '', percent: p.dsk, points: line(c?.disk?.filter((s) => s.name === '/'), 100) },
   ]
 })
 
 async function load() {
   const id = props.vm.id
+  const to = new Date()
+  const q = new URLSearchParams({ from: new Date(to.getTime() - windowMs).toISOString(), to: to.toISOString() })
   try {
-    const res = await api<{ samples: Sample[] }>(`/api/orgs/${props.orgId}/vms/${id}/metrics`)
+    const res = await api<Usage>(`/api/orgs/${props.orgId}/vms/${id}/usage?${q}`)
     if (id !== props.vm.id) return
-    samples.value = res.samples
-    now.value = Date.now()
+    usage.value = res
+    now.value = to.getTime()
     error.value = ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -72,7 +71,7 @@ onBeforeUnmount(() => {
 watch(
   () => props.vm.id,
   () => {
-    samples.value = []
+    usage.value = null
     load()
   },
   { immediate: true },
@@ -80,7 +79,7 @@ watch(
 </script>
 
 <template>
-  <Section :label="t('usage.window', { n: minutes || 10 })">
+  <Section :label="t('usage.window', { n: 10 })">
     <template #actions><span v-if="live" class="live mono">{{ t('usage.live') }}</span></template>
     <p v-if="error" role="alert">{{ error }}</p>
     <p v-else-if="!last" class="muted">{{ t('usage.none') }}</p>
@@ -100,7 +99,7 @@ watch(
             <polyline v-if="c.points" :points="c.points" fill="none" class="plot" vector-effect="non-scaling-stroke" />
           </svg>
           <div class="axis mono small muted">
-            <span>{{ t('usage.ago', { n: minutes || 10 }) }}</span>
+            <span>{{ t('usage.ago', { n: 10 }) }}</span>
             <span>{{ t('usage.now') }}</span>
           </div>
         </Card>

@@ -51,7 +51,7 @@ func dialToken() (tokenConn, error) {
 	if path := os.Getenv("VMM_TOKEN_UNIX"); path != "" {
 		return net.DialTimeout("unix", path, tokenTimeout)
 	}
-	return dialVsock(tokenTimeout)
+	return dialVsock(tokenPort, tokenTimeout)
 }
 
 // Token asks the node's token service for kind; the code is 0, tokenNotConnected or tokenUnavailable.
@@ -674,7 +674,7 @@ func runIntegrationSync(ctx context.Context, interval time.Duration, trigger <-c
 	defer tick.Stop()
 	for {
 		if err := sync(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, "init: integrations:", err)
+			logf("init: integrations: %v", err)
 		}
 		select {
 		case <-ctx.Done():

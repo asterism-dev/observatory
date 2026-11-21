@@ -19,9 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/chassisconf"
 	"github.com/asterism-dev/observatory/internal/node"
 	"github.com/asterism-dev/observatory/internal/node/ociimage"
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/provider/linuxvm"
 )
@@ -45,7 +48,8 @@ type Provider struct {
 	fcVersion string
 	building  sync.Mutex // held while a template builds; builds never queue
 
-	tokens atomic.Pointer[node.TokenLookup]
+	tokens    atomic.Pointer[node.TokenLookup]
+	telemetry atomic.Pointer[vmtelemetry.Sink]
 }
 
 func New(c node.Config) (*Provider, error) {
@@ -441,6 +445,16 @@ func (s *jailSock) close() {
 	s.dir = nil
 }
 
+// vmTelemetry returns the sink and VM ID for spawn id, or a nil sink when telemetry is off or id is no VM's, such as a template build's.
+func (p *Provider) vmTelemetry(id string) (*vmtelemetry.Sink, uuid.UUID) {
+	sink := p.telemetry.Load()
+	vmID, err := uuid.Parse(id)
+	if sink == nil || err != nil {
+		return nil, uuid.Nil
+	}
+	return sink, vmID
+}
+
 // spawnJailed starts Firecracker under the jailer; to boot, files holds the kernel, the initrd and then the drives.
 func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds []string, boot bool) (*linuxvm.Process, string, int, error) {
 	p.mu.Lock()
@@ -485,19 +499,35 @@ func (p *Provider) spawnJailed(f node.VMFile, dir string, files []jailFile, nbds
 		removeJail()
 		return nil, "", 0, err
 	}
-	tokens, err := listenTokens(dir, uid)
+	tokens, err := listenGuestPort(dir, uid, node.TokenPort)
 	if err != nil {
 		removeJail()
 		return nil, "", 0, fmt.Errorf("token socket: %w", err)
 	}
 	go node.ServeTokens(tokens, f.Spec.ID, p.token)
-	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, func() { tokens.Close(); removeJail() })
+	closeListeners := func() { tokens.Close() }
+	sink, vmID := p.vmTelemetry(f.Spec.ID)
+	if sink != nil {
+		telemetry, err := listenGuestPort(dir, uid, node.TelemetryPort)
+		if err != nil {
+			tokens.Close()
+			removeJail()
+			return nil, "", 0, fmt.Errorf("telemetry socket: %w", err)
+		}
+		sink.Register(vmID)
+		go sink.Serve(telemetry, vmID)
+		closeListeners = func() { tokens.Close(); telemetry.Close(); sink.Forget(vmID) }
+	}
+	proc, err := linuxvm.Spawn(f, dir, jailerCmd(fcPath, dir, uid, boot), nbds, uid, func() { closeListeners(); removeJail() })
 	if err != nil {
-		tokens.Close()
+		closeListeners()
 	} else {
 		ctx, stop := context.WithCancel(context.Background())
 		go func() { <-proc.Done(); stop() }()
 		go tailFCLog(ctx, fcLog, f.Spec.ID, f.Spec.Name)
+		if sink != nil {
+			go tailConsole(ctx, proc.Console, proc.Offset, vmID, sink.Emit)
+		}
 	}
 	// Without a management NIC the NAT address is the only one the VM has.
 	if err == nil && proc.IP == "" {
@@ -561,32 +591,6 @@ func (i *instance) WaitIP(ctx context.Context) (string, error) {
 	return i.Process.WaitIP(ctx)
 }
 
-// CPUTicks reads the jailed Firecracker, the shell's only child, by its host PID.
-func (i *instance) CPUTicks() (uint64, error) {
-	sh := strconv.Itoa(i.Cmd.Process.Pid)
-	b, err := os.ReadFile("/proc/" + sh + "/task/" + sh + "/children")
-	if err != nil {
-		return 0, err
-	}
-	kids := strings.Fields(string(b))
-	if len(kids) == 0 {
-		return 0, errors.New("firecracker process not found")
-	}
-	child, err := strconv.Atoi(kids[0])
-	if err != nil {
-		return 0, err
-	}
-	return node.ProcTicks(child)
-}
-
-func (i *instance) Memory() (int, int, error) {
-	st, err := i.api.BalloonStats()
-	if err != nil || st.TotalMemory == 0 {
-		return 0, 0, err
-	}
-	return int(st.TotalMemory >> 20), int((st.TotalMemory - min(st.AvailableMemory, st.TotalMemory)) >> 20), nil
-}
-
 func (i *instance) Pause() error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -632,6 +636,11 @@ func (i *instance) ReloadSeed() error {
 func (i *instance) GuestResume(ctx context.Context) error {
 	_, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "resume", Time: time.Now().UnixNano()})
 	return err
+}
+
+func (i *instance) GuestProcesses(ctx context.Context) ([]proto.GuestProcess, error) {
+	r, err := node.CallGuest(ctx, filepath.Join(jailRoot(i.dir), vsockPath), node.GuestRequest{Op: "processes"})
+	return r.Processes, err
 }
 
 func (i *instance) GuestTrust(ctx context.Context, cas map[string]string) error {

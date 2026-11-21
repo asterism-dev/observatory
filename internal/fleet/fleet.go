@@ -3,6 +3,8 @@ package fleet
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"maps"
@@ -41,9 +43,8 @@ type Fleet struct {
 	mu           sync.Mutex
 	conns        map[uuid.UUID]*conn
 	diskErrs     map[uuid.UUID]map[string]string // VM → disk ID → error, from the latest status
-	metrics      map[uuid.UUID][]MetricSample
-	retrying     map[uuid.UUID]bool       // orgs with a pending integrationRetry push
-	imageRetries map[uuid.UUID]imageRetry // by node
+	retrying     map[uuid.UUID]bool              // orgs with a pending integrationRetry push
+	imageRetries map[uuid.UUID]imageRetry        // by node
 
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
@@ -64,7 +65,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	if err != nil {
 		return nil, err
 	}
-	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, metrics: map[uuid.UUID][]MetricSample{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
+	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
@@ -127,6 +128,54 @@ func (f *Fleet) Online(node uuid.UUID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.conns[node] != nil
+}
+
+var (
+	ErrNodeOffline  = errors.New("node offline")
+	ErrVMNotRunning = errors.New("vm not running")
+)
+
+// Processes asks the VM's node for its live process list; ctx bounds the wait for the reply.
+func (f *Fleet) Processes(ctx context.Context, node, vm uuid.UUID) ([]proto.GuestProcess, error) {
+	id := make([]byte, 16)
+	rand.Read(id)
+	req := proto.Message{Type: "processes", ReqID: hex.EncodeToString(id), VM: vm.String()}
+	reply := make(chan proto.Message, 1)
+	f.mu.Lock()
+	c := f.conns[node]
+	if c == nil {
+		f.mu.Unlock()
+		return nil, ErrNodeOffline
+	}
+	c.pending[req.ReqID] = reply
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(c.pending, req.ReqID)
+		f.mu.Unlock()
+	}()
+	select {
+	case c.requests <- req:
+	case <-c.done:
+		return nil, ErrNodeOffline
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case m := <-reply:
+		switch m.Error {
+		case "":
+			return m.Processes[:min(len(m.Processes), proto.MaxGuestProcesses)], nil
+		case proto.ErrVMNotRunning:
+			return nil, ErrVMNotRunning
+		default:
+			return nil, errors.New(m.Error)
+		}
+	case <-c.done:
+		return nil, ErrNodeOffline
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // NotifyOrg schedules a fresh desired list for every connected node of the org; it never waits on a node.

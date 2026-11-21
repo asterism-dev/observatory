@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,8 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	collogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
@@ -494,5 +498,84 @@ func TestTelemetryDurationInGroupAsString(t *testing.T) {
 	}
 	if took != "2s" {
 		t.Fatalf("pull.took = %q, want 2s (attrs %v)", took, recs[0].Attributes)
+	}
+}
+
+func TestVMTelemetryDroppedCounter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	tel := &Telemetry{Meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")}
+	sink, fw, err := NewVMTelemetry("ws://127.0.0.1:1/api/nodes/connect", "cred", tel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	defer fw.Close(ctx)
+	vm := uuid.New()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan struct{})
+	sink.Register(vm)
+	go func() { sink.Serve(l, vm); close(served) }()
+	defer func() { l.Close(); <-served }()
+	// Emit drops records of a VM not yet served, so it repeats until Serve has started.
+	eventually(t, "dropped counter", func() bool {
+		sink.Emit(vm, "console", make([]*logspb.LogRecord, 501))
+		var rm metricdata.ResourceMetrics
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			t.Fatal(err)
+		}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				if m.Name != "observatory.vm.telemetry.dropped" {
+					continue
+				}
+				for _, p := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					v, _ := p.Attributes.Value("vm")
+					k, _ := p.Attributes.Value("kind")
+					if v.AsString() == vm.String() && k.AsString() == "logs" && p.Value >= 1 {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	})
+}
+
+func TestVMTelemetryDroppedCounterStartsAtRegister(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	tel := &Telemetry{Meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")}
+	sink, fw, err := NewVMTelemetry("ws://127.0.0.1:1/api/nodes/connect", "cred", tel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	defer fw.Close(ctx)
+	vm := uuid.New()
+	sink.Register(vm)
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "observatory.vm.telemetry.dropped" {
+				continue
+			}
+			for _, p := range m.Data.(metricdata.Sum[int64]).DataPoints {
+				if v, _ := p.Attributes.Value("vm"); v.AsString() == vm.String() {
+					k, _ := p.Attributes.Value("kind")
+					got[k.AsString()] = p.Value
+				}
+			}
+		}
+	}
+	if len(got) != 3 || got["logs"] != 0 || got["series"] != 0 || got["body"] != 0 {
+		t.Fatalf("dropped after Register = %v, want logs, series and body at 0", got)
 	}
 }

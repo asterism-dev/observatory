@@ -7,12 +7,12 @@ import { api } from '@/api'
 import { logParams, prettyLine, type LogFilter, type LogLine, type UsageRange } from '@/composables/telemetry'
 import { Card, Section } from '@/ui'
 
-const props = defineProps<{ orgId: string; nodeId: string; range: UsageRange; hoverAt: number | null }>()
+const props = defineProps<{ url: string; range: UsageRange; hoverAt: number | null; filter: { key: 'source' | 'stream'; options: string[] } }>()
 
 const { t, locale } = useI18n()
 const q = ref('')
 const level = ref('all')
-const source = ref('all')
+const picked = ref('all')
 const fields = ref<Record<string, string>>({})
 const live = ref(true)
 const lines = ref<LogLine[]>([])
@@ -27,17 +27,16 @@ let generation = 0
 const linesEl = ref<HTMLElement | null>(null)
 
 const levels = computed(() => [{ value: 'all', label: t('telemetry.allLevels') }, ...['error', 'warn', 'info', 'debug'].map((v) => ({ value: v, label: v }))])
-const sources = computed(() => [{ value: 'all', label: t('telemetry.allSources') }, ...['observatory-node', 'firecracker'].map((v) => ({ value: v, label: v }))])
-const filter = computed<LogFilter>(() => ({
+const pickOptions = computed(() => [{ value: 'all', label: t(props.filter.key === 'source' ? 'telemetry.allSources' : 'telemetry.allStreams') }, ...props.filter.options.map((v) => ({ value: v, label: v }))])
+const logFilter = computed<LogFilter>(() => ({
   from: props.range.from,
   to: props.range.to,
   q: q.value.trim(),
   level: level.value === 'all' ? '' : level.value,
-  source: source.value === 'all' ? '' : source.value,
+  [props.filter.key]: picked.value === 'all' ? '' : picked.value,
   fields: fields.value,
 }))
 const following = computed(() => live.value && props.range.now)
-const base = () => `/api/orgs/${props.orgId}/nodes/${props.nodeId}/logs`
 const lineKey = (l: LogLine) => JSON.stringify(l)
 const time = (iso: string) =>
   new Date(iso).toLocaleString(locale.value, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -52,7 +51,7 @@ function tail(f: LogFilter) {
   p.delete('from')
   p.delete('to')
   stop()
-  stream = new EventSource(`${base()}/tail?${p}`)
+  stream = new EventSource(`${props.url}/tail?${p}`)
   // The stream may end without notice; EventSource reconnects and the dedupe drops lines already shown.
   stream.onmessage = (e) => {
     let l: LogLine
@@ -77,9 +76,9 @@ async function load() {
   const gen = ++generation
   stop()
   // range.to of a live range is only set on preset changes; history must reach now or the tail leaves a gap.
-  const f = props.range.now ? { ...filter.value, to: new Date() } : filter.value
+  const f = props.range.now ? { ...logFilter.value, to: new Date() } : logFilter.value
   try {
-    const res = await api<{ lines: LogLine[] }>(`${base()}?${logParams(f)}`)
+    const res = await api<{ lines: LogLine[] }>(`${props.url}?${logParams(f)}`)
     if (gen !== generation) return
     lines.value = res.lines
     seen = new Set(res.lines.map(lineKey))
@@ -91,7 +90,7 @@ async function load() {
   if (following.value) tail(f)
 }
 
-watch([filter, following], () => {
+watch([logFilter, following], () => {
   window.clearTimeout(debounce)
   debounce = window.setTimeout(load, 250)
 }, { immediate: true })
@@ -130,7 +129,7 @@ function removeField(key: string) {
       <div class="bar">
         <TextInput v-model="q" type="search" :placeholder="t('telemetry.search')" :aria-label="t('telemetry.search')" />
         <Select v-model="level" :options="levels" :aria-label="t('telemetry.level')" />
-        <Select v-model="source" :options="sources" :aria-label="t('telemetry.source')" />
+        <Select v-model="picked" :options="pickOptions" :aria-label="t(`telemetry.${filter.key}`)" />
         <Button v-if="range.now" variant="ghost" size="sm" class="live mono" :class="{ paused: !live }" @click="live = !live">
           {{ live ? `● ${t('telemetry.live')}` : `❚❚ ${t('telemetry.paused')}` }}
         </Button>
@@ -147,7 +146,7 @@ function removeField(key: string) {
           <div class="ln" :data-t="Date.parse(l.time)" role="button" tabindex="0" :aria-expanded="open.has(lineKey(l))" @click="toggle(lineKey(l))" @keydown.enter="toggle(lineKey(l))">
             <span class="muted">{{ open.has(lineKey(l)) ? '▾' : '▸' }} {{ time(l.time) }}</span>
             <span :class="`lv-${l.level}`">{{ l.level.toUpperCase() }}</span>
-            <span class="src muted">{{ l.source }}</span>
+            <span class="src muted">{{ l[filter.key] }}</span>
             <span class="msg">{{ l.msg }}</span>
           </div>
           <pre v-if="open.has(lineKey(l))" class="json"><template v-for="(p, i) in prettyLine(l)" :key="i"><span

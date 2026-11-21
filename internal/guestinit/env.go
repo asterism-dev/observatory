@@ -16,6 +16,11 @@ const (
 	maxEnvironmentVal = 1000
 )
 
+var otelDefaults = map[string]string{
+	"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:14318",
+	"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+}
+
 var (
 	envName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	trustVars = []string{"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"}
@@ -47,6 +52,12 @@ func (r Root) WriteEnv(seed map[string]string, image []string) (map[string]strin
 	}
 	for n, v := range seed {
 		set(n, v)
+	}
+	// An image or seed with its own exporter setup must not get half of ours.
+	_, endpoint := env["OTEL_EXPORTER_OTLP_ENDPOINT"]
+	_, protocol := env["OTEL_EXPORTER_OTLP_PROTOCOL"]
+	if !endpoint && !protocol {
+		maps.Copy(env, otelDefaults)
 	}
 	slices.Sort(bad)
 	path := env["PATH"]
@@ -108,6 +119,11 @@ func (r Root) writeEnvironmentBlock(block string) error {
 func (r Root) writeSystemdEnv(env map[string]string) error {
 	vars := map[string]string{"PATH": env["PATH"]}
 	for _, n := range trustVars {
+		if v, ok := env[n]; ok {
+			vars[n] = v
+		}
+	}
+	for n := range otelDefaults {
 		if v, ok := env[n]; ok {
 			vars[n] = v
 		}

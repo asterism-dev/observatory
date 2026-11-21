@@ -45,7 +45,7 @@ services:
     image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
     profiles: [telemetry]
     restart: unless-stopped
-    command: ["-storageDataPath=/storage", "-retentionPeriod=30d", "-opentelemetry.usePrometheusNaming"]
+    command: ["-storageDataPath=/storage", "-retentionPeriod=30d", "-opentelemetry.usePrometheusNaming", "-opentelemetry.promoteScopeMetadata=false"]
     ports:
       - "127.0.0.1:58428:8428"
     volumes:

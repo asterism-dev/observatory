@@ -132,7 +132,7 @@ func (d *Desktop) launch() error {
 		// xpra exits 1 on SIGTERM, so exit status 1 is a normal stop.
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() > 1 {
-			fmt.Fprintln(os.Stderr, "init: desktop:", err)
+			logf("init: desktop: %v", err)
 		}
 		close(done)
 	}()

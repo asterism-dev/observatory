@@ -13,10 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+
 	"github.com/asterism-dev/observatory/internal/node"
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -26,7 +31,11 @@ const egressKillWait = 5 * time.Second
 // Egress runs per-VM proxies as `<Binary> egress` and redirects the VMs' NAT-tap HTTPS to them with nftables.
 type Egress struct {
 	VMsDir, Binary string
+	telemetry      atomic.Pointer[vmtelemetry.Sink]
 }
+
+// SetVMTelemetry makes every proxy's output lines also go to the sink's egress stream, redacted.
+func (e *Egress) SetVMTelemetry(s *vmtelemetry.Sink) { e.telemetry.Store(s) }
 
 // NewEgress recreates the node's egress tables, dropping redirects a previous run left behind.
 func NewEgress(vmsDir, binary string) (*Egress, error) {
@@ -77,6 +86,7 @@ func (e *Egress) Unredirect(f node.VMFile) error {
 
 func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	id := f.Spec.ID
+	vmID, _ := uuid.Parse(id)
 	natIP, uid, port, _, err := e.slot(id)
 	if err != nil {
 		return nil, err
@@ -150,14 +160,24 @@ func (e *Egress) Spawn(f node.VMFile) (node.EgressProc, error) {
 	}()
 	go func() {
 		defer readers.Done()
+		batch := vmtelemetry.NewLineBatch(func(recs []*logspb.LogRecord) { emitEgress(e.telemetry.Load(), vmID, recs) })
+		defer batch.Close()
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			egressOutputLog.Info("egress proxy output", "vm", id, "line", sc.Text())
+			line := sc.Text()
+			egressOutputLog.Info("egress proxy output", "vm", id, "line", line)
+			batch.Add(RedactEgress(line))
 		}
 		// An over-long line ends the scanner; draining keeps the proxy from blocking on a full pipe.
 		io.Copy(io.Discard, stderr)
 	}()
 	return p, nil
+}
+
+func emitEgress(sink *vmtelemetry.Sink, vmID uuid.UUID, recs []*logspb.LogRecord) {
+	if sink != nil && vmID != uuid.Nil {
+		sink.Emit(vmID, "egress", recs)
+	}
 }
 
 type egressProc struct {

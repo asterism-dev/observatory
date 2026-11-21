@@ -4,9 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -43,6 +41,7 @@ type Agent struct {
 	// Sync and StopDesktop are nil-safe: the integrations and desktop tasks are wired in by Run.
 	Sync        func()
 	StopDesktop func()
+	Proc        string
 
 	mu        sync.Mutex // serializes takeoff, resume and trust
 	stateMu   sync.RWMutex
@@ -63,14 +62,24 @@ type agentRequest struct {
 }
 
 type agentReply struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
-	Version string `json:"version,omitempty"`
+	OK        bool                 `json:"ok"`
+	Error     string               `json:"error,omitempty"`
+	Version   string               `json:"version,omitempty"`
+	Processes []proto.GuestProcess `json:"processes,omitempty"`
 }
 
 func (a *Agent) readyChan() chan struct{} {
 	a.initOnce.Do(func() { a.ready = make(chan struct{}) })
 	return a.ready
+}
+
+func (a *Agent) isReady() bool {
+	select {
+	case <-a.readyChan():
+		return true
+	default:
+		return false
+	}
 }
 
 // SetReady lets ping succeed; Run calls it once the guest is set up.
@@ -106,11 +115,11 @@ func (a *Agent) setSeedKeys(keys []string) {
 // applyEnv writes the guest environment and makes it the one SSH sessions get; a failed write is logged and the merged env still used.
 func (a *Agent) applyEnv(seed proto.GuestSeed) map[string]string {
 	if err := a.Root.WriteContext(seed.Context); err != nil {
-		fmt.Fprintln(os.Stderr, "agent: context:", err)
+		logf("agent: context: %v", err)
 	}
 	env, err := a.Root.WriteEnv(seed.Env, seed.Image.Env)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "agent: environment:", err)
+		logf("agent: environment: %v", err)
 	}
 	if env == nil {
 		env = map[string]string{"PATH": platformBin + ":" + defaultPath}
@@ -123,7 +132,7 @@ func (a *Agent) applyEnv(seed proto.GuestSeed) map[string]string {
 
 func (a *Agent) installCAs(seed proto.GuestSeed) {
 	if _, err := a.Root.InstallCAs(seed.EgressCAs); err != nil {
-		fmt.Fprintln(os.Stderr, "agent: egress CAs:", err)
+		logf("agent: egress CAs: %v", err)
 	}
 }
 
@@ -139,14 +148,26 @@ func (a *Agent) handle(line []byte) agentReply {
 	if err != nil {
 		return agentReply{Error: err.Error()}
 	}
+	// A poll during boot must not hold one of the few agent slots for minutes.
+	if req.Op == "processes" && !a.isReady() {
+		return agentReply{Error: "booting"}
+	}
 	// Every op waits for Run's setup, or a trust could be overwritten by the setup's older seed.
 	select {
 	case <-a.readyChan():
 	case <-time.After(pingBootTimeout):
 		return agentReply{Error: "booting"}
 	}
-	if req.Op == "ping" {
+	switch req.Op {
+	case "ping":
 		return agentReply{OK: true, Version: version.Version}
+	case "processes":
+		// Read-only, so it never waits behind a takeoff.
+		ps, err := listProcesses(a.Proc, a.Root.join("etc/passwd"), time.Sleep)
+		if err != nil {
+			return agentReply{Error: err.Error()}
+		}
+		return agentReply{OK: true, Processes: ps}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

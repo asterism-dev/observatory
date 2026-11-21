@@ -45,7 +45,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `node:read`, `node:create` | `org/nodes` |
 | `node:read`, `node:update`, `node:delete`, `node:use`, `node:metrics` | `org/nodes/*` |
 | `vm:create` | `org/vms` (user VMs), `org/team-vms/*` (team VMs) |
-| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect`, `vm:snapshot`, `vm:restore`, `vm:fork` | `org/vms/*` |
+| `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:connect`, `vm:snapshot`, `vm:restore`, `vm:fork`, `vm:metrics` | `org/vms/*` |
 | `device:create`, `device:list`, `device:delete` | `org/user-devices/*` |
 | `network:read`, `network:create` | `org/networks` |
 | `network:use`, `network:delete` | `org/networks/*` |
@@ -69,6 +69,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `integration:*` on `org/integrations` and `org/team-integrations/*` | | yes | yes |
 | `node:read` on `org/nodes` and `org/nodes/*`, `node:use` on `org/nodes/*` | yes | yes | yes |
 | `node:*` (create, update, delete, metrics) on `org/nodes` and `org/nodes/*` | | yes | yes |
+| `vm:metrics` on `org/vms/*` | | yes | yes |
 | `vm:create` on `org/vms` | yes | yes | yes |
 | `vm:create` on `org/team-vms/*`; `vm:read`, `vm:power`, `vm:delete`, `vm:network`, `vm:disks`, `vm:snapshot`, `vm:restore` on `org/vms/*` | | yes | yes |
 | `network:read`, `network:create` on `org/networks`, `network:use` on `org/networks/*` | yes | yes | yes |
@@ -186,7 +187,7 @@ disks cannot be deleted (`409` "owns VMs or disks").
 ## VM lifecycle
 
 Pause, hibernate, resume and the auto-suspend setting are power actions (`vm:power`). Snapshots are VM sub-resources,
-so their actions are on the VM object; listing snapshots and reading metrics need `vm:read`
+so their actions are on the VM object; listing snapshots needs `vm:read`
 ([vm-lifecycle.md](vm-lifecycle.md)).
 
 | Action | Allows |
@@ -196,6 +197,7 @@ so their actions are on the VM object; listing snapshots and reading metrics nee
 | `vm:snapshot` | take and delete snapshots |
 | `vm:restore` | restore the VM to one of its snapshots |
 | `vm:fork` | create a new VM from a snapshot; the owner also needs `vm:create` for the new VM |
+| `vm:metrics` | read the VM's telemetry: usage, processes and logs |
 
 - A user VM gives its user `vm:snapshot`, `vm:restore` and `vm:fork` on it.
 - A team VM gives the team subject `vm:snapshot`, and each admin of that team `vm:snapshot`, `vm:restore` and
@@ -203,6 +205,8 @@ so their actions are on the VM object; listing snapshots and reading metrics nee
 - Org admins and owners get `vm:snapshot` and `vm:restore` on every VM, never `vm:fork`: a fork holds the source's
   memory and disks, so like `vm:connect` and `disk:use` it is data access. All three actions go through the escalation
   rule.
+- A user VM gives its user `vm:metrics`; a team VM gives it to the team subject and each team admin. Org admins and
+  owners may read every VM's telemetry (`vm:metrics`, incl. logs and processes) but still never connect.
 
 | | member | team admin (of that team) | admin | owner |
 |---|---|---|---|---|

@@ -5,9 +5,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 )
 
 func TestParseFCLogLine(t *testing.T) {
@@ -116,5 +122,108 @@ func TestTailFCLogDrainsOnStop(t *testing.T) {
 	tailFCLog(ctx, path, "vm1", "web")
 	if recs := h.records(); len(recs) != 1 || recs[0].Level != slog.LevelError {
 		t.Errorf("records = %v, want the last line written before the VM exited", recs)
+	}
+}
+
+func TestTailLinesFromOffset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	old := "old boot line\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var got []string
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		tailLines(ctx, path, int64(len(old)), func(l []string) { mu.Lock(); got = append(got, l...); mu.Unlock() })
+		close(done)
+	}()
+	lines := func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), got...) }
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	f.WriteString("one\ntw")
+	time.Sleep(1500 * time.Millisecond)
+	if l := lines(); len(l) != 1 || l[0] != "one" {
+		t.Fatalf("lines = %q, want only the complete one", l)
+	}
+	f.WriteString("o\nlast\n")
+	cancel()
+	<-done
+	if l := lines(); len(l) != 3 || l[1] != "two" || l[2] != "last" {
+		t.Errorf("lines = %q, want one, two, last", l)
+	}
+}
+
+func TestConsoleStreamEmitted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	if err := os.WriteFile(path, []byte("login: \r\n\r\n \t\n"+strings.Repeat("x", 20<<10)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	vm := uuid.New()
+	type got struct {
+		vm     uuid.UUID
+		stream string
+		recs   []*logspb.LogRecord
+	}
+	var emitted []got
+	tailConsole(ctx, path, 0, vm, func(id uuid.UUID, stream string, recs []*logspb.LogRecord) {
+		emitted = append(emitted, got{id, stream, recs})
+	})
+	if len(emitted) != 1 {
+		t.Fatalf("emitted %d batches, want 1", len(emitted))
+	}
+	e := emitted[0]
+	if e.vm != vm || e.stream != "console" || len(e.recs) != 2 {
+		t.Fatalf("emitted = %+v", e)
+	}
+	for _, r := range e.recs {
+		if r.SeverityText != "INFO" || r.TimeUnixNano == 0 {
+			t.Errorf("record = %+v", r)
+		}
+	}
+	if b := e.recs[0].Body.GetStringValue(); b != "login: " {
+		t.Errorf("body = %q", b)
+	}
+	if n := len(e.recs[1].Body.GetStringValue()); n != 16<<10 {
+		t.Errorf("long line body = %d bytes, want 16 KiB", n)
+	}
+}
+
+func TestTailLinesBoundsLongLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 1<<20)+"\nnext\n"+strings.Repeat("y", 100<<10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var got []string
+	tailLines(ctx, path, 0, func(l []string) { got = append(got, l...) })
+	if len(got) != 3 || len(got[0]) != maxLine || got[1] != "next" || len(got[2]) != maxLine {
+		var lens []int
+		for _, l := range got {
+			lens = append(lens, len(l))
+		}
+		t.Errorf("line lengths = %v, want truncated, next, truncated", lens)
+	}
+}
+
+func TestTailLinesBatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "console.log")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 2*vmtelemetry.MaxBatch+3)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var sizes []int
+	tailLines(ctx, path, 0, func(l []string) { sizes = append(sizes, len(l)) })
+	if len(sizes) != 3 || sizes[0] != vmtelemetry.MaxBatch || sizes[1] != vmtelemetry.MaxBatch || sizes[2] != 3 {
+		t.Errorf("batch sizes = %v", sizes)
 	}
 }

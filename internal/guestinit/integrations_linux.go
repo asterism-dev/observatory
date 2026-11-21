@@ -15,7 +15,7 @@ type vsockConn struct {
 	deadline time.Time
 }
 
-func dialVsock(timeout time.Duration) (tokenConn, error) {
+func dialVsock(port uint32, timeout time.Duration) (tokenConn, error) {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -25,7 +25,7 @@ func dialVsock(timeout time.Duration) (tokenConn, error) {
 		c.Close()
 		return nil, err
 	}
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: tokenPort}); err != nil {
+	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: port}); err != nil {
 		c.Close()
 		return nil, err
 	}

@@ -89,6 +89,17 @@ func main() {
 			slog.Warn("host metrics disabled", "err", err)
 		}
 	}
+	sink, fw, err := node.NewVMTelemetry(cfg.Hub.URL, cfg.Hub.Credential, tel)
+	if err != nil {
+		slog.Warn("vm telemetry disabled", "err", err)
+	} else {
+		a.VMTelemetry = sink
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			fw.Close(ctx)
+		}()
+	}
 	slog.Info("node starting", "node", cfg.NodeID, "version", version.Version, "provider", provider.Name(), "cpus", cfg.Capacity.CPUs, "memory_mb", cfg.Capacity.MemoryMB)
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)

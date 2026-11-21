@@ -92,8 +92,8 @@ cannot read it.
   at least 32 characters.
 - `OBSERVATORY_METRICS_URL` and `OBSERVATORY_LOGS_URL` (the compose file sets both) point at the telemetry stores;
   both unset turns telemetry off, setting only one is an error. `OBSERVATORY_METRICS_RETENTION` (default `30d`),
-  `OBSERVATORY_LOGS_RETENTION` (`14d`), `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`200000`) and
-  `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`1000000`) are optional; series beyond the limits are dropped.
+  `OBSERVATORY_LOGS_RETENTION` (`14d`), `OBSERVATORY_METRICS_MAX_HOURLY_SERIES` (`500000`) and
+  `OBSERVATORY_METRICS_MAX_DAILY_SERIES` (`2000000`) are optional; series beyond the limits are dropped.
 - `OBSERVATORY_BUILDER_IMAGE` overrides the builder image repository and `OBSERVATORY_BUILDER_HUB_URL` the hub URL
   builder VMs use (default: the public URL); set the latter when VMs cannot reach the public URL.
 - `OBSERVATORY_BUILDER_CPUS`, `OBSERVATORY_BUILDER_MEMORY_MB` and `OBSERVATORY_BUILDER_DISK_GB` size builder VMs
@@ -130,7 +130,9 @@ pulls and VMs are not affected. Versions without tags are kept.
 
 The `victoriametrics` and `victorialogs` services hold node metrics and logs in the volumes `metrics-data` and
 `logs-data`. They publish no port; only the hub reaches them. Upgrading an existing deployment: `docker compose up -d`
-starts the stores, and telemetry is on from then.
+starts the stores, and telemetry is on from then. VictoriaMetrics runs with `-opentelemetry.promoteScopeMetadata=false`:
+scope names, versions and attributes from VM apps would otherwise become labels, and so series that the per-VM series
+limit does not count ([telemetry.md](telemetry.md#vms)). Keep the flag if you run your own VictoriaMetrics.
 
 ## Updating
 

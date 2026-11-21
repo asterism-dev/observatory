@@ -157,7 +157,7 @@ func runDHCP(ctx context.Context, name string, link netlink.Link) {
 		} else if ctx.Err() == nil {
 			// The next round starts over with a fresh discover; OVN hands a port the same address again.
 			lease = nil
-			fmt.Fprintf(os.Stderr, "init: dhcp %s: %v\n", name, err)
+			logf("init: dhcp %s: %v", name, err)
 		}
 		select {
 		case <-ctx.Done():

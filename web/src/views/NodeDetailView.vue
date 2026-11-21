@@ -8,8 +8,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError } from '@/api'
 import UpdateNodesDialog from '@/components/UpdateNodesDialog.vue'
 import InstallCommand from '@/components/InstallCommand.vue'
-import NodeLogs from '@/components/NodeLogs.vue'
-import NodeUsage from '@/components/NodeUsage.vue'
+import TelemetryLogs from '@/components/TelemetryLogs.vue'
+import TelemetryUsage from '@/components/TelemetryUsage.vue'
 import VMList from '@/components/VMList.vue'
 import { gb, imageLine, stateTones, type NodeInfo, type VmInfo } from '@/composables/nodes'
 import { useCrumbs } from '@/composables/useCrumbs'
@@ -51,6 +51,7 @@ watch(tab, (v) => {
   if (v !== 'metrics') usageRange.value = hoverAt.value = null
 })
 
+const nodeLogFilter = { key: 'source' as const, options: ['observatory-node', 'firecracker'] }
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -190,8 +191,8 @@ watch(
         </template>
 
         <template v-if="tab === 'metrics'">
-          <NodeUsage :org-id="org.id" :node="node" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
-          <NodeLogs v-if="usageRange" :org-id="org.id" :node-id="node.id" :range="usageRange" :hover-at="hoverAt" />
+          <TelemetryUsage :url="`${base()}/usage`" :no-data="t('telemetry.noData')" @range="(r) => (usageRange = r)" @hover="(at) => (hoverAt = at)" />
+          <TelemetryLogs v-if="usageRange" :url="`${base()}/logs`" :range="usageRange" :hover-at="hoverAt" :filter="nodeLogFilter" />
         </template>
 
         <VMList v-if="tab === 'vms'" :org-id="org.id" :vms="vms" :empty="t('nodes.noVms')" @changed="load" />

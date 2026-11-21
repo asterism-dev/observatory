@@ -11,8 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
@@ -20,6 +22,8 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+
+	"github.com/asterism-dev/observatory/internal/node/vmtelemetry"
 )
 
 const (
@@ -106,6 +110,21 @@ func startTelemetry(ctx context.Context, connectURL, credential, version string,
 }
 
 func (t *Telemetry) Shutdown(ctx context.Context) error { return t.shutdown(ctx) }
+
+// NewVMTelemetry forwards VM telemetry to the hub of connectURL and counts its drops on tel's meter; tel may be nil.
+func NewVMTelemetry(connectURL, credential string, tel *Telemetry) (*vmtelemetry.Sink, *vmtelemetry.Forwarder, error) {
+	fw := vmtelemetry.NewForwarder(hubBase(connectURL), credential, &http.Client{})
+	if tel == nil {
+		return vmtelemetry.NewSink(fw, nil), fw, nil
+	}
+	dropped, err := tel.Meter.Int64Counter("observatory.vm.telemetry.dropped")
+	if err != nil {
+		return nil, nil, err
+	}
+	return vmtelemetry.NewSink(fw, func(vmID uuid.UUID, kind string, n int64) {
+		dropped.Add(context.Background(), n, metric.WithAttributes(attribute.String("vm", vmID.String()), attribute.String("kind", kind)))
+	}), fw, nil
+}
 
 // defaultSource tags records without a source attribute as coming from the node agent.
 type defaultSource struct {

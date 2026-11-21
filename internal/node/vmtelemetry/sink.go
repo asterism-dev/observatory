@@ -1,0 +1,679 @@
+package vmtelemetry
+
+import (
+	"compress/gzip"
+	"errors"
+	"hash/maphash"
+	"io"
+	"math"
+	"net"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	"google.golang.org/protobuf/encoding/protowire"
+	gproto "google.golang.org/protobuf/proto"
+)
+
+const (
+	maxBody        = 1 << 20
+	maxLine        = 16 << 10
+	logRate        = 100
+	logBurst       = 500
+	maxSeries      = 2000
+	maxUsageSeries = 2000 // cpu × state points alone pass 500 above ~60 vCPUs
+	maxAttrs       = 128
+	maxBuckets     = 64 // histogram bounds, exponential histogram buckets or summary quantiles per point
+	seriesWindow   = time.Hour
+	byteRate       = 256 << 10
+	byteBurst      = 2 << 20
+	// maxItems bounds records or points per request: decoding inflates a body of empty items about a hundredfold.
+	maxItems = 100_000
+	// maxConns and maxDecodes bound the memory decoding takes, per VM and node-wide.
+	maxConns   = 2
+	maxDecodes = 4
+)
+
+var decodeWait = 5 * time.Second
+
+// forgetDelay keeps an exited VM's forwarder queue long enough for its last lines to reach the hub.
+var forgetDelay = time.Minute
+
+var (
+	logItems        = [][]protowire.Number{{1}, {2}, {2}}
+	metricItems     = [][]protowire.Number{{1}, {2}, {2}, {5, 7, 9, 10, 11}, {1}}
+	histogramBounds = [][]protowire.Number{{1}, {2}, {2}, {9}, {1}, {7}}
+)
+
+// guestStreams are the stream classes a guest may send per signal; console and egress only originate on the node.
+var guestStreams = map[string][]string{"logs": {"service", "system", "app"}, "metrics": {"usage", "app"}}
+
+var (
+	errTooLarge       = errors.New("body too large")
+	errTooManyAttrs   = errors.New("too many attributes")
+	errTooManyBuckets = errors.New("too many buckets")
+)
+
+// usageMetrics are the metrics the guest collector sends on stream usage.
+var usageMetrics = []string{"system.cpu.time", "system.memory.usage", "system.filesystem.usage", "system.filesystem.limit", "system.network.io",
+	"system.cpu.load_average.1m", "system.cpu.load_average.5m", "system.cpu.load_average.15m"}
+
+// Sink enforces the per-VM limits on telemetry from guests and node-origin streams before handing it to the Forwarder.
+type Sink struct {
+	fw      *Forwarder
+	dropped func(vmID uuid.UUID, kind string, n int64)
+	seed    maphash.Seed
+	decodes chan struct{}
+
+	mu      sync.Mutex
+	vms     map[uuid.UUID]*vmLimits   // registered VMs
+	forgets map[uuid.UUID]*time.Timer // pending forwarder Forgets of exited VMs
+}
+
+// vmLimits is one VM's limit state; its own lock keeps one VM's admission from holding up another's.
+type vmLimits struct {
+	mu          sync.Mutex
+	logs, bytes bucket
+	windowStart time.Time
+	series      map[string]map[uint64]struct{} // per stream, the series seen in the current window
+	storeSeries map[string]int
+}
+
+type bucket struct {
+	tokens float64
+	filled time.Time
+}
+
+// refill adds what accrued since the last refill at rate per second, up to burst.
+func (b *bucket) refill(now time.Time, rate, burst float64) {
+	b.tokens = min(burst, b.tokens+now.Sub(b.filled).Seconds()*rate)
+	b.filled = now
+}
+
+// NewSink forwards through fw and reports every drop to dropped, which may be nil.
+func NewSink(fw *Forwarder, dropped func(vmID uuid.UUID, kind string, n int64)) *Sink {
+	if dropped == nil {
+		dropped = func(uuid.UUID, string, int64) {}
+	}
+	fw.dropped = dropped
+	return &Sink{fw: fw, dropped: dropped, seed: maphash.MakeSeed(), decodes: make(chan struct{}, maxDecodes), vms: map[uuid.UUID]*vmLimits{}, forgets: map[uuid.UUID]*time.Timer{}}
+}
+
+// Serve answers OTLP/HTTP requests on l, the listener of vmID only, until l is closed; it starts vmID with fresh limits.
+func (s *Sink) Serve(l net.Listener, vmID uuid.UUID) {
+	s.mu.Lock()
+	v := s.vms[vmID]
+	s.mu.Unlock()
+	if v == nil {
+		return
+	}
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, vmID, v) }),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    16 << 10,
+	}
+	srv.Serve(capListener{l, make(chan struct{}, maxConns)})
+}
+
+// capListener closes connections past the cap; unlike netutil.LimitListener it never waits for a slot, so closing l ends Serve.
+type capListener struct {
+	net.Listener
+	slots chan struct{}
+}
+
+func (l capListener) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.slots <- struct{}{}:
+			return &slotConn{Conn: c, release: sync.OnceFunc(func() { <-l.slots })}, nil
+		default:
+			c.Close()
+		}
+	}
+}
+
+type slotConn struct {
+	net.Conn
+	release func()
+}
+
+func (c *slotConn) Close() error {
+	c.release()
+	return c.Conn.Close()
+}
+
+// Register starts vmID with fresh limits when it boots; Emit and Serve accept a VM only from here until Forget.
+func (s *Sink) Register(vmID uuid.UUID) {
+	// A drop counter exported first at its first non-zero value is invisible to the hub's increase().
+	for _, kind := range []string{"logs", "series", "body"} {
+		s.dropped(vmID, kind, 0)
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vms[vmID] = &vmLimits{logs: bucket{logBurst, now}, bytes: bucket{byteBurst, now}, windowStart: now, series: map[string]map[uint64]struct{}{}, storeSeries: map[string]int{}}
+	if t := s.forgets[vmID]; t != nil {
+		t.Stop()
+		delete(s.forgets, vmID)
+	}
+}
+
+// LineRecord is an info-level record of line, truncated at maxLine bytes, stamped now.
+func LineRecord(line string) *logspb.LogRecord {
+	now := uint64(time.Now().UnixNano())
+	return &logspb.LogRecord{
+		TimeUnixNano: now, ObservedTimeUnixNano: now,
+		SeverityNumber: logspb.SeverityNumber_SEVERITY_NUMBER_INFO, SeverityText: "INFO",
+		Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: strings.ToValidUTF8(line[:min(len(line), maxLine)], "")}},
+	}
+}
+
+// MaxBatch bounds the lines of one LineBatch emit, as the VM's log burst does.
+const MaxBatch = logBurst
+
+var batchInterval = time.Second
+
+// LineBatch hands node-origin lines to emit as records, MaxBatch at a time and at least every batchInterval, so a burst is not one forwarder body per line.
+type LineBatch struct {
+	emit func(records []*logspb.LogRecord)
+	mu   sync.Mutex
+	recs []*logspb.LogRecord
+	stop chan struct{}
+	done chan struct{}
+}
+
+func NewLineBatch(emit func(records []*logspb.LogRecord)) *LineBatch {
+	b := &LineBatch{emit: emit, stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(b.done)
+		t := time.NewTicker(batchInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				b.mu.Lock()
+				b.flush()
+				b.mu.Unlock()
+			case <-b.stop:
+				return
+			}
+		}
+	}()
+	return b
+}
+
+// Add queues line as a LineRecord, unless it is blank (VictoriaLogs would store a placeholder message); a full batch is emitted at once.
+func (b *LineBatch) Add(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.recs = append(b.recs, LineRecord(line))
+	if len(b.recs) >= MaxBatch {
+		b.flush()
+	}
+}
+
+// Close emits what is left and stops the timer.
+func (b *LineBatch) Close() {
+	close(b.stop)
+	<-b.done
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.flush()
+}
+
+// flush runs under mu so batches go out in order.
+func (b *LineBatch) flush() {
+	if len(b.recs) > 0 {
+		b.emit(b.recs)
+		b.recs = nil
+	}
+}
+
+// Emit forwards node-origin log records of vmID under the VM's log limit; records of a VM not registered are dropped.
+func (s *Sink) Emit(vmID uuid.UUID, stream string, records []*logspb.LogRecord) {
+	s.mu.Lock()
+	v := s.vms[vmID]
+	s.mu.Unlock()
+	if v == nil {
+		return
+	}
+	req := &collogspb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{ScopeLogs: []*logspb.ScopeLogs{{LogRecords: records}}}}}
+	if out, n := s.admitLogs(vmID, v, req); out != nil {
+		s.fw.Send(vmID, "logs", stream, out, n)
+	}
+}
+
+// Forget drops an exited VM's limit state (in-flight requests keep theirs) and its forwarder queue forgetDelay later unless it registers again.
+func (s *Sink) Forget(vmID uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.vms, vmID)
+	if t := s.forgets[vmID]; t != nil {
+		t.Stop()
+	}
+	var t *time.Timer
+	t = time.AfterFunc(forgetDelay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.forgets[vmID] == t {
+			delete(s.forgets, vmID)
+			s.fw.Forget(vmID)
+		}
+	})
+	s.forgets[vmID] = t
+}
+
+func (s *Sink) handle(w http.ResponseWriter, r *http.Request, vmID uuid.UUID, v *vmLimits) {
+	signal, _ := strings.CutPrefix(r.URL.Path, "/v1/")
+	streams, ok := guestStreams[signal]
+	if !ok || r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	stream := r.Header.Get("X-Observatory-Stream")
+	if !slices.Contains(streams, stream) {
+		http.Error(w, "invalid X-Observatory-Stream", http.StatusBadRequest)
+		return
+	}
+	body, err := readBody(w, r)
+	if errors.Is(err, errTooLarge) {
+		s.dropped(vmID, "body", 1)
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err == nil && !v.takeBytes(len(body)) {
+		s.dropped(vmID, "body", 1)
+		http.Error(w, "rate limited", http.StatusTooManyRequests)
+		return
+	}
+	items := logItems
+	if signal == "metrics" {
+		items = metricItems
+	}
+	var n int
+	if err == nil {
+		n, err = countFields(body, items, 0)
+	}
+	if err == nil && signal == "metrics" {
+		var bounds int
+		bounds, err = countFields(body, histogramBounds, 8)
+		n += bounds
+	}
+	if err == nil && n > maxItems {
+		s.dropped(vmID, "body", 1)
+		http.Error(w, "too many items", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err == nil {
+		t := time.NewTimer(decodeWait)
+		select {
+		case s.decodes <- struct{}{}:
+			t.Stop()
+			defer func() { <-s.decodes }()
+		case <-t.C:
+			s.dropped(vmID, "body", 1)
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	var out []byte
+	var records int
+	if err == nil && signal == "logs" {
+		out, records, err = s.admitLogsBody(vmID, v, body)
+	} else if err == nil {
+		out, err = s.admitMetrics(vmID, v, stream, body)
+	}
+	if errors.Is(err, errTooManyAttrs) || errors.Is(err, errTooManyBuckets) {
+		s.dropped(vmID, "body", 1)
+	}
+	if err != nil {
+		http.Error(w, "invalid OTLP body", http.StatusBadRequest)
+		return
+	}
+	if out != nil {
+		s.fw.Send(vmID, signal, stream, out, records)
+	}
+	// An empty body is the protobuf encoding of an empty Export*ServiceResponse.
+	w.Header().Set("Content-Type", "application/x-protobuf")
+}
+
+// readBody applies the body limit to the request and, for gzip, again to the decompressed body.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	var src io.Reader = http.MaxBytesReader(w, r.Body, maxBody)
+	switch r.Header.Get("Content-Encoding") {
+	case "", "identity":
+	case "gzip":
+		zr, err := gzip.NewReader(src)
+		if err != nil {
+			return nil, err
+		}
+		defer zr.Close()
+		src = zr
+	default:
+		return nil, errors.New("unsupported content encoding")
+	}
+	body, err := io.ReadAll(io.LimitReader(src, maxBody+1))
+	var tooBig *http.MaxBytesError
+	if len(body) > maxBody || errors.As(err, &tooBig) {
+		return nil, errTooLarge
+	}
+	return body, err
+}
+
+func (v *vmLimits) takeBytes(n int) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.bytes.refill(time.Now(), byteRate, byteBurst)
+	if float64(n) > v.bytes.tokens {
+		return false
+	}
+	v.bytes.tokens -= float64(n)
+	return true
+}
+
+// countFields counts the fields reached by following path, one set of field numbers per nesting level, without decoding; elemSize > 0 counts the elements of a packed last level instead.
+func countFields(b []byte, path [][]protowire.Number, elemSize int) (int, error) {
+	n := 0
+	for len(b) > 0 {
+		num, typ, l := protowire.ConsumeTag(b)
+		if l < 0 {
+			return 0, protowire.ParseError(l)
+		}
+		b = b[l:]
+		l = protowire.ConsumeFieldValue(num, typ, b)
+		if l < 0 {
+			return 0, protowire.ParseError(l)
+		}
+		if len(path) == 1 && elemSize > 0 && typ == protowire.Fixed64Type && slices.Contains(path[0], num) {
+			n++
+		} else if typ == protowire.BytesType && slices.Contains(path[0], num) {
+			v, _ := protowire.ConsumeBytes(b)
+			if len(path) == 1 && elemSize > 0 {
+				n += len(v) / elemSize
+			} else if len(path) == 1 {
+				n++
+			} else {
+				k, err := countFields(v, path[1:], elemSize)
+				if err != nil {
+					return 0, err
+				}
+				n += k
+			}
+		}
+		b = b[l:]
+	}
+	return n, nil
+}
+
+func tooManyAttrs(attrs ...[]*commonpb.KeyValue) bool {
+	return slices.ContainsFunc(attrs, func(a []*commonpb.KeyValue) bool { return len(a) > maxAttrs })
+}
+
+func (s *Sink) admitLogsBody(vmID uuid.UUID, v *vmLimits, body []byte) ([]byte, int, error) {
+	var req collogspb.ExportLogsServiceRequest
+	if err := gproto.Unmarshal(body, &req); err != nil {
+		return nil, 0, err
+	}
+	for _, rl := range req.ResourceLogs {
+		if tooManyAttrs(rl.GetResource().GetAttributes()) {
+			return nil, 0, errTooManyAttrs
+		}
+		for _, sl := range rl.GetScopeLogs() {
+			if tooManyAttrs(sl.GetScope().GetAttributes()) || slices.ContainsFunc(sl.GetLogRecords(), func(r *logspb.LogRecord) bool { return tooManyAttrs(r.GetAttributes()) }) {
+				return nil, 0, errTooManyAttrs
+			}
+		}
+	}
+	out, n := s.admitLogs(vmID, v, &req)
+	return out, n, nil
+}
+
+// admitLogs keeps the records the VM's token bucket allows and returns them encoded with their count, nil if none are left.
+func (s *Sink) admitLogs(vmID uuid.UUID, v *vmLimits, req *collogspb.ExportLogsServiceRequest) ([]byte, int) {
+	n := 0
+	for _, rl := range req.ResourceLogs {
+		for _, sl := range rl.GetScopeLogs() {
+			n += len(sl.GetLogRecords())
+		}
+	}
+	if n == 0 {
+		return nil, 0
+	}
+	v.mu.Lock()
+	v.logs.refill(time.Now(), logRate, logBurst)
+	allowed := min(n, int(v.logs.tokens))
+	v.logs.tokens -= float64(allowed)
+	v.mu.Unlock()
+	if allowed < n {
+		s.dropped(vmID, "logs", int64(n-allowed))
+		left := allowed
+		for _, rl := range req.ResourceLogs {
+			for _, sl := range rl.GetScopeLogs() {
+				k := min(left, len(sl.LogRecords))
+				sl.LogRecords = sl.LogRecords[:k]
+				left -= k
+			}
+		}
+	}
+	if allowed == 0 {
+		return nil, 0
+	}
+	out, _ := gproto.Marshal(req)
+	return out, allowed
+}
+
+type seriesPoint struct {
+	key     uint64
+	weight  int  // the series the store makes of the point
+	allowed bool // false for a metric the stream does not accept
+}
+
+// admitMetrics drops new series past the VM's hourly limit of the stream and, on usage, every metric the guest collector does not send.
+func (s *Sink) admitMetrics(vmID uuid.UUID, v *vmLimits, stream string, body []byte) ([]byte, error) {
+	var req colmetricspb.ExportMetricsServiceRequest
+	if err := gproto.Unmarshal(body, &req); err != nil {
+		return nil, err
+	}
+	// Keys are hashed before taking the lock, so a costly request only delays itself.
+	var points []seriesPoint
+	for _, rm := range req.ResourceMetrics {
+		res := rm.GetResource().GetAttributes()
+		if tooManyAttrs(res) {
+			return nil, errTooManyAttrs
+		}
+		resKey := s.attrsKey(res)
+		for _, sm := range rm.GetScopeMetrics() {
+			if tooManyAttrs(sm.GetScope().GetAttributes()) {
+				return nil, errTooManyAttrs
+			}
+			scopeKey := s.scopeKey(resKey, sm)
+			for _, m := range sm.GetMetrics() {
+				allowed := stream != "usage" || slices.Contains(usageMetrics, m.GetName())
+				var err error
+				keepPoints(m, func(p dataPoint) bool {
+					weight, buckets, layout := pointSeries(p)
+					if tooManyAttrs(p.GetAttributes()) {
+						err = errTooManyAttrs
+					} else if buckets > maxBuckets {
+						err = errTooManyBuckets
+					}
+					points = append(points, seriesPoint{s.seriesKey(m.GetName(), m.GetUnit(), scopeKey, p.GetAttributes(), layout), weight, allowed})
+					return true
+				})
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	limit := maxSeries
+	if stream == "usage" {
+		limit = maxUsageSeries
+	}
+	keep := make([]bool, len(points))
+	dropped := 0
+	now := time.Now()
+	v.mu.Lock()
+	if now.Sub(v.windowStart) >= seriesWindow {
+		clear(v.series)
+		clear(v.storeSeries)
+		v.windowStart = now
+	}
+	seen := v.series[stream]
+	if seen == nil {
+		seen = map[uint64]struct{}{}
+		v.series[stream] = seen
+	}
+	for i, p := range points {
+		if _, ok := seen[p.key]; ok && p.allowed {
+			keep[i] = true
+		} else if p.allowed && v.storeSeries[stream]+p.weight <= limit {
+			seen[p.key] = struct{}{}
+			v.storeSeries[stream] += p.weight
+			keep[i] = true
+		} else {
+			dropped++
+		}
+	}
+	v.mu.Unlock()
+	if dropped > 0 {
+		s.dropped(vmID, "series", int64(dropped))
+	}
+	if dropped == len(points) {
+		return nil, nil
+	}
+	if dropped > 0 {
+		i := 0
+		for _, rm := range req.ResourceMetrics {
+			for _, sm := range rm.GetScopeMetrics() {
+				sm.Metrics = slices.DeleteFunc(sm.Metrics, func(m *metricspb.Metric) bool {
+					return !keepPoints(m, func(dataPoint) bool { i++; return keep[i-1] })
+				})
+			}
+		}
+	}
+	return gproto.Marshal(&req)
+}
+
+type dataPoint interface{ GetAttributes() []*commonpb.KeyValue }
+
+// pointSeries returns the series the store makes of p (histograms: one per bucket plus _sum and _count), its buckets or quantiles, and the layout naming them.
+func pointSeries(p dataPoint) (series, buckets int, layout []float64) {
+	switch p := p.(type) {
+	case *metricspb.HistogramDataPoint:
+		return len(p.ExplicitBounds) + 3, len(p.ExplicitBounds), p.ExplicitBounds
+	case *metricspb.ExponentialHistogramDataPoint:
+		pos, neg := p.GetPositive(), p.GetNegative()
+		n := len(pos.GetBucketCounts()) + len(neg.GetBucketCounts())
+		layout := []float64{float64(p.Scale), float64(pos.GetOffset()), float64(len(pos.GetBucketCounts())), float64(neg.GetOffset()), float64(len(neg.GetBucketCounts()))}
+		// The store names the zero bucket by its threshold.
+		if p.ZeroCount > 0 {
+			layout = append(layout, p.ZeroThreshold)
+		}
+		return n + 3, n, layout
+	case *metricspb.SummaryDataPoint:
+		qs := make([]float64, len(p.QuantileValues))
+		for i, q := range p.QuantileValues {
+			qs[i] = q.GetQuantile()
+		}
+		return len(qs) + 2, len(qs), qs
+	}
+	return 1, 0, nil
+}
+
+// keepPoints filters m's data points and reports whether any are left.
+func keepPoints(m *metricspb.Metric, keep func(dataPoint) bool) bool {
+	switch d := m.Data.(type) {
+	case *metricspb.Metric_Gauge:
+		if d.Gauge != nil {
+			d.Gauge.DataPoints = filterPoints(d.Gauge.DataPoints, keep)
+			return len(d.Gauge.DataPoints) > 0
+		}
+	case *metricspb.Metric_Sum:
+		if d.Sum != nil {
+			d.Sum.DataPoints = filterPoints(d.Sum.DataPoints, keep)
+			return len(d.Sum.DataPoints) > 0
+		}
+	case *metricspb.Metric_Histogram:
+		if d.Histogram != nil {
+			d.Histogram.DataPoints = filterPoints(d.Histogram.DataPoints, keep)
+			return len(d.Histogram.DataPoints) > 0
+		}
+	case *metricspb.Metric_ExponentialHistogram:
+		if d.ExponentialHistogram != nil {
+			d.ExponentialHistogram.DataPoints = filterPoints(d.ExponentialHistogram.DataPoints, keep)
+			return len(d.ExponentialHistogram.DataPoints) > 0
+		}
+	case *metricspb.Metric_Summary:
+		if d.Summary != nil {
+			d.Summary.DataPoints = filterPoints(d.Summary.DataPoints, keep)
+			return len(d.Summary.DataPoints) > 0
+		}
+	}
+	return false
+}
+
+func filterPoints[P dataPoint](pts []P, keep func(dataPoint) bool) []P {
+	return slices.DeleteFunc(pts, func(p P) bool { return !keep(p) })
+}
+
+// attrsKey hashes attributes independent of their order.
+func (s *Sink) attrsKey(attrs []*commonpb.KeyValue) uint64 {
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	sorted := slices.SortedFunc(slices.Values(attrs), func(a, b *commonpb.KeyValue) int { return strings.Compare(a.GetKey(), b.GetKey()) })
+	for _, kv := range sorted {
+		h.WriteString(kv.GetKey())
+		h.WriteByte(0)
+		v, _ := gproto.MarshalOptions{Deterministic: true}.Marshal(kv.GetValue())
+		h.Write(v)
+		h.WriteByte(0)
+	}
+	return h.Sum64()
+}
+
+// scopeKey adds sm's scope to resKey: unless -opentelemetry.promoteScopeMetadata=false the store makes labels of it.
+func (s *Sink) scopeKey(resKey uint64, sm *metricspb.ScopeMetrics) uint64 {
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	maphash.WriteComparable(&h, resKey)
+	for _, v := range []string{sm.GetScope().GetName(), sm.GetScope().GetVersion(), sm.GetSchemaUrl()} {
+		maphash.WriteComparable(&h, len(v))
+		h.WriteString(v)
+	}
+	maphash.WriteComparable(&h, s.attrsKey(sm.GetScope().GetAttributes()))
+	return h.Sum64()
+}
+
+// seriesKey hashes the metric name and unit (part of the name with Prometheus naming) with the scope, the point attributes and the bucket layout, which the store turns into labels.
+func (s *Sink) seriesKey(name, unit string, scopeKey uint64, attrs []*commonpb.KeyValue, layout []float64) uint64 {
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	h.WriteString(name)
+	h.WriteByte(0)
+	maphash.WriteComparable(&h, len(unit))
+	h.WriteString(unit)
+	maphash.WriteComparable(&h, scopeKey)
+	maphash.WriteComparable(&h, s.attrsKey(attrs))
+	for _, f := range layout {
+		maphash.WriteComparable(&h, math.Float64bits(f))
+	}
+	return h.Sum64()
+}

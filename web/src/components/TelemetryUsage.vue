@@ -5,11 +5,10 @@ import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
 import TimeSeriesChart from '@/components/TimeSeriesChart.vue'
-import type { NodeInfo } from '@/composables/nodes'
-import { presets, rangeFor, type Preset, type Unit, type Usage, type UsageRange } from '@/composables/telemetry'
+import { droppedTotal, presets, rangeFor, type Preset, type Unit, type Usage, type UsageRange } from '@/composables/telemetry'
 import { Section } from '@/ui'
 
-const props = defineProps<{ orgId: string; node: NodeInfo }>()
+const props = defineProps<{ url: string; noData: string; memMax?: number }>()
 const emit = defineEmits<{ range: [r: UsageRange]; hover: [t: number | null] }>()
 
 const { t } = useI18n()
@@ -23,7 +22,7 @@ const options = presets.map((p) => ({ value: p, label: p.replace(/(\d+)/, '$1 ')
 const charts = computed(() => {
   const defs: { key: keyof Usage['charts']; unit: Unit; max?: number }[] = [
     { key: 'cpu', unit: '%', max: 100 },
-    { key: 'mem', unit: 'By' },
+    { key: 'mem', unit: 'By', max: props.memMax },
     { key: 'disk', unit: '%', max: 100 },
     { key: 'net', unit: 'By/s' },
   ]
@@ -33,11 +32,11 @@ const charts = computed(() => {
 const range = (): UsageRange => (zoomed.value ? { ...zoomed.value, now: false } : { ...rangeFor(preset.value, new Date()), now: true })
 
 async function load(r: UsageRange) {
-  const id = props.node.id
+  const url = props.url
   const q = new URLSearchParams({ from: r.from.toISOString(), to: r.to.toISOString() })
   try {
-    const res = await api<Usage>(`/api/orgs/${props.orgId}/nodes/${id}/usage?${q}`)
-    if (id !== props.node.id) return
+    const res = await api<Usage>(`${url}?${q}`)
+    if (url !== props.url) return
     usage.value = res
     shown.value = r
     error.value = ''
@@ -52,7 +51,7 @@ function pick(p: Preset | '') {
 }
 
 watch(
-  [preset, zoomed, () => props.node.id],
+  [preset, zoomed, () => props.url],
   () => {
     const r = range()
     emit('range', r)
@@ -76,7 +75,7 @@ onBeforeUnmount(() => {
       <SegmentedControl :model-value="zoomed ? '' : preset" :options="options" size="sm" @update:model-value="pick" />
     </template>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-else-if="usage && !usage.t.length" class="muted">{{ t('telemetry.noData') }}</p>
+    <p v-else-if="usage && !usage.t.length" class="muted">{{ noData }}</p>
     <p v-else class="muted small">{{ t('telemetry.zoomHint') }}</p>
     <div class="charts">
       <TimeSeriesChart
@@ -89,12 +88,13 @@ onBeforeUnmount(() => {
         :series="c.series"
         :from="(shown?.from.getTime() ?? 0) / 1000"
         :to="(shown?.to.getTime() ?? 0) / 1000"
-        :sync-key="`node-${node.id}`"
+        :sync-key="url"
         @zoom="(from, to) => (zoomed = { from: new Date(from * 1000), to: new Date(to * 1000) })"
         @reset="zoomed = null"
         @hover="(at) => emit('hover', at)"
       />
     </div>
+    <p v-if="droppedTotal(usage?.dropped)" role="status" class="dropped">{{ t('telemetry.dropped', usage!.dropped!) }}</p>
   </Section>
 </template>
 
@@ -109,5 +109,8 @@ onBeforeUnmount(() => {
 }
 p {
   margin: 0;
+}
+.dropped {
+  color: var(--warning);
 }
 </style>
