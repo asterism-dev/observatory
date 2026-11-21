@@ -38,12 +38,13 @@ type meshPeer struct {
 	proto.Peer // validated, candidates in canonical form
 	mode       pathMode
 	cand       int       // index of the candidate tried or in use
-	since      time.Time // when cand was configured
+	since      time.Time // start of the current try or relay; only a newer handshake proves the path
 	retryAt    time.Time
 	handshake  time.Time
+	cleared    bool // a previous run or an older version of this peer may have left allowed-ips until set
 }
 
-// mesh moves each peer node's /32 between its own wg-underlay entry (direct) and the gateway's /16 (relay).
+// mesh moves each peer node's /32 onto its own wg-underlay entry once a handshake proves the direct path; until then the gateway's /16 relays it.
 type mesh struct {
 	cmd func(name string, args ...string) (string, error)
 	now func() time.Time
@@ -92,7 +93,7 @@ func (m *mesh) update(p proto.Peers) {
 			next[v.NodeID] = old
 			continue
 		}
-		next[v.NodeID] = &meshPeer{Peer: v} // relay with a zero retryAt: tried right away
+		next[v.NodeID] = &meshPeer{Peer: v, since: m.now()} // relay with a zero retryAt: tried right away
 	}
 	m.peers = next
 	m.reconcileLocked()
@@ -136,7 +137,7 @@ func (m *mesh) tick() {
 	m.reconcileLocked()
 }
 
-// reconcileLocked's sweep of unwanted kernel peers also clears a previous run's leftovers and retries failed removes.
+// reconcileLocked's sweep removes dropped peers and a previous run's leftovers, and retries failed removes.
 func (m *mesh) reconcileLocked() {
 	if m.gateway == "" {
 		return
@@ -152,7 +153,7 @@ func (m *mesh) reconcileLocked() {
 	for _, p := range m.peers {
 		hs, present := kernel[p.PublicKey]
 		m.step(p, hs, present, now)
-		if p.mode != pathRelay {
+		if len(p.Candidates) > 0 {
 			want[p.PublicKey] = true
 		}
 	}
@@ -167,45 +168,75 @@ func (m *mesh) reconcileLocked() {
 }
 
 func (m *mesh) step(p *meshPeer, hs time.Time, present bool, now time.Time) {
-	if p.mode == pathRelay {
-		if len(p.Candidates) > 0 && !now.Before(p.retryAt) {
-			m.try(p, 0, now)
-		}
+	if len(p.Candidates) == 0 {
 		return
 	}
-	// A wg-quick restart (chassis cert renewal) drops runtime peers.
-	if !present {
+	// A wg-quick restart (chassis cert renewal) drops runtime peers; a relay peer is re-added at its retry.
+	if !present && p.mode != pathRelay {
 		m.try(p, p.cand, now)
 		return
 	}
-	p.handshake = hs
-	switch {
-	case p.mode == pathTrying && !hs.Before(p.since.Truncate(time.Second)):
-		p.mode = pathDirect
-	case p.mode == pathTrying && now.Sub(p.since) >= directTimeout:
-		if p.cand+1 < len(p.Candidates) {
+	if present {
+		p.handshake = hs
+	}
+	proven := present && !hs.Before(p.since.Truncate(time.Second))
+	switch p.mode {
+	case pathRelay:
+		// The other node's try handshakes with us too; routing at once keeps both sides symmetric.
+		if proven {
+			m.direct(p)
+		} else if !now.Before(p.retryAt) {
+			m.try(p, 0, now)
+		}
+	case pathTrying:
+		switch {
+		case proven:
+			m.direct(p)
+		case now.Sub(p.since) < directTimeout:
+		case p.cand+1 < len(p.Candidates):
 			m.try(p, p.cand+1, now)
-		} else {
+		default:
 			m.relay(p, now)
 		}
-	case p.mode == pathDirect && now.Sub(hs) > directStale:
-		m.relay(p, now)
+	case pathDirect:
+		if now.Sub(hs) > directStale {
+			m.relay(p, now)
+		}
 	}
 }
 
+// try leaves allowed-ips empty so traffic keeps going through the relay; keepalives start the handshake.
 func (m *mesh) try(p *meshPeer, cand int, now time.Time) {
 	p.mode, p.cand, p.since = pathTrying, cand, now
-	_, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "endpoint", p.Candidates[cand],
-		"allowed-ips", p.Address+"/32", "persistent-keepalive", "25")
-	if err != nil {
+	args := []string{"set", underlayIface, "peer", p.PublicKey, "endpoint", p.Candidates[cand]}
+	if !p.cleared {
+		args = append(args, "allowed-ips", "")
+	}
+	if _, err := m.cmd("wg", append(args, "persistent-keepalive", "25")...); err != nil {
 		slog.Warn("configuring direct underlay path", "node", p.NodeID, "err", err)
 		m.relay(p, now)
+		return
 	}
+	p.cleared = true
 }
 
-// relay leaves the removal to reconcileLocked's sweep, which returns the /32 to the gateway's /16.
+func (m *mesh) direct(p *meshPeer) {
+	if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "allowed-ips", p.Address+"/32"); err != nil {
+		slog.Warn("routing direct underlay path", "node", p.NodeID, "err", err)
+		return
+	}
+	p.mode = pathDirect
+}
+
+// relay keeps the peer so its keepalives can still prove a path; only its /32 goes back to the gateway.
 func (m *mesh) relay(p *meshPeer, now time.Time) {
-	p.mode, p.retryAt, p.handshake = pathRelay, now.Add(directRetry), time.Time{}
+	if p.mode == pathDirect {
+		if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "allowed-ips", ""); err != nil {
+			slog.Warn("returning underlay path to relay", "node", p.NodeID, "err", err)
+			return
+		}
+	}
+	p.mode, p.since, p.retryAt, p.handshake = pathRelay, now, now.Add(directRetry), time.Time{}
 }
 
 func (m *mesh) status() []proto.PathStatus {

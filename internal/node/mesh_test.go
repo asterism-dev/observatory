@@ -16,37 +16,76 @@ func testKey(b byte) string { return base64.StdEncoding.EncodeToString(bytes.Rep
 
 var gwKey = testKey(1)
 
-// fakeWG models wg-underlay's runtime peers and their latest handshakes.
+type wgPeer struct {
+	hs       int64
+	endpoint string
+	ips      string
+}
+
+// fakeWG models wg-underlay's runtime peers.
 type fakeWG struct {
 	t     *testing.T
-	peers map[string]int64
+	peers map[string]*wgPeer
 	calls []string
 }
 
 func (f *fakeWG) run(name string, args ...string) (string, error) {
-	call := strings.Join(append([]string{name}, args...), " ")
+	shown := make([]string, len(args))
+	for i, a := range args {
+		shown[i] = a
+		if a == "" {
+			shown[i] = `""`
+		}
+	}
+	call := name + " " + strings.Join(shown, " ")
 	f.calls = append(f.calls, call)
-	switch {
-	case call == "wg show wg-underlay latest-handshakes":
+	if call == "wg show wg-underlay latest-handshakes" {
 		var out strings.Builder
-		for k, ts := range f.peers {
-			fmt.Fprintf(&out, "%s\t%d\n", k, ts)
+		for k, p := range f.peers {
+			fmt.Fprintf(&out, "%s\t%d\n", k, p.hs)
 		}
 		return out.String(), nil
-	case len(args) == 5 && args[0] == "set" && args[4] == "remove":
-		delete(f.peers, args[3])
-		return "", nil
-	case len(args) == 10 && args[0] == "set" && args[4] == "endpoint":
-		if _, ok := f.peers[args[3]]; !ok {
-			f.peers[args[3]] = 0
-		}
+	}
+	if name != "wg" || len(args) < 5 || args[0] != "set" || args[1] != "wg-underlay" || args[2] != "peer" {
+		f.t.Fatalf("unexpected command %q", call)
+	}
+	key, rest := args[3], args[4:]
+	if len(rest) == 1 && rest[0] == "remove" {
+		delete(f.peers, key)
 		return "", nil
 	}
-	f.t.Fatalf("unexpected command %q", call)
+	if len(rest)%2 != 0 {
+		f.t.Fatalf("odd wg set arguments %q", call)
+	}
+	p := f.peers[key]
+	if p == nil {
+		p = &wgPeer{}
+		f.peers[key] = p
+	}
+	for i := 0; i < len(rest); i += 2 {
+		switch rest[i] {
+		case "endpoint":
+			p.endpoint = rest[i+1]
+		case "allowed-ips":
+			p.ips = rest[i+1]
+		case "persistent-keepalive":
+		default:
+			f.t.Fatalf("unexpected wg set option in %q", call)
+		}
+	}
 	return "", nil
 }
 
 func (f *fakeWG) took(call string) bool { return slices.Contains(f.calls, call) }
+
+func (f *fakeWG) routed() bool {
+	for _, c := range f.calls {
+		if strings.Contains(c, "/32") {
+			return true
+		}
+	}
+	return false
+}
 
 type meshEnv struct {
 	m   *mesh
@@ -55,7 +94,7 @@ type meshEnv struct {
 }
 
 func newMeshEnv(t *testing.T) *meshEnv {
-	e := &meshEnv{wg: &fakeWG{t: t, peers: map[string]int64{gwKey: 1}}, now: time.Unix(1_800_000_000, 0)}
+	e := &meshEnv{wg: &fakeWG{t: t, peers: map[string]*wgPeer{gwKey: {hs: 1, ips: "10.198.0.0/16"}}}, now: time.Unix(1_800_000_000, 0)}
 	e.m = &mesh{cmd: e.wg.run, now: func() time.Time { return e.now }, gateway: gwKey}
 	return e
 }
@@ -65,7 +104,7 @@ func (e *meshEnv) advance(d time.Duration) {
 	e.m.tick()
 }
 
-func (e *meshEnv) handshake(key string) { e.wg.peers[key] = e.now.Unix() }
+func (e *meshEnv) handshake(key string) { e.wg.peers[key].hs = e.now.Unix() }
 
 func (e *meshEnv) path(t *testing.T, nodeID string) proto.PathStatus {
 	t.Helper()
@@ -80,8 +119,21 @@ func (e *meshEnv) path(t *testing.T, nodeID string) proto.PathStatus {
 
 var peerA = proto.Peer{NodeID: "a", PublicKey: testKey(2), Address: "10.198.0.5", Candidates: []string{"192.168.1.5:51822", "203.0.113.5:51822"}}
 
+// firstTry also clears routes a previous run or an older version of the peer may have left.
+func firstTry(p proto.Peer, cand string) string {
+	return "wg set wg-underlay peer " + p.PublicKey + " endpoint " + cand + ` allowed-ips "" persistent-keepalive 25`
+}
+
 func trySet(p proto.Peer, cand string) string {
-	return "wg set wg-underlay peer " + p.PublicKey + " endpoint " + cand + " allowed-ips " + p.Address + "/32 persistent-keepalive 25"
+	return "wg set wg-underlay peer " + p.PublicKey + " endpoint " + cand + " persistent-keepalive 25"
+}
+
+func route(p proto.Peer) string {
+	return "wg set wg-underlay peer " + p.PublicKey + " allowed-ips " + p.Address + "/32"
+}
+
+func unroute(p proto.Peer) string {
+	return "wg set wg-underlay peer " + p.PublicKey + ` allowed-ips ""`
 }
 
 func removeCall(key string) string { return "wg set wg-underlay peer " + key + " remove" }
@@ -89,18 +141,24 @@ func removeCall(key string) string { return "wg set wg-underlay peer " + key + "
 func TestMeshGoesDirectOnHandshake(t *testing.T) {
 	e := newMeshEnv(t)
 	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
-	if !e.wg.took(trySet(peerA, "192.168.1.5:51822")) {
+	if !e.wg.took(firstTry(peerA, "192.168.1.5:51822")) {
 		t.Fatalf("first candidate not tried: %v", e.wg.calls)
+	}
+	e.advance(5 * time.Second)
+	if e.wg.routed() || e.wg.peers[peerA.PublicKey].ips != "" {
+		t.Fatalf("/32 moved off the relay before a handshake: %v", e.wg.calls)
 	}
 	if s := e.path(t, "a"); s.Mode != "relay" {
 		t.Fatalf("mode while trying = %q, want relay", s.Mode)
 	}
-	e.now = e.now.Add(3 * time.Second)
 	e.handshake(peerA.PublicKey)
-	e.advance(2 * time.Second)
+	e.advance(5 * time.Second)
 	s := e.path(t, "a")
 	if s.Mode != "direct" || s.Endpoint != "192.168.1.5:51822" || s.Handshake == nil {
 		t.Fatalf("path = %+v, want direct via first candidate", s)
+	}
+	if !e.wg.took(route(peerA)) || e.wg.peers[peerA.PublicKey].ips != "10.198.0.5/32" {
+		t.Fatalf("/32 not routed to the peer after its handshake: %v", e.wg.calls)
 	}
 }
 
@@ -115,6 +173,9 @@ func TestMeshTriesNextCandidate(t *testing.T) {
 	if !e.wg.took(trySet(peerA, "203.0.113.5:51822")) {
 		t.Fatalf("second candidate not tried after 15s: %v", e.wg.calls)
 	}
+	if e.wg.routed() {
+		t.Fatalf("/32 moved off the relay while trying: %v", e.wg.calls)
+	}
 	e.handshake(peerA.PublicKey)
 	e.advance(5 * time.Second)
 	if s := e.path(t, "a"); s.Mode != "direct" || s.Endpoint != "203.0.113.5:51822" {
@@ -127,14 +188,14 @@ func TestMeshFallsBackToRelay(t *testing.T) {
 	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
 	e.advance(15 * time.Second)
 	e.advance(15 * time.Second)
-	if !e.wg.took(removeCall(peerA.PublicKey)) {
-		t.Fatalf("peer not removed after all candidates failed: %v", e.wg.calls)
-	}
-	if _, ok := e.wg.peers[peerA.PublicKey]; ok {
-		t.Fatal("peer still configured, its /32 would black-hole relayed traffic")
-	}
 	if s := e.path(t, "a"); s.Mode != "relay" {
 		t.Fatalf("mode = %q, want relay", s.Mode)
+	}
+	if e.wg.routed() || e.wg.took(removeCall(peerA.PublicKey)) {
+		t.Fatalf("relay fallback routed or removed the peer: %v", e.wg.calls)
+	}
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" {
+		t.Fatalf("peer = %+v, want kept without allowed-ips", p)
 	}
 }
 
@@ -154,6 +215,20 @@ func TestMeshRetriesAfterTwoMinutes(t *testing.T) {
 	}
 }
 
+func TestMeshRelayPeerGoesDirectOnHandshake(t *testing.T) {
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.advance(15 * time.Second)
+	e.advance(15 * time.Second)
+	e.advance(10 * time.Second)
+	// The other node's try reached us: both sides share the handshake, so this side routes too.
+	e.handshake(peerA.PublicKey)
+	e.advance(5 * time.Second)
+	if s := e.path(t, "a"); s.Mode != "direct" || !e.wg.took(route(peerA)) {
+		t.Fatalf("path = %+v after a handshake while on relay, want direct", s)
+	}
+}
+
 func TestMeshStaleHandshakeFallsBack(t *testing.T) {
 	e := newMeshEnv(t)
 	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
@@ -169,8 +244,15 @@ func TestMeshStaleHandshakeFallsBack(t *testing.T) {
 	if s := e.path(t, "a"); s.Mode != "relay" {
 		t.Fatalf("mode = %q with a stale handshake, want relay", s.Mode)
 	}
-	if _, ok := e.wg.peers[peerA.PublicKey]; ok {
-		t.Fatal("stale peer still configured")
+	if !e.wg.took(unroute(peerA)) || e.wg.took(removeCall(peerA.PublicKey)) {
+		t.Fatalf("stale peer: want allowed-ips cleared and peer kept: %v", e.wg.calls)
+	}
+	if p := e.wg.peers[peerA.PublicKey]; p == nil || p.ips != "" {
+		t.Fatalf("peer = %+v, want kept without allowed-ips", p)
+	}
+	e.advance(5 * time.Second)
+	if s := e.path(t, "a"); s.Mode != "relay" {
+		t.Fatalf("old handshake promoted the relay peer again: %+v", s)
 	}
 }
 
@@ -193,18 +275,32 @@ func TestMeshReappliesAfterWGRestart(t *testing.T) {
 	e.handshake(peerA.PublicKey)
 	e.advance(5 * time.Second)
 	// wg-quick restart: only the gateway peer from the config file is left.
-	e.wg.peers = map[string]int64{gwKey: e.now.Unix()}
+	e.wg.peers = map[string]*wgPeer{gwKey: {hs: e.now.Unix(), ips: "10.198.0.0/16"}}
 	e.wg.calls = nil
 	e.advance(5 * time.Second)
 	if !e.wg.took(trySet(peerA, "203.0.113.5:51822")) {
 		t.Fatalf("direct peer not re-applied after restart: %v", e.wg.calls)
+	}
+	e.handshake(peerA.PublicKey)
+	e.advance(5 * time.Second)
+	if !e.wg.took(route(peerA)) {
+		t.Fatalf("re-applied peer not routed after its handshake: %v", e.wg.calls)
+	}
+}
+
+func TestMeshClearsLeftoverRoute(t *testing.T) {
+	e := newMeshEnv(t)
+	e.wg.peers[peerA.PublicKey] = &wgPeer{hs: e.now.Unix() - 10, ips: "10.198.0.5/32"}
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	if p := e.wg.peers[peerA.PublicKey]; p.ips != "" {
+		t.Fatalf("leftover /32 kept while trying: %+v", p)
 	}
 }
 
 func TestMeshRemovesUnknownPeers(t *testing.T) {
 	e := newMeshEnv(t)
 	stale := testKey(9)
-	e.wg.peers[stale] = 1
+	e.wg.peers[stale] = &wgPeer{hs: 1}
 	e.advance(5 * time.Second)
 	if !e.wg.took(removeCall(stale)) {
 		t.Fatalf("leftover peer not removed: %v", e.wg.calls)
@@ -235,11 +331,11 @@ func TestMeshNeverTouchesGatewayPeer(t *testing.T) {
 			}
 		}
 	}
-	if !e.wg.took(trySet(proto.Peer{PublicKey: testKey(6), Address: "10.198.0.12"}, "198.51.100.7:51822")) {
+	if !e.wg.took(firstTry(proto.Peer{PublicKey: testKey(6)}, "198.51.100.7:51822")) {
 		t.Fatalf("valid candidate of a peer with bad ones not tried: %v", e.wg.calls)
 	}
-	if _, ok := e.wg.peers[gwKey]; !ok {
-		t.Fatal("gateway peer removed")
+	if gw := e.wg.peers[gwKey]; gw == nil || gw.ips != "10.198.0.0/16" {
+		t.Fatalf("gateway peer changed: %+v", gw)
 	}
 	if s := e.path(t, "nocands"); s.Mode != "relay" {
 		t.Fatalf("peer without candidates: mode %q, want relay", s.Mode)
@@ -250,7 +346,7 @@ func TestAgentAppliesPeers(t *testing.T) {
 	e := newMeshEnv(t)
 	a := &Agent{mesh: e.m}
 	a.handle(t.Context(), proto.Message{Type: proto.TypePeers, Peers: &proto.Peers{Peers: []proto.Peer{peerA}}}, nil)
-	if !e.wg.took(trySet(peerA, "192.168.1.5:51822")) {
+	if !e.wg.took(firstTry(peerA, "192.168.1.5:51822")) {
 		t.Fatalf("peers message not applied: %v", e.wg.calls)
 	}
 }
