@@ -572,3 +572,16 @@ func TestSetStatusRecordsEndpoint(t *testing.T) {
 		t.Fatalf("node B endpoint %q", cs.Endpoint)
 	}
 }
+
+func TestGatewayStateUsesGuestMTU(t *testing.T) {
+	f := newFixture(t)
+	if got := f.state().GuestMTU; got != netaddr.DefaultGuestMTU {
+		t.Fatalf("default %d", got)
+	}
+	if err := f.s.SetGuestMTU(context.Background(), 1200, f.owner); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.state().GuestMTU; got != 1200 {
+		t.Fatalf("got %d", got)
+	}
+}

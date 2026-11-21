@@ -57,6 +57,7 @@ const (
 	ActionPlatformRevokeAdmin = "platform:revoke-admin"
 	ActionAdminRead           = "admin:read"
 	ActionRegistryGC          = "registry:gc"
+	ActionPlatformGuestMTU    = "platform.guest_mtu"
 	ActionEnvSet              = "env:set"
 	ActionEnvMove             = "env:move"
 	ActionEnvDelete           = "env:delete"

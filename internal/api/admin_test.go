@@ -1,6 +1,7 @@
 package api
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,6 +21,8 @@ func TestAdminEndpointsRequirePlatformAdmin(t *testing.T) {
 		{"GET", "/api/admin/users", "", store.ActionAdminRead},
 		{"PUT", o + "/" + org.String() + "/limits", `{}`, store.ActionLimitSet},
 		{"PUT", u, `{"admin":true}`, store.ActionPlatformGrantAdmin},
+		{"GET", "/api/admin/network", "", store.ActionAdminRead},
+		{"PUT", "/api/admin/network", `{"guestMTU":1200}`, store.ActionPlatformGuestMTU},
 	} {
 		if rec := e.send(c.method, c.path, tok, c.body); rec.Code != 403 {
 			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
@@ -135,5 +138,46 @@ func TestPlatformAdminHasNoTenantAccess(t *testing.T) {
 	// The admin read is read-only: a platform admin gets no tenant action out of it.
 	if rec := e.send("PATCH", "/api/admin/orgs/"+org.String(), rootTok, `{"name":"x"}`); rec.Code == 200 || rec.Code == 204 {
 		t.Fatalf("admin org write: %d", rec.Code)
+	}
+}
+
+func TestAdminNetworkGuestMTU(t *testing.T) {
+	e := newEnv(t)
+	_, rootTok := e.user("root")
+	var got struct{ GuestMTU int }
+	decode(t, e.do("GET", "/api/admin/network", rootTok), &got)
+	if got.GuestMTU != 1300 {
+		t.Fatalf("default %d", got.GuestMTU)
+	}
+	for _, body := range []string{`{"guestMTU":999}`, `{"guestMTU":1401}`, `{}`, `x`} {
+		if rec := e.send("PUT", "/api/admin/network", rootTok, body); rec.Code != 400 {
+			t.Fatalf("%s: %d", body, rec.Code)
+		}
+	}
+	if rec := e.send("PUT", "/api/admin/network", rootTok, `{"guestMTU":1200}`); rec.Code != 200 {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	decode(t, e.do("GET", "/api/admin/network", rootTok), &got)
+	if got.GuestMTU != 1200 {
+		t.Fatalf("got %d", got.GuestMTU)
+	}
+}
+
+func TestSetGuestMTUDoesNotTouchVMs(t *testing.T) {
+	e := newEnv(t)
+	root, rootTok := e.user("root")
+	org := e.createOrg(rootTok, "Acme")
+	node, _ := uuid.Parse(e.enrolledNode(rootTok, org, "n"))
+	vm, err := e.store.CreateVM(t.Context(), store.VM{OrgID: org, NodeID: node, UserID: &root.ID, Name: "dev", CPUs: 1, MemoryMB: 1, DiskGB: 1, CreatedBy: root.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := e.store.VM(t.Context(), org, vm.ID)
+	if rec := e.send("PUT", "/api/admin/network", rootTok, `{"guestMTU":1200}`); rec.Code != 200 {
+		t.Fatalf("put: %d", rec.Code)
+	}
+	after, _ := e.store.VM(t.Context(), org, vm.ID)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("vm changed: %+v -> %+v", before, after)
 	}
 }

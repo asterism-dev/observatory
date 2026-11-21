@@ -46,6 +46,7 @@
     "images": "Images",
     "builders": "Builder-VMs",
     "adminRegistry": "Registry",
+    "adminNetwork": "Netzwerk",
     "telemetry": "Telemetrie",
     "dashboards": "Dashboards",
     "logs": "Logs"
@@ -886,6 +887,11 @@
     },
     "logTruncated": "— gekürzt, lade das vollständige Log herunter —",
     "logStreamFailed": "Das Live-Log konnte nicht geladen werden. Lade die Seite neu oder das Log herunter."
+  },
+  "adminNetwork": {
+    "title": "Netzwerk",
+    "guestMtu": "Gast-MTU",
+    "guestMtuHint": "MTU der VM-Netzwerkschnittstellen und Device-Configs. Gilt für VMs beim nächsten Start und für neu heruntergeladene Device-Configs."
   },
   "registryGC": {
     "title": "Registry-Bereinigung",

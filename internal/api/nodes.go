@@ -12,7 +12,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/fleet"
-	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -110,13 +109,17 @@ func (h *api) nodeJSON(r *http.Request, n store.Node) (nodeJSON, error) {
 		for _, p := range peers {
 			names[p.ID.String()] = p.Name
 		}
+		guestMTU, err := h.store.GuestMTU(r.Context())
+		if err != nil {
+			return nodeJSON{}, err
+		}
 		for _, p := range paths {
 			id, err := uuid.Parse(p.NodeID)
 			name, same := names[p.NodeID]
 			if err != nil || !same {
 				continue
 			}
-			warn, rec := pathWarning(netaddr.GuestMTU, p.MTU)
+			warn, rec := pathWarning(guestMTU, p.MTU)
 			j.Paths = append(j.Paths, pathJSON{Node: id, NodeName: name, Mode: p.Mode, Endpoint: p.Endpoint, MTU: p.MTU, Handshake: p.Handshake, Warning: warn, RecommendedGuestMTU: rec})
 		}
 	}

@@ -38,12 +38,16 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 		return proto.GatewayState{}, err
 	}
 	// Revocations reach the allow lists on the next successful authz reload, which may trail this snapshot.
+	guestMTU, err := h.store.GuestMTU(ctx)
+	if err != nil {
+		return proto.GatewayState{}, err
+	}
 	connect := h.authz.Enforcer().ConnectChecker()
 	st := proto.GatewayState{
 		UnderlayKey: h.underlay.priv,
 		ClientsKey:  h.clients.priv,
 		SB:          proto.GatewaySB{CACert: h.ca.CertPEM(), Cert: h.sbCert, Key: h.sbKey},
-		GuestMTU:    netaddr.GuestMTU,
+		GuestMTU:    guestMTU,
 		Chassis:     []proto.GatewayChassis{},
 		Devices:     []proto.GatewayDevice{},
 		Orgs:        []proto.GatewayOrg{},
