@@ -239,6 +239,8 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 			if changed {
 				f.NotifyOrg(node.OrgID)
 			}
+		case m.Type == proto.TypePaths:
+			f.storePaths(ctx, node, m.Paths)
 		case m.Type == "disks":
 			f.confirmReleases(ctx, node, m.DisksInUse, m.AppliedSeq)
 		case m.Type == "image" && m.Image != nil:

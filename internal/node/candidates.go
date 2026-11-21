@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -84,6 +85,30 @@ func (a *Agent) candidatesLoop(ctx context.Context) {
 			a.mu.Unlock()
 			if send != nil && send(proto.Message{Type: "candidates", Candidates: cur}) == nil {
 				last = cur
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// pathsLoop reports peer paths on connect, whenever they change and at least every pathReport.
+func (a *Agent) pathsLoop(ctx context.Context) {
+	var last []proto.PathStatus
+	var sentAt time.Time
+	t := time.NewTicker(pathCheck)
+	defer t.Stop()
+	for {
+		cur := a.mesh.status()
+		if !reflect.DeepEqual(cur, last) || time.Since(sentAt) >= pathReport {
+			a.mu.Lock()
+			send := a.send
+			a.mu.Unlock()
+			if send != nil && send(proto.Message{Type: proto.TypePaths, Paths: cur}) == nil {
+				last, sentAt = cur, time.Now()
 			}
 		}
 		select {

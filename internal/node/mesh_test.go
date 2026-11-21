@@ -2,9 +2,12 @@ package node
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +27,10 @@ type wgPeer struct {
 
 // fakeWG models wg-underlay's runtime peers.
 type fakeWG struct {
-	t     *testing.T
-	peers map[string]*wgPeer
-	calls []string
+	t       *testing.T
+	peers   map[string]*wgPeer
+	calls   []string
+	pathMTU int // largest IP packet the fake path passes; 0 means 1500
 }
 
 func (f *fakeWG) run(name string, args ...string) (string, error) {
@@ -39,6 +43,9 @@ func (f *fakeWG) run(name string, args ...string) (string, error) {
 	}
 	call := name + " " + strings.Join(shown, " ")
 	f.calls = append(f.calls, call)
+	if name == "ping" {
+		return f.ping(args)
+	}
 	if name == "wg" && len(args) == 3 && args[0] == "show" && args[1] == "wg-underlay" {
 		var out strings.Builder
 		for k, p := range f.peers {
@@ -409,5 +416,71 @@ func TestAgentAppliesPeers(t *testing.T) {
 	a.handle(t.Context(), proto.Message{Type: proto.TypePeers, Peers: &proto.Peers{Peers: []proto.Peer{peerA}}}, nil)
 	if !e.wg.took(firstTry(peerA, "192.168.1.5:51822")) {
 		t.Fatalf("peers message not applied: %v", e.wg.calls)
+	}
+}
+
+func (f *fakeWG) ping(args []string) (string, error) {
+	want := []string{"-M", "do", "-c", "1", "-W", "1", "-s"}
+	if len(args) != 9 || !slices.Equal(args[:7], want) {
+		f.t.Fatalf("unexpected ping %q", args)
+	}
+	size, err := strconv.Atoi(args[7])
+	if err != nil {
+		f.t.Fatalf("ping size %q", args[7])
+	}
+	if limit := cmp.Or(f.pathMTU, 1500); size+28 > limit {
+		return "", errors.New("message too long")
+	}
+	return "", nil
+}
+
+func (f *fakeWG) pings() (n int) {
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "ping ") {
+			n++
+		}
+	}
+	return
+}
+
+func TestProbeMTUBinarySearch(t *testing.T) {
+	for limit, want := range map[int]int{1420: 1420, 1500: 1500, 1200: 1200, 1199: 0, 1350: 1350} {
+		f := &fakeWG{t: t, pathMTU: limit}
+		if got := probeMTU(f.run, "203.0.113.5"); got != want {
+			t.Errorf("limit %d: probeMTU = %d, want %d", limit, got, want)
+		}
+	}
+	f := &fakeWG{t: t}
+	if got := probeMTU(f.run, "not-an-ip; reboot"); got != 0 || len(f.calls) != 0 {
+		t.Fatalf("invalid ip probed: %d %v", got, f.calls)
+	}
+}
+
+func TestMeshProbesDirectPathMTUOnce(t *testing.T) {
+	e := newMeshEnv(t)
+	e.wg.pathMTU = 1420
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	if e.wg.pings() != 0 || e.path(t, "a").MTU != 0 {
+		t.Fatalf("probed a relay path: %v", e.wg.calls)
+	}
+	e.advance(time.Second)
+	e.handshake(peerA.PublicKey)
+	e.wg.peers[peerA.PublicKey].endpoint = "192.168.1.5:51822"
+	e.advance(meshTick)
+	if s := e.path(t, "a"); s.Mode != "direct" || s.MTU != 1420 {
+		t.Fatalf("path = %+v", s)
+	}
+	n := e.wg.pings()
+	e.handshake(peerA.PublicKey)
+	e.advance(meshTick)
+	if e.wg.pings() != n {
+		t.Fatal("probed the same endpoint again")
+	}
+	e.wg.peers[peerA.PublicKey].endpoint = "192.168.1.6:51822"
+	e.handshake(peerA.PublicKey)
+	e.wg.pathMTU = 1400
+	e.advance(meshTick)
+	if s := e.path(t, "a"); s.MTU != 1400 {
+		t.Fatalf("new endpoint not probed: %+v", s)
 	}
 }

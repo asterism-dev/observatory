@@ -36,6 +36,8 @@ const (
 
 	defaultDiskRefresh = 60 * time.Second
 	candidateCheck     = time.Minute
+	pathReport         = time.Minute
+	pathCheck          = 5 * time.Second
 )
 
 var (
@@ -236,6 +238,9 @@ func (a *Agent) connect(ctx context.Context) error {
 	connCtx, stopRefresh := context.WithCancel(ctx)
 	go a.refreshDisksLoop(connCtx)
 	go a.candidatesLoop(connCtx)
+	if a.mesh != nil {
+		go a.pathsLoop(connCtx)
+	}
 	defer func() {
 		stopRefresh()
 		a.mu.Lock()

@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -522,5 +523,49 @@ func TestEmergencyEndpointStoresVersion(t *testing.T) {
 	e.emergency(cred, `{"version":"v0.5.0"}`)
 	if n := read(); n.Version != "v0.5.0" || n.Outdated || n.Updatable {
 		t.Fatalf("after: %+v", n)
+	}
+}
+
+func TestPathWarning(t *testing.T) {
+	for _, c := range []struct {
+		guest, path int
+		warn        bool
+		rec         int
+	}{{1300, 1500, false, 0}, {1300, 1420, true, 1280}, {1300, 0, false, 0}, {1300, 1438, false, 0}, {1300, 1437, true, 1290}} {
+		if warn, rec := pathWarning(c.guest, c.path); warn != c.warn || rec != c.rec {
+			t.Errorf("pathWarning(%d, %d) = %v, %d; want %v, %d", c.guest, c.path, warn, rec, c.warn, c.rec)
+		}
+	}
+}
+
+func TestNodeJSONIncludesPaths(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	a, ctrl := e.onlineNodeConn(alice, org, "a", "v1", nil)
+	b := e.onlineNode(alice, org, "b", "v1", nil)
+	hs := time.Unix(1_800_000_000, 0).UTC()
+	msg := proto.Message{Type: "paths", Paths: []proto.PathStatus{
+		{NodeID: b.ID.String(), Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &hs},
+		{NodeID: uuid.NewString(), Mode: "relay"},
+	}}
+	if err := json.NewEncoder(ctrl).Encode(msg); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); len(e.api.fleet.Paths(a.ID)) != 1; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("paths not stored")
+		}
+	}
+	var got struct{ Paths []pathJSON }
+	decode(t, e.do("GET", nodesPath(org)+"/"+a.ID.String(), tok), &got)
+	want := pathJSON{Node: b.ID, NodeName: "b", Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &hs, Warning: true, RecommendedGuestMTU: 1280}
+	if len(got.Paths) != 1 || got.Paths[0].Node != want.Node || got.Paths[0].NodeName != "b" || got.Paths[0].MTU != 1420 || !got.Paths[0].Warning || got.Paths[0].RecommendedGuestMTU != 1280 || got.Paths[0].Mode != "direct" {
+		t.Fatalf("paths = %+v, want %+v", got.Paths, want)
+	}
+	var none struct{ Paths []pathJSON }
+	decode(t, e.do("GET", nodesPath(org)+"/"+b.ID.String(), tok), &none)
+	if none.Paths == nil || len(none.Paths) != 0 {
+		t.Fatalf("node without paths: %+v", none.Paths)
 	}
 }

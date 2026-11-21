@@ -2700,3 +2700,33 @@ func TestPeersNotResentWhenUnchanged(t *testing.T) {
 	a.desired()
 	a.noPeers()
 }
+
+func TestFleetStoresValidPaths(t *testing.T) {
+	e := newEnv(t)
+	n1, cred1 := e.node(e.org.ID, "n1")
+	n2, _ := e.node(e.org.ID, "n2")
+	other := newEnv(t)
+	foreign, _ := other.node(other.org.ID, "x")
+	a := e.connect(cred1)
+	a.nextPeers()
+	hs := time.Unix(1_800_000_000, 0)
+	paths := []proto.PathStatus{
+		{NodeID: n2.ID.String(), Mode: "direct", Endpoint: "192.168.1.5:51822", MTU: 1420, Handshake: &hs},
+		{NodeID: foreign.ID.String(), Mode: "direct", MTU: 1420},
+		{NodeID: n1.ID.String(), Mode: "relay"},
+		{NodeID: n2.ID.String(), Mode: "bogus"},
+		{NodeID: n2.ID.String(), Mode: "relay", MTU: 100},
+		{NodeID: n2.ID.String(), Mode: "direct", Endpoint: "nope"},
+		{NodeID: "not-a-uuid", Mode: "relay"},
+	}
+	a.send(proto.Message{Type: "paths", Paths: paths})
+	waitFor(t, func() bool { return len(e.f.Paths(n1.ID)) > 0 })
+	got := e.f.Paths(n1.ID)
+	if len(got) != 1 || got[0].NodeID != n2.ID.String() || got[0].MTU != 1420 || got[0].Endpoint != "192.168.1.5:51822" {
+		t.Fatalf("paths = %+v", got)
+	}
+	e.f.Disconnect(n1.ID)
+	if got := e.f.Paths(n1.ID); len(got) != 0 {
+		t.Fatalf("after disconnect: %+v", got)
+	}
+}

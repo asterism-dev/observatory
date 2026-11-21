@@ -54,7 +54,10 @@ type mesh struct {
 	mu      sync.Mutex
 	gateway string // the hub's wg-underlay key; never configured or removed here
 	peers   map[string]*meshPeer
+	mtus    map[string]int // direct endpoint → probed path MTU, 0 when the probe failed
 }
+
+type runner = func(name string, args ...string) (string, error)
 
 func newMesh() *mesh { return &mesh{cmd: runOutput, now: time.Now} }
 
@@ -143,8 +146,52 @@ func (m *mesh) run(ctx context.Context) {
 
 func (m *mesh) tick() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.reconcileLocked()
+	var todo []string
+	for _, p := range m.peers {
+		if _, done := m.mtus[p.endpoint]; p.mode == pathDirect && p.endpoint != "" && !done {
+			todo = append(todo, p.endpoint)
+		}
+	}
+	m.mu.Unlock()
+	// Probing takes seconds, so it runs without the lock; update and status stay responsive.
+	for _, ep := range todo {
+		mtu := 0
+		if ap, err := netip.ParseAddrPort(ep); err == nil {
+			mtu = probeMTU(m.cmd, ap.Addr().String())
+		}
+		m.mu.Lock()
+		if m.mtus == nil {
+			m.mtus = map[string]int{}
+		}
+		m.mtus[ep] = mtu
+		m.mu.Unlock()
+	}
+}
+
+// probeMTU returns the largest total IP size in 1200-1500 that passes unfragmented, or 0 when even 1200 fails.
+func probeMTU(run runner, ip string) int {
+	// Only IPv4 literals reach ping, which has no shell.
+	if a, err := netip.ParseAddr(ip); err != nil || !a.Is4() {
+		return 0
+	}
+	ok := func(size int) bool {
+		_, err := run("ping", "-M", "do", "-c", "1", "-W", "1", "-s", strconv.Itoa(size-28), ip)
+		return err == nil
+	}
+	lo, hi := 1200, 1500
+	if !ok(lo) {
+		return 0
+	}
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if ok(mid) {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
 }
 
 // reconcileLocked's sweep removes dropped peers and a previous run's leftovers, and retries failed removes.
@@ -269,7 +316,7 @@ func (m *mesh) status() []proto.PathStatus {
 	for _, p := range m.peers {
 		s := proto.PathStatus{NodeID: p.NodeID, Mode: "relay"}
 		if p.mode == pathDirect {
-			s.Mode, s.Endpoint = "direct", p.endpoint
+			s.Mode, s.Endpoint, s.MTU = "direct", p.endpoint, m.mtus[p.endpoint]
 		}
 		if !p.handshake.IsZero() {
 			hs := p.handshake

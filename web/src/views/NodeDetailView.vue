@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Button, Dialog, Tabs, TextInput } from '@asterism-dev/lumen'
+import { Button, Dialog, Tabs, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { HardDrive } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -16,7 +16,7 @@ import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import type { UsageRange } from '@/composables/telemetry'
-import { Card, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
+import { Card, DataTable, KeyValue, KeyValueList, Meter, PageHeader, Section, Tag } from '@/ui'
 
 const { t, d, locale } = useI18n()
 const route = useRoute()
@@ -52,6 +52,13 @@ watch(tab, (v) => {
 })
 
 const nodeLogFilter = { key: 'source' as const, options: ['observatory-node', 'firecracker'] }
+const pathColumns = computed<TableColumn[]>(() => [
+  { key: 'nodeName', label: t('nodes.pathPeer') },
+  { key: 'mode', label: t('nodes.pathMode') },
+  { key: 'endpoint', label: t('nodes.pathEndpoint') },
+  { key: 'mtu', label: t('nodes.pathMtu'), align: 'right' },
+  { key: 'warning', label: t('nodes.pathWarning') },
+])
 const machine = computed(() => Object.entries(node.value?.machine ?? {}))
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -188,6 +195,18 @@ watch(
                 <KeyValue v-for="[k, v] in machine" :key="k" :label="k">{{ v }}</KeyValue>
               </KeyValueList>
             </Card>
+          </Section>
+          <Section v-if="node.paths.length" :label="t('nodes.paths')">
+            <DataTable :columns="pathColumns" :rows="node.paths as unknown as Record<string, unknown>[]" row-key="node">
+              <template #cell-mode="{ row }">
+                <Tag :tone="row.mode === 'direct' ? 'success' : undefined">{{ t(row.mode === 'direct' ? 'nodes.pathDirect' : 'nodes.pathRelay') }}</Tag>
+              </template>
+              <template #cell-endpoint="{ row }"><span class="mono">{{ row.endpoint || '–' }}</span></template>
+              <template #cell-mtu="{ row }"><span class="mono">{{ row.mtu || '–' }}</span></template>
+              <template #cell-warning="{ row }">
+                <Tag v-if="row.warning" tone="warning">{{ t('nodes.pathFragmented', { mtu: row.recommendedGuestMTU }) }}</Tag>
+              </template>
+            </DataTable>
           </Section>
         </template>
 

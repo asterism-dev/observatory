@@ -271,7 +271,7 @@ type GuestProcess struct {
 	RSSBytes   int64   `json:"rssBytes"`
 }
 
-// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates" (node→hub), "peers" (hub→node), "processes" (request and reply by ReqID).
+// Message types: "register" (node→hub), "desired" (hub→node), "status", "disks", "metrics", "image", "usage", "candidates", "paths" (node→hub), "peers" (hub→node), "processes" (request and reply by ReqID).
 type Message struct {
 	Type     string    `json:"type"`
 	Register *Register `json:"register,omitempty"`
@@ -290,9 +290,13 @@ type Message struct {
 	Error      string             `json:"error,omitempty"`      // type "processes" reply
 	Candidates []string           `json:"candidates,omitempty"` // type "candidates": the node's underlay endpoints as ip:port
 	Peers      *Peers             `json:"peers,omitempty"`
+	Paths      []PathStatus       `json:"paths,omitempty"` // type "paths": how the node reaches each peer node
 }
 
-const TypePeers = "peers"
+const (
+	TypePeers = "peers"
+	TypePaths = "paths"
+)
 
 // Peers is the full set of same-org nodes a node may reach directly, sorted by NodeID.
 type Peers struct {
@@ -311,6 +315,7 @@ type PathStatus struct {
 	NodeID    string     `json:"nodeId"`
 	Mode      string     `json:"mode"` // "direct" or "relay"
 	Endpoint  string     `json:"endpoint,omitempty"`
+	MTU       int        `json:"mtu,omitempty"` // largest IP packet the direct path passes; 0 when unknown
 	Handshake *time.Time `json:"handshake,omitempty"`
 }
 
