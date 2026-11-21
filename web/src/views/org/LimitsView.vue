@@ -4,6 +4,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section } from '@/ui'
@@ -36,8 +37,8 @@ async function refresh() {
   try {
     const [ls, ts, ms] = await Promise.all([
       api<LimitsResponse>(`${base}/limits`),
-      api<Named[]>(`${base}/teams`).catch(() => []),
-      api<{ id: string; name: string; email: string }[]>(`${base}/members`).catch(() => []),
+      iamClient.listTeams({ org: id }).then((r) => r.teams, () => []),
+      iamClient.listMembers({ org: id }).then((r) => r.members, () => []),
     ])
     // Org switched while loading.
     if (id !== org.value?.id) return

@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import DashboardPanel from '@/components/DashboardPanel.vue'
 import PanelEditor from '@/components/PanelEditor.vue'
 import { copyPanel, creatableTeams, dashboardScope, dashboardScopes, exampleQuery, nameValid, newPanel, panelKey, type Dashboard, type Panel, type Team } from '@/composables/dashboards'
@@ -66,7 +67,7 @@ async function load() {
   const orgId = org.value.id
   const want = id.value
   try {
-    const [d, ts] = await Promise.all([api<Dashboard>(`/api/orgs/${orgId}/dashboards/${want}`), api<Team[]>(`/api/orgs/${orgId}/teams`).catch(() => [])])
+    const [d, ts] = await Promise.all([api<Dashboard>(`/api/orgs/${orgId}/dashboards/${want}`), iamClient.listTeams({ org: orgId }).then((r) => r.teams, () => [])])
     if (want !== id.value) return false
     dash.value = d
     teams.value = ts
@@ -86,7 +87,7 @@ async function startEdit() {
   saveError.value = ''
   conflict.value = false
   editing.value = true
-  ownTeams.value = await creatableTeams(api, org.value.id, me.value.user.id, can('telemetry.dashboards.create'), teams.value)
+  ownTeams.value = await creatableTeams((team) => iamClient.getTeam({ org: org.value!.id, team }), me.value.user.id, can('telemetry.dashboards.create'), teams.value)
 }
 
 function stopEdit() {

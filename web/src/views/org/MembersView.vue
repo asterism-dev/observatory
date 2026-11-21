@@ -1,26 +1,18 @@
 <script setup lang="ts">
+import { timestampDate, type Timestamp } from '@bufbuild/protobuf/wkt'
 import { Button, Dialog, Select, TextInput, type TableColumn } from '@asterism-dev/lumen'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage as message, iamClient } from '@/composables/iamClient'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import type { Invite as IamInvite, Member as IamMember } from '@/gen/observatory/iam/v1/iam_pb'
 import { Card, DataTable, Section, Tag } from '@/ui'
 
-interface Member {
-  id: string
-  email: string
-  name: string
-  role: string
-  joinedAt: string
-}
-interface Invite {
-  id: string
-  role: string
-  expiresAt: string
-}
+type Member = IamMember
+type Invite = IamInvite
 
 const { t, d } = useI18n()
 const router = useRouter()
@@ -56,16 +48,14 @@ const inviteColumns = computed<TableColumn[]>(() => [
   { key: 'actions', label: '' },
 ])
 
-const fmt = (v: string) => d(new Date(v), { dateStyle: 'short', timeStyle: 'short' })
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+const fmt = (v?: Timestamp) => (v ? d(timestampDate(v), { dateStyle: 'short', timeStyle: 'short' }) : '–')
 
 async function refresh() {
   if (!org.value) return
   const id = org.value.id
-  const base = `/api/orgs/${id}`
   try {
-    const ms = await api<Member[]>(`${base}/members`)
-    const invs = canInvite.value ? await api<Invite[]>(`${base}/invites`) : []
+    const ms = (await iamClient.listMembers({ org: id })).members
+    const invs = canInvite.value ? (await iamClient.listInvites({ org: id })).invites : []
     // Org switched while loading.
     if (id !== org.value?.id) return
     members.value = ms
@@ -97,11 +87,9 @@ async function run(fn: () => Promise<unknown>) {
   }
 }
 
-const memberUrl = (m: Member) => `/api/orgs/${org.value?.id}/members/${m.id}`
-
 const setRole = (m: Member, role: string) =>
   run(async () => {
-    await api(memberUrl(m), { method: 'PATCH', body: JSON.stringify({ role }) })
+    await iamClient.updateMember({ org: org.value?.id, user: m.id, role })
     await refreshAfterChange(isSelf(m))
   })
 
@@ -109,7 +97,8 @@ function remove() {
   const m = pending.value
   if (!m) return
   return run(async () => {
-    await api(memberUrl(m), { method: 'DELETE' })
+    if (isSelf(m)) await iamClient.leaveOrg({ orgId: org.value?.id })
+    else await iamClient.deleteMember({ org: org.value?.id, user: m.id })
     pending.value = null
     if (isSelf(m)) {
       await loadMe()
@@ -120,10 +109,7 @@ function remove() {
 
 const createInvite = () =>
   run(async () => {
-    const res = await api<{ url: string }>(`/api/orgs/${org.value?.id}/invites`, {
-      method: 'POST',
-      body: JSON.stringify({ role: inviteRole.value }),
-    })
+    const res = await iamClient.createInvite({ org: org.value?.id, role: inviteRole.value })
     link.value = res.url
     copied.value = false
     await refresh()
@@ -131,7 +117,7 @@ const createInvite = () =>
 
 const revokeInvite = (i: Invite) =>
   run(async () => {
-    await api(`/api/orgs/${org.value?.id}/invites/${i.id}`, { method: 'DELETE' })
+    await iamClient.deleteInvite({ org: org.value?.id, invite: i.id })
     await refresh()
   })
 

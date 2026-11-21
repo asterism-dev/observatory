@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import { creatableTeams, dashboardScope, dashboardScopes, nameValid, type Dashboard, type Team } from '@/composables/dashboards'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import { useMe } from '@/composables/useMe'
@@ -43,7 +44,7 @@ async function refresh() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const [list, ts] = await Promise.all([api<Dashboard[]>(`/api/orgs/${id}/dashboards`), api<Team[]>(`/api/orgs/${id}/teams`).catch(() => [])])
+    const [list, ts] = await Promise.all([api<Dashboard[]>(`/api/orgs/${id}/dashboards`), iamClient.listTeams({ org: id }).then((r) => r.teams, () => [])])
     if (id !== org.value?.id) return
     items.value = list
     teams.value = ts
@@ -58,7 +59,7 @@ async function openCreate() {
   scope.value = 'user'
   createError.value = ''
   createOpen.value = true
-  if (org.value && me.value) own.value = await creatableTeams(api, org.value.id, me.value.user.id, can('telemetry.dashboards.create'), teams.value)
+  if (org.value && me.value) own.value = await creatableTeams((team) => iamClient.getTeam({ org: org.value!.id, team }), me.value.user.id, can('telemetry.dashboards.create'), teams.value)
 }
 
 async function create() {

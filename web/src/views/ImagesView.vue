@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import CreateImageDialog from '@/components/CreateImageDialog.vue'
 import { scopeLabel } from '@/composables/envScopes'
 import { buildTones, formatBytes, imageScope, imageScopes, shortDigest, type Image } from '@/composables/images'
@@ -38,7 +39,7 @@ async function refresh() {
   try {
     const [list, ts] = await Promise.all([
       api<Image[]>(`/api/orgs/${id}/images`),
-      api<{ id: string; name: string }[]>(`/api/orgs/${id}/teams`).catch(() => []),
+      iamClient.listTeams({ org: id }).then((r) => r.teams, () => []),
     ])
     if (id !== org.value?.id) return
     items.value = list

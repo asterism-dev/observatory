@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import BuildLog from '@/components/BuildLog.vue'
 import RecipeEditor from '@/components/RecipeEditor.vue'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
@@ -115,8 +116,8 @@ async function loadPeople() {
   if (!org.value) return
   const id = org.value.id
   const [ms, ts] = await Promise.all([
-    api<{ id: string; name: string; email: string }[]>(`/api/orgs/${id}/members`).catch(() => []),
-    api<{ id: string; name: string }[]>(`/api/orgs/${id}/teams`).catch(() => []),
+    iamClient.listMembers({ org: id }).then((r) => r.members, () => []),
+    iamClient.listTeams({ org: id }).then((r) => r.teams, () => []),
   ])
   people.value = Object.fromEntries(ms.map((m) => [m.id, m.name || m.email]))
   teams.value = ts

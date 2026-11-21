@@ -4,22 +4,12 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage as message, iamClient } from '@/composables/iamClient'
 import { useOrg } from '@/composables/useOrg'
+import type { Role as IamRole, RoleBinding as Binding } from '@/gen/observatory/iam/v1/iam_pb'
 import { Card, DataTable, Section, Tag } from '@/ui'
 
-interface Role {
-  id?: string
-  key?: string
-  rid: string
-  name: string
-  builtin?: boolean
-}
-interface Binding {
-  id: string
-  subject: string
-  roleId: string
-}
+type Role = IamRole & { rid: string }
 
 const { t } = useI18n()
 const router = useRouter()
@@ -36,7 +26,7 @@ const error = ref('')
 
 const custom = computed(() => roles.value.filter((r) => !r.builtin))
 const subjectOptions = computed(() => Object.entries(subjectNames.value).map(([value, label]) => ({ value, label })))
-const roleOptions = computed(() => custom.value.map((r) => ({ value: r.id!, label: r.name })))
+const roleOptions = computed(() => custom.value.map((r) => ({ value: r.id, label: r.name })))
 const columns = computed<TableColumn[]>(() => [
   { key: 'name', label: t('members.name') },
   { key: 'actions', label: '' },
@@ -46,25 +36,23 @@ const bindingColumns = computed<TableColumn[]>(() => [
   { key: 'roleId', label: t('members.role') },
   { key: 'actions', label: '' },
 ])
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
   if (!org.value) return
   const id = org.value.id
-  const base = `/api/orgs/${id}`
   try {
-    const rs = await api<Omit<Role, 'rid'>[]>(`${base}/roles`)
-    const bs = can('iam.roleBindings.manage') ? await api<Binding[]>(`${base}/bindings`) : []
+    const rs = (await iamClient.listRoles({ org: id })).roles
+    const bs = can('iam.roleBindings.manage') ? (await iamClient.listRoleBindings({ org: id })).bindings : []
     // Without iam.members.list or iam.teams.list the subject picker has fewer entries.
     const [ms, ts] = can('iam.roleBindings.manage')
       ? await Promise.all([
-          api<{ id: string; name: string; email: string }[]>(`${base}/members`).catch(() => []),
-          api<{ id: string; name: string }[]>(`${base}/teams`).catch(() => []),
+          iamClient.listMembers({ org: id }).then((r) => r.members, () => []),
+          iamClient.listTeams({ org: id }).then((r) => r.teams, () => []),
         ])
       : [[], []]
     // Org switched while loading.
     if (id !== org.value?.id) return
-    roles.value = rs.map((r) => ({ ...r, rid: r.key ?? r.id! }))
+    roles.value = rs.map((r) => ({ ...r, rid: r.key || r.id }))
     bindings.value = bs
     subjectNames.value = Object.fromEntries([
       ...ms.map((m) => [`user:${m.id}`, m.name || m.email]),
@@ -91,20 +79,17 @@ async function run(fn: () => Promise<unknown>) {
 
 const bind = () =>
   run(async () => {
-    await api(`/api/orgs/${org.value?.id}/bindings`, {
-      method: 'POST',
-      body: JSON.stringify({ subject: subject.value, roleId: roleId.value }),
-    })
+    await iamClient.createRoleBinding({ org: org.value?.id, subject: subject.value ?? '', roleId: roleId.value ?? '' })
     subject.value = roleId.value = null
   })
 
-const unbind = (b: Binding) => run(() => api(`/api/orgs/${org.value?.id}/bindings/${b.id}`, { method: 'DELETE' }))
+const unbind = (b: Binding) => run(() => iamClient.deleteRoleBinding({ org: org.value?.id, binding: b.id }))
 
 function remove() {
   const r = pendingDelete.value
   if (!r) return
   return run(async () => {
-    await api(`/api/orgs/${org.value?.id}/roles/${r.id}`, { method: 'DELETE' })
+    await iamClient.deleteRole({ org: org.value?.id, role: r.id })
     pendingDelete.value = null
   })
 }

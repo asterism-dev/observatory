@@ -3,15 +3,12 @@ import { Button, TextInput } from '@asterism-dev/lumen'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api } from '@/api'
+import { errorMessage as message, iamClient } from '@/composables/iamClient'
 import { useOrg } from '@/composables/useOrg'
+import type { TeamInfo } from '@/gen/observatory/iam/v1/iam_pb'
 import { Card, ResourceList, ResourceRow, Section } from '@/ui'
 
-interface Team {
-  id: string
-  name: string
-  memberCount: number
-}
+type Team = TeamInfo
 
 const { t } = useI18n()
 const { org, can, reload } = useOrg()
@@ -21,13 +18,11 @@ const name = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
-
 async function refresh() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const res = await api<Team[]>(`/api/orgs/${id}/teams`)
+    const res = (await iamClient.listTeams({ org: id })).teams
     // Org switched while loading.
     if (id === org.value?.id) teams.value = res
   } catch (e) {
@@ -39,7 +34,7 @@ async function create() {
   busy.value = true
   error.value = ''
   try {
-    await api(`/api/orgs/${org.value?.id}/teams`, { method: 'POST', body: JSON.stringify({ name: name.value.trim() }) })
+    await iamClient.createTeam({ org: org.value?.id, name: name.value.trim() })
     name.value = ''
     await reload()
     await refresh()

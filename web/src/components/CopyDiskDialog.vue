@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 
 const props = defineProps<{ open: boolean; orgId: string; diskId: string; diskName: string; unsettled: boolean }>()
 const emit = defineEmits<{ 'update:open': [boolean]; copied: [] }>()
@@ -31,7 +32,7 @@ watch(
     error.value = ''
     warning.value = ''
     try {
-      teams.value = await api(`/api/orgs/${props.orgId}/teams`)
+      teams.value = (await iamClient.listTeams({ org: props.orgId })).teams
     } catch {
       teams.value = []
     }

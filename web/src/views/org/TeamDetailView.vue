@@ -4,33 +4,14 @@ import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage as message, iamClient } from '@/composables/iamClient'
 import DefaultImageSection from '@/components/DefaultImageSection.vue'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
+import type { GetTeamResponse, Member as OrgMember } from '@/gen/observatory/iam/v1/iam_pb'
 import { Card, DataTable, Section, Tag } from '@/ui'
 
-interface TeamMember {
-  id: string
-  email: string
-  name: string
-  admin: boolean
-}
-interface Team {
-  id: string
-  name: string
-  members: TeamMember[]
-  canManageMembers: boolean
-  canUpdate: boolean
-  canDelete: boolean
-  canLeave: boolean
-}
-interface OrgMember {
-  id: string
-  email: string
-  name: string
-}
 
 const { t } = useI18n()
 const route = useRoute()
@@ -38,10 +19,10 @@ const router = useRouter()
 const { me } = useMe()
 const { org, reload } = useOrg()
 
-const team = ref<Team | null>(null)
+const team = ref<GetTeamResponse | null>(null)
 const { setCrumbs } = useCrumbs()
 watchEffect(() => {
-  if (team.value) setCrumbs(route.path, [{ label: team.value.name, to: route.path }])
+  if (team.value) setCrumbs(route.path, [{ label: team.value.team?.name ?? '', to: route.path }])
 })
 const orgMembers = ref<OrgMember[]>([])
 const name = ref('')
@@ -52,7 +33,7 @@ const busy = ref(false)
 const error = ref('')
 
 const teamId = computed(() => route.params.teamId as string)
-const base = computed(() => `/api/orgs/${org.value?.id}/teams/${teamId.value}`)
+const key = computed(() => ({ org: org.value?.id, team: teamId.value }))
 const candidates = computed(() =>
   orgMembers.value
     .filter((m) => !team.value?.members.some((tm) => tm.id === m.id))
@@ -64,23 +45,23 @@ const columns = computed<TableColumn[]>(() => [
   { key: 'admin', label: t('teams.admin') },
   { key: 'actions', label: '' },
 ])
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 async function refresh() {
   if (!org.value) return
-  const key = base.value
+  const want = { ...key.value }
+  const same = () => want.org === key.value.org && want.team === key.value.team
   try {
-    const res = await api<Team>(key)
+    const res = await iamClient.getTeam(want)
     // Navigated elsewhere while loading.
-    if (key !== base.value) return
+    if (!same()) return
     team.value = res
-    name.value = res.name
+    name.value = res.team?.name ?? ''
     // Without iam.members.list the picker stays empty.
     orgMembers.value = res.canManageMembers
-      ? await api<OrgMember[]>(`/api/orgs/${org.value.id}/members`).catch(() => [])
+      ? await iamClient.listMembers({ org: org.value.id }).then((r) => r.members, () => [] as OrgMember[])
       : []
   } catch (e) {
-    if (key === base.value) error.value = message(e)
+    if (same()) error.value = message(e)
   }
 }
 
@@ -103,13 +84,13 @@ const afterChange = async () => {
 
 const rename = () =>
   run(async () => {
-    await api(base.value, { method: 'PATCH', body: JSON.stringify({ name: name.value.trim() }) })
+    await iamClient.updateTeam({ ...key.value, name: name.value.trim() })
     await afterChange()
   })
 
 const setMember = (id: string, admin: boolean) =>
   run(async () => {
-    await api(`${base.value}/members/${id}`, { method: 'PUT', body: JSON.stringify({ admin }) })
+    await iamClient.setTeamMember({ ...key.value, user: id, admin })
     newUser.value = null
     newAdmin.value = false
     await afterChange()
@@ -117,13 +98,14 @@ const setMember = (id: string, admin: boolean) =>
 
 const removeMember = (id: string) =>
   run(async () => {
-    await api(`${base.value}/members/${id}`, { method: 'DELETE' })
+    if (id === me.value?.user.id) await iamClient.leaveTeam(key.value)
+    else await iamClient.removeTeamMember({ ...key.value, user: id })
     await afterChange()
   })
 
 const deleteTeam = () =>
   run(async () => {
-    await api(base.value, { method: 'DELETE' })
+    await iamClient.deleteTeam(key.value)
     confirmDelete.value = false
     await reload()
     await router.push(`/orgs/${org.value?.id}/teams`)
@@ -148,7 +130,7 @@ watch(
         <Card>
           <form class="row" @submit.prevent="rename">
             <TextInput v-model="name" :aria-label="t('teams.name')" />
-            <Button type="submit" variant="accent" :disabled="busy || !name.trim() || name.trim() === team.name">
+            <Button type="submit" variant="accent" :disabled="busy || !name.trim() || name.trim() === team.team?.name">
               {{ t('org.save') }}
             </Button>
           </form>
@@ -185,11 +167,11 @@ watch(
         </DataTable>
       </Section>
 
-      <DefaultImageSection :org-id="org.id" :level="`team/${team.id}`" :editable="team.canUpdate" :description="t('images.teamDefaultHint')" />
+      <DefaultImageSection :org-id="org.id" :level="`team/${teamId}`" :editable="team.canUpdate" :description="t('images.teamDefaultHint')" />
 
       <Section v-if="team.canDelete" :label="t('teams.delete')">
         <Card tone="danger">
-          <span class="muted">{{ t('teams.deleteBody', { name: team.name }) }}</span>
+          <span class="muted">{{ t('teams.deleteBody', { name: team.team?.name }) }}</span>
           <p><Button variant="danger" @click="confirmDelete = true">{{ t('teams.delete') }}</Button></p>
         </Card>
       </Section>
@@ -197,7 +179,7 @@ watch(
       <Dialog
         :open="confirmDelete"
         :title="t('teams.deleteTitle')"
-        :description="t('teams.deleteBody', { name: team.name })"
+        :description="t('teams.deleteBody', { name: team.team?.name })"
         @update:open="(o) => !o && !busy && (confirmDelete = false)"
       >
         <p v-if="error" role="alert">{{ error }}</p>

@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { api } from '@/api'
+import { iamClient } from '@/composables/iamClient'
 import { useOrg } from '@/composables/useOrg'
 import { CopyButton, DataTable, Section, ValueField } from '@/ui'
 
@@ -45,7 +46,7 @@ async function refresh() {
   try {
     const [ts, ms] = await Promise.all([
       api<Token[]>(`/api/orgs/${id}/telemetry-tokens`),
-      api<{ id: string; name: string; email: string }[]>(`/api/orgs/${id}/members`).catch(() => []),
+      iamClient.listMembers({ org: id }).then((r) => r.members, () => []),
     ])
     if (id !== org.value?.id) return
     tokens.value = ts

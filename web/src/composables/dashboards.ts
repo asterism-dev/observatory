@@ -159,13 +159,11 @@ export function copyPanel(p: Panel) {
   return c
 }
 
-type Get = <T>(path: string) => Promise<T>
-
 // ponytail: non-admins need one team lookup each; a writableScopes field on the list API (like env) if orgs get many teams.
-export async function creatableTeams(get: Get, orgId: string, me: string, all: boolean, teams: Team[]): Promise<Team[]> {
+export async function creatableTeams(getTeam: (team: string) => Promise<{ members: { id: string }[] }>, me: string, all: boolean, teams: Team[]): Promise<Team[]> {
   if (all) return teams
   const member = await Promise.all(
-    teams.map((x) => get<{ members: { id: string }[] }>(`/api/orgs/${orgId}/teams/${x.id}`).then((d) => d.members.some((m) => m.id === me), () => false)),
+    teams.map((x) => getTeam(x.id).then((d) => d.members.some((m) => m.id === me), () => false)),
   )
   return teams.filter((_, i) => member[i])
 }

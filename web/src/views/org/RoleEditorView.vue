@@ -4,10 +4,11 @@ import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
-import { api } from '@/api'
+import { errorMessage as message, iamClient } from '@/composables/iamClient'
 import { actionSuggestions } from '@/composables/roleActions'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
+import type { CatalogEntry as Perm, Role } from '@/gen/observatory/iam/v1/iam_pb'
 import { Card, Section, Tag } from '@/ui'
 
 interface Rule {
@@ -15,19 +16,6 @@ interface Rule {
   effect: 'allow' | 'deny'
   object: string
   action: string
-}
-interface Role {
-  id?: string
-  key?: string
-  name: string
-  description?: string
-  builtin?: boolean
-  rules: Rule[]
-  parents?: string[]
-}
-interface Perm {
-  action: string
-  object: string
 }
 
 const { t } = useI18n()
@@ -49,7 +37,7 @@ const busy = ref(false)
 const error = ref('')
 
 const roleId = computed(() => route.params.roleId as string | undefined)
-const current = computed(() => roles.value.find((r) => (r.key ?? r.id) === roleId.value))
+const current = computed(() => roles.value.find((r) => (r.key || r.id) === roleId.value))
 const readonly = computed(() => !!current.value?.builtin || !can('iam.roles.manage'))
 const { setCrumbs } = useCrumbs()
 watchEffect(() => {
@@ -62,11 +50,11 @@ const effectOptions = computed(() => [
   { value: 'allow' as const, label: t('roles.allow') },
   { value: 'deny' as const, label: t('roles.deny'), disabled: !canDeny.value },
 ])
-const parentLabel = (p: string) => roles.value.find((r) => (r.key ?? r.id) === p)?.name ?? p
+const parentLabel = (p: string) => roles.value.find((r) => (r.key || r.id) === p)?.name ?? p
 const parentOptions = computed(() =>
   roles.value
     .filter((r) => (r.id ? r.id !== roleId.value : r.key !== 'owner'))
-    .map((r) => ({ value: r.key ?? r.id!, label: r.name }))
+    .map((r) => ({ value: r.key || r.id, label: r.name }))
     .filter((o) => !parents.value.includes(o.value)),
 )
 
@@ -81,23 +69,23 @@ function suggestions(pool: string[], key: string) {
   return hits.map((v) => ({ value: v, label: v }))
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
-
 async function load() {
   if (!org.value) return
   const id = org.value.id
   try {
-    const base = `/api/orgs/${id}`
-    const [rs, cat] = await Promise.all([api<Role[]>(`${base}/roles`), api<Perm[]>(`${base}/catalog`)])
+    const [rs, cat] = await Promise.all([
+      iamClient.listRoles({ org: id }).then((r) => r.roles),
+      iamClient.listCatalog({ org: id }).then((r) => r.entries),
+    ])
     // Org switched while loading.
     if (id !== org.value?.id) return
     roles.value = rs
     catalog.value = cat
-    const r = rs.find((x) => (x.key ?? x.id) === roleId.value)
+    const r = rs.find((x) => (x.key || x.id) === roleId.value)
     name.value = r?.name ?? ''
     description.value = r?.description ?? ''
     parents.value = [...(r?.parents ?? [])]
-    rules.value = (r?.rules ?? []).map(withUid)
+    rules.value = (r?.rules ?? []).map((x) => withUid({ effect: x.effect === 'deny' ? 'deny' : 'allow', object: x.object, action: x.action }))
     if (roleId.value !== 'new' && !r) error.value = t('roles.notFound')
   } catch (e) {
     if (id === org.value?.id) error.value = message(e)
@@ -109,11 +97,9 @@ async function save() {
   error.value = ''
   const isNew = roleId.value === 'new'
   try {
-    const body = { name: name.value.trim(), description: description.value, rules: rules.value.map(({ effect, object, action }) => ({ effect, object, action })), parents: parents.value }
-    await api(`/api/orgs/${org.value?.id}/roles${isNew ? '' : `/${roleId.value}`}`, {
-      method: isNew ? 'POST' : 'PUT',
-      body: JSON.stringify(body),
-    })
+    const body = { org: org.value?.id, name: name.value.trim(), description: description.value, rules: rules.value.map(({ effect, object, action }) => ({ effect, object, action })), parents: parents.value }
+    if (isNew) await iamClient.createRole(body)
+    else await iamClient.updateRole({ ...body, role: roleId.value })
     await reload()
     await router.push(`/orgs/${org.value?.id}/roles`)
   } catch (e) {
