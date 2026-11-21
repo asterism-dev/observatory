@@ -302,8 +302,9 @@ token. Services verify the token offline against the hub's published keys.
   rotation, which comes later.
 - The hub's own `/api/` routes use the same token: the edge swaps a session (the `obs_session` cookie or an
   `obs_…` bearer) for it, removes the session cookie and the hub verifies the token offline. The hub never sees a
-  session there, but it checks on every request that the token's session is neither revoked nor expired, so hub
-  routes and the IAM API refuse a logged-out or revoked session immediately. Other bearer tokens
+  session there, but on every request it asks iam (`GetSession`) whether the token's session is neither revoked nor
+  expired, so hub routes and the IAM API refuse a logged-out or revoked session immediately. If iam cannot answer, the
+  hub answers 503 rather than admit the request. Registry credentials are checked with iam the same way on every use. Other bearer tokens
   (node, gateway, storage, builder, registry events, telemetry) pass through unchanged. A stale session is dropped
   rather than refused, so public routes such as `/api/auth/config` keep working; protected ones answer 401. While the
   issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` keeps using the

@@ -38,7 +38,11 @@ func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO disks (org_id, team_id, name, size_gb, deleted_at) VALUES ($1, $2, 'gone', 1, now())", org.ID, team.ID); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(servicetoken.Middleware(map[string]string{"iam": svcToken})(internalHub(api.ResourceServer{Store: s})))
+	z, err := authz.NewService(ctx, s.HubPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(servicetoken.Middleware(map[string]string{"iam": svcToken})(internalHub(api.ResourceServer{Store: s, Policy: hubPolicy{z, NewPolicyServer()}})))
 	defer srv.Close()
 	c := hubv1connect.NewResourceServiceClient(srv.Client(), srv.URL+"/internal/hub")
 	check := func(subject, auth string) (*hubv1.CheckOwnershipResponse, error) {
@@ -49,10 +53,20 @@ func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 		return res.Msg, nil
 	}
 
+	canHold := func(auth string) error {
+		_, err := c.CanHold(ctx, withAuth(&hubv1.CanHoldRequest{OrgId: org.ID.String(), Actor: authz.UserSubject(alice.User.ID)}, auth))
+		return err
+	}
 	for _, auth := range []string{"", "Bearer " + otherTok} {
 		if _, err := check(authz.UserSubject(alice.User.ID), auth); connect.CodeOf(err) != connect.CodePermissionDenied {
 			t.Errorf("with %q: %v", auth, err)
 		}
+		if err := canHold(auth); connect.CodeOf(err) != connect.CodePermissionDenied {
+			t.Errorf("CanHold with %q: %v", auth, err)
+		}
+	}
+	if err := canHold("Bearer " + svcToken); err != nil {
+		t.Errorf("CanHold with the service token: %v", err)
 	}
 	auth := "Bearer " + svcToken
 	if got, err := check(authz.UserSubject(alice.User.ID), auth); err != nil || !got.OwnsDisks || got.OwnsVms {

@@ -81,6 +81,9 @@ func (s *Store) Dashboards(ctx context.Context, org uuid.UUID) ([]Dashboard, err
 // UpdateDashboard saves name, scope, owner and panels; ErrConflict when the dashboard changed since expectUpdatedAt.
 func (s *Store) UpdateDashboard(ctx context.Context, d Dashboard, expectUpdatedAt time.Time) (Dashboard, error) {
 	err := s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, d.OrgID, d.Scope); err != nil {
+			return err
+		}
 		teamID, userID := envOwnerColumns(dashboardOwner(d))
 		// clock_timestamp, not now(): a transaction started earlier must not move updated_at backwards.
 		updated, err := scanDashboard(tx.q.QueryRow(ctx, `

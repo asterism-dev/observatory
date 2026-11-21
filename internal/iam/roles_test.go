@@ -666,7 +666,7 @@ func TestGrantOwnedVMActionViaHub(t *testing.T) {
 	_, err = e.tryCreateRole(bobTok, org, owned)
 	wantCode(t, err, connect.CodeUnavailable)
 	e.resources.setCanHold(func(r *hubv1.CanHoldRequest) error {
-		if r.Actor != authz.UserSubject(bob.ID) || r.OrgId != org.String() || r.MinRevision != testRevision ||
+		if r.Actor != authz.UserSubject(bob.ID) || r.OrgId != org.String() || r.MinRevision != e.rev.Load() ||
 			len(r.Rules) != 1 || r.Rules[0].Object != vm || r.Rules[0].Action != "compute.instances.get" {
 			return connect.NewError(connect.CodePermissionDenied, fmt.Errorf("%w: unexpected request %v", authz.ErrEscalation, r))
 		}
@@ -677,5 +677,65 @@ func TestGrantOwnedVMActionViaHub(t *testing.T) {
 	}
 	if e.roleCount(org) != 2 {
 		t.Fatalf("roles: %d", e.roleCount(org))
+	}
+}
+
+// hubOnLatest answers CanHold like a hub on the latest published policy, which here is e.z after its last reload.
+func (e *env) hubOnLatest(r *hubv1.CanHoldRequest) error {
+	if r.MinRevision > e.rev.Load() {
+		return connect.NewError(connect.CodeUnavailable, errors.New("policy behind"))
+	}
+	rules := make([]authz.Rule, len(r.Rules))
+	for i, x := range r.Rules {
+		rules[i] = authz.Rule{Effect: authz.Effect(x.Effect), Object: x.Object, Action: x.Action}
+	}
+	if err := e.z.Enforcer().CanHold(r.Actor, uuid.MustParse(r.OrgId), rules); err != nil {
+		return connect.NewError(connect.CodePermissionDenied, err)
+	}
+	return nil
+}
+
+// A removal committed but not yet published must not let the fallback approve on the older policy.
+func TestFallbackDecidesOnCommittedPolicy(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/roles", "iam.roles.manage")
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/vms/*", "compute.instances.get")
+	e.resources.setCanHold(e.hubOnLatest)
+	viewer := &iamv1.CreateRoleRequest{Name: "viewer", Rules: []*iamv1.RoleRule{rule("allow", authz.VMObject(uuid.New()), "compute.instances.get")}}
+	e.exec(`DELETE FROM role_bindings WHERE subject = $1 AND role_id IN (SELECT role_id FROM role_rules WHERE object = 'org/vms/*')`, authz.UserSubject(bob.ID))
+
+	_, err := e.tryCreateRole(bobTok, org, viewer)
+	wantCode(t, err, connect.CodePermissionDenied)
+	if !strings.Contains(err.Error(), "compute.instances.get") {
+		t.Fatalf("message: %v", err)
+	}
+	if e.roleCount(org) != 2 {
+		t.Fatal("role created on the policy from before the removal")
+	}
+}
+
+func TestFallbackSendsInheritedRules(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/roles", "iam.roles.manage")
+	vm := authz.VMObject(uuid.New())
+	parent := e.createRole(ownerTok, org, &iamv1.CreateRoleRequest{Name: "vm viewer", Rules: []*iamv1.RoleRule{rule("allow", vm, "compute.instances.get")}})
+	e.resources.setCanHold(func(*hubv1.CanHoldRequest) error { return nil })
+
+	if _, err := e.tryCreateRole(bobTok, org, &iamv1.CreateRoleRequest{Name: "child", Parents: []string{parent.String()}}); err != nil {
+		t.Fatalf("child of an owned-VM role: %v", err)
+	}
+	e.resources.mu.Lock()
+	got := e.resources.canHolds[len(e.resources.canHolds)-1].Rules
+	e.resources.mu.Unlock()
+	if !slices.ContainsFunc(got, func(r *hubv1.Rule) bool { return r.Object == vm && r.Action == "compute.instances.get" }) {
+		t.Fatalf("CanHold rules %v lack the inherited rule", got)
 	}
 }

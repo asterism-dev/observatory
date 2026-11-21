@@ -340,7 +340,9 @@ func TestIAMInternalRequiresServiceToken(t *testing.T) {
 		_, uerr := c.GetUsers(ctx, withAuth(&iamv1.GetUsersRequest{UserIds: ids}, auth))
 		_, kerr := c.ListSSHKeys(ctx, withAuth(&iamv1.ListSSHKeysRequest{UserIds: ids}, auth))
 		_, terr := c.ListTeams(ctx, withAuth(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}, auth))
-		for _, err := range []error{uerr, kerr, terr} {
+		_, merr := c.GetMembership(ctx, withAuth(&iamv1.GetMembershipRequest{OrgId: org.ID.String(), UserId: alice.ID.String()}, auth))
+		_, serr := c.GetSession(ctx, withAuth(&iamv1.GetSessionRequest{SessionId: uuid.NewString()}, auth))
+		for _, err := range []error{uerr, kerr, terr, merr, serr} {
 			if connect.CodeOf(err) != connect.CodePermissionDenied {
 				t.Errorf("with %q: %v", auth, err)
 			}
@@ -358,6 +360,12 @@ func TestIAMInternalRequiresServiceToken(t *testing.T) {
 	ts, err := c.ListTeams(ctx, withAuth(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}, auth))
 	if err != nil || len(ts.Msg.Teams) != 1 || ts.Msg.Teams[0].Name != "core" {
 		t.Fatalf("ListTeams: %v %v", ts, err)
+	}
+	if m, err := c.GetMembership(ctx, withAuth(&iamv1.GetMembershipRequest{OrgId: org.ID.String(), UserId: alice.ID.String()}, auth)); err != nil || !m.Msg.Member {
+		t.Fatalf("GetMembership: %v %v", m, err)
+	}
+	if _, err := c.GetSession(ctx, withAuth(&iamv1.GetSessionRequest{SessionId: uuid.NewString()}, auth)); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("GetSession: %v", err)
 	}
 }
 

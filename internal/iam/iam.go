@@ -51,6 +51,9 @@ type server struct {
 
 // Handler serves IAMService under Prefix; writes record their own audit events inside their transaction.
 func Handler(d Deps) (http.Handler, error) {
+	if d.Revision == nil {
+		return nil, errors.New("iam: Deps.Revision is required")
+	}
 	interceptors := append(auditlog.Interceptors("iam", d.Verifier, d.Policy, d.Settings, d.Pool, auditlog.HandlerRecordsWrites()), sessionActive(d.Store))
 	// Bodies are read before the interceptors run, so the cap is what keeps unauthenticated callers from filling memory.
 	path, h := iamv1connect.NewIAMServiceHandler(&server{Deps: d}, connect.WithInterceptors(interceptors...), connect.WithReadMaxBytes(maxBody))

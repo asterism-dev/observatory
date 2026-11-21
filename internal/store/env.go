@@ -288,6 +288,9 @@ func (s *Store) UpdateEnvVar(ctx context.Context, old, v EnvVar, value *string) 
 // MoveEnvVar sets scope and owner from v if the row still matches old; the value is not re-encrypted since the AAD has no scope.
 func (s *Store) MoveEnvVar(ctx context.Context, old, v EnvVar) error {
 	return s.InTx(ctx, func(tx *Store) error {
+		if err := tx.lockUserScope(ctx, v.OrgID, v.Scope); err != nil {
+			return err
+		}
 		teamID, userID := envOwnerColumns(v)
 		tag, err := tx.q.Exec(ctx, `
 			UPDATE env_vars SET scope = $7, team_id = $8, user_id = $9, updated_by = $10, updated_at = now()

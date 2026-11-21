@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,8 @@ type env struct {
 
 	mu       sync.Mutex
 	notified []uuid.UUID
+	// rev counts z's reloads, standing in for the published policy revision.
+	rev atomic.Uint64
 }
 
 // fakeResources reports the subjects in owners as owning VMs, and those in diskOwners as owning disks, in any org.
@@ -86,9 +89,6 @@ func (f *fakeResources) setDiskOwner(subject string, owns bool) {
 	f.diskOwners[subject] = owns
 }
 
-// testRevision is the policy revision iam reports to the fake hub.
-const testRevision = 42
-
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
@@ -109,8 +109,9 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
+	z.OnReload(func(authz.Policy) { e.rev.Add(1) })
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,
-		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify, Revision: func() uint64 { return testRevision }})
+		PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Notify: e.notify, Revision: e.rev.Load})
 	if err != nil {
 		t.Fatal(err)
 	}

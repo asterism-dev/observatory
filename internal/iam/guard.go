@@ -23,7 +23,12 @@ func (s *server) canGrant(ctx context.Context, e *authz.Enforcer, actor string, 
 	}
 	inherited, err := e.EffectiveRules(parents, org)
 	if err != nil {
-		return denied
+		return fmt.Errorf("%w: %w", authz.ErrInvalidPattern, err)
+	}
+	// The caller holds LockOrg, so this reload sees every earlier commit for org, like the denial did; the hub must not decide on less.
+	if err := s.Policy.Reload(ctx); err != nil {
+		slog.Error("policy reload before can hold", "org", org, "err", err)
+		return connect.NewError(connect.CodeUnavailable, errors.New("cannot check the grant against service-owned resources, retry"))
 	}
 	req := &hubv1.CanHoldRequest{OrgId: org.String(), Actor: actor, MinRevision: s.Revision()}
 	for _, r := range slices.Concat(rules, inherited) {

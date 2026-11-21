@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -225,50 +227,124 @@ func TestPurgeSkipsWhenIAMSaysMember(t *testing.T) {
 	}
 }
 
+// TestUserScopeCreateWaitsForPurge: every write that lands a row in a user's scope blocks on a running purge, then keeps its row.
 func TestUserScopeCreateWaitsForPurge(t *testing.T) {
-	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
-	a, m := login(t, s, "a"), login(t, s, "m")
-	org := mustCreateOrg(t, s, "A", a.User.ID)
-	mid := m.User.ID
-	old := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "OLD"), "o")
-	locked, release := make(chan struct{}), make(chan struct{})
-	purgeDone := make(chan error, 1)
-	go func() {
-		_, err := s.PurgeMember(ctx, org.ID, mid, func(context.Context) (bool, error) {
-			close(locked)
-			<-release
-			return false, nil
+	cases := []struct {
+		name string
+		// prepare runs before the purge and returns the write and the count of the row it lands in the user's scope.
+		prepare func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (write func() error, count func() int)
+	}{
+		{"env create", func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (func() error, func() int) {
+			var v store.EnvVar
+			return func() (err error) {
+					v, err = s.CreateEnvVar(t.Context(), envVar(org, user, store.EnvPlain, store.EnvScopeUser, &user, "NEW"), "n")
+					return err
+				}, func() int {
+					_, err := s.EnvVar(t.Context(), org.ID, v.ID)
+					return boolCount(err == nil)
+				}
+		}},
+		{"env move", func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (func() error, func() int) {
+			old := mustCreateEnv(t, s, envVar(org, user, store.EnvPlain, store.EnvScopeOrg, nil, "SHARED"), "s")
+			return func() error {
+					moved := old
+					moved.Scope, moved.OwnerID, moved.UpdatedBy = store.EnvScopeUser, &user, user
+					return s.MoveEnvVar(t.Context(), old, moved)
+				}, func() int {
+					v, err := s.EnvVar(t.Context(), org.ID, old.ID)
+					return boolCount(err == nil && v.Scope == store.EnvScopeUser)
+				}
+		}},
+		{"dashboard scope change", func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (func() error, func() int) {
+			d, err := s.CreateDashboard(t.Context(), store.Dashboard{OrgID: org.ID, Scope: store.EnvScopeOrg, Name: "d", CreatedBy: user})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return func() error {
+					moved := d
+					moved.Scope, moved.OwnerID = store.EnvScopeUser, &user
+					_, err := s.UpdateDashboard(t.Context(), moved, d.UpdatedAt)
+					return err
+				}, func() int {
+					got, err := s.Dashboard(t.Context(), org.ID, d.ID)
+					return boolCount(err == nil && got.Scope == store.EnvScopeUser)
+				}
+		}},
+		{"device create", func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (func() error, func() int) {
+			if _, err := s.OrgSlice(t.Context(), org.ID); err != nil {
+				t.Fatal(err)
+			}
+			return func() error {
+					_, err := s.CreateDevice(t.Context(), store.Device{OrgID: org.ID, UserID: user, Name: "laptop", PublicKey: "key-" + user.String()})
+					return err
+				}, func() int {
+					ds, _ := s.Devices(t.Context(), org.ID)
+					return len(ds)
+				}
+		}},
+		{"integration create", func(t *testing.T, s *store.Store, org store.Org, user uuid.UUID) (func() error, func() int) {
+			var v store.Integration
+			return func() (err error) {
+					v, err = s.CreateIntegration(t.Context(), store.Integration{OrgID: org.ID, Kind: integrations.GitHub, Source: integrations.SourcePAT,
+						Scope: store.EnvScopeUser, OwnerID: &user, CreatedBy: user, UpdatedBy: user}, store.IntegrationSecret{Token: "ghp_dummy0000000000000000"})
+					return err
+				}, func() int {
+					_, err := s.Integration(t.Context(), org.ID, v.ID)
+					return boolCount(err == nil)
+				}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
+			a, m := login(t, s, "a"), login(t, s, "m")
+			org := mustCreateOrg(t, s, "A", a.User.ID)
+			mid := m.User.ID
+			old := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "OLD"), "o")
+			write, count := c.prepare(t, s, org, mid)
+			locked, release := make(chan struct{}), make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			// A failing check must not leave the purge holding its transaction while the test database is dropped.
+			t.Cleanup(unblock)
+			purgeDone := make(chan error, 1)
+			go func() {
+				_, err := s.PurgeMember(ctx, org.ID, mid, func(context.Context) (bool, error) {
+					close(locked)
+					<-release
+					return false, nil
+				})
+				purgeDone <- err
+			}()
+			<-locked
+			writeDone := make(chan error, 1)
+			go func() { writeDone <- write() }()
+			select {
+			case err := <-writeDone:
+				t.Fatalf("write didn't wait for the purge: %v", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			unblock()
+			if err := <-purgeDone; err != nil {
+				t.Fatal(err)
+			}
+			if err := <-writeDone; err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.EnvVar(ctx, org.ID, old.ID); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("old variable: %v", err)
+			}
+			if n := count(); n != 1 {
+				t.Fatalf("rows landed after the purge: %d", n)
+			}
 		})
-		purgeDone <- err
-	}()
-	<-locked
-	type created struct {
-		v   store.EnvVar
-		err error
 	}
-	createDone := make(chan created, 1)
-	go func() {
-		v, err := s.CreateEnvVar(ctx, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "NEW"), "n")
-		createDone <- created{v, err}
-	}()
-	select {
-	case c := <-createDone:
-		t.Fatalf("create didn't wait for the purge: %+v", c)
-	case <-time.After(200 * time.Millisecond):
+}
+
+func boolCount(ok bool) int {
+	if ok {
+		return 1
 	}
-	close(release)
-	if err := <-purgeDone; err != nil {
-		t.Fatal(err)
-	}
-	c := <-createDone
-	if c.err != nil {
-		t.Fatal(c.err)
-	}
-	if _, err := s.EnvVar(ctx, org.ID, old.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("old variable: %v", err)
-	}
-	if _, err := s.EnvVar(ctx, org.ID, c.v.ID); err != nil {
-		t.Fatalf("variable created after the purge: %v", err)
-	}
+	return 0
 }
