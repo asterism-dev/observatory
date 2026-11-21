@@ -105,11 +105,12 @@ Nodes of one org reach each other through the gateway (relay) or, when possible,
 Only the hub host needs inbound ports; a node listens on `wg-underlay` UDP 51822 for direct peers, and if that port is
 unreachable the relay is used.
 
-- Each node reports candidate addresses: private LAN addresses first, then public addresses and the endpoint the
-  gateway observed for it, then CGNAT/VPN-range addresses (`100.64.0.0/10`, other interfaces such as `tailscale0`),
-  at most 8. Loopback, link-local, multicast, the platform pools from the address plan (including `10.198.0.0/16`,
-  `192.168.64.0/24` and `10.64.0.0/10`), addresses with a zone ID and docker/OVS/bridge/`wg-underlay` interfaces are
-  never candidates; the hub validates and drops them. A physical LAN inside `10.64.0.0/10` therefore cannot be used for direct paths.
+- Each node reports candidate addresses on port 51822: private LAN addresses first, then public addresses and the
+  endpoint the gateway observed for it (with its observed port), then CGNAT/VPN-range addresses (`100.64.0.0/10`, other
+  interfaces such as `tailscale0`), at most 8. Loopback, link-local, multicast, the platform pools from the address
+  plan (including `10.198.0.0/16`, `192.168.64.0/24` and `10.64.0.0/10`), addresses with a zone ID and
+  docker/OVS/bridge/`wg-underlay` interfaces are never candidates; the hub validates and drops them, and any reported
+  candidate on another port. A physical LAN inside `10.64.0.0/10` therefore cannot be used for direct paths.
   Other VPNs' configuration is never touched, only their addresses are read.
 - The hub pushes each node its peer set: the enrolled, non-quarantined nodes of its own org with an underlay address.
   Nodes of other orgs and quarantined nodes never appear in it, and a quarantined node drops out of every peer set on
@@ -117,10 +118,18 @@ unreachable the relay is used.
 - A node tries each candidate for 15 s. A path counts as direct only after a fresh WireGuard handshake (younger than
   3 min); until then traffic stays on the relay and the peer gets no allowed IPs. If every candidate fails the node
   keeps the relay and retries every 2 min. A direct path whose handshake is older than 3 min falls back to the relay.
+  A peer whose candidates are not known yet (e.g. right after a hub restart) is not tried, but a direct path it
+  already has stays until its handshake goes stale.
 - On `wg-underlay` the node admits only Geneve (UDP 6081), ICMP echo and established/related traffic from peers, and
   everything from the gateway (`10.198.0.1`); see [nodes.md](nodes.md#underlay).
 
 The node page lists every path with its mode, endpoint and path MTU.
+
+Known limits:
+
+- A node whose underlay is down keeps its old peer set until it reconnects to the hub.
+- Switching a path between direct and relay can drop traffic for up to one 5 s check.
+- A node uses the first working candidate in rank order (LAN, public, VPN), not the one with the largest MTU.
 
 ## Guest MTU
 
