@@ -125,8 +125,8 @@ The node page lists every path with its mode, endpoint and path MTU.
 ## Guest MTU
 
 VM interfaces (DHCP) and device configs use the guest MTU, a platform setting (platform admin, Admin → Network): 1000
-to 1400, default 1300. It applies to VMs on their next start and to newly downloaded device configs; changing it never
-restarts a VM and it is never lowered automatically.
+to 1400, default 1300. It applies to VMs on their next start or DHCP lease renewal and to newly downloaded device
+configs; changing it never restarts a VM and it is never lowered automatically.
 
 Geneve (58 bytes) and WireGuard (80 bytes) add 138 bytes of overhead. When the guest MTU plus 138 exceeds the MTU of
 a direct path, packets on it are fragmented. The node page then shows a warning and the recommended guest MTU, the

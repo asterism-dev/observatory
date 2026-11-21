@@ -891,7 +891,7 @@
   "adminNetwork": {
     "title": "Netzwerk",
     "guestMtu": "Gast-MTU",
-    "guestMtuHint": "MTU der VM-Netzwerkschnittstellen und Device-Configs. Gilt für VMs beim nächsten Start und für neu heruntergeladene Device-Configs."
+    "guestMtuHint": "MTU der VM-Netzwerkschnittstellen und Device-Configs. Gilt für VMs beim nächsten Start oder bei der nächsten DHCP-Verlängerung und für neu heruntergeladene Device-Configs."
   },
   "registryGC": {
     "title": "Registry-Bereinigung",

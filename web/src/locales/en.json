@@ -891,7 +891,7 @@
   "adminNetwork": {
     "title": "Network",
     "guestMtu": "Guest MTU",
-    "guestMtuHint": "MTU for VM network interfaces and device configs. Applies to VMs on their next start and to newly downloaded device configs."
+    "guestMtuHint": "MTU for VM network interfaces and device configs. Applies to VMs on their next start or DHCP lease renewal and to newly downloaded device configs."
   },
   "registryGC": {
     "title": "Registry cleanup",
