@@ -1,0 +1,9 @@
+# Shared mode, for a hub host that is also a node (docs/network.md, "Hub and node on one host"):
+# docker compose -f deploy/compose.yaml -f deploy/compose.shared.yaml up -d
+services:
+  gateway:
+    environment:
+      OBSERVATORY_GATEWAY_CHASSIS: ${OBSERVATORY_GATEWAY_NODE:?set OBSERVATORY_GATEWAY_NODE in deploy/.env}
+    volumes:
+      - /var/run/openvswitch:/host-ovs:ro
+      - /proc/1/ns/net:/hostns/net:ro
