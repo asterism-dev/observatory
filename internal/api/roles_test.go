@@ -538,7 +538,7 @@ func TestGuardsSeeUnreloadedPolicy(t *testing.T) {
 	member, memberTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.*"}]}`)
+	writer := e.createRole(ownerTok, org, `{"name":"writer","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.*"},{"effect":"allow","object":"org/roles","action":"iam.roleBindings.manage"}]}`)
 	e.bind(ownerTok, org, authz.UserSubject(member.ID), writer)
 	target := e.createRole(ownerTok, org, `{"name":"target"}`)
 
