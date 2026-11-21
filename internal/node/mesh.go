@@ -65,7 +65,6 @@ type mesh struct {
 	queued  map[string]bool
 	queue   []string
 	wake    chan struct{}
-	punched chan struct{}
 }
 
 type mtuResult struct {
@@ -75,9 +74,7 @@ type mtuResult struct {
 
 type runner = func(name string, args ...string) (string, error)
 
-func newMesh() *mesh {
-	return &mesh{cmd: runOutput, now: time.Now, wake: make(chan struct{}, 1), punched: make(chan struct{}, 1)}
-}
+func newMesh() *mesh { return &mesh{cmd: runOutput, now: time.Now, wake: make(chan struct{}, 1)} }
 
 func runOutput(name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), wgTimeout)
@@ -154,36 +151,13 @@ func (m *mesh) run(ctx context.Context) {
 	t := time.NewTicker(meshTick)
 	defer t.Stop()
 	for {
-		var due <-chan time.Time
-		if d, ok := m.nextPunch(); ok {
-			due = time.After(d)
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-		case <-due:
-		case <-m.punched:
-			continue
 		}
 		m.tick()
 	}
-}
-
-// nextPunch returns the wait until the next punch start or window end, so both sides start close to the hub's time.
-func (m *mesh) nextPunch() (time.Duration, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	now, next := m.now(), time.Time{}
-	for _, p := range m.peers {
-		for _, t := range []time.Time{p.punchAt, p.punchEnd} {
-			// A time long past means reconcile keeps failing; the regular tick retries it without spinning.
-			if !t.IsZero() && now.Sub(t) <= punchWindow && (next.IsZero() || t.Before(next)) {
-				next = t
-			}
-		}
-	}
-	return max(next.Sub(now), 100*time.Millisecond), !next.IsZero()
 }
 
 // punch schedules a hub-coordinated burst of keepalives towards the peer's observed endpoint; only a fresh handshake makes it direct.
@@ -210,11 +184,6 @@ func (m *mesh) punch(pp proto.Punch, now time.Time) {
 	p.punchAt, p.punchEP = pp.At, ap.String()
 	if !now.Before(pp.At) {
 		m.startPunch(p)
-		return
-	}
-	select {
-	case m.punched <- struct{}{}:
-	default:
 	}
 }
 
@@ -224,16 +193,22 @@ func (m *mesh) startPunch(p *meshPeer) {
 	if p.mode == pathDirect {
 		return
 	}
-	args := []string{"set", underlayIface, "peer", p.PublicKey, "endpoint", p.punchEP}
+	// Kernel WireGuard sends at once only when the keepalive goes from 0 to non-zero, so 25 → 1 needs a 0 first.
+	args := []string{"set", underlayIface, "peer", p.PublicKey}
 	if !p.cleared {
 		args = append(args, "allowed-ips", "")
 	}
-	if _, err := m.cmd("wg", append(args, "persistent-keepalive", "1")...); err != nil {
+	if _, err := m.cmd("wg", append(args, "persistent-keepalive", "0")...); err != nil {
+		slog.Warn("starting underlay punch", "node", p.NodeID, "err", err)
+		return
+	}
+	p.cleared = true
+	if _, err := m.cmd("wg", "set", underlayIface, "peer", p.PublicKey, "endpoint", p.punchEP, "persistent-keepalive", "1"); err != nil {
 		slog.Warn("starting underlay punch", "node", p.NodeID, "err", err)
 		return
 	}
 	// The window runs from the hub's start time, so a late start keeps both sides' windows aligned.
-	p.mode, p.cleared, p.punchEnd = pathPunching, true, at.Add(punchWindow)
+	p.mode, p.punchEnd = pathPunching, at.Add(punchWindow)
 }
 
 // stepPunch reports whether a punch window holds the peer, so the regular step leaves its endpoint and keepalive alone.

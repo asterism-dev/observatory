@@ -609,6 +609,16 @@ func punchSet(p proto.Peer, ep string) string {
 	return "wg set wg-underlay peer " + p.PublicKey + " endpoint " + ep + " persistent-keepalive 1"
 }
 
+func keepalive0(p proto.Peer) string {
+	return "wg set wg-underlay peer " + p.PublicKey + " persistent-keepalive 0"
+}
+
+// startedPunch reports whether the punch went 0 → 1 in two calls, since only that change makes the kernel send at once.
+func (f *fakeWG) startedPunch(p proto.Peer, ep string) bool {
+	i := slices.Index(f.calls, keepalive0(p))
+	return i >= 0 && i+1 < len(f.calls) && f.calls[i+1] == punchSet(p, ep)
+}
+
 func keepalive25(p proto.Peer) string {
 	return "wg set wg-underlay peer " + p.PublicKey + " persistent-keepalive 25"
 }
@@ -628,14 +638,18 @@ func (e *meshEnv) punch(ep string, at time.Time) {
 }
 
 func TestPunchSetsEndpointAndFastKeepalive(t *testing.T) {
-	e := relayedEnv(t)
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.advance(5 * time.Second)
+	e.wg.calls = nil
+	// Mid-try: without the window holding it, the try timeout at 15s would move on to the next candidate.
 	e.punch(punchEP, e.now.Add(2*time.Second))
 	e.advance(time.Second)
 	if e.wg.took(punchSet(peerA, punchEP)) {
 		t.Fatal("punch started before its time")
 	}
 	e.advance(time.Second)
-	if !e.wg.took(punchSet(peerA, punchEP)) || e.wg.peers[peerA.PublicKey].endpoint != punchEP {
+	if !e.wg.startedPunch(peerA, punchEP) || e.wg.peers[peerA.PublicKey].endpoint != punchEP {
 		t.Fatalf("punch not started at its time: %v", e.wg.calls)
 	}
 	e.wg.calls = nil
@@ -786,5 +800,43 @@ func TestAgentAppliesPunch(t *testing.T) {
 	a.handle(t.Context(), proto.Message{Type: proto.TypePunch, Punch: &proto.Punch{NodeID: "a", Endpoint: punchEP, At: e.now}}, nil)
 	if !e.wg.took(punchSet(peerA, punchEP)) {
 		t.Fatalf("punch message not applied: %v", e.wg.calls)
+	}
+}
+
+func TestPunchPeerWithoutCandidates(t *testing.T) {
+	unknown := peerA
+	unknown.Candidates = nil
+	e := newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{unknown}})
+	e.advance(5 * time.Second)
+	e.wg.calls = nil
+	e.punch(punchEP, e.now)
+	if !e.wg.startedPunch(peerA, punchEP) {
+		t.Fatalf("punch not started for a peer without candidates: %v", e.wg.calls)
+	}
+	e.wg.calls = nil
+	for range 9 {
+		e.advance(time.Second)
+	}
+	if slices.ContainsFunc(e.wg.calls, func(c string) bool { return strings.HasPrefix(c, "wg set") }) ||
+		e.m.peers["a"].mode != pathPunching || e.wg.peers[peerA.PublicKey].endpoint != punchEP {
+		t.Fatalf("punch window not held: mode %v, %v", e.m.peers["a"].mode, e.wg.calls)
+	}
+	e.advance(time.Second)
+	if !e.wg.took(keepalive25(peerA)) || e.wg.routed() {
+		t.Fatalf("want keepalive 25 restored and no route after the window: %v", e.wg.calls)
+	}
+	if s := e.path(t, "a"); s.Mode != "relay" {
+		t.Fatalf("mode = %q after a failed punch, want relay", s.Mode)
+	}
+
+	e = newMeshEnv(t)
+	e.m.update(proto.Peers{Peers: []proto.Peer{unknown}})
+	e.punch(punchEP, e.now)
+	e.advance(3 * time.Second)
+	e.handshake(peerA.PublicKey)
+	e.advance(time.Second)
+	if s := e.path(t, "a"); s.Mode != "direct" || !e.wg.took(route(peerA)) {
+		t.Fatalf("path = %+v after a handshake in the punch window, want direct: %v", s, e.wg.calls)
 	}
 }
