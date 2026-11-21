@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -25,6 +26,26 @@ type ClaudeUsage interface {
 type HTTPClaudeUsage struct {
 	Client *http.Client
 	URL    string
+}
+
+// RetryAfterError is a 429 that named when to retry.
+type RetryAfterError struct {
+	Err   error
+	After time.Duration
+}
+
+func (e *RetryAfterError) Error() string { return e.Err.Error() }
+func (e *RetryAfterError) Unwrap() error { return e.Err }
+
+// retryAfter accepts both Retry-After forms; a past or unparsable value leaves the caller's backoff in charge.
+func retryAfter(v string, now time.Time) (time.Duration, bool) {
+	if sec, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Duration(sec) * time.Second, sec > 0
+	}
+	if t, err := http.ParseTime(v); err == nil && t.After(now) {
+		return t.Sub(now), true
+	}
+	return 0, false
 }
 
 type usageWindow struct {
@@ -51,7 +72,11 @@ func (c HTTPClaudeUsage) Usage(ctx context.Context, access string) (Usage, error
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 || resp.StatusCode/100 == 3:
-		return Usage{}, fmt.Errorf("%w: %s: HTTP %d", ErrUnreachable, Claude, resp.StatusCode)
+		err := fmt.Errorf("%w: %s: HTTP %d", ErrUnreachable, Claude, resp.StatusCode)
+		if d, ok := retryAfter(resp.Header.Get("Retry-After"), time.Now()); ok && resp.StatusCode == http.StatusTooManyRequests {
+			return Usage{}, &RetryAfterError{Err: err, After: d}
+		}
+		return Usage{}, err
 	case resp.StatusCode != http.StatusOK:
 		return Usage{}, fmt.Errorf("%w: %s: HTTP %d", ErrRejected, Claude, resp.StatusCode)
 	case json.Unmarshal(body, &out) != nil:
