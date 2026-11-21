@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/v1/annotations.proto.
  */
 export const file_observatory_v1_annotations: GenFile = /*@__PURE__*/
-  fileDesc("CiBvYnNlcnZhdG9yeS92MS9hbm5vdGF0aW9ucy5wcm90bxIOb2JzZXJ2YXRvcnkudjEiTgoKUGVybWlzc2lvbhIMCgRuYW1lGAEgASgJEg4KBm9iamVjdBgCIAEoCRIiCgRraW5kGAMgASgOMhQub2JzZXJ2YXRvcnkudjEuS2luZCo7CgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIOCgpLSU5EX1dSSVRFEAESDQoJS0lORF9SRUFEEAI6XAoKcGVybWlzc2lvbhIeLmdvb2dsZS5wcm90b2J1Zi5NZXRob2RPcHRpb25zGNGGAyABKAsyGi5vYnNlcnZhdG9yeS52MS5QZXJtaXNzaW9uUgpwZXJtaXNzaW9uQsgBChJjb20ub2JzZXJ2YXRvcnkudjFCEEFubm90YXRpb25zUHJvdG9QAVpHZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L3YxO29ic2VydmF0b3J5djGiAgNPWFiqAg5PYnNlcnZhdG9yeS5WMcoCDk9ic2VydmF0b3J5XFYx4gIaT2JzZXJ2YXRvcnlcVjFcR1BCTWV0YWRhdGHqAg9PYnNlcnZhdG9yeTo6VjFiBnByb3RvMw", [file_google_protobuf_descriptor]);
+  fileDesc("CiBvYnNlcnZhdG9yeS92MS9hbm5vdGF0aW9ucy5wcm90bxIOb2JzZXJ2YXRvcnkudjEiYgoKUGVybWlzc2lvbhIMCgRuYW1lGAEgASgJEg4KBm9iamVjdBgCIAEoCRIiCgRraW5kGAMgASgOMhQub2JzZXJ2YXRvcnkudjEuS2luZBISCgphbnlfbWVtYmVyGAQgASgIKjsKBEtpbmQSFAoQS0lORF9VTlNQRUNJRklFRBAAEg4KCktJTkRfV1JJVEUQARINCglLSU5EX1JFQUQQAjpcCgpwZXJtaXNzaW9uEh4uZ29vZ2xlLnByb3RvYnVmLk1ldGhvZE9wdGlvbnMY0YYDIAEoCzIaLm9ic2VydmF0b3J5LnYxLlBlcm1pc3Npb25SCnBlcm1pc3Npb25CyAEKEmNvbS5vYnNlcnZhdG9yeS52MUIQQW5ub3RhdGlvbnNQcm90b1ABWkdnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvdjE7b2JzZXJ2YXRvcnl2MaICA09YWKoCDk9ic2VydmF0b3J5LlYxygIOT2JzZXJ2YXRvcnlcVjHiAhpPYnNlcnZhdG9yeVxWMVxHUEJNZXRhZGF0YeoCD09ic2VydmF0b3J5OjpWMWIGcHJvdG8z", [file_google_protobuf_descriptor]);
 
 /**
  * @generated from message observatory.v1.Permission
@@ -32,6 +32,13 @@ export type Permission = Message<"observatory.v1.Permission"> & {
    * @generated from field: observatory.v1.Kind kind = 3;
    */
   kind: Kind;
+
+  /**
+   * Membership is the whole check: no rule applies. Valid only on org-scoped methods.
+   *
+   * @generated from field: bool any_member = 4;
+   */
+  anyMember: boolean;
 };
 
 /**

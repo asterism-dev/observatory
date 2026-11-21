@@ -23,12 +23,9 @@ const (
 	maxBackoff = 30 * time.Second
 )
 
-type orgUser struct{ org, user uuid.UUID }
-
 type snapshot struct {
 	revision uint64
 	enforcer *coreauthz.Enforcer
-	members  map[orgUser]bool
 }
 
 // Watcher keeps the latest valid policy snapshot from PolicyService.WatchPolicy.
@@ -121,15 +118,11 @@ func (w *Watcher) apply(m *iamv1.Policy) {
 		// Still applied: the stream is the only source, and ignoring it could freeze a revoked grant.
 		slog.Warn("policy revision went backwards", "revision", m.GetRevision(), "previous", cur.revision)
 	}
-	members := make(map[orgUser]bool, len(p.Memberships))
-	for _, mr := range p.Memberships {
-		members[orgUser{mr.OrgID, mr.UserID}] = true
-	}
-	w.cur.Store(&snapshot{revision: m.GetRevision(), enforcer: e, members: members})
+	w.cur.Store(&snapshot{revision: m.GetRevision(), enforcer: e})
 }
 
-// Enforcer returns false until the first snapshot arrived.
-func (w *Watcher) Enforcer() (*coreauthz.Enforcer, bool) {
+// Current returns false until the first snapshot arrived.
+func (w *Watcher) Current() (*coreauthz.Enforcer, bool) {
 	s := w.cur.Load()
 	if s == nil {
 		return nil, false

@@ -53,7 +53,11 @@ func NewSettingsFrom(src auditv1connect.AuditInternalServiceClient) *Settings {
 	return &Settings{src: src}
 }
 
+// DataEvents reports false on a nil Settings, for services without access to the audit service.
 func (s *Settings) DataEvents(org, svc string) bool {
+	if s == nil {
+		return false
+	}
 	m := s.cur.Load()
 	return m != nil && (*m)[orgService{org, svc}]
 }

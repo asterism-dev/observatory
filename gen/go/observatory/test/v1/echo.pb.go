@@ -8,6 +8,7 @@ package testv1
 
 import (
 	_ "github.com/asterism-dev/observatory/gen/go/observatory/v1"
+	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -270,6 +271,239 @@ func (*GetEchoResponse) Descriptor() ([]byte, []int) {
 	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{5}
 }
 
+type GetOrgEchoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Org           string                 `protobuf:"bytes,1,opt,name=org,proto3" json:"org,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetOrgEchoRequest) Reset() {
+	*x = GetOrgEchoRequest{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetOrgEchoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetOrgEchoRequest) ProtoMessage() {}
+
+func (x *GetOrgEchoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetOrgEchoRequest.ProtoReflect.Descriptor instead.
+func (*GetOrgEchoRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetOrgEchoRequest) GetOrg() string {
+	if x != nil {
+		return x.Org
+	}
+	return ""
+}
+
+type GetOrgEchoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetOrgEchoResponse) Reset() {
+	*x = GetOrgEchoResponse{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetOrgEchoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetOrgEchoResponse) ProtoMessage() {}
+
+func (x *GetOrgEchoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetOrgEchoResponse.ProtoReflect.Descriptor instead.
+func (*GetOrgEchoResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{7}
+}
+
+// self must never fill {self}: that is always the caller.
+type GetSelfEchoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Self          string                 `protobuf:"bytes,1,opt,name=self,proto3" json:"self,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSelfEchoRequest) Reset() {
+	*x = GetSelfEchoRequest{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSelfEchoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSelfEchoRequest) ProtoMessage() {}
+
+func (x *GetSelfEchoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSelfEchoRequest.ProtoReflect.Descriptor instead.
+func (*GetSelfEchoRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetSelfEchoRequest) GetSelf() string {
+	if x != nil {
+		return x.Self
+	}
+	return ""
+}
+
+type GetSelfEchoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSelfEchoResponse) Reset() {
+	*x = GetSelfEchoResponse{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSelfEchoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSelfEchoResponse) ProtoMessage() {}
+
+func (x *GetSelfEchoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSelfEchoResponse.ProtoReflect.Descriptor instead.
+func (*GetSelfEchoResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{9}
+}
+
+type GetAnyEchoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAnyEchoRequest) Reset() {
+	*x = GetAnyEchoRequest{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnyEchoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnyEchoRequest) ProtoMessage() {}
+
+func (x *GetAnyEchoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnyEchoRequest.ProtoReflect.Descriptor instead.
+func (*GetAnyEchoRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{10}
+}
+
+type GetAnyEchoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAnyEchoResponse) Reset() {
+	*x = GetAnyEchoResponse{}
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnyEchoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnyEchoResponse) ProtoMessage() {}
+
+func (x *GetAnyEchoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnyEchoResponse.ProtoReflect.Descriptor instead.
+func (*GetAnyEchoResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{11}
+}
+
 type PingRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -278,7 +512,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +524,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_observatory_test_v1_echo_proto_msgTypes[6]
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,7 +537,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{6}
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{12}
 }
 
 type PingResponse struct {
@@ -314,7 +548,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -326,7 +560,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_observatory_test_v1_echo_proto_msgTypes[7]
+	mi := &file_observatory_test_v1_echo_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,14 +573,14 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{7}
+	return file_observatory_test_v1_echo_proto_rawDescGZIP(), []int{13}
 }
 
 var File_observatory_test_v1_echo_proto protoreflect.FileDescriptor
 
 const file_observatory_test_v1_echo_proto_rawDesc = "" +
 	"\n" +
-	"\x1eobservatory/test/v1/echo.proto\x12\x13observatory.test.v1\x1a observatory/v1/annotations.proto\"!\n" +
+	"\x1eobservatory/test/v1/echo.proto\x12\x13observatory.test.v1\x1a\x1cgoogle/api/annotations.proto\x1a observatory/v1/annotations.proto\"!\n" +
 	"\vEchoRequest\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\"\"\n" +
 	"\fEchoResponse\x12\x12\n" +
@@ -356,18 +590,34 @@ const file_observatory_test_v1_echo_proto_rawDesc = "" +
 	"\x0eGetEchoRequest\x12\x10\n" +
 	"\x03org\x18\x01 \x01(\tR\x03org\x12\x12\n" +
 	"\x04echo\x18\x02 \x01(\tR\x04echo\"\x11\n" +
-	"\x0fGetEchoResponse\"\r\n" +
+	"\x0fGetEchoResponse\"%\n" +
+	"\x11GetOrgEchoRequest\x12\x10\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\"\x14\n" +
+	"\x12GetOrgEchoResponse\"(\n" +
+	"\x12GetSelfEchoRequest\x12\x12\n" +
+	"\x04self\x18\x01 \x01(\tR\x04self\"\x15\n" +
+	"\x13GetSelfEchoResponse\"\x13\n" +
+	"\x11GetAnyEchoRequest\"\x14\n" +
+	"\x12GetAnyEchoResponse\"\r\n" +
 	"\vPingRequest\"\x0e\n" +
-	"\fPingResponse2\xc2\x03\n" +
+	"\fPingResponse2\xf7\x06\n" +
 	"\vEchoService\x12s\n" +
 	"\x04Echo\x12 .observatory.test.v1.EchoRequest\x1a!.observatory.test.v1.EchoResponse\"&\x8a\xb5\x18\"\n" +
 	"\x12test.echoes.create\x12\n" +
 	"org/echoes\x18\x01\x12n\n" +
 	"\x04Peek\x12 .observatory.test.v1.PeekRequest\x1a!.observatory.test.v1.PeekResponse\"!\x8a\xb5\x18\x1d\n" +
 	"\x0ftest.echoes.get\x12\n" +
-	"org/echoes\x12\x80\x01\n" +
-	"\aGetEcho\x12#.observatory.test.v1.GetEchoRequest\x1a$.observatory.test.v1.GetEchoResponse\"*\x8a\xb5\x18&\n" +
-	"\x0ftest.echoes.get\x12\x11org/echoes/{echo}\x18\x02\x12K\n" +
+	"org/echoes\x12\xa1\x01\n" +
+	"\aGetEcho\x12#.observatory.test.v1.GetEchoRequest\x1a$.observatory.test.v1.GetEchoResponse\"K\x8a\xb5\x18&\n" +
+	"\x0ftest.echoes.get\x12\x11org/echoes/{echo}\x18\x02\x82\xd3\xe4\x93\x02\x1b\x12\x19/orgs/{org}/echoes/{echo}\x12}\n" +
+	"\n" +
+	"GetOrgEcho\x12&.observatory.test.v1.GetOrgEchoRequest\x1a'.observatory.test.v1.GetOrgEchoResponse\"\x1e\x8a\xb5\x18\x1a\n" +
+	"\x0ftest.echoes.get\x12\x03org\x18\x02 \x01\x12\x8d\x01\n" +
+	"\vGetSelfEcho\x12'.observatory.test.v1.GetSelfEchoRequest\x1a(.observatory.test.v1.GetSelfEchoResponse\"+\x8a\xb5\x18'\n" +
+	"\x0ftest.echoes.get\x12\x12user:{self}/echoes\x18\x02\x12\x82\x01\n" +
+	"\n" +
+	"GetAnyEcho\x12&.observatory.test.v1.GetAnyEchoRequest\x1a'.observatory.test.v1.GetAnyEchoResponse\"#\x8a\xb5\x18\x1f\n" +
+	"\x0ftest.echoes.get\x12\bplatform\x18\x02 \x01\x12K\n" +
 	"\x04Ping\x12 .observatory.test.v1.PingRequest\x1a!.observatory.test.v1.PingResponseB\xd9\x01\n" +
 	"\x17com.observatory.test.v1B\tEchoProtoP\x01ZEgithub.com/asterism-dev/observatory/gen/go/observatory/test/v1;testv1\xa2\x02\x03OTX\xaa\x02\x13Observatory.Test.V1\xca\x02\x13Observatory\\Test\\V1\xe2\x02\x1fObservatory\\Test\\V1\\GPBMetadata\xea\x02\x15Observatory::Test::V1b\x06proto3"
 
@@ -383,31 +633,43 @@ func file_observatory_test_v1_echo_proto_rawDescGZIP() []byte {
 	return file_observatory_test_v1_echo_proto_rawDescData
 }
 
-var file_observatory_test_v1_echo_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_observatory_test_v1_echo_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_observatory_test_v1_echo_proto_goTypes = []any{
-	(*EchoRequest)(nil),     // 0: observatory.test.v1.EchoRequest
-	(*EchoResponse)(nil),    // 1: observatory.test.v1.EchoResponse
-	(*PeekRequest)(nil),     // 2: observatory.test.v1.PeekRequest
-	(*PeekResponse)(nil),    // 3: observatory.test.v1.PeekResponse
-	(*GetEchoRequest)(nil),  // 4: observatory.test.v1.GetEchoRequest
-	(*GetEchoResponse)(nil), // 5: observatory.test.v1.GetEchoResponse
-	(*PingRequest)(nil),     // 6: observatory.test.v1.PingRequest
-	(*PingResponse)(nil),    // 7: observatory.test.v1.PingResponse
+	(*EchoRequest)(nil),         // 0: observatory.test.v1.EchoRequest
+	(*EchoResponse)(nil),        // 1: observatory.test.v1.EchoResponse
+	(*PeekRequest)(nil),         // 2: observatory.test.v1.PeekRequest
+	(*PeekResponse)(nil),        // 3: observatory.test.v1.PeekResponse
+	(*GetEchoRequest)(nil),      // 4: observatory.test.v1.GetEchoRequest
+	(*GetEchoResponse)(nil),     // 5: observatory.test.v1.GetEchoResponse
+	(*GetOrgEchoRequest)(nil),   // 6: observatory.test.v1.GetOrgEchoRequest
+	(*GetOrgEchoResponse)(nil),  // 7: observatory.test.v1.GetOrgEchoResponse
+	(*GetSelfEchoRequest)(nil),  // 8: observatory.test.v1.GetSelfEchoRequest
+	(*GetSelfEchoResponse)(nil), // 9: observatory.test.v1.GetSelfEchoResponse
+	(*GetAnyEchoRequest)(nil),   // 10: observatory.test.v1.GetAnyEchoRequest
+	(*GetAnyEchoResponse)(nil),  // 11: observatory.test.v1.GetAnyEchoResponse
+	(*PingRequest)(nil),         // 12: observatory.test.v1.PingRequest
+	(*PingResponse)(nil),        // 13: observatory.test.v1.PingResponse
 }
 var file_observatory_test_v1_echo_proto_depIdxs = []int32{
-	0, // 0: observatory.test.v1.EchoService.Echo:input_type -> observatory.test.v1.EchoRequest
-	2, // 1: observatory.test.v1.EchoService.Peek:input_type -> observatory.test.v1.PeekRequest
-	4, // 2: observatory.test.v1.EchoService.GetEcho:input_type -> observatory.test.v1.GetEchoRequest
-	6, // 3: observatory.test.v1.EchoService.Ping:input_type -> observatory.test.v1.PingRequest
-	1, // 4: observatory.test.v1.EchoService.Echo:output_type -> observatory.test.v1.EchoResponse
-	3, // 5: observatory.test.v1.EchoService.Peek:output_type -> observatory.test.v1.PeekResponse
-	5, // 6: observatory.test.v1.EchoService.GetEcho:output_type -> observatory.test.v1.GetEchoResponse
-	7, // 7: observatory.test.v1.EchoService.Ping:output_type -> observatory.test.v1.PingResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: observatory.test.v1.EchoService.Echo:input_type -> observatory.test.v1.EchoRequest
+	2,  // 1: observatory.test.v1.EchoService.Peek:input_type -> observatory.test.v1.PeekRequest
+	4,  // 2: observatory.test.v1.EchoService.GetEcho:input_type -> observatory.test.v1.GetEchoRequest
+	6,  // 3: observatory.test.v1.EchoService.GetOrgEcho:input_type -> observatory.test.v1.GetOrgEchoRequest
+	8,  // 4: observatory.test.v1.EchoService.GetSelfEcho:input_type -> observatory.test.v1.GetSelfEchoRequest
+	10, // 5: observatory.test.v1.EchoService.GetAnyEcho:input_type -> observatory.test.v1.GetAnyEchoRequest
+	12, // 6: observatory.test.v1.EchoService.Ping:input_type -> observatory.test.v1.PingRequest
+	1,  // 7: observatory.test.v1.EchoService.Echo:output_type -> observatory.test.v1.EchoResponse
+	3,  // 8: observatory.test.v1.EchoService.Peek:output_type -> observatory.test.v1.PeekResponse
+	5,  // 9: observatory.test.v1.EchoService.GetEcho:output_type -> observatory.test.v1.GetEchoResponse
+	7,  // 10: observatory.test.v1.EchoService.GetOrgEcho:output_type -> observatory.test.v1.GetOrgEchoResponse
+	9,  // 11: observatory.test.v1.EchoService.GetSelfEcho:output_type -> observatory.test.v1.GetSelfEchoResponse
+	11, // 12: observatory.test.v1.EchoService.GetAnyEcho:output_type -> observatory.test.v1.GetAnyEchoResponse
+	13, // 13: observatory.test.v1.EchoService.Ping:output_type -> observatory.test.v1.PingResponse
+	7,  // [7:14] is the sub-list for method output_type
+	0,  // [0:7] is the sub-list for method input_type
+	0,  // [0:0] is the sub-list for extension type_name
+	0,  // [0:0] is the sub-list for extension extendee
+	0,  // [0:0] is the sub-list for field type_name
 }
 
 func init() { file_observatory_test_v1_echo_proto_init() }
@@ -421,7 +683,7 @@ func file_observatory_test_v1_echo_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_test_v1_echo_proto_rawDesc), len(file_observatory_test_v1_echo_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -14,6 +14,8 @@ type Permission struct {
 	Name   string
 	Object string
 	Write  bool
+	// AnyMember admits every org member without a rule check.
+	AnyMember bool
 }
 
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9]*\.[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$`)
@@ -31,9 +33,9 @@ func Of(md protoreflect.MethodDescriptor) (Permission, bool) {
 	}
 	switch p.GetKind() {
 	case obsv1.Kind_KIND_WRITE:
-		return Permission{Name: p.GetName(), Object: p.GetObject(), Write: true}, true
+		return Permission{Name: p.GetName(), Object: p.GetObject(), Write: true, AnyMember: p.GetAnyMember()}, true
 	case obsv1.Kind_KIND_READ:
-		return Permission{Name: p.GetName(), Object: p.GetObject()}, true
+		return Permission{Name: p.GetName(), Object: p.GetObject(), AnyMember: p.GetAnyMember()}, true
 	}
 	// An unset kind must never fail open as a read.
 	return Permission{}, false

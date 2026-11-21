@@ -54,6 +54,9 @@ func (s *Service) OnReload(fn func(Policy)) {
 
 func (s *Service) Enforcer() *Enforcer { return s.cur.Load() }
 
+// Current makes the hub's policy a platform authz source; it is loaded at construction, so always present.
+func (s *Service) Current() (*Enforcer, bool) { return s.cur.Load(), true }
+
 func (s *Service) Allowed(sub string, org uuid.UUID, obj, act string) bool {
 	return s.Enforcer().Allowed(sub, org, obj, act)
 }

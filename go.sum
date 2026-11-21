@@ -1,5 +1,11 @@
+buf.build/gen/go/connectrpc/eliza/connectrpc/go v1.11.1-20230822171018-8b8b971d6fde.1 h1:VxlBIOBOYa4k5dHcmduPVF1OXJwhiGmsVhqdbPd33Mo=
+buf.build/gen/go/connectrpc/eliza/connectrpc/go v1.11.1-20230822171018-8b8b971d6fde.1/go.mod h1:FapnC4TeZc01ECYAUKV30mpI5J0R60dZrIeqfOSPbMk=
+buf.build/gen/go/connectrpc/eliza/protocolbuffers/go v1.31.0-20230822171018-8b8b971d6fde.1 h1:JUxbUtCrCK/nPCkWcucuBKRH9mbwSElgeWoORg16IrI=
+buf.build/gen/go/connectrpc/eliza/protocolbuffers/go v1.31.0-20230822171018-8b8b971d6fde.1/go.mod h1:QiftkbxA+bQUTeN1ke64YoIoxt6diVLfuolQi3ORa9c=
 connectrpc.com/connect v1.21.1 h1:h2kacdlzXpZU2OQFSv98xkjYXNUSr/ptxmGVbS/+CRM=
 connectrpc.com/connect v1.21.1/go.mod h1:fhMcVJ5w6r/yTYhnkEbW6+sIF7OZ5Ay7KYgmfebh2ek=
+connectrpc.com/vanguard v0.4.0 h1:lx23IDorlJnaR1mNbjgP0LXiI5yBwo0eWeXA5qSBNoY=
+connectrpc.com/vanguard v0.4.0/go.mod h1:VbDkW6OqfRPOi144sbE+OuLiLmhLfCxkQjzKErJsoT0=
 github.com/anchore/go-lzo v0.1.0 h1:NgAacnzqPeGH49Ky19QKLBZEuFRqtTG9cdaucc3Vncs=
 github.com/anchore/go-lzo v0.1.0/go.mod h1:3kLx0bve2oN1iDwgM1U5zGku1Tfbdb0No5qp1eL1fIk=
 github.com/antithesishq/antithesis-sdk-go v0.9.0-default-no-op h1:TfLnk/It42eZEgaWL/e+xBKBAhX9ru4mRn2+0Xeukmc=

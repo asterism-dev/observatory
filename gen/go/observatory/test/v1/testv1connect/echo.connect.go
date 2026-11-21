@@ -39,6 +39,12 @@ const (
 	EchoServicePeekProcedure = "/observatory.test.v1.EchoService/Peek"
 	// EchoServiceGetEchoProcedure is the fully-qualified name of the EchoService's GetEcho RPC.
 	EchoServiceGetEchoProcedure = "/observatory.test.v1.EchoService/GetEcho"
+	// EchoServiceGetOrgEchoProcedure is the fully-qualified name of the EchoService's GetOrgEcho RPC.
+	EchoServiceGetOrgEchoProcedure = "/observatory.test.v1.EchoService/GetOrgEcho"
+	// EchoServiceGetSelfEchoProcedure is the fully-qualified name of the EchoService's GetSelfEcho RPC.
+	EchoServiceGetSelfEchoProcedure = "/observatory.test.v1.EchoService/GetSelfEcho"
+	// EchoServiceGetAnyEchoProcedure is the fully-qualified name of the EchoService's GetAnyEcho RPC.
+	EchoServiceGetAnyEchoProcedure = "/observatory.test.v1.EchoService/GetAnyEcho"
 	// EchoServicePingProcedure is the fully-qualified name of the EchoService's Ping RPC.
 	EchoServicePingProcedure = "/observatory.test.v1.EchoService/Ping"
 )
@@ -49,6 +55,10 @@ type EchoServiceClient interface {
 	// No kind: Of must refuse it rather than treat it as a read.
 	Peek(context.Context, *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error)
 	GetEcho(context.Context, *connect.Request[v1.GetEchoRequest]) (*connect.Response[v1.GetEchoResponse], error)
+	GetOrgEcho(context.Context, *connect.Request[v1.GetOrgEchoRequest]) (*connect.Response[v1.GetOrgEchoResponse], error)
+	GetSelfEcho(context.Context, *connect.Request[v1.GetSelfEchoRequest]) (*connect.Response[v1.GetSelfEchoResponse], error)
+	// any_member without an org field: the interceptor must refuse it.
+	GetAnyEcho(context.Context, *connect.Request[v1.GetAnyEchoRequest]) (*connect.Response[v1.GetAnyEchoResponse], error)
 	// No annotation: the interceptor must deny it.
 	Ping(context.Context, *connect.Request[v1.PingRequest]) (*connect.Response[v1.PingResponse], error)
 }
@@ -82,6 +92,24 @@ func NewEchoServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(echoServiceMethods.ByName("GetEcho")),
 			connect.WithClientOptions(opts...),
 		),
+		getOrgEcho: connect.NewClient[v1.GetOrgEchoRequest, v1.GetOrgEchoResponse](
+			httpClient,
+			baseURL+EchoServiceGetOrgEchoProcedure,
+			connect.WithSchema(echoServiceMethods.ByName("GetOrgEcho")),
+			connect.WithClientOptions(opts...),
+		),
+		getSelfEcho: connect.NewClient[v1.GetSelfEchoRequest, v1.GetSelfEchoResponse](
+			httpClient,
+			baseURL+EchoServiceGetSelfEchoProcedure,
+			connect.WithSchema(echoServiceMethods.ByName("GetSelfEcho")),
+			connect.WithClientOptions(opts...),
+		),
+		getAnyEcho: connect.NewClient[v1.GetAnyEchoRequest, v1.GetAnyEchoResponse](
+			httpClient,
+			baseURL+EchoServiceGetAnyEchoProcedure,
+			connect.WithSchema(echoServiceMethods.ByName("GetAnyEcho")),
+			connect.WithClientOptions(opts...),
+		),
 		ping: connect.NewClient[v1.PingRequest, v1.PingResponse](
 			httpClient,
 			baseURL+EchoServicePingProcedure,
@@ -93,10 +121,13 @@ func NewEchoServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 
 // echoServiceClient implements EchoServiceClient.
 type echoServiceClient struct {
-	echo    *connect.Client[v1.EchoRequest, v1.EchoResponse]
-	peek    *connect.Client[v1.PeekRequest, v1.PeekResponse]
-	getEcho *connect.Client[v1.GetEchoRequest, v1.GetEchoResponse]
-	ping    *connect.Client[v1.PingRequest, v1.PingResponse]
+	echo        *connect.Client[v1.EchoRequest, v1.EchoResponse]
+	peek        *connect.Client[v1.PeekRequest, v1.PeekResponse]
+	getEcho     *connect.Client[v1.GetEchoRequest, v1.GetEchoResponse]
+	getOrgEcho  *connect.Client[v1.GetOrgEchoRequest, v1.GetOrgEchoResponse]
+	getSelfEcho *connect.Client[v1.GetSelfEchoRequest, v1.GetSelfEchoResponse]
+	getAnyEcho  *connect.Client[v1.GetAnyEchoRequest, v1.GetAnyEchoResponse]
+	ping        *connect.Client[v1.PingRequest, v1.PingResponse]
 }
 
 // Echo calls observatory.test.v1.EchoService.Echo.
@@ -114,6 +145,21 @@ func (c *echoServiceClient) GetEcho(ctx context.Context, req *connect.Request[v1
 	return c.getEcho.CallUnary(ctx, req)
 }
 
+// GetOrgEcho calls observatory.test.v1.EchoService.GetOrgEcho.
+func (c *echoServiceClient) GetOrgEcho(ctx context.Context, req *connect.Request[v1.GetOrgEchoRequest]) (*connect.Response[v1.GetOrgEchoResponse], error) {
+	return c.getOrgEcho.CallUnary(ctx, req)
+}
+
+// GetSelfEcho calls observatory.test.v1.EchoService.GetSelfEcho.
+func (c *echoServiceClient) GetSelfEcho(ctx context.Context, req *connect.Request[v1.GetSelfEchoRequest]) (*connect.Response[v1.GetSelfEchoResponse], error) {
+	return c.getSelfEcho.CallUnary(ctx, req)
+}
+
+// GetAnyEcho calls observatory.test.v1.EchoService.GetAnyEcho.
+func (c *echoServiceClient) GetAnyEcho(ctx context.Context, req *connect.Request[v1.GetAnyEchoRequest]) (*connect.Response[v1.GetAnyEchoResponse], error) {
+	return c.getAnyEcho.CallUnary(ctx, req)
+}
+
 // Ping calls observatory.test.v1.EchoService.Ping.
 func (c *echoServiceClient) Ping(ctx context.Context, req *connect.Request[v1.PingRequest]) (*connect.Response[v1.PingResponse], error) {
 	return c.ping.CallUnary(ctx, req)
@@ -125,6 +171,10 @@ type EchoServiceHandler interface {
 	// No kind: Of must refuse it rather than treat it as a read.
 	Peek(context.Context, *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error)
 	GetEcho(context.Context, *connect.Request[v1.GetEchoRequest]) (*connect.Response[v1.GetEchoResponse], error)
+	GetOrgEcho(context.Context, *connect.Request[v1.GetOrgEchoRequest]) (*connect.Response[v1.GetOrgEchoResponse], error)
+	GetSelfEcho(context.Context, *connect.Request[v1.GetSelfEchoRequest]) (*connect.Response[v1.GetSelfEchoResponse], error)
+	// any_member without an org field: the interceptor must refuse it.
+	GetAnyEcho(context.Context, *connect.Request[v1.GetAnyEchoRequest]) (*connect.Response[v1.GetAnyEchoResponse], error)
 	// No annotation: the interceptor must deny it.
 	Ping(context.Context, *connect.Request[v1.PingRequest]) (*connect.Response[v1.PingResponse], error)
 }
@@ -154,6 +204,24 @@ func NewEchoServiceHandler(svc EchoServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(echoServiceMethods.ByName("GetEcho")),
 		connect.WithHandlerOptions(opts...),
 	)
+	echoServiceGetOrgEchoHandler := connect.NewUnaryHandler(
+		EchoServiceGetOrgEchoProcedure,
+		svc.GetOrgEcho,
+		connect.WithSchema(echoServiceMethods.ByName("GetOrgEcho")),
+		connect.WithHandlerOptions(opts...),
+	)
+	echoServiceGetSelfEchoHandler := connect.NewUnaryHandler(
+		EchoServiceGetSelfEchoProcedure,
+		svc.GetSelfEcho,
+		connect.WithSchema(echoServiceMethods.ByName("GetSelfEcho")),
+		connect.WithHandlerOptions(opts...),
+	)
+	echoServiceGetAnyEchoHandler := connect.NewUnaryHandler(
+		EchoServiceGetAnyEchoProcedure,
+		svc.GetAnyEcho,
+		connect.WithSchema(echoServiceMethods.ByName("GetAnyEcho")),
+		connect.WithHandlerOptions(opts...),
+	)
 	echoServicePingHandler := connect.NewUnaryHandler(
 		EchoServicePingProcedure,
 		svc.Ping,
@@ -168,6 +236,12 @@ func NewEchoServiceHandler(svc EchoServiceHandler, opts ...connect.HandlerOption
 			echoServicePeekHandler.ServeHTTP(w, r)
 		case EchoServiceGetEchoProcedure:
 			echoServiceGetEchoHandler.ServeHTTP(w, r)
+		case EchoServiceGetOrgEchoProcedure:
+			echoServiceGetOrgEchoHandler.ServeHTTP(w, r)
+		case EchoServiceGetSelfEchoProcedure:
+			echoServiceGetSelfEchoHandler.ServeHTTP(w, r)
+		case EchoServiceGetAnyEchoProcedure:
+			echoServiceGetAnyEchoHandler.ServeHTTP(w, r)
 		case EchoServicePingProcedure:
 			echoServicePingHandler.ServeHTTP(w, r)
 		default:
@@ -189,6 +263,18 @@ func (UnimplementedEchoServiceHandler) Peek(context.Context, *connect.Request[v1
 
 func (UnimplementedEchoServiceHandler) GetEcho(context.Context, *connect.Request[v1.GetEchoRequest]) (*connect.Response[v1.GetEchoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.GetEcho is not implemented"))
+}
+
+func (UnimplementedEchoServiceHandler) GetOrgEcho(context.Context, *connect.Request[v1.GetOrgEchoRequest]) (*connect.Response[v1.GetOrgEchoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.GetOrgEcho is not implemented"))
+}
+
+func (UnimplementedEchoServiceHandler) GetSelfEcho(context.Context, *connect.Request[v1.GetSelfEchoRequest]) (*connect.Response[v1.GetSelfEchoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.GetSelfEcho is not implemented"))
+}
+
+func (UnimplementedEchoServiceHandler) GetAnyEcho(context.Context, *connect.Request[v1.GetAnyEchoRequest]) (*connect.Response[v1.GetAnyEchoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.GetAnyEcho is not implemented"))
 }
 
 func (UnimplementedEchoServiceHandler) Ping(context.Context, *connect.Request[v1.PingRequest]) (*connect.Response[v1.PingResponse], error) {

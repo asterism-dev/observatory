@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package observatory.test.v1;
 
+import "google/api/annotations.proto";
 import "observatory/v1/annotations.proto";
 
 message EchoRequest {
@@ -22,6 +23,23 @@ message GetEchoRequest {
 }
 
 message GetEchoResponse {}
+
+message GetOrgEchoRequest {
+  string org = 1;
+}
+
+message GetOrgEchoResponse {}
+
+// self must never fill {self}: that is always the caller.
+message GetSelfEchoRequest {
+  string self = 1;
+}
+
+message GetSelfEchoResponse {}
+
+message GetAnyEchoRequest {}
+
+message GetAnyEchoResponse {}
 
 message PingRequest {}
 
@@ -47,6 +65,31 @@ service EchoService {
       name: "test.echoes.get"
       object: "org/echoes/{echo}"
       kind: KIND_READ
+    };
+    option (google.api.http) = {get: "/orgs/{org}/echoes/{echo}"};
+  }
+  rpc GetOrgEcho(GetOrgEchoRequest) returns (GetOrgEchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.get"
+      object: "org"
+      kind: KIND_READ
+      any_member: true
+    };
+  }
+  rpc GetSelfEcho(GetSelfEchoRequest) returns (GetSelfEchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.get"
+      object: "user:{self}/echoes"
+      kind: KIND_READ
+    };
+  }
+  // any_member without an org field: the interceptor must refuse it.
+  rpc GetAnyEcho(GetAnyEchoRequest) returns (GetAnyEchoResponse) {
+    option (observatory.v1.permission) = {
+      name: "test.echoes.get"
+      object: "platform"
+      kind: KIND_READ
+      any_member: true
     };
   }
   // No annotation: the interceptor must deny it.

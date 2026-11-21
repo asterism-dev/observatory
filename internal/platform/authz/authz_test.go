@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"connectrpc.com/vanguard"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	testv1 "github.com/asterism-dev/observatory/gen/go/observatory/test/v1"
@@ -78,6 +79,15 @@ func (echoServer) GetEcho(ctx context.Context, _ *connect.Request[testv1.GetEcho
 	}
 	return connect.NewResponse(&testv1.GetEchoResponse{}), nil
 }
+func (echoServer) GetOrgEcho(context.Context, *connect.Request[testv1.GetOrgEchoRequest]) (*connect.Response[testv1.GetOrgEchoResponse], error) {
+	return connect.NewResponse(&testv1.GetOrgEchoResponse{}), nil
+}
+func (echoServer) GetSelfEcho(context.Context, *connect.Request[testv1.GetSelfEchoRequest]) (*connect.Response[testv1.GetSelfEchoResponse], error) {
+	return connect.NewResponse(&testv1.GetSelfEchoResponse{}), nil
+}
+func (echoServer) GetAnyEcho(context.Context, *connect.Request[testv1.GetAnyEchoRequest]) (*connect.Response[testv1.GetAnyEchoResponse], error) {
+	return connect.NewResponse(&testv1.GetAnyEchoResponse{}), nil
+}
 func (echoServer) Ping(context.Context, *connect.Request[testv1.PingRequest]) (*connect.Response[testv1.PingResponse], error) {
 	return connect.NewResponse(&testv1.PingResponse{}), nil
 }
@@ -86,6 +96,7 @@ type fixture struct {
 	key    ed25519.PrivateKey
 	policy *fakePolicy
 	echo   testv1connect.EchoServiceClient
+	rest   *httptest.Server
 	org    uuid.UUID
 	member uuid.UUID
 	viewer uuid.UUID
@@ -127,11 +138,19 @@ func newFixture(t *testing.T) *fixture {
 	go func() { w.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
 
+	svcPath, svcHandler := testv1connect.NewEchoServiceHandler(echoServer{}, connect.WithInterceptors(NewInterceptor(v, w)))
 	svcMux := http.NewServeMux()
-	svcMux.Handle(testv1connect.NewEchoServiceHandler(echoServer{}, connect.WithInterceptors(NewInterceptor(v, w))))
+	svcMux.Handle(svcPath, svcHandler)
 	svc := httptest.NewServer(svcMux)
 	t.Cleanup(svc.Close)
 	f.echo = testv1connect.NewEchoServiceClient(svc.Client(), svc.URL)
+
+	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(svcPath, svcHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.rest = httptest.NewServer(http.StripPrefix("/api/test/v1", tc))
+	t.Cleanup(f.rest.Close)
 	return f
 }
 
@@ -145,6 +164,15 @@ func (f *fixture) connect(t *testing.T) chan *iamv1.Policy {
 		t.Fatal("watcher did not connect")
 		return nil
 	}
+}
+
+// denyAll binds an org-wide deny of everything to user.
+func (f *fixture) denyAll(p *iamv1.Policy, user uuid.UUID) *iamv1.Policy {
+	role := uuid.NewString()
+	p.Roles = append(p.Roles, &iamv1.CustomRole{Id: role, OrgId: f.org.String(), Name: "deny all",
+		Rules: []*iamv1.Rule{{Effect: "deny", Object: "*", Action: "*"}}})
+	p.Bindings = append(p.Bindings, &iamv1.Binding{OrgId: f.org.String(), Subject: "user:" + user.String(), RoleId: role})
+	return p
 }
 
 // snapshot makes every given user an org member; only f.member also gets a role granting test.echoes.get.
@@ -340,10 +368,81 @@ func TestPlatformScopeUserObject(t *testing.T) {
 func TestResolveObjectRejectsBadAnnotations(t *testing.T) {
 	m := (&testv1.GetEchoRequest{Echo: uuid.NewString()}).ProtoReflect()
 	for _, pattern := range []string{"org/echoes/{missing}", "org/echoes/{echo", "org/echoes/echo}", "org/{{echo}}"} {
-		if _, err := ResolveObject(pattern, m); connect.CodeOf(err) != connect.CodeUnimplemented {
+		if _, err := ResolveObject(pattern, uuid.New(), m); connect.CodeOf(err) != connect.CodeUnimplemented {
 			t.Errorf("ResolveObject(%q) err = %v, want Unimplemented", pattern, err)
 		}
 	}
+}
+
+func TestRESTReachesInterceptor(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t) <- f.snapshot(1, f.member)
+	url := f.rest.URL + "/api/test/v1/orgs/" + f.org.String() + "/echoes/" + uuid.NewString()
+	get := func(user *uuid.UUID) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		if user != nil {
+			req.Header.Set("Authorization", "Bearer "+f.token(t, *user, false))
+		}
+		res, err := f.rest.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for get(&f.member) != http.StatusOK {
+		if time.Now().After(deadline) {
+			t.Fatal("member never reached the handler over REST")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := get(nil); got != http.StatusUnauthorized {
+		t.Errorf("no JWT: status %d, want 401", got)
+	}
+	stranger := uuid.New()
+	if got := get(&stranger); got != http.StatusNotFound {
+		t.Errorf("non-member: status %d, want 404", got)
+	}
+}
+
+func TestAnyMemberSkipsRuleCheck(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t) <- f.denyAll(f.snapshot(1, f.member, f.viewer), f.viewer)
+	getOrg := func(user uuid.UUID) error {
+		_, err := f.echo.GetOrgEcho(context.Background(), withToken(f.token(t, user, false), &testv1.GetOrgEchoRequest{Org: f.org.String()}))
+		return err
+	}
+	eventually(t, 0, func() error { return getOrg(f.viewer) })
+	// The deny applies to rule-checked methods, proving the binding is live.
+	wantCode(t, f.getEcho(t, f.viewer, f.org.String(), uuid.NewString()), connect.CodePermissionDenied)
+	wantCode(t, getOrg(uuid.New()), connect.CodeNotFound)
+}
+
+func TestAnyMemberOnPlatformMethodIsBadAnnotation(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t) <- f.snapshot(1, f.member)
+	eventually(t, 0, func() error { return f.getEcho(t, f.member, f.org.String(), uuid.NewString()) })
+	for _, admin := range []bool{false, true} {
+		_, err := f.echo.GetAnyEcho(context.Background(), withToken(f.token(t, f.member, admin), &testv1.GetAnyEchoRequest{}))
+		wantCode(t, err, connect.CodeUnimplemented)
+	}
+}
+
+func TestSelfResolvesToCaller(t *testing.T) {
+	caller, other := uuid.New(), uuid.New()
+	obj, err := ResolveObject("user:{self}/echoes", caller, (&testv1.GetSelfEchoRequest{Self: other.String()}).ProtoReflect())
+	if err != nil || obj != "user:"+caller.String()+"/echoes" {
+		t.Fatalf("ResolveObject = %q, %v; want the caller's object", obj, err)
+	}
+
+	f := newFixture(t)
+	f.connect(t) <- f.snapshot(1, f.member)
+	eventually(t, 0, func() error {
+		_, err := f.echo.GetSelfEcho(context.Background(), withToken(f.token(t, f.member, false), &testv1.GetSelfEchoRequest{Self: other.String()}))
+		return err
+	})
 }
 
 func TestNewWatcherRequiresURLAndToken(t *testing.T) {

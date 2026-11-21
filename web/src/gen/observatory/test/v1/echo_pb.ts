@@ -4,6 +4,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_google_api_annotations } from "../../../google/api/annotations_pb";
 import { file_observatory_v1_annotations } from "../../v1/annotations_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -11,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/test/v1/echo.proto.
  */
 export const file_observatory_test_v1_echo: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCSINCgtQZWVrUmVxdWVzdCIOCgxQZWVrUmVzcG9uc2UiKwoOR2V0RWNob1JlcXVlc3QSCwoDb3JnGAEgASgJEgwKBGVjaG8YAiABKAkiEQoPR2V0RWNob1Jlc3BvbnNlIg0KC1BpbmdSZXF1ZXN0Ig4KDFBpbmdSZXNwb25zZTLCAwoLRWNob1NlcnZpY2UScwoERWNobxIgLm9ic2VydmF0b3J5LnRlc3QudjEuRWNob1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLkVjaG9SZXNwb25zZSImirUYIgoSdGVzdC5lY2hvZXMuY3JlYXRlEgpvcmcvZWNob2VzGAESbgoEUGVlaxIgLm9ic2VydmF0b3J5LnRlc3QudjEuUGVla1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLlBlZWtSZXNwb25zZSIhirUYHQoPdGVzdC5lY2hvZXMuZ2V0EgpvcmcvZWNob2VzEoABCgdHZXRFY2hvEiMub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRFY2hvUmVxdWVzdBokLm9ic2VydmF0b3J5LnRlc3QudjEuR2V0RWNob1Jlc3BvbnNlIiqKtRgmCg90ZXN0LmVjaG9lcy5nZXQSEW9yZy9lY2hvZXMve2VjaG99GAISSwoEUGluZxIgLm9ic2VydmF0b3J5LnRlc3QudjEuUGluZ1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLlBpbmdSZXNwb25zZULZAQoXY29tLm9ic2VydmF0b3J5LnRlc3QudjFCCUVjaG9Qcm90b1ABWkVnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvdGVzdC92MTt0ZXN0djGiAgNPVFiqAhNPYnNlcnZhdG9yeS5UZXN0LlYxygITT2JzZXJ2YXRvcnlcVGVzdFxWMeICH09ic2VydmF0b3J5XFRlc3RcVjFcR1BCTWV0YWRhdGHqAhVPYnNlcnZhdG9yeTo6VGVzdDo6VjFiBnByb3RvMw", [file_observatory_v1_annotations]);
+  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCSINCgtQZWVrUmVxdWVzdCIOCgxQZWVrUmVzcG9uc2UiKwoOR2V0RWNob1JlcXVlc3QSCwoDb3JnGAEgASgJEgwKBGVjaG8YAiABKAkiEQoPR2V0RWNob1Jlc3BvbnNlIiAKEUdldE9yZ0VjaG9SZXF1ZXN0EgsKA29yZxgBIAEoCSIUChJHZXRPcmdFY2hvUmVzcG9uc2UiIgoSR2V0U2VsZkVjaG9SZXF1ZXN0EgwKBHNlbGYYASABKAkiFQoTR2V0U2VsZkVjaG9SZXNwb25zZSITChFHZXRBbnlFY2hvUmVxdWVzdCIUChJHZXRBbnlFY2hvUmVzcG9uc2UiDQoLUGluZ1JlcXVlc3QiDgoMUGluZ1Jlc3BvbnNlMvcGCgtFY2hvU2VydmljZRJzCgRFY2hvEiAub2JzZXJ2YXRvcnkudGVzdC52MS5FY2hvUmVxdWVzdBohLm9ic2VydmF0b3J5LnRlc3QudjEuRWNob1Jlc3BvbnNlIiaKtRgiChJ0ZXN0LmVjaG9lcy5jcmVhdGUSCm9yZy9lY2hvZXMYARJuCgRQZWVrEiAub2JzZXJ2YXRvcnkudGVzdC52MS5QZWVrUmVxdWVzdBohLm9ic2VydmF0b3J5LnRlc3QudjEuUGVla1Jlc3BvbnNlIiGKtRgdCg90ZXN0LmVjaG9lcy5nZXQSCm9yZy9lY2hvZXMSoQEKB0dldEVjaG8SIy5vYnNlcnZhdG9yeS50ZXN0LnYxLkdldEVjaG9SZXF1ZXN0GiQub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRFY2hvUmVzcG9uc2UiS4q1GCYKD3Rlc3QuZWNob2VzLmdldBIRb3JnL2VjaG9lcy97ZWNob30YAoLT5JMCGxIZL29yZ3Mve29yZ30vZWNob2VzL3tlY2hvfRJ9CgpHZXRPcmdFY2hvEiYub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRPcmdFY2hvUmVxdWVzdBonLm9ic2VydmF0b3J5LnRlc3QudjEuR2V0T3JnRWNob1Jlc3BvbnNlIh6KtRgaCg90ZXN0LmVjaG9lcy5nZXQSA29yZxgCIAESjQEKC0dldFNlbGZFY2hvEicub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRTZWxmRWNob1JlcXVlc3QaKC5vYnNlcnZhdG9yeS50ZXN0LnYxLkdldFNlbGZFY2hvUmVzcG9uc2UiK4q1GCcKD3Rlc3QuZWNob2VzLmdldBISdXNlcjp7c2VsZn0vZWNob2VzGAISggEKCkdldEFueUVjaG8SJi5vYnNlcnZhdG9yeS50ZXN0LnYxLkdldEFueUVjaG9SZXF1ZXN0Gicub2JzZXJ2YXRvcnkudGVzdC52MS5HZXRBbnlFY2hvUmVzcG9uc2UiI4q1GB8KD3Rlc3QuZWNob2VzLmdldBIIcGxhdGZvcm0YAiABEksKBFBpbmcSIC5vYnNlcnZhdG9yeS50ZXN0LnYxLlBpbmdSZXF1ZXN0GiEub2JzZXJ2YXRvcnkudGVzdC52MS5QaW5nUmVzcG9uc2VC2QEKF2NvbS5vYnNlcnZhdG9yeS50ZXN0LnYxQglFY2hvUHJvdG9QAVpFZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L3Rlc3QvdjE7dGVzdHYxogIDT1RYqgITT2JzZXJ2YXRvcnkuVGVzdC5WMcoCE09ic2VydmF0b3J5XFRlc3RcVjHiAh9PYnNlcnZhdG9yeVxUZXN0XFYxXEdQQk1ldGFkYXRh6gIVT2JzZXJ2YXRvcnk6OlRlc3Q6OlYxYgZwcm90bzM", [file_google_api_annotations, file_observatory_v1_annotations]);
 
 /**
  * @generated from message observatory.test.v1.EchoRequest
@@ -109,6 +110,94 @@ export const GetEchoResponseSchema: GenMessage<GetEchoResponse> = /*@__PURE__*/
   messageDesc(file_observatory_test_v1_echo, 5);
 
 /**
+ * @generated from message observatory.test.v1.GetOrgEchoRequest
+ */
+export type GetOrgEchoRequest = Message<"observatory.test.v1.GetOrgEchoRequest"> & {
+  /**
+   * @generated from field: string org = 1;
+   */
+  org: string;
+};
+
+/**
+ * Describes the message observatory.test.v1.GetOrgEchoRequest.
+ * Use `create(GetOrgEchoRequestSchema)` to create a new message.
+ */
+export const GetOrgEchoRequestSchema: GenMessage<GetOrgEchoRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 6);
+
+/**
+ * @generated from message observatory.test.v1.GetOrgEchoResponse
+ */
+export type GetOrgEchoResponse = Message<"observatory.test.v1.GetOrgEchoResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.GetOrgEchoResponse.
+ * Use `create(GetOrgEchoResponseSchema)` to create a new message.
+ */
+export const GetOrgEchoResponseSchema: GenMessage<GetOrgEchoResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 7);
+
+/**
+ * self must never fill {self}: that is always the caller.
+ *
+ * @generated from message observatory.test.v1.GetSelfEchoRequest
+ */
+export type GetSelfEchoRequest = Message<"observatory.test.v1.GetSelfEchoRequest"> & {
+  /**
+   * @generated from field: string self = 1;
+   */
+  self: string;
+};
+
+/**
+ * Describes the message observatory.test.v1.GetSelfEchoRequest.
+ * Use `create(GetSelfEchoRequestSchema)` to create a new message.
+ */
+export const GetSelfEchoRequestSchema: GenMessage<GetSelfEchoRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 8);
+
+/**
+ * @generated from message observatory.test.v1.GetSelfEchoResponse
+ */
+export type GetSelfEchoResponse = Message<"observatory.test.v1.GetSelfEchoResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.GetSelfEchoResponse.
+ * Use `create(GetSelfEchoResponseSchema)` to create a new message.
+ */
+export const GetSelfEchoResponseSchema: GenMessage<GetSelfEchoResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 9);
+
+/**
+ * @generated from message observatory.test.v1.GetAnyEchoRequest
+ */
+export type GetAnyEchoRequest = Message<"observatory.test.v1.GetAnyEchoRequest"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.GetAnyEchoRequest.
+ * Use `create(GetAnyEchoRequestSchema)` to create a new message.
+ */
+export const GetAnyEchoRequestSchema: GenMessage<GetAnyEchoRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 10);
+
+/**
+ * @generated from message observatory.test.v1.GetAnyEchoResponse
+ */
+export type GetAnyEchoResponse = Message<"observatory.test.v1.GetAnyEchoResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.GetAnyEchoResponse.
+ * Use `create(GetAnyEchoResponseSchema)` to create a new message.
+ */
+export const GetAnyEchoResponseSchema: GenMessage<GetAnyEchoResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 11);
+
+/**
  * @generated from message observatory.test.v1.PingRequest
  */
 export type PingRequest = Message<"observatory.test.v1.PingRequest"> & {
@@ -119,7 +208,7 @@ export type PingRequest = Message<"observatory.test.v1.PingRequest"> & {
  * Use `create(PingRequestSchema)` to create a new message.
  */
 export const PingRequestSchema: GenMessage<PingRequest> = /*@__PURE__*/
-  messageDesc(file_observatory_test_v1_echo, 6);
+  messageDesc(file_observatory_test_v1_echo, 12);
 
 /**
  * @generated from message observatory.test.v1.PingResponse
@@ -132,7 +221,7 @@ export type PingResponse = Message<"observatory.test.v1.PingResponse"> & {
  * Use `create(PingResponseSchema)` to create a new message.
  */
 export const PingResponseSchema: GenMessage<PingResponse> = /*@__PURE__*/
-  messageDesc(file_observatory_test_v1_echo, 7);
+  messageDesc(file_observatory_test_v1_echo, 13);
 
 /**
  * @generated from service observatory.test.v1.EchoService
@@ -163,6 +252,32 @@ export const EchoService: GenService<{
     methodKind: "unary";
     input: typeof GetEchoRequestSchema;
     output: typeof GetEchoResponseSchema;
+  },
+  /**
+   * @generated from rpc observatory.test.v1.EchoService.GetOrgEcho
+   */
+  getOrgEcho: {
+    methodKind: "unary";
+    input: typeof GetOrgEchoRequestSchema;
+    output: typeof GetOrgEchoResponseSchema;
+  },
+  /**
+   * @generated from rpc observatory.test.v1.EchoService.GetSelfEcho
+   */
+  getSelfEcho: {
+    methodKind: "unary";
+    input: typeof GetSelfEchoRequestSchema;
+    output: typeof GetSelfEchoResponseSchema;
+  },
+  /**
+   * any_member without an org field: the interceptor must refuse it.
+   *
+   * @generated from rpc observatory.test.v1.EchoService.GetAnyEcho
+   */
+  getAnyEcho: {
+    methodKind: "unary";
+    input: typeof GetAnyEchoRequestSchema;
+    output: typeof GetAnyEchoResponseSchema;
   },
   /**
    * No annotation: the interceptor must deny it.

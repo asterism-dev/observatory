@@ -72,10 +72,12 @@ func (Kind) EnumDescriptor() ([]byte, []int) {
 }
 
 type Permission struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Object        string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
-	Kind          Kind                   `protobuf:"varint,3,opt,name=kind,proto3,enum=observatory.v1.Kind" json:"kind,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Name   string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Object string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Kind   Kind                   `protobuf:"varint,3,opt,name=kind,proto3,enum=observatory.v1.Kind" json:"kind,omitempty"`
+	// Membership is the whole check: no rule applies. Valid only on org-scoped methods.
+	AnyMember     bool `protobuf:"varint,4,opt,name=any_member,json=anyMember,proto3" json:"any_member,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -131,6 +133,13 @@ func (x *Permission) GetKind() Kind {
 	return Kind_KIND_UNSPECIFIED
 }
 
+func (x *Permission) GetAnyMember() bool {
+	if x != nil {
+		return x.AnyMember
+	}
+	return false
+}
+
 var file_observatory_v1_annotations_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
@@ -152,12 +161,14 @@ var File_observatory_v1_annotations_proto protoreflect.FileDescriptor
 
 const file_observatory_v1_annotations_proto_rawDesc = "" +
 	"\n" +
-	" observatory/v1/annotations.proto\x12\x0eobservatory.v1\x1a google/protobuf/descriptor.proto\"b\n" +
+	" observatory/v1/annotations.proto\x12\x0eobservatory.v1\x1a google/protobuf/descriptor.proto\"\x81\x01\n" +
 	"\n" +
 	"Permission\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06object\x18\x02 \x01(\tR\x06object\x12(\n" +
-	"\x04kind\x18\x03 \x01(\x0e2\x14.observatory.v1.KindR\x04kind*;\n" +
+	"\x04kind\x18\x03 \x01(\x0e2\x14.observatory.v1.KindR\x04kind\x12\x1d\n" +
+	"\n" +
+	"any_member\x18\x04 \x01(\bR\tanyMember*;\n" +
 	"\x04Kind\x12\x14\n" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +

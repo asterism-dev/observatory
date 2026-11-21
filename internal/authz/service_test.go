@@ -115,3 +115,15 @@ func TestServiceConcurrentReloads(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestServiceCurrent(t *testing.T) {
+	org, user := uuid.New(), uuid.New()
+	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) { return memberPolicy(org, user, "owner"), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := svc.Current()
+	if !ok || e != svc.Enforcer() {
+		t.Fatalf("Current = %v, %v; want the current enforcer", e, ok)
+	}
+}

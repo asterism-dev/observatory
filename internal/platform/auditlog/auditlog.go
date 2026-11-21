@@ -24,19 +24,31 @@ import (
 const writeTimeout = 5 * time.Second
 
 type interceptor struct {
-	svc      string
-	settings *Settings
-	pool     *pgxpool.Pool
+	svc                  string
+	settings             *Settings
+	pool                 *pgxpool.Pool
+	handlerRecordsWrites bool
+}
+
+type Option func(*interceptor)
+
+// HandlerRecordsWrites leaves allowed and failed writes to handlers that record them inside their own transaction; denials are still recorded here.
+func HandlerRecordsWrites() Option {
+	return func(i *interceptor) { i.handlerRecordsWrites = true }
 }
 
 // Interceptors is the chain every service handler must use: auditing outside authz, since authz stops denied calls before any inner interceptor.
-func Interceptors(svc string, v *identity.Verifier, w *authz.Watcher, settings *Settings, pool *pgxpool.Pool) []connect.Interceptor {
-	return []connect.Interceptor{NewInterceptor(svc, settings, pool), authz.NewInterceptor(v, w)}
+func Interceptors(svc string, v *identity.Verifier, s authz.Source, settings *Settings, pool *pgxpool.Pool, opts ...Option) []connect.Interceptor {
+	return []connect.Interceptor{NewInterceptor(svc, settings, pool, opts...), authz.NewInterceptor(v, s)}
 }
 
 // NewInterceptor records writes and authz denials of verified callers, and reads with data events on; use it through Interceptors.
-func NewInterceptor(svc string, settings *Settings, pool *pgxpool.Pool) connect.Interceptor {
-	return &interceptor{svc: svc, settings: settings, pool: pool}
+func NewInterceptor(svc string, settings *Settings, pool *pgxpool.Pool, opts ...Option) connect.Interceptor {
+	i := &interceptor{svc: svc, settings: settings, pool: pool}
+	for _, o := range opts {
+		o(i)
+	}
+	return i
 }
 
 func (i *interceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
@@ -86,10 +98,10 @@ func (i *interceptor) record(ctx context.Context, req connect.AnyRequest, caller
 	case callErr != nil:
 		res = eventsv1.Result_RESULT_FAILED
 	}
-	if !perm.Write && !caller.Denied && !i.settings.DataEvents(org, i.svc) {
+	if !caller.Denied && (perm.Write && i.handlerRecordsWrites || !perm.Write && !i.settings.DataEvents(org, i.svc)) {
 		return
 	}
-	resource, err := authz.ResolveObject(perm.Object, m)
+	resource, err := authz.ResolveObject(perm.Object, caller.Principal.User, m)
 	if err != nil {
 		resource = perm.Object
 	}

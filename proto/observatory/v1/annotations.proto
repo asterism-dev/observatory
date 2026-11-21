@@ -14,6 +14,8 @@ message Permission {
   string name = 1;
   string object = 2;
   Kind kind = 3;
+  // Membership is the whole check: no rule applies. Valid only on org-scoped methods.
+  bool any_member = 4;
 }
 
 extend google.protobuf.MethodOptions {

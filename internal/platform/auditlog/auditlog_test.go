@@ -58,6 +58,10 @@ func (echoServer) Echo(_ context.Context, r *connect.Request[testv1.EchoRequest]
 	return connect.NewResponse(&testv1.EchoResponse{}), nil
 }
 
+func (echoServer) GetSelfEcho(context.Context, *connect.Request[testv1.GetSelfEchoRequest]) (*connect.Response[testv1.GetSelfEchoResponse], error) {
+	return connect.NewResponse(&testv1.GetSelfEchoResponse{}), nil
+}
+
 func (echoServer) GetEcho(context.Context, *connect.Request[testv1.GetEchoRequest]) (*connect.Response[testv1.GetEchoResponse], error) {
 	return connect.NewResponse(&testv1.GetEchoResponse{}), nil
 }
@@ -95,22 +99,30 @@ type env struct {
 	user uuid.UUID
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, opts ...Option) *env {
+	e := newBareEnv(t)
+	e.src.set()
+	e.set = NewSettingsFrom(e.src)
+	e.serve(t, e.set, opts...)
+	return e
+}
+
+func newBareEnv(t *testing.T) *env {
 	pool, err := pgsvc.Open(context.Background(), dbtest.Empty(t), "svc", outbox.Migrations(fstest.MapFS{}, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	e := &env{pool: pool, src: &fakeSource{}, user: uuid.New()}
-	e.src.set()
-	e.set = NewSettingsFrom(e.src)
+	return &env{pool: pool, src: &fakeSource{}, user: uuid.New()}
+}
+
+func (e *env) serve(t *testing.T, set *Settings, opts ...Option) {
 	mux := http.NewServeMux()
 	mux.Handle(testv1connect.NewEchoServiceHandler(echoServer{},
-		connect.WithInterceptors(NewInterceptor("test", e.set, pool), fakeAuthz{user: e.user})))
+		connect.WithInterceptors(NewInterceptor("test", set, e.pool, opts...), fakeAuthz{user: e.user})))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	e.echo = testv1connect.NewEchoServiceClient(srv.Client(), srv.URL)
-	return e
 }
 
 // events returns the outbox in write order; recording is synchronous, so it is complete once the call returned.
@@ -199,6 +211,50 @@ func TestInterceptorRecords(t *testing.T) {
 		if (row{ev.GetType(), ev.GetOrg(), ev.GetResult()}) != want[i] || ev.GetActor().GetId() != e.user.String() || ev.GetClientIp() != "203.0.113.9" || !ev.GetAudit() {
 			t.Errorf("event %d = %v, want %v", i, ev, want[i])
 		}
+	}
+}
+
+func TestHandlerRecordsWritesSkipsAllowedAndFailed(t *testing.T) {
+	e := newEnv(t, HandlerRecordsWrites())
+	ctx := context.Background()
+	if _, err := e.echo.Echo(ctx, call(t, &testv1.EchoRequest{Text: "hi"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.echo.Echo(ctx, call(t, &testv1.EchoRequest{Text: "notfound"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("handler not found: %v", err)
+	}
+	if _, err := e.echo.Echo(ctx, call(t, &testv1.EchoRequest{}, "X-Deny")); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("denied write: %v", err)
+	}
+	got := e.events(t)
+	if len(got) != 1 || got[0].GetType() != "test.echoes.create" || got[0].GetResult() != eventsv1.Result_RESULT_DENIED {
+		t.Fatalf("recorded %v, want one denied test.echoes.create", got)
+	}
+}
+
+func TestNilSettingsNoDataEvents(t *testing.T) {
+	var s *Settings
+	if s.DataEvents(uuid.NewString(), "test") {
+		t.Fatal("nil settings report data events")
+	}
+	e := newBareEnv(t)
+	e.serve(t, nil)
+	if _, err := e.echo.GetEcho(context.Background(), call(t, &testv1.GetEchoRequest{Org: uuid.NewString(), Echo: uuid.NewString()})); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.events(t); len(got) != 0 {
+		t.Fatalf("recorded %v, want nothing", got)
+	}
+}
+
+func TestSelfResourceIsCaller(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.echo.GetSelfEcho(context.Background(), call(t, &testv1.GetSelfEchoRequest{Self: uuid.NewString()}, "X-Deny")); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("denied read: %v", err)
+	}
+	got := e.events(t)
+	if want := "user:" + e.user.String() + "/echoes"; len(got) != 1 || got[0].GetResource() != want {
+		t.Fatalf("recorded %v, want one event on %s", got, want)
 	}
 }
 
