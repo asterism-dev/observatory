@@ -359,3 +359,57 @@ func TestDashboardLimit(t *testing.T) {
 		t.Fatalf("51st dashboard: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDashboardMoveToPrivateCreatorOnly(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, carolTok := e.user("carol")
+	dan, danTok := e.user("dan")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.addMember(org, carol, store.RoleMember)
+	e.addMember(org, dan, store.RoleAdmin)
+	team := e.createTeam(ownerTok, org, "core")
+	e.setTeamMember(ownerTok, org, team, bob)
+	e.makeTeamAdmin(ownerTok, org, team, carol)
+
+	toPrivate := func(tok string, d dashboardTest) (dashboardTest, int) {
+		e.t.Helper()
+		rec := e.send("PUT", dashboardPath(org, d.ID), tok, `{"name":"`+d.Name+`","scope":"user","panels":[],"updatedAt":"`+d.UpdatedAt+`"}`)
+		var got dashboardTest
+		if rec.Code == 200 {
+			decode(t, rec, &got)
+		}
+		return got, rec.Code
+	}
+	teamDash := e.createDashboard(bobTok, org, `{"name":"Shop","scope":"team","teamId":"`+team.String()+`","panels":[]}`)
+	orgDash := e.createDashboard(danTok, org, `{"name":"All","scope":"org","panels":[]}`)
+	for _, c := range []struct {
+		who string
+		tok string
+		d   dashboardTest
+	}{{"team admin", carolTok, teamDash}, {"org owner", ownerTok, teamDash}, {"org owner on org", ownerTok, orgDash}} {
+		if _, code := toPrivate(c.tok, c.d); code != 403 {
+			t.Fatalf("%s moves to private: %d", c.who, code)
+		}
+	}
+	if es := e.audit("dashboard:edit"); len(es) != 3 || es[0].Result != store.ResultDenied {
+		t.Fatalf("denied audit: %+v", es)
+	}
+	if got, _ := e.getDashboard(bobTok, org, teamDash.ID); got.Scope != "team" {
+		t.Fatalf("moved anyway: %+v", got)
+	}
+
+	got, code := toPrivate(bobTok, teamDash)
+	if code != 200 || got.Scope != "user" || *got.OwnerID != bob.ID {
+		t.Fatalf("creator moves to private: %d %+v", code, got)
+	}
+	es := e.audit(store.ActionDashboardUpdate)
+	if len(es) != 1 || es[0].Details["fromScope"] != "team" || es[0].Details["fromOwnerId"] != team.String() || es[0].Details["scope"] != "user" {
+		t.Fatalf("move audit: %+v", es)
+	}
+	if _, code := toPrivate(danTok, orgDash); code != 200 {
+		t.Fatalf("org creator moves to private: %d", code)
+	}
+}

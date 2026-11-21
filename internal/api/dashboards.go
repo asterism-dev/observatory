@@ -283,6 +283,12 @@ func (h *api) updateDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	moved := body.Scope != old.Scope || (owner != nil && *owner != *old.OwnerID)
+	// Making a dashboard private would take it from everyone else, so only its creator may.
+	if moved && body.Scope == store.EnvScopeUser && old.CreatedBy != a.user {
+		h.auditDenied(r, old.OrgID, dashboardObject(old.Scope, old.OwnerID), "dashboard:edit")
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
 	if moved && !h.authorize(w, r, old.OrgID, dashboardObject(body.Scope, owner), "dashboard:create") {
 		return
 	}
@@ -293,7 +299,11 @@ func (h *api) updateDashboard(w http.ResponseWriter, r *http.Request) {
 		if d, err = tx.UpdateDashboard(r.Context(), d, *body.UpdatedAt); err != nil {
 			return err
 		}
-		return tx.Audit(r.Context(), dashboardAudit(r, store.ActionDashboardUpdate, d))
+		entry := dashboardAudit(r, store.ActionDashboardUpdate, d)
+		if moved {
+			entry.Details["fromScope"], entry.Details["fromOwnerId"] = old.Scope, old.OwnerID
+		}
+		return tx.Audit(r.Context(), entry)
 	}) {
 		return
 	}
