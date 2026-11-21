@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -589,4 +590,41 @@ func TestListAllEventsPlatformAdminOnly(t *testing.T) {
 	wantIDs(t, resp.GetEvents(), b)
 	_, err = f.listAll(t, f.platformAdmin, true, &auditv1.ListAllEventsRequest{FilterOrg: "nope"})
 	wantCode(t, err, connect.CodeInvalidArgument)
+}
+
+type spaces struct{ n, read int }
+
+func (b *spaces) Read(p []byte) (int, error) {
+	if b.read >= b.n {
+		return 0, io.EOF
+	}
+	k := min(len(p), b.n-b.read)
+	for i := range p[:k] {
+		p[i] = ' '
+	}
+	b.read += k
+	return k, nil
+}
+
+func TestOversizedBodyRefusedBeforeAuth(t *testing.T) {
+	f := newFixture(t)
+	// Lets the service finish starting, so the shutdown at cleanup is clean.
+	if _, err := f.list(t, f.admin, &auditv1.ListEventsRequest{Org: f.orgA}); err != nil {
+		t.Fatal(err)
+	}
+	body := &spaces{n: 64 << 20}
+	req, _ := http.NewRequest(http.MethodPost, f.baseURL+"/api/audit/v1/observatory.audit.v1.AuditService/ListEvents", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429 (resource_exhausted)", resp.StatusCode)
+	}
+	// Loose: socket buffers hold some of what the client wrote after the server stopped reading.
+	if body.read > 16<<20 {
+		t.Fatalf("server read about %d bytes before refusing", body.read)
+	}
 }

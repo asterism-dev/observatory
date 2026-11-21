@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -348,5 +349,46 @@ func catalogObject(obj string) string {
 		}
 		_, obj, _ = strings.Cut(after, "}")
 		b.WriteString("*")
+	}
+}
+
+// countingBody yields n bytes of JSON-ish filler and counts how many the handler pulled.
+type countingBody struct{ n, read int }
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	if b.read >= b.n {
+		return 0, io.EOF
+	}
+	k := min(len(p), b.n-b.read)
+	for i := range p[:k] {
+		p[i] = ' '
+	}
+	b.read += k
+	return k, nil
+}
+
+func TestOversizedBodyRefusedBeforeAuth(t *testing.T) {
+	e := newEnv(t)
+	for _, c := range []struct{ name, path, protocol string }{
+		{"connect", "/api/iam/v1/observatory.iam.v1.IAMService/CreateOrg", "1"},
+		{"rest", "/api/iam/v1/orgs", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			body := &countingBody{n: 64 << 20}
+			r := httptest.NewRequest(http.MethodPost, c.path, body)
+			r.Header.Set("Content-Type", "application/json")
+			if c.protocol != "" {
+				r.Header.Set("Connect-Protocol-Version", c.protocol)
+			}
+			w := httptest.NewRecorder()
+			e.srv.Config.Handler.ServeHTTP(w, r)
+			// resource_exhausted, over Connect and REST alike.
+			if w.Code != http.StatusTooManyRequests {
+				t.Fatalf("status %d, want 429: %s", w.Code, w.Body)
+			}
+			if body.read > 2<<20 {
+				t.Fatalf("handler read %d bytes before refusing", body.read)
+			}
+		})
 	}
 }

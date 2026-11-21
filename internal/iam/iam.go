@@ -26,6 +26,8 @@ import (
 // Prefix is where the hub mounts Handler.
 const Prefix = "/api/iam/v1"
 
+const maxBody = 1 << 20
+
 type Deps struct {
 	Store     *store.Store
 	Policy    *authz.Service
@@ -48,12 +50,14 @@ type server struct {
 // Handler serves IAMService under Prefix; writes record their own audit events inside their transaction.
 func Handler(d Deps) (http.Handler, error) {
 	interceptors := append(auditlog.Interceptors("iam", d.Verifier, d.Policy, d.Settings, d.Pool, auditlog.HandlerRecordsWrites()), sessionActive(d.Store))
-	path, h := iamv1connect.NewIAMServiceHandler(&server{Deps: d}, connect.WithInterceptors(interceptors...))
-	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h)})
+	// Bodies are read before the interceptors run, so the cap is what keeps unauthenticated callers from filling memory.
+	path, h := iamv1connect.NewIAMServiceHandler(&server{Deps: d}, connect.WithInterceptors(interceptors...), connect.WithReadMaxBytes(maxBody))
+	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h, vanguard.WithMaxMessageBufferBytes(maxBody))})
 	if err != nil {
 		return nil, err
 	}
-	return http.StripPrefix(Prefix, rest.NoQuery(path, tc)), nil
+	// Connect drains an oversized body to the end; MaxBytesHandler stops reading at the cap instead.
+	return http.MaxBytesHandler(http.StripPrefix(Prefix, rest.NoQuery(path, tc)), maxBody), nil
 }
 
 // ponytail: one session lookup per call so logout and revoke apply at once, as in auth.Require; 5b-2 moves sessions into iam's own store.

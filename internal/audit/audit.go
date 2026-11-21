@@ -25,6 +25,8 @@ import (
 // prefix is where the edge routes the service; the handler strips it.
 const prefix = "/api/audit/v1"
 
+const maxBody = 1 << 20
+
 // internalPrefix serves other services; the edge never routes /internal/.
 const internalPrefix = "/internal/audit"
 
@@ -83,10 +85,11 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		cancel()
 	})
 
+	// Bodies are read before authz, so cap them; MaxBytesHandler also stops Connect from draining an oversized one.
 	path, h := auditv1connect.NewAuditServiceHandler(&server{store: s},
-		connect.WithInterceptors(auditlog.Interceptors("audit", v, w, settings, pool)...))
+		connect.WithInterceptors(auditlog.Interceptors("audit", v, w, settings, pool)...), connect.WithReadMaxBytes(maxBody))
 	mux := http.NewServeMux()
-	mux.Handle(prefix+path, http.StripPrefix(prefix, h))
+	mux.Handle(prefix+path, http.MaxBytesHandler(http.StripPrefix(prefix, h), maxBody))
 	ipath, ih := auditv1connect.NewAuditInternalServiceHandler(internal)
 	mux.Handle(internalPrefix+ipath, http.StripPrefix(internalPrefix, servicetoken.Middleware(cfg.ServiceTokens)(ih)))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
