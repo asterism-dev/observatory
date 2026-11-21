@@ -88,7 +88,11 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/iam/jwks" {
+			http.NotFound(w, r)
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": base64.RawURLEncoding.EncodeToString(pub)}}})
 	}))
 	t.Cleanup(jwks.Close)

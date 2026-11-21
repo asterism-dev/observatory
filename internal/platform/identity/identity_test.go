@@ -36,6 +36,10 @@ func newFakeJWKS(t *testing.T) *fakeJWKS {
 	f := &fakeJWKS{keys: map[string]ed25519.PublicKey{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.hits.Add(1)
+		if r.URL.Path != "/internal/iam/jwks" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer "+testToken {
 			f.badAu.Store(true)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -93,7 +97,7 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	f := &fixture{jwks: newFakeJWKS(t), now: time.Now(), user: uuid.New(), sess: uuid.New()}
 	f.key = f.jwks.addKey("k1")
-	v, err := NewVerifier(f.jwks.srv.URL, testIssuer, testToken, f.jwks.srv.Client())
+	v, err := NewVerifier(f.jwks.srv.URL+"/", testIssuer+"/", testToken, f.jwks.srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

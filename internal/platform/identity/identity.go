@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -69,10 +70,13 @@ type Verifier struct {
 	inflight    chan struct{}
 }
 
-func NewVerifier(jwksURL, issuer, serviceToken string, client *http.Client) (*Verifier, error) {
-	if jwksURL == "" || issuer == "" || serviceToken == "" {
-		return nil, errors.New("identity: jwks url, issuer and service token are required")
+// NewVerifier fetches keys from hubURL's /internal/iam/jwks; issuer is the public URL, compared without a trailing slash as the hub issues it.
+func NewVerifier(hubURL, issuer, serviceToken string, client *http.Client) (*Verifier, error) {
+	issuer = strings.TrimRight(issuer, "/")
+	if hubURL == "" || issuer == "" || serviceToken == "" {
+		return nil, errors.New("identity: hub url, issuer and service token are required")
 	}
+	jwksURL := strings.TrimRight(hubURL, "/") + "/internal/iam/jwks"
 	if client == nil {
 		client = &http.Client{Timeout: fetchTimeout}
 	}
