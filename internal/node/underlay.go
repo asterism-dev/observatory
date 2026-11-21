@@ -50,6 +50,9 @@ func (a *Agent) refreshUnderlay(ctx context.Context) error {
 	a.mu.Lock()
 	a.underlayCert = u.Cert
 	a.mu.Unlock()
+	if a.mesh != nil {
+		a.mesh.setGateway(u.HubKey)
+	}
 	go a.startChassis(ctx, u)
 	return nil
 }

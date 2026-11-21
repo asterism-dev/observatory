@@ -67,6 +67,8 @@ type Agent struct {
 	// VMTelemetry receives the VMs' telemetry; nil receives none.
 	VMTelemetry *vmtelemetry.Sink
 
+	mesh *mesh // nil without an underlay; outlives control connections so direct paths survive reconnects
+
 	updating     atomic.Bool
 	unsentUpdate *proto.UpdateReport // guarded by mu
 
@@ -150,6 +152,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	if a.ChassisKey != "" {
+		a.mesh = newMesh()
 		for {
 			err := a.refreshUnderlay(ctx)
 			if err == nil {
@@ -164,6 +167,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		}
 		go a.renewUnderlay(ctx)
+		go a.mesh.run(ctx)
 	}
 	go a.newHealthMonitor().run(ctx)
 	for {
@@ -275,6 +279,8 @@ func (a *Agent) handle(ctx context.Context, m proto.Message, send func(proto.Mes
 		a.reconcile(ctx, m.Seq, m.Desired)
 	case m.Type == "processes" && m.ReqID != "":
 		go func() { _ = send(a.processes(ctx, m)) }()
+	case m.Type == proto.TypePeers && m.Peers != nil && a.mesh != nil:
+		a.mesh.update(*m.Peers)
 	case m.Type == "update":
 		// The installer may drop the connection; a failure that cannot be sent goes out right after the next register.
 		a.runUpdate(ctx, func(m proto.Message) error {

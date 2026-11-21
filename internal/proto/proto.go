@@ -306,6 +306,14 @@ type Peer struct {
 	Candidates []string `json:"candidates,omitempty"`
 }
 
+// PathStatus is how a node currently reaches one peer node.
+type PathStatus struct {
+	NodeID    string     `json:"nodeId"`
+	Mode      string     `json:"mode"` // "direct" or "relay"
+	Endpoint  string     `json:"endpoint,omitempty"`
+	Handshake *time.Time `json:"handshake,omitempty"`
+}
+
 func NewEncoder(w io.Writer) *json.Encoder { return json.NewEncoder(w) }
 
 func StorageFileName(diskID string) string { return diskID + ".img" }

@@ -62,6 +62,8 @@ underlay config and the emergency channel, never for the control connection.
   `/etc/nftables.conf`; the `nftables` service is enabled. Other tables (e.g. Docker's) are left alone.
   The same table drops traffic from `vmm0` to the underlay (`10.198.0.0/16`), so VMs cannot reach the gateway's
   services (southbound DB, storage exports) or other nodes through their node.
+- **Underlay firewall:** table `inet obs_underlay_node` in the same file admits on `wg-underlay` everything from the
+  gateway (`10.198.0.1`), established traffic, Geneve (UDP 6081) and ICMP echo from other nodes, and drops the rest.
 - **Docker hosts:** the service adds `DOCKER-USER` rules accepting traffic from and back to `vmm0`, so Docker's
   forward policy does not block the VMs.
 - **Node binary** in `/usr/local/bin/observatory-node`, config in `/etc/observatory-node/node.json` (mode 0600, holds
