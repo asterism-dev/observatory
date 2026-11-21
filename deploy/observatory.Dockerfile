@@ -37,7 +37,6 @@ COPY --from=build /guestboot.tar /usr/local/lib/observatory/guestboot.tar
 COPY --from=registry /bin/registry /usr/local/bin/registry
 ENV OBSERVATORY_NODE_BINARY=/usr/local/lib/observatory/observatory-node OBSERVATORY_GUESTBOOT=/usr/local/lib/observatory/guestboot.tar \
     OBSERVATORY_DATA_DIR=/var/lib/observatory
-VOLUME /var/lib/observatory
 USER 65532
 EXPOSE 8090 8091
 ENTRYPOINT ["observatory", "serve"]
