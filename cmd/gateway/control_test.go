@@ -81,3 +81,37 @@ func TestControlProxyUpgrade(t *testing.T) {
 		t.Errorf("status line %q, upstream upgrade %q", line, upgrade)
 	}
 }
+
+func TestControlProxyKeepsStampsListedInConnection(t *testing.T) {
+	var peer, gw string
+	srv, _ := controlFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		peer, gw = r.Header.Get(proto.HeaderUnderlayPeer), r.Header.Get(proto.HeaderGateway)
+	})
+	req, _ := http.NewRequest("GET", srv.URL+"/api/nodes/health", nil)
+	req.Header.Set("Connection", proto.HeaderGateway+", "+proto.HeaderUnderlayPeer)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if peer != "127.0.0.1" || gw != "gw-token" {
+		t.Errorf("upstream saw peer %q gateway %q", peer, gw)
+	}
+}
+
+func TestControlProxyIgnoresForwardedFor(t *testing.T) {
+	var peer string
+	srv, _ := controlFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		peer = r.Header.Get(proto.HeaderUnderlayPeer)
+	})
+	req, _ := http.NewRequest("GET", srv.URL+"/api/nodes/health", nil)
+	req.Header.Set("X-Forwarded-For", "10.198.0.99")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if peer != "127.0.0.1" {
+		t.Errorf("upstream saw peer %q", peer)
+	}
+}
