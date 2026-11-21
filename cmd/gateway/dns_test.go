@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func query(t *testing.T, addr, name string, qt dnsmessage.Type) dnsmessage.Messa
 
 func ask(t *testing.T, s *dnsServer, src, name string) dnsmessage.Message {
 	t.Helper()
-	b, err := s.handle("udp", pack(t, name, dnsmessage.TypeA), "127.0.0.1:1", netip.MustParseAddr(src))
+	b, err := s.handle("udp", pack(t, name, dnsmessage.TypeA), []string{"127.0.0.1:1"}, netip.MustParseAddr(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,10 @@ func TestDNSServesAndForwards(t *testing.T) {
 	defer conn.Close()
 	s := newDNSServer()
 	s.setViews([]proto.GatewayOrg{{ID: orgA, Slice: "127.0.0.0/8", Records: map[string]string{"dev.internal": "10.64.0.10"}}}, nil)
-	go s.serveUDP(conn, up.LocalAddr().String())
+	dead, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	dead.Close()
+	upstreams := []string{dead.LocalAddr().String(), up.LocalAddr().String()}
+	go s.serveUDP(conn, upstreams)
 	addr := conn.LocalAddr().String()
 
 	if m := query(t, addr, "dev.internal.", dnsmessage.TypeA); answer(m) != "10.64.0.10" {
@@ -162,12 +166,31 @@ func TestDNSServesAndForwards(t *testing.T) {
 		t.Fatalf("forward for the gateway itself: %+v", m)
 	}
 	// A device or VM the gateway has no state for yet still resolves public names.
-	b, err := s.handle("udp", pack(t, "example.com.", dnsmessage.TypeA), up.LocalAddr().String(), netip.MustParseAddr("10.192.0.99"))
+	b, err := s.handle("udp", pack(t, "example.com.", dnsmessage.TypeA), upstreams, netip.MustParseAddr("10.192.0.99"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m := unpack(t, b); answer(m) != "9.9.9.9" {
 		t.Fatalf("forward for an unknown device: %+v", m)
+	}
+}
+
+func TestParseUpstreams(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                 "1.1.1.1:53 9.9.9.9:53",
+		"10.0.0.53":                        "10.0.0.53:53",
+		" 10.0.0.53 , 10.0.0.54:5353 ":     "10.0.0.53:53 10.0.0.54:5353",
+		"2001:db8::53,[2001:db8::54]:5353": "[2001:db8::53]:53 [2001:db8::54]:5353",
+	} {
+		got, err := parseUpstreams(in)
+		if err != nil || strings.Join(got, " ") != want {
+			t.Errorf("%q: %v %v, want %s", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"dns.example", "10.0.0.53,", "10.0.0.1:x"} {
+		if _, err := parseUpstreams(in); err == nil {
+			t.Errorf("%q accepted", in)
+		}
 	}
 }
 
@@ -179,7 +202,7 @@ func TestDNSBoundsConcurrency(t *testing.T) {
 	for i := 0; i < cap(s.sem); i++ {
 		s.sem <- struct{}{}
 	}
-	go s.serveUDP(conn, "127.0.0.1:1")
+	go s.serveUDP(conn, []string{"127.0.0.1:1"})
 	c, _ := net.Dial("udp", conn.LocalAddr().String())
 	defer c.Close()
 	c.Write(pack(t, "dev.internal.", dnsmessage.TypeA))

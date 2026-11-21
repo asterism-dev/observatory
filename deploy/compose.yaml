@@ -142,6 +142,7 @@ services:
     environment:
       HUB_URL: http://hub:8090
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
+      OBSERVATORY_GATEWAY_DNS: ${OBSERVATORY_GATEWAY_DNS:-}
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch

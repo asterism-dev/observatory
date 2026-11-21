@@ -116,8 +116,20 @@ On macOS:
 - A device reaches only its own org's router address (`<slice>.1`); ACLs on `ls-transit` drop the other orgs'.
 - DNS picks the view by source address: a device or a VM management address sees only its own org's names
   (`<vm>.internal`, `<vm>.<network>.internal`); any other source gets REFUSED for `*.internal`. Other names are
-  forwarded upstream, except for queries from the gateway's own addresses: when the hub host resolves through a
-  device, Docker's DNS (the gateway's upstream) gets REFUSED and moves on to its next server instead of looping back.
+  forwarded upstream, except for queries from the gateway's own addresses, which get REFUSED.
+
+## Upstream DNS
+
+The gateway forwards names outside `*.internal` to the resolvers in `OBSERVATORY_GATEWAY_DNS` (`deploy/.env`):
+comma-separated IPs, each with an optional port, asked in order until one answers. The default is `1.1.1.1,9.9.9.9`.
+
+It does not use Docker's DNS or the hub host's resolvers. Docker's DNS hands public names to the host's resolver, and
+a device on the hub host (with `DNS = 10.192.0.1`, as generated) routes the host's lookups through the tunnel back to
+the gateway: a loop that times out every lookup on that host.
+
+Set your own resolvers when devices must resolve names only your network's DNS knows, or when outbound DNS to public
+resolvers is blocked. Do not set the hub host's stub (`127.0.0.53`) or Docker's DNS (`127.0.0.11`): both bring the
+loop back. The gateway refuses to start on a value that is not an IP address.
 
 ## Networks
 

@@ -100,6 +100,7 @@ services:
     environment:
       HUB_URL: ${HUB_URL:-http://host.docker.internal:8090}
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:-}
+      OBSERVATORY_GATEWAY_DNS: ${OBSERVATORY_GATEWAY_DNS:-}
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch

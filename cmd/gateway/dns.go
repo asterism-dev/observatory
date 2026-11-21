@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -79,7 +80,7 @@ func (d *dnsServer) viewFor(src netip.Addr) *view {
 	return nil
 }
 
-func (d *dnsServer) handle(network string, req []byte, upstream string, src netip.Addr) ([]byte, error) {
+func (d *dnsServer) handle(network string, req []byte, upstreams []string, src netip.Addr) ([]byte, error) {
 	var m dnsmessage.Message
 	if err := m.Unpack(req); err != nil {
 		return nil, err
@@ -91,11 +92,11 @@ func (d *dnsServer) handle(network string, req []byte, upstream string, src neti
 	name := strings.ToLower(q.Name.String())
 	v := d.viewFor(src)
 	if name != "internal." && !strings.HasSuffix(name, ".internal.") {
-		// The gateway asking itself is its upstream (Docker's DNS) forwarding back when the hub host resolves via a device: a loop.
+		// A local source is an upstream set to the gateway or Docker's DNS asking back: a loop.
 		if v == nil && gatewayLocal(src) {
 			return reply(m, dnsmessage.RCodeRefused, nil, false)
 		}
-		return forward(network, req, upstream)
+		return forward(network, req, upstreams)
 	}
 	if v == nil {
 		return reply(m, dnsmessage.RCodeRefused, nil, false)
@@ -131,7 +132,39 @@ func reply(req dnsmessage.Message, rcode dnsmessage.RCode, answers []dnsmessage.
 	}).Pack()
 }
 
-func forward(network string, req []byte, upstream string) ([]byte, error) {
+// defaultUpstreams are public resolvers: Docker's DNS ends at the host's resolver, which on the hub host may route through a device back to this gateway.
+var defaultUpstreams = []string{"1.1.1.1:53", "9.9.9.9:53"}
+
+// parseUpstreams reads OBSERVATORY_GATEWAY_DNS: comma-separated IPs, each with an optional port.
+func parseUpstreams(s string) ([]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return defaultUpstreams, nil
+	}
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if ap, err := netip.ParseAddrPort(f); err == nil {
+			out = append(out, ap.String())
+		} else if a, err := netip.ParseAddr(f); err == nil {
+			out = append(out, netip.AddrPortFrom(a, 53).String())
+		} else {
+			return nil, fmt.Errorf("OBSERVATORY_GATEWAY_DNS: %q is not an IP address or IP:port", f)
+		}
+	}
+	return out, nil
+}
+
+// forward asks each upstream in turn until one answers.
+func forward(network string, req []byte, upstreams []string) (resp []byte, err error) {
+	for _, u := range upstreams {
+		if resp, err = exchange(network, req, u); err == nil {
+			return resp, nil
+		}
+	}
+	return nil, err
+}
+
+func exchange(network string, req []byte, upstream string) ([]byte, error) {
 	c, err := net.DialTimeout(network, upstream, 3*time.Second)
 	if err != nil {
 		return nil, err
@@ -176,7 +209,7 @@ func sourceAddr(a net.Addr) netip.Addr {
 	return ap.Addr().Unmap()
 }
 
-func (d *dnsServer) serveUDP(conn net.PacketConn, upstream string) {
+func (d *dnsServer) serveUDP(conn net.PacketConn, upstreams []string) {
 	buf := make([]byte, 65535)
 	for {
 		n, from, err := conn.ReadFrom(buf)
@@ -187,14 +220,14 @@ func (d *dnsServer) serveUDP(conn net.PacketConn, upstream string) {
 		d.sem <- struct{}{}
 		go func() {
 			defer func() { <-d.sem }()
-			if resp, err := d.handle("udp", req, upstream, sourceAddr(from)); err == nil {
+			if resp, err := d.handle("udp", req, upstreams, sourceAddr(from)); err == nil {
 				conn.WriteTo(resp, from)
 			}
 		}()
 	}
 }
 
-func (d *dnsServer) serveTCP(l net.Listener, upstream string) {
+func (d *dnsServer) serveTCP(l net.Listener, upstreams []string) {
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -211,7 +244,7 @@ func (d *dnsServer) serveTCP(l net.Listener, upstream string) {
 				if err != nil {
 					return
 				}
-				resp, err := d.handle("tcp", req, upstream, src)
+				resp, err := d.handle("tcp", req, upstreams, src)
 				if err != nil || writeFramed(c, resp) != nil {
 					return
 				}
