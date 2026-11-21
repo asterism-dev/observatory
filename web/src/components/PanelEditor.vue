@@ -73,6 +73,13 @@ async function pick(name: string) {
   area.value?.setSelectionRange(token.start + name.length, token.start + name.length)
 }
 
+// Esc closes the suggestions first; with none open it reaches the dialog.
+function closeSuggestions(e: KeyboardEvent) {
+  if (!suggestions.value.length) return
+  e.stopPropagation()
+  suggestions.value = []
+}
+
 function save() {
   emit('save', { ...draft.value })
   emit('update:open', false)
@@ -117,7 +124,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
           @input="suggest"
           @keydown.ctrl.enter.prevent="run"
           @keydown.meta.enter.prevent="run"
-          @keydown.esc.stop="suggestions = []"
+          @keydown.esc="closeSuggestions"
         />
       </label>
       <div v-if="suggestions.length" class="suggest" role="listbox" :aria-label="t('dashboards.metricNames')">
