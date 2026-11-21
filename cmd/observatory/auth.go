@@ -2,7 +2,6 @@ package main
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
@@ -28,7 +26,7 @@ func cmdLogin(c *cli, args []string) error {
 		Issuer      string `json:"issuer"`
 		CLIClientID string `json:"cliClientId"`
 	}
-	if err := c.do(http.MethodGet, "/api/auth/config", "", nil, &hubCfg); err != nil {
+	if err := c.do(http.MethodGet, "/api/auth/config", "", nil, nil, &hubCfg); err != nil {
 		return fmt.Errorf("fetch hub config: %w", err)
 	}
 
@@ -79,7 +77,7 @@ func cmdLogin(c *cli, args []string) error {
 		ExpiresAt time.Time `json:"expiresAt"`
 	}
 	body := map[string]string{"idToken": idToken, "accessToken": token.AccessToken}
-	if err := c.do(http.MethodPost, "/api/auth/cli-token", "", body, &res); err != nil {
+	if err := c.do(http.MethodPost, "/api/auth/cli-token", "", nil, body, &res); err != nil {
 		if ae := (*apiError)(nil); errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
 			return errors.New("hub refused the login: " + cmp.Or(ae.Msg, "unauthorized"))
 		}
@@ -263,16 +261,8 @@ func cmdOrgAudit(c *cli, args []string) error {
 	if *since > 0 {
 		req.Filter.From = timestamppb.New(c.now().Add(-*since))
 	}
-	body, err := protojson.Marshal(req)
-	if err != nil {
-		return err
-	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodPost, "/api/audit/v1/observatory.audit.v1.AuditService/ListEvents", json.RawMessage(body), &raw); err != nil {
-		return err
-	}
 	var resp auditv1.ListEventsResponse
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, &resp); err != nil {
+	if err := c.connectCall("/api/audit/v1/observatory.audit.v1.AuditService/ListEvents", req, &resp); err != nil {
 		return err
 	}
 	rows := make([][]string, 0, len(resp.GetEvents()))
@@ -283,5 +273,5 @@ func cmdOrgAudit(c *cli, args []string) error {
 		}
 		rows = append(rows, []string{ago(c.now(), e.GetTime().AsTime()), actor, e.GetType(), e.GetResource(), strings.ToLower(strings.TrimPrefix(e.GetResult().String(), "RESULT_"))})
 	}
-	return c.emit(raw, []string{"time", "actor", "action", "resource", "result"}, rows)
+	return c.emit(pj(&resp), []string{"time", "actor", "action", "resource", "result"}, rows)
 }

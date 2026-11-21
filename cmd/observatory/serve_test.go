@@ -520,6 +520,13 @@ func TestServeAllRefusesEndedSessionsAtOnce(t *testing.T) {
 			t.Fatalf("/api/info before: %d", code)
 		}
 	}
+	// The real CLI transport, so a request the edge or the transcoder misroutes fails here.
+	c, stdout, stderr := newTestCLI(t, nil)
+	t.Setenv("OBSERVATORY_HUB", "http://"+edgeLn.Addr().String())
+	t.Setenv("OBSERVATORY_TOKEN", other)
+	if code := run(c, []string{"whoami"}); code != 0 || !strings.Contains(stdout.String(), "alice") {
+		t.Fatalf("whoami: exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
 	if code := call("POST", "/auth/logout", web, true); code != http.StatusNoContent {
 		t.Fatalf("logout: %d", code)
 	}

@@ -99,8 +99,8 @@ func (c *cli) token() (string, error) {
 	return c.cfg.Token, nil
 }
 
-// do sends body as JSON and decodes a 2xx response into into (a struct pointer, *json.RawMessage or nil).
-func (c *cli) do(method, path, bearer string, body, into any) error {
+// do sends body as JSON with the extra headers hdr and decodes a 2xx response into into (a struct pointer, *json.RawMessage or nil).
+func (c *cli) do(method, path, bearer string, hdr http.Header, body, into any) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -115,6 +115,9 @@ func (c *cli) do(method, path, bearer string, body, into any) error {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range hdr {
+		req.Header[k] = v
 	}
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
@@ -150,19 +153,30 @@ func (c *cli) call(method, path string, body, into any) error {
 	if err != nil {
 		return err
 	}
-	return c.do(method, path, tok, body, into)
+	return c.do(method, path, tok, nil, body, into)
 }
 
 const iamService = "/api/iam/v1/observatory.iam.v1.IAMService/"
 
-// rpc calls an IAMService method with Connect's JSON protocol, so auth and errors work as for the REST routes.
+// Without it the iam transcoder takes a JSON POST for REST and finds no route.
+var connectHeader = http.Header{"Connect-Protocol-Version": {"1"}}
+
 func (c *cli) rpc(method string, req, resp proto.Message) error {
+	return c.connectCall(iamService+method, req, resp)
+}
+
+// connectCall calls the Connect procedure at path with Connect's JSON protocol.
+func (c *cli) connectCall(path string, req, resp proto.Message) error {
 	body, err := protojson.Marshal(req)
 	if err != nil {
 		return err
 	}
+	tok, err := c.token()
+	if err != nil {
+		return err
+	}
 	var raw json.RawMessage
-	if err := c.call(http.MethodPost, iamService+method, json.RawMessage(body), &raw); err != nil {
+	if err := c.do(http.MethodPost, path, tok, connectHeader, json.RawMessage(body), &raw); err != nil {
 		return err
 	}
 	if len(raw) == 0 {
