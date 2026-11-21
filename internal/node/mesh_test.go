@@ -467,12 +467,17 @@ func TestMeshProbesDirectPathMTUOnce(t *testing.T) {
 	e.handshake(peerA.PublicKey)
 	e.wg.peers[peerA.PublicKey].endpoint = "192.168.1.5:51822"
 	e.advance(meshTick)
+	if e.wg.pings() != 0 {
+		t.Fatal("tick probed inline")
+	}
+	e.m.probePending()
 	if s := e.path(t, "a"); s.Mode != "direct" || s.MTU != 1420 {
 		t.Fatalf("path = %+v", s)
 	}
 	n := e.wg.pings()
 	e.handshake(peerA.PublicKey)
 	e.advance(meshTick)
+	e.m.probePending()
 	if e.wg.pings() != n {
 		t.Fatal("probed the same endpoint again")
 	}
@@ -480,7 +485,43 @@ func TestMeshProbesDirectPathMTUOnce(t *testing.T) {
 	e.handshake(peerA.PublicKey)
 	e.wg.pathMTU = 1400
 	e.advance(meshTick)
+	e.m.probePending()
 	if s := e.path(t, "a"); s.MTU != 1400 {
 		t.Fatalf("new endpoint not probed: %+v", s)
+	}
+}
+
+func TestMeshRetriesFailedProbeAndPrunes(t *testing.T) {
+	e := newMeshEnv(t)
+	e.wg.pathMTU = 1100
+	e.m.update(proto.Peers{Peers: []proto.Peer{peerA}})
+	e.advance(time.Second)
+	e.handshake(peerA.PublicKey)
+	e.wg.peers[peerA.PublicKey].endpoint = "192.168.1.5:51822"
+	e.advance(meshTick)
+	e.m.probePending()
+	if s := e.path(t, "a"); s.Mode != "direct" || s.MTU != 0 {
+		t.Fatalf("path = %+v", s)
+	}
+	n := e.wg.pings()
+	e.wg.pathMTU = 1420
+	for range 9 {
+		e.handshake(peerA.PublicKey)
+		e.advance(time.Minute)
+	}
+	e.m.probePending()
+	if e.wg.pings() != n {
+		t.Fatal("retried before mtuRetry")
+	}
+	e.handshake(peerA.PublicKey)
+	e.advance(time.Minute)
+	e.m.probePending()
+	if s := e.path(t, "a"); s.MTU != 1420 {
+		t.Fatalf("failed probe not retried: %+v", s)
+	}
+	e.wg.peers[peerA.PublicKey].endpoint = "192.168.1.6:51822"
+	e.advance(meshTick)
+	if _, ok := e.m.mtus["192.168.1.5:51822"]; ok {
+		t.Fatal("stale endpoint kept")
 	}
 }

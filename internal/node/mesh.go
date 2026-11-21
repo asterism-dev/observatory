@@ -24,6 +24,7 @@ const (
 	directTimeout = 15 * time.Second
 	directRetry   = 2 * time.Minute
 	directStale   = 3 * time.Minute
+	mtuRetry      = 10 * time.Minute
 	underlayIface = "wg-underlay"
 )
 
@@ -54,12 +55,20 @@ type mesh struct {
 	mu      sync.Mutex
 	gateway string // the hub's wg-underlay key; never configured or removed here
 	peers   map[string]*meshPeer
-	mtus    map[string]int // direct endpoint → probed path MTU, 0 when the probe failed
+	mtus    map[string]mtuResult // direct endpoint → probed path MTU
+	queued  map[string]bool
+	queue   []string
+	wake    chan struct{}
+}
+
+type mtuResult struct {
+	mtu int // 0 when the probe failed
+	at  time.Time
 }
 
 type runner = func(name string, args ...string) (string, error)
 
-func newMesh() *mesh { return &mesh{cmd: runOutput, now: time.Now} }
+func newMesh() *mesh { return &mesh{cmd: runOutput, now: time.Now, wake: make(chan struct{}, 1)} }
 
 func runOutput(name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), wgTimeout)
@@ -132,6 +141,7 @@ func (m *mesh) validPeer(p proto.Peer) (proto.Peer, error) {
 }
 
 func (m *mesh) run(ctx context.Context) {
+	go m.prober(ctx)
 	t := time.NewTicker(meshTick)
 	defer t.Stop()
 	for {
@@ -147,24 +157,67 @@ func (m *mesh) run(ctx context.Context) {
 func (m *mesh) tick() {
 	m.mu.Lock()
 	m.reconcileLocked()
-	var todo []string
+	now := m.now()
+	used := map[string]bool{}
 	for _, p := range m.peers {
-		if _, done := m.mtus[p.endpoint]; p.mode == pathDirect && p.endpoint != "" && !done {
-			todo = append(todo, p.endpoint)
+		if p.mode == pathDirect && p.endpoint != "" {
+			used[p.endpoint] = true
+		}
+	}
+	for ep := range m.mtus {
+		if !used[ep] {
+			delete(m.mtus, ep)
+		}
+	}
+	for ep := range used {
+		r, done := m.mtus[ep]
+		if (!done || (r.mtu == 0 && now.Sub(r.at) >= mtuRetry)) && !m.queued[ep] {
+			if m.queued == nil {
+				m.queued = map[string]bool{}
+			}
+			m.queued[ep] = true
+			m.queue = append(m.queue, ep)
 		}
 	}
 	m.mu.Unlock()
-	// Probing takes seconds, so it runs without the lock; update and status stay responsive.
-	for _, ep := range todo {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+// prober probes one endpoint at a time so slow pings never delay path judgment.
+func (m *mesh) prober(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.wake:
+			m.probePending()
+		}
+	}
+}
+
+func (m *mesh) probePending() {
+	for {
+		m.mu.Lock()
+		if len(m.queue) == 0 {
+			m.mu.Unlock()
+			return
+		}
+		ep := m.queue[0]
+		m.queue = m.queue[1:]
+		m.mu.Unlock()
 		mtu := 0
 		if ap, err := netip.ParseAddrPort(ep); err == nil {
 			mtu = probeMTU(m.cmd, ap.Addr().String())
 		}
 		m.mu.Lock()
 		if m.mtus == nil {
-			m.mtus = map[string]int{}
+			m.mtus = map[string]mtuResult{}
 		}
-		m.mtus[ep] = mtu
+		m.mtus[ep] = mtuResult{mtu, m.now()}
+		delete(m.queued, ep)
 		m.mu.Unlock()
 	}
 }
@@ -316,7 +369,7 @@ func (m *mesh) status() []proto.PathStatus {
 	for _, p := range m.peers {
 		s := proto.PathStatus{NodeID: p.NodeID, Mode: "relay"}
 		if p.mode == pathDirect {
-			s.Mode, s.Endpoint, s.MTU = "direct", p.endpoint, m.mtus[p.endpoint]
+			s.Mode, s.Endpoint, s.MTU = "direct", p.endpoint, m.mtus[p.endpoint].mtu
 		}
 		if !p.handshake.IsZero() {
 			hs := p.handshake
