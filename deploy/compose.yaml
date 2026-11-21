@@ -127,12 +127,16 @@ services:
     environment:
       HUB_URL: http://hub:8090
       OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
+      OBSERVATORY_GATEWAY_CHASSIS: ${OBSERVATORY_GATEWAY_NODE:-}
     ports:
       - "51820:51820/udp"
       - "51821:51821/udp"
     volumes:
       - ovn:/var/lib/ovn
       - ovs:/etc/openvswitch
+      # Used only with OBSERVATORY_GATEWAY_NODE: the node's OVS and network namespace on this host.
+      - /var/run/openvswitch:/host-ovs
+      - /proc/1/ns/net:/hostns/net:ro
   # Shares the gateway's network namespace so exports listen on the underlay address only, nothing published on the host.
   storage:
     image: ghcr.io/asterism-dev/observatory-storage:${OBSERVATORY_VERSION:-latest}
