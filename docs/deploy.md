@@ -84,7 +84,8 @@ cannot read it.
 - `OBSERVATORY_GATEWAY_HOST` is what nodes and devices dial on UDP 51820/51821; it defaults to the host of the public
   URL.
 - `OBSERVATORY_GATEWAY_NODE` (optional) is the id of a node installed on the hub host itself. The gateway then uses
-  that node's OVS instead of its own; see [network.md](network.md#hub-and-node-on-one-host).
+  that node's OVS instead of its own. It needs the override `deploy/compose.shared.yaml`
+  (`-f deploy/compose.yaml -f deploy/compose.shared.yaml`); see [network.md](network.md#hub-and-node-on-one-host).
 - `OBSERVATORY_SECRETS_KEY` encrypts every stored secret. Back it up; a new key makes them unreadable.
 - `OBSERVATORY_OIDC_ISSUER` must be reachable from the hub container, so not `localhost`.
 - `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub. They arrive at

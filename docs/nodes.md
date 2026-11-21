@@ -51,11 +51,12 @@ underlay config and the emergency channel, never for the control connection.
 
 ### On the hub host
 
-The hub host can also be a node. Install it as above, then set `OBSERVATORY_GATEWAY_NODE` in `deploy/.env` to the
-node id (`ovs-vsctl get open . external_ids:system-id`) and restart gateway and hub with
-`docker compose -f deploy/compose.yaml up -d`, before the node runs VMs. The gateway then uses this node's OVS, and
-this node's chassis carries every org's device traffic; a node update briefly interrupts all devices. Details and
-trade-offs: [network.md](network.md#hub-and-node-on-one-host).
+The hub host can also be a node. Install it as above, set `OBSERVATORY_GATEWAY_NODE` in `deploy/.env` to the node id
+(`ovs-vsctl get open . external_ids:system-id`), run
+`docker compose -f deploy/compose.yaml -f deploy/compose.shared.yaml up -d` and then
+`sudo systemctl restart observatory-node`. The gateway then uses this node's OVS, and this node's chassis carries every
+org's device traffic; a node update briefly interrupts all devices. Details, switching back and trade-offs:
+[network.md](network.md#hub-and-node-on-one-host).
 
 ## What the installer changes on the host
 
