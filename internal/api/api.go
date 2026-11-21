@@ -90,6 +90,7 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, resources
 	mux.HandleFunc("POST /api/registry/credentials", h.createRegistryCredential)
 	mux.HandleFunc("GET /api/admin/orgs", h.adminListOrgs)
 	mux.HandleFunc("GET /api/admin/orgs/{org}", h.adminGetOrg)
+	mux.HandleFunc("GET /api/admin/orgs/{org}/limits", h.adminGetOrgLimits)
 	mux.HandleFunc("PUT /api/admin/orgs/{org}/limits", h.adminSetOrgLimits)
 	mux.HandleFunc("GET /api/admin/users", h.adminListUsers)
 	mux.HandleFunc("PUT /api/admin/users/{user}/platform-admin", h.adminSetPlatformAdmin)

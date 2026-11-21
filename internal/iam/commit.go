@@ -43,6 +43,7 @@ var errorCodes = []struct {
 	{errForbidden, connect.CodePermissionDenied},
 	{authz.ErrDenyNotAllowed, connect.CodePermissionDenied},
 	{authz.ErrEscalation, connect.CodePermissionDenied},
+	{errLiftsOwnDeny, connect.CodePermissionDenied},
 	{store.ErrLastOwner, connect.CodeFailedPrecondition},
 	{store.ErrPersonalOrg, connect.CodeFailedPrecondition},
 	{store.ErrConflict, connect.CodeFailedPrecondition},

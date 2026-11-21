@@ -95,6 +95,26 @@ func (h *api) adminReadError(w http.ResponseWriter, what string, err error) {
 	serverError(w, what, err)
 }
 
+func (h *api) adminGetOrgLimits(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePlatformAdmin(w, r, store.ActionAdminRead, "admin/orgs") {
+		return
+	}
+	id, ok := pathID(w, r, "org")
+	if !ok {
+		return
+	}
+	if _, err := h.store.Org(r.Context(), id); err != nil {
+		h.adminReadError(w, "org", err)
+		return
+	}
+	ls, err := h.store.Limits(r.Context(), id)
+	if err != nil {
+		serverError(w, "admin org limits", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toOrgLimitsJSON(ls))
+}
+
 func (h *api) adminSetOrgLimits(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlatformAdmin(w, r, store.ActionLimitSet, "admin/orgs") {
 		return

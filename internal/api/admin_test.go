@@ -181,3 +181,33 @@ func TestSetGuestMTUDoesNotTouchVMs(t *testing.T) {
 		t.Fatalf("vm changed: %+v -> %+v", before, after)
 	}
 }
+
+func TestAdminOrgLimitsEndpoint(t *testing.T) {
+	e := newEnv(t)
+	_, rootTok := e.user("root")
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	team := e.createTeam(tok, org, "core")
+	e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", rootTok, `{"vcpu":8}`)
+	e.send("PUT", "/api/orgs/"+org.String()+"/limits/team:"+team.String(), tok, `{"vcpu":2}`)
+	path := "/api/admin/orgs/" + org.String() + "/limits"
+
+	var got limitsResp
+	rec := e.do("GET", path, rootTok)
+	decode(t, rec, &got)
+	if rec.Code != 200 || *got.Org["vcpu"] != 8 || *got.Teams[team.String()]["vcpu"] != 2 {
+		t.Fatalf("limits: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("GET", "/api/admin/orgs/"+uuid.NewString()+"/limits", rootTok); rec.Code != 404 {
+		t.Fatalf("unknown org: %d", rec.Code)
+	}
+	if rec := e.do("GET", path, tok); rec.Code != 403 {
+		t.Fatalf("non-admin: %d", rec.Code)
+	}
+	if es := e.audit(store.ActionAdminRead); len(es) == 0 || es[0].Result != store.ResultDenied || es[0].ActorID != alice.ID.String() {
+		t.Fatalf("denied audit: %+v", es)
+	}
+	if rec := e.do("GET", path, ""); rec.Code != 401 {
+		t.Fatalf("no token: %d", rec.Code)
+	}
+}
