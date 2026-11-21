@@ -11,7 +11,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/test/v1/echo.proto.
  */
 export const file_observatory_test_v1_echo: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCTKCAQoLRWNob1NlcnZpY2UScwoERWNobxIgLm9ic2VydmF0b3J5LnRlc3QudjEuRWNob1JlcXVlc3QaIS5vYnNlcnZhdG9yeS50ZXN0LnYxLkVjaG9SZXNwb25zZSImirUYIgoSdGVzdC5lY2hvZXMuY3JlYXRlEgpvcmcvZWNob2VzGAFC2QEKF2NvbS5vYnNlcnZhdG9yeS50ZXN0LnYxQglFY2hvUHJvdG9QAVpFZ2l0aHViLmNvbS9hc3RlcmlzbS1kZXYvb2JzZXJ2YXRvcnkvZ2VuL2dvL29ic2VydmF0b3J5L3Rlc3QvdjE7dGVzdHYxogIDT1RYqgITT2JzZXJ2YXRvcnkuVGVzdC5WMcoCE09ic2VydmF0b3J5XFRlc3RcVjHiAh9PYnNlcnZhdG9yeVxUZXN0XFYxXEdQQk1ldGFkYXRh6gIVT2JzZXJ2YXRvcnk6OlRlc3Q6OlYxYgZwcm90bzM", [file_observatory_v1_annotations]);
+  fileDesc("Ch5vYnNlcnZhdG9yeS90ZXN0L3YxL2VjaG8ucHJvdG8SE29ic2VydmF0b3J5LnRlc3QudjEiGwoLRWNob1JlcXVlc3QSDAoEdGV4dBgBIAEoCSIcCgxFY2hvUmVzcG9uc2USDAoEdGV4dBgBIAEoCSINCgtQZWVrUmVxdWVzdCIOCgxQZWVrUmVzcG9uc2Uy8gEKC0VjaG9TZXJ2aWNlEnMKBEVjaG8SIC5vYnNlcnZhdG9yeS50ZXN0LnYxLkVjaG9SZXF1ZXN0GiEub2JzZXJ2YXRvcnkudGVzdC52MS5FY2hvUmVzcG9uc2UiJoq1GCIKEnRlc3QuZWNob2VzLmNyZWF0ZRIKb3JnL2VjaG9lcxgBEm4KBFBlZWsSIC5vYnNlcnZhdG9yeS50ZXN0LnYxLlBlZWtSZXF1ZXN0GiEub2JzZXJ2YXRvcnkudGVzdC52MS5QZWVrUmVzcG9uc2UiIYq1GB0KD3Rlc3QuZWNob2VzLmdldBIKb3JnL2VjaG9lc0LZAQoXY29tLm9ic2VydmF0b3J5LnRlc3QudjFCCUVjaG9Qcm90b1ABWkVnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvdGVzdC92MTt0ZXN0djGiAgNPVFiqAhNPYnNlcnZhdG9yeS5UZXN0LlYxygITT2JzZXJ2YXRvcnlcVGVzdFxWMeICH09ic2VydmF0b3J5XFRlc3RcVjFcR1BCTWV0YWRhdGHqAhVPYnNlcnZhdG9yeTo6VGVzdDo6VjFiBnByb3RvMw", [file_observatory_v1_annotations]);
 
 /**
  * @generated from message observatory.test.v1.EchoRequest
@@ -48,6 +48,32 @@ export const EchoResponseSchema: GenMessage<EchoResponse> = /*@__PURE__*/
   messageDesc(file_observatory_test_v1_echo, 1);
 
 /**
+ * @generated from message observatory.test.v1.PeekRequest
+ */
+export type PeekRequest = Message<"observatory.test.v1.PeekRequest"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.PeekRequest.
+ * Use `create(PeekRequestSchema)` to create a new message.
+ */
+export const PeekRequestSchema: GenMessage<PeekRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 2);
+
+/**
+ * @generated from message observatory.test.v1.PeekResponse
+ */
+export type PeekResponse = Message<"observatory.test.v1.PeekResponse"> & {
+};
+
+/**
+ * Describes the message observatory.test.v1.PeekResponse.
+ * Use `create(PeekResponseSchema)` to create a new message.
+ */
+export const PeekResponseSchema: GenMessage<PeekResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_test_v1_echo, 3);
+
+/**
  * @generated from service observatory.test.v1.EchoService
  */
 export const EchoService: GenService<{
@@ -58,6 +84,16 @@ export const EchoService: GenService<{
     methodKind: "unary";
     input: typeof EchoRequestSchema;
     output: typeof EchoResponseSchema;
+  },
+  /**
+   * No kind: Of must refuse it rather than treat it as a read.
+   *
+   * @generated from rpc observatory.test.v1.EchoService.Peek
+   */
+  peek: {
+    methodKind: "unary";
+    input: typeof PeekRequestSchema;
+    output: typeof PeekResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_test_v1_echo, 0);

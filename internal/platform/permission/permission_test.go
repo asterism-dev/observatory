@@ -16,6 +16,13 @@ func TestPermissionOf(t *testing.T) {
 	}
 }
 
+func TestPermissionOfRejectsUnspecifiedKind(t *testing.T) {
+	md := testv1.File_observatory_test_v1_echo_proto.Services().ByName("EchoService").Methods().ByName("Peek")
+	if got, ok := permission.Of(md); ok {
+		t.Fatalf("Of = %+v, true; want false for KIND_UNSPECIFIED", got)
+	}
+}
+
 func TestValidName(t *testing.T) {
 	for s, want := range map[string]bool{
 		"logging.logEntries.list": true,

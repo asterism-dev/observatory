@@ -29,5 +29,12 @@ func Of(md protoreflect.MethodDescriptor) (Permission, bool) {
 	if p == nil {
 		return Permission{}, false
 	}
-	return Permission{Name: p.GetName(), Object: p.GetObject(), Write: p.GetKind() == obsv1.Kind_KIND_WRITE}, true
+	switch p.GetKind() {
+	case obsv1.Kind_KIND_WRITE:
+		return Permission{Name: p.GetName(), Object: p.GetObject(), Write: true}, true
+	case obsv1.Kind_KIND_READ:
+		return Permission{Name: p.GetName(), Object: p.GetObject()}, true
+	}
+	// An unset kind must never fail open as a read.
+	return Permission{}, false
 }

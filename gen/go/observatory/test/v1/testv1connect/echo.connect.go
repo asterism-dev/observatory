@@ -35,11 +35,15 @@ const (
 const (
 	// EchoServiceEchoProcedure is the fully-qualified name of the EchoService's Echo RPC.
 	EchoServiceEchoProcedure = "/observatory.test.v1.EchoService/Echo"
+	// EchoServicePeekProcedure is the fully-qualified name of the EchoService's Peek RPC.
+	EchoServicePeekProcedure = "/observatory.test.v1.EchoService/Peek"
 )
 
 // EchoServiceClient is a client for the observatory.test.v1.EchoService service.
 type EchoServiceClient interface {
 	Echo(context.Context, *connect.Request[v1.EchoRequest]) (*connect.Response[v1.EchoResponse], error)
+	// No kind: Of must refuse it rather than treat it as a read.
+	Peek(context.Context, *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error)
 }
 
 // NewEchoServiceClient constructs a client for the observatory.test.v1.EchoService service. By
@@ -59,12 +63,19 @@ func NewEchoServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(echoServiceMethods.ByName("Echo")),
 			connect.WithClientOptions(opts...),
 		),
+		peek: connect.NewClient[v1.PeekRequest, v1.PeekResponse](
+			httpClient,
+			baseURL+EchoServicePeekProcedure,
+			connect.WithSchema(echoServiceMethods.ByName("Peek")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // echoServiceClient implements EchoServiceClient.
 type echoServiceClient struct {
 	echo *connect.Client[v1.EchoRequest, v1.EchoResponse]
+	peek *connect.Client[v1.PeekRequest, v1.PeekResponse]
 }
 
 // Echo calls observatory.test.v1.EchoService.Echo.
@@ -72,9 +83,16 @@ func (c *echoServiceClient) Echo(ctx context.Context, req *connect.Request[v1.Ec
 	return c.echo.CallUnary(ctx, req)
 }
 
+// Peek calls observatory.test.v1.EchoService.Peek.
+func (c *echoServiceClient) Peek(ctx context.Context, req *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error) {
+	return c.peek.CallUnary(ctx, req)
+}
+
 // EchoServiceHandler is an implementation of the observatory.test.v1.EchoService service.
 type EchoServiceHandler interface {
 	Echo(context.Context, *connect.Request[v1.EchoRequest]) (*connect.Response[v1.EchoResponse], error)
+	// No kind: Of must refuse it rather than treat it as a read.
+	Peek(context.Context, *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error)
 }
 
 // NewEchoServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -90,10 +108,18 @@ func NewEchoServiceHandler(svc EchoServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(echoServiceMethods.ByName("Echo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	echoServicePeekHandler := connect.NewUnaryHandler(
+		EchoServicePeekProcedure,
+		svc.Peek,
+		connect.WithSchema(echoServiceMethods.ByName("Peek")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/observatory.test.v1.EchoService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case EchoServiceEchoProcedure:
 			echoServiceEchoHandler.ServeHTTP(w, r)
+		case EchoServicePeekProcedure:
+			echoServicePeekHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -105,4 +131,8 @@ type UnimplementedEchoServiceHandler struct{}
 
 func (UnimplementedEchoServiceHandler) Echo(context.Context, *connect.Request[v1.EchoRequest]) (*connect.Response[v1.EchoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.Echo is not implemented"))
+}
+
+func (UnimplementedEchoServiceHandler) Peek(context.Context, *connect.Request[v1.PeekRequest]) (*connect.Response[v1.PeekResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.test.v1.EchoService.Peek is not implemented"))
 }
