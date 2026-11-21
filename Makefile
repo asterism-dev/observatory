@@ -16,7 +16,7 @@ gateway-up: gateway-token storage-token
 	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway storage
 
 gateway-down:
-	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf storage gateway modules
+	docker compose -f deploy/dev/compose.yaml --profile gateway rm -sf storage gateway netns modules
 
 registry-env:
 	mkdir -p deploy/dev/registry-keys deploy/dev/registry-certs
