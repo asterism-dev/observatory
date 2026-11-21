@@ -30,14 +30,17 @@ change applies at the next run. Nothing else deletes events.
 
 ## API
 
-- `ListEvents` (org) and `ListAllEvents` (platform admins) at `/api/audit/v1/`, filterable by action, actor and time,
-  paged with `nextPageToken`.
+- `ListEvents` (org) and `ListAllEvents` (platform admins) at `/api/audit/v1/`, filterable by action, actor, result
+  (`allowed`, `denied`, `failed`) and time, paged with `nextPageToken`.
 - CLI: `observatory org audit [--limit N] [--action A] [--actor ID] [--since 24h]`, see [cli.md](cli.md).
 
 ## Guarantees
 
 - Transactional outbox: an event is written in the transaction of the change, so a rolled-back change leaves no event
   and a committed change is eventually recorded, also when the event bus or the audit service is down meanwhile.
+- The bus keeps events for 7 days. An audit service down for longer loses the events older than that; the bus being
+  down only delays them, since they wait in the outbox.
+- Text is stored without NUL characters, which Postgres cannot hold; only an event that cannot be decoded is dropped.
 - Delivery is at least once; storage is idempotent by event id, so a redelivery is stored once.
 - Delivery order is not causal order. Consumers must not rely on it; sort by `time`.
 - Storage is append-only: a database trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`, except in the retention job.

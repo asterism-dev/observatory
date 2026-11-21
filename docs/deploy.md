@@ -80,7 +80,8 @@ per start.
 
 `nats` (NATS with JetStream) carries events between services. It is not published; `OBSERVATORY_NATS_TOKEN` (at least
 32 characters, `openssl rand -hex 32`) is the shared secret, and the `nats-data` volume holds the streams. The hub starts
-without the bus and buffers its events in the outbox until it is reachable.
+without the bus and buffers its events in the outbox until it is reachable; `OBSERVATORY_NATS_URL` and
+`OBSERVATORY_NATS_TOKEN` must still be set. A bus that is down or refuses the token is logged and retried.
 
 ## Audit service
 
@@ -216,4 +217,5 @@ Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKE
 (`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
-`registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data` and, with TLS, `caddy-data`.
+`registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data`, `nats-data` and, with TLS,
+`caddy-data`.
