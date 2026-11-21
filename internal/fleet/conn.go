@@ -103,7 +103,7 @@ func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rep proto.EmergencyReport
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&rep); err != nil || len(rep.Version) > maxVersionLen {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -116,6 +116,12 @@ func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	f.mu.Lock()
+	// A node polling here has no working control path, so a connection still attached is half-open.
+	stale := f.conns[node.ID]
+	if stale != nil {
+		delete(f.conns, node.ID)
+		f.dropDiskErrors(stale, nil)
+	}
 	if !f.underlayDown(node.ID) {
 		slog.Warn("node underlay down", "node", node.ID, "reason", rep.Reason)
 	}
@@ -127,6 +133,9 @@ func (f *Fleet) ServeEmergency(w http.ResponseWriter, r *http.Request) {
 	reply := proto.EmergencyReply{Update: f.emergencyUpd[node.ID]}
 	delete(f.emergencyUpd, node.ID)
 	f.mu.Unlock()
+	if stale != nil {
+		stale.ws.CloseNow()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(reply)
 }
@@ -177,6 +186,7 @@ func (f *Fleet) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	slog.Info("node connected", "node", node.ID, "vms", len(m.Register.VMs))
 	defer slog.Info("node disconnected", "node", node.ID)
 	go f.pushLoop(ctx, c, proto.NewEncoder(ctrl), *m.Register)
+	go f.pingLoop(ctx, node.ID, ws)
 	c.kick()
 	for {
 		var m proto.Message
@@ -276,6 +286,29 @@ func (f *Fleet) register(ctx context.Context, n store.Node, reg proto.Register) 
 	}
 	f.confirmReleases(ctx, n, reg.DisksInUse, reg.AppliedSeq)
 	return nil
+}
+
+// pingLoop closes ws once the node stops answering pings; nothing else notices a half-open connection.
+func (f *Fleet) pingLoop(ctx context.Context, node uuid.UUID, ws *websocket.Conn) {
+	t := time.NewTicker(f.ping.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		pctx, cancel := context.WithTimeout(ctx, f.ping.timeout)
+		err := ws.Ping(pctx)
+		cancel()
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("node control ping failed", "node", node, "err", err)
+			}
+			ws.CloseNow()
+			return
+		}
+	}
 }
 
 // pushLoop is the connection's only writer, so a slow node blocks nothing but itself.

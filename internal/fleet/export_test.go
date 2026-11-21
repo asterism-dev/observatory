@@ -75,3 +75,5 @@ func PendingRequests(f *Fleet, node uuid.UUID) int {
 	}
 	return 0
 }
+
+func SetPing(f *Fleet, every, timeout time.Duration) { f.ping.every, f.ping.timeout = every, timeout }

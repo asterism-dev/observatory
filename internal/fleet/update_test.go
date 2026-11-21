@@ -685,3 +685,33 @@ func TestEmergencyRejects(t *testing.T) {
 		t.Fatalf("unknown field: %d", rec.Code)
 	}
 }
+
+func TestEmergencyDropsStalledConnection(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	fleet.AttachStalledConn(e.f, ns[0].ID, e.org.ID)
+	if code, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion, Reason: "health check failed"}); code != 200 || r.Update {
+		t.Fatalf("report: %d %+v", code, r)
+	}
+	if e.f.Online(ns[0].ID) || !e.f.UnderlayDown(ns[0].ID) {
+		t.Fatalf("online %v, underlay down %v after an emergency report", e.f.Online(ns[0].ID), e.f.UnderlayDown(ns[0].ID))
+	}
+	e.start(ns[0])
+	waitFor(t, func() bool {
+		_, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion})
+		return r.Update
+	})
+}
+
+func TestEmergencyRedeliversUpdateSentIntoDeadConnection(t *testing.T) {
+	e, ns := updEnv(t, "n1")
+	e.start(ns[0])
+	ns[0].conn.awaitUpdate()
+	waitFor(t, func() bool {
+		_, r := e.emergency(ns[0].cred, proto.EmergencyReport{Version: oldVersion})
+		return r.Update
+	})
+	e.emergency(ns[0].cred, proto.EmergencyReport{Version: version.Version})
+	if r := e.ended(); r.State != "done" {
+		t.Fatalf("run %+v", r)
+	}
+}

@@ -51,6 +51,7 @@ type Fleet struct {
 	runs           map[uuid.UUID]*updateRun // by org: the active or last run
 	updateErrs     map[uuid.UUID]string     // node → failure it reported for its latest update request
 	updateTimeouts updateTimeouts
+	ping           struct{ every, timeout time.Duration }
 	betweenVMReads func() // test hook in vmsBack
 
 	registryHost string
@@ -70,6 +71,7 @@ func New(ctx context.Context, s *store.Store, z *authz.Service, n *network.Hub) 
 	f := &Fleet{store: s, authz: z, net: n, conns: map[uuid.UUID]*conn{}, diskErrs: map[uuid.UUID]map[string]string{}, retrying: map[uuid.UUID]bool{}, imageRetries: map[uuid.UUID]imageRetry{},
 		emergency: map[uuid.UUID]emergencySeen{}, emergencyUpd: map[uuid.UUID]bool{},
 		runs: map[uuid.UUID]*updateRun{}, updateErrs: map[uuid.UUID]string{}, updateTimeouts: updateTimeouts{back: 15 * time.Minute, vms: 10 * time.Minute, vmErrGrace: 2 * time.Minute, poll: 2 * time.Second}}
+	f.ping.every, f.ping.timeout = 30*time.Second, 10*time.Second
 	f.ctx, f.stop = context.WithCancel(ctx)
 	f.seq.Store(max(uint64(time.Now().UnixNano()), maxSeq+1))
 	return f, nil

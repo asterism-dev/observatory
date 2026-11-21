@@ -2475,3 +2475,28 @@ func TestFleetProcessesCapped(t *testing.T) {
 		t.Fatalf("%d entries, %v", len(ps), err)
 	}
 }
+
+func TestPingFailureClosesConnection(t *testing.T) {
+	e := newEnv(t)
+	fleet.SetPing(e.f, 100*time.Millisecond, 100*time.Millisecond)
+	healthy, healthyCred := e.node(e.org.ID, "healthy")
+	e.connect(healthyCred).desired()
+	n, cred := e.node(e.org.ID, "half-open")
+	n = e.storedNode(n.ID)
+	ctx := context.Background()
+	// A peer that never reads never answers pings, like one whose path went away without a FIN.
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(e.srv.URL, "http"), &websocket.DialOptions{HTTPHeader: underlayHeaders(cred, n.UnderlayIP.String())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ws.CloseNow() })
+	reg := proto.Register{NodeID: "x", Hostname: "h", CPUs: 4, MemoryMB: 4096, Version: "v1"}
+	if err := json.NewEncoder(websocket.NetConn(ctx, ws, websocket.MessageBinary)).Encode(proto.Message{Type: "register", Register: &reg}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return e.f.Online(n.ID) })
+	waitFor(t, func() bool { return !e.f.Online(n.ID) })
+	if !e.f.Online(healthy.ID) {
+		t.Fatal("ping dropped a connection that answers")
+	}
+}

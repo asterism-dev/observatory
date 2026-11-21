@@ -202,6 +202,7 @@ func (f *Fleet) updateNode(n store.Node) string {
 	tick := time.NewTicker(t.poll)
 	defer tick.Stop()
 	var backAt time.Time
+	armed := down // whether the emergency channel has the update request, waiting or delivered
 	errSince := map[string]time.Time{}
 	for ; ctx.Err() == nil; wait(ctx, tick.C) {
 		f.mu.Lock()
@@ -216,6 +217,12 @@ func (f *Fleet) updateNode(n store.Node) string {
 		redirect := c != nil && f.emergencyUpd[n.ID]
 		if redirect {
 			delete(f.emergencyUpd, n.ID)
+			armed = false
+		}
+		// The connection died, maybe with the update request unread in it, and the node now polls the emergency channel.
+		if c == nil && backAt.IsZero() && !armed && f.underlayDown(n.ID) {
+			f.emergencyUpd[n.ID] = true
+			armed = true
 		}
 		f.mu.Unlock()
 		if failed {
@@ -284,7 +291,11 @@ func (f *Fleet) sendUpdate(ctx context.Context, node uuid.UUID, c *conn, limit t
 		case <-c.done:
 			f.mu.Lock()
 			next := f.conns[node]
+			down := f.underlayDown(node)
 			f.mu.Unlock()
+			if down {
+				return "" // updateNode hands the request to the emergency channel
+			}
 			if next == nil || next == c {
 				return "node offline"
 			}
