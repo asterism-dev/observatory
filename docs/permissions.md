@@ -53,6 +53,7 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `network.networks.use`, `network.networks.delete` | `org/networks/*` |
 | `compute.disks.create` | `org/disks` (user disks), `org/team-disks/*` (team disks) |
 | `compute.disks.get`, `compute.disks.update`, `compute.disks.delete`, `compute.disks.use` | `org/disks/*` |
+| `artifacts.images.list`, `artifacts.images.use`, `artifacts.images.update`, `artifacts.images.setDefault`, `build.builds.create` | `org/images`, `org/team-images/*`, `org/user-images/*` |
 
 ## Built-in roles
 
@@ -81,6 +82,8 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `network.networks.delete` on `org/networks/*` | | yes | yes |
 | `network.devices.list`, `network.devices.delete` on `org/user-devices/*` | | yes | yes |
 | `compute.disks.create` on `org/disks` | yes | yes | yes |
+| `artifacts.images.list`, `artifacts.images.use` on `org/images` | yes | yes | yes |
+| `artifacts.images.*` and `build.builds.create` on `org/images` and `org/team-images/*` | | yes | yes |
 | `compute.disks.create` on `org/team-disks/*`; `compute.disks.get`, `compute.disks.update`, `compute.disks.delete` on `org/disks/*` | | yes | yes |
 
 No built-in role holds `compute.instances.connect`, `compute.instances.fork`, `compute.disks.use` or `network.devices.create` on others' objects; those come only from the
@@ -96,6 +99,8 @@ is never granted by accident. Disk actions are explicit too, never `compute.disk
   with the first resource type.
 - Allow rules with action wildcards (`iam.teams.*`) are expanded against the catalog when written, so they
   never silently gain future actions. Deny rules keep their wildcard, so a deny also covers future actions.
+- Wildcards follow resource boundaries: `iam.roles.*` does not include `iam.roleBindings.manage`, and `iam.members.*`
+  does not include `iam.invites.create`. The former single image wildcard became two rules, `artifacts.images.*` and `build.builds.create`.
 
 ## Deny rules and the escalation rule
 
@@ -281,7 +286,8 @@ revoked (`409`).
 ## Audit
 
 Every state change writes an audit row in the same transaction. Every denied authorization writes a row
-with result `denied`, actor, org, action and object.
+with result `denied`, actor, org, action and object. A denied row carries the same action name as the allowed one,
+so consumers must filter on `result` when they count what happened.
 
 ## Not yet built
 
