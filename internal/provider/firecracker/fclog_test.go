@@ -161,7 +161,7 @@ func TestTailLinesFromOffset(t *testing.T) {
 
 func TestConsoleStreamEmitted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "console.log")
-	if err := os.WriteFile(path, []byte("login: \r\n"+strings.Repeat("x", 20<<10)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("login: \r\n\r\n \t\n"+strings.Repeat("x", 20<<10)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

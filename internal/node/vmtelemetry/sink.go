@@ -216,8 +216,11 @@ func NewLineBatch(emit func(records []*logspb.LogRecord)) *LineBatch {
 	return b
 }
 
-// Add queues line as a LineRecord; a full batch is emitted at once.
+// Add queues line as a LineRecord, unless it is blank (VictoriaLogs would store a placeholder message); a full batch is emitted at once.
 func (b *LineBatch) Add(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.recs = append(b.recs, LineRecord(line))

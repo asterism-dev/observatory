@@ -92,6 +92,13 @@ func TestJournalEntryToRecord(t *testing.T) {
 		t.Fatalf("kernel entry: rec=%v ok=%v cursor=%q", rec, ok, cursor)
 	}
 
+	for _, msg := range []string{`""`, `"  "`, `[32]`} {
+		rec, cursor, ok = journalRecord([]byte(`{"__CURSOR":"s=3","MESSAGE":` + msg + `}`))
+		if ok || rec != nil || cursor != "s=3" {
+			t.Fatalf("blank message %s: rec=%v ok=%v cursor=%q", msg, rec, ok, cursor)
+		}
+	}
+
 	rec, _, ok = journalRecord([]byte(`{"MESSAGE":"` + strings.Repeat("y", 20<<10) + `"}`))
 	if !ok || len(rec.GetBody().GetStringValue()) != maxLogLine {
 		t.Fatalf("long message: ok=%v len=%d", ok, len(rec.GetBody().GetStringValue()))
