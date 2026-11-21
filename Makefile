@@ -67,12 +67,12 @@ node:
 	GOOS=linux GOARCH=amd64 go build -o bin/observatory-node-linux-amd64 ./cmd/node
 
 gen:
-	npm --prefix web ci
-	go tool buf generate
+	test -x web/node_modules/.bin/protoc-gen-es || npm --prefix web ci
+	go tool -modfile=tools/go.mod buf generate
 
 gen-check: gen
 	git diff --exit-code -- gen web/src/gen
 	test -z "$$(git ls-files --others --exclude-standard -- gen web/src/gen)"
 
 lint:
-	go tool buf lint
+	go tool -modfile=tools/go.mod buf lint
