@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-for mod in openvswitch wireguard xt_connlimit; do
+for mod in openvswitch wireguard; do
   [ -d /sys/module/$mod ] || { echo "the Docker host kernel lacks the $mod module" >&2; exit 1; }
 done
 
