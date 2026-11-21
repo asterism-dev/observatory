@@ -97,8 +97,8 @@ func Write(ctx context.Context, tx pgx.Tx, e *eventsv1.Event) error {
 		e.GetId(), "events."+scope+"."+e.GetType(), payload); err != nil {
 		return fmt.Errorf("write outbox: %w", err)
 	}
-	// Delivered on commit only, so the relay wakes for committed events and never for rolled-back ones.
-	if _, err := tx.Exec(ctx, "NOTIFY outbox"); err != nil {
+	// Delivered on commit only, so the relay wakes for committed events and never for rolled-back ones; per schema so services sharing a database don't wake each other.
+	if _, err := tx.Exec(ctx, "SELECT pg_notify('outbox_' || current_schema(), '')"); err != nil {
 		return fmt.Errorf("notify outbox: %w", err)
 	}
 	return nil
@@ -106,9 +106,10 @@ func Write(ctx context.Context, tx pgx.Tx, e *eventsv1.Event) error {
 
 // Relay publishes committed outbox rows to JetStream in id order, at least once.
 type Relay struct {
-	pool *pgxpool.Pool
-	js   jetstream.JetStream
-	now  func() time.Time
+	pool    *pgxpool.Pool
+	js      jetstream.JetStream
+	now     func() time.Time
+	failing bool
 }
 
 func NewRelay(pool *pgxpool.Pool, js jetstream.JetStream) *Relay {
@@ -136,13 +137,15 @@ func (r *Relay) listen(ctx context.Context) error {
 	// Hijacked so the LISTEN never leaks back into the pool.
 	conn := c.Hijack()
 	defer func() { _ = conn.Close(context.Background()) }()
-	if _, err := conn.Exec(ctx, "LISTEN outbox"); err != nil {
+	var schema string
+	if err := conn.QueryRow(ctx, "SELECT current_schema()").Scan(&schema); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, "LISTEN "+pgx.Identifier{"outbox_" + schema}.Sanitize()); err != nil {
 		return err
 	}
 	for {
-		if err := r.relay(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("outbox relay failed", "err", err)
-		}
+		r.report(ctx, r.relay(ctx))
 		waitCtx, cancel := context.WithTimeout(ctx, pollInterval)
 		_, err := conn.WaitForNotification(waitCtx)
 		cancel()
@@ -152,6 +155,18 @@ func (r *Relay) listen(ctx context.Context) error {
 		if err != nil && !pgconn.Timeout(err) {
 			return err
 		}
+	}
+}
+
+// report logs only when relaying starts or stops failing, since a bus outage would otherwise log every second.
+func (r *Relay) report(ctx context.Context, err error) {
+	switch {
+	case err != nil && ctx.Err() == nil && !r.failing:
+		r.failing = true
+		slog.Warn("outbox relay failed, retrying", "err", err)
+	case err == nil && r.failing:
+		r.failing = false
+		slog.Info("outbox relay recovered")
 	}
 }
 

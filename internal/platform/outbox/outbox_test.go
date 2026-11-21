@@ -1,10 +1,14 @@
 package outbox_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -326,4 +330,81 @@ func TestSentRowsPruned(t *testing.T) {
 	}
 	now.Add(int64(2 * time.Hour))
 	eventually(t, "row pruned", func() bool { return e.count(t, "true") == 0 })
+}
+
+func TestNotifyIsPerSchema(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	c, err := e.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Release()
+	if _, err := c.Exec(ctx, "LISTEN outbox_svc"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = c.Exec(ctx, "UNLISTEN *") }()
+	e.write(t, true)
+	wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n, err := c.Conn().WaitForNotification(wait)
+	if err != nil {
+		t.Fatalf("no notification on outbox_svc: %v", err)
+	}
+	if n.Channel != "outbox_svc" {
+		t.Fatalf("channel = %q", n.Channel)
+	}
+}
+
+// failing stands in for a bus that refuses every publish while down is set.
+type failing struct {
+	jetstream.JetStream
+	down *atomic.Bool
+}
+
+func (f failing) Publish(ctx context.Context, subject string, data []byte, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+	if f.down.Load() {
+		return nil, errors.New("bus down")
+	}
+	return f.JetStream.Publish(ctx, subject, data, opts...)
+}
+
+func TestRelayLogsBusDownOnce(t *testing.T) {
+	e := setup(t)
+	var logs syncBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+	down := new(atomic.Bool)
+	down.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { outbox.NewRelay(e.pool, failing{e.js, down}).Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	e.write(t, true)
+	time.Sleep(3500 * time.Millisecond)
+	if n := strings.Count(logs.String(), "outbox relay failed"); n != 1 {
+		t.Fatalf("logged the outage %d times, want once:\n%s", n, logs.String())
+	}
+	down.Store(false)
+	eventually(t, "row sent", func() bool { return e.count(t, "sent_at IS NULL") == 0 })
+	eventually(t, "recovery logged", func() bool { return strings.Contains(logs.String(), "outbox relay recovered") })
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
