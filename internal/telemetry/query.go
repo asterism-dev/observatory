@@ -133,12 +133,13 @@ func (c *Client) usage(ctx context.Context, org uuid.UUID, label string, id uuid
 }
 
 type LogQuery struct {
-	Org, Node, VM       uuid.UUID
-	From, To            time.Time
-	Text, Level, Source string
-	Stream              string
-	Fields              map[string]string
-	Limit               int
+	Org, Node, VM, Image uuid.UUID
+	Build                uuid.UUID
+	From, To             time.Time
+	Text, Level, Source  string
+	Stream               string
+	Fields               map[string]string
+	Limit                int
 }
 
 type LogLine struct {
@@ -170,6 +171,9 @@ func buildLogsQL(q LogQuery) string {
 	}
 	if q.Source != "" {
 		parts = append(parts, "source:="+strconv.Quote(q.Source))
+	}
+	if q.Build != uuid.Nil {
+		parts = append(parts, `"observatory.build":=`+strconv.Quote(q.Build.String()))
 	}
 	keys := make([]string, 0, len(q.Fields))
 	for k := range q.Fields {
@@ -213,15 +217,17 @@ func (c *Client) TailLogs(ctx context.Context, q LogQuery, emit func(LogLine) er
 }
 
 func (c *Client) streamLogs(ctx context.Context, hc *http.Client, path string, q LogQuery, form url.Values, emit func(LogLine) error) error {
-	if (q.Node == uuid.Nil) == (q.VM == uuid.Nil) {
-		return errors.New("telemetry: log query needs exactly one of node or vm")
+	var scopes []GroupRef
+	for kind, id := range map[GroupKind]uuid.UUID{KindNode: q.Node, KindVM: q.VM, KindImage: q.Image} {
+		if id != uuid.Nil {
+			scopes = append(scopes, GroupRef{Kind: kind, ID: id})
+		}
 	}
-	scope := " observatory.node:=" + strconv.Quote(q.Node.String()) + ` observatory.vm:=""`
-	if q.VM != uuid.Nil {
-		scope = " observatory.vm:=" + strconv.Quote(q.VM.String())
+	if len(scopes) != 1 {
+		return errors.New("telemetry: log query needs exactly one of node, vm or image")
 	}
 	form.Set("query", buildLogsQL(q))
-	form.Set("extra_filters", "observatory.org:="+strconv.Quote(q.Org.String())+scope)
+	form.Set("extra_filters", orgFilter(q.Org)+" "+scopes[0].filter())
 	resp, err := c.postForm(ctx, hc, c.LogsURL+path, form)
 	if resp != nil {
 		defer resp.Body.Close()
@@ -552,9 +558,7 @@ func (c *Client) MetricNames(ctx context.Context, org uuid.UUID, s Scope, match 
 
 // queryStore bounds a dashboard request by ctx alone, so the caller sets its timeout; the store gets it too and stops working on it.
 func (c *Client) queryStore(ctx context.Context, path string, form url.Values, v any) error {
-	if dl, ok := ctx.Deadline(); ok {
-		form.Set("timeout", strconv.FormatFloat(math.Ceil(time.Until(dl).Seconds()), 'f', 0, 64)+"s")
-	}
+	setStoreTimeout(ctx, form)
 	resp, err := c.postForm(ctx, c.StoreClient(0), c.MetricsURL+path, form)
 	if err != nil {
 		return err
@@ -564,4 +568,10 @@ func (c *Client) queryStore(ctx context.Context, path string, form url.Values, v
 		return fmt.Errorf("%w: decode %s: %v", ErrStore, path, err)
 	}
 	return nil
+}
+
+func setStoreTimeout(ctx context.Context, form url.Values) {
+	if dl, ok := ctx.Deadline(); ok {
+		form.Set("timeout", strconv.FormatFloat(math.Ceil(time.Until(dl).Seconds()), 'f', 0, 64)+"s")
+	}
 }
