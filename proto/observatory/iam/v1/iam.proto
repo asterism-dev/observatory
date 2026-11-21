@@ -279,7 +279,7 @@ service IAMService {
       kind: KIND_WRITE
     };
     option (google.api.http) = {
-      patch: "/orgs/{org}/roles/{role}"
+      put: "/orgs/{org}/roles/{role}"
       body: "*"
     };
   }

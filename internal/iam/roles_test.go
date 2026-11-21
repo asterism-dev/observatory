@@ -625,3 +625,19 @@ func TestUpdateRoleDenyParent(t *testing.T) {
 		t.Fatal("deny reached admin")
 	}
 }
+
+// UpdateRole replaces the whole role, so REST serves it as PUT, not PATCH.
+func TestRESTUpdateRoleIsPut(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	role := e.createRole(tok, org, &iamv1.CreateRoleRequest{Name: "ops", Rules: []*iamv1.RoleRule{rule("allow", "org/roles", "iam.roles.list")}})
+	path := "/api/iam/v1/orgs/" + org.String() + "/roles/" + role.String()
+	body := `{"name":"ops2","rules":[{"effect":"allow","object":"org/roles","action":"iam.roles.list"}]}`
+	if code, msg := e.restSend("PUT", path, tok, body); code != 200 {
+		t.Fatalf("PUT: %d %s", code, msg)
+	}
+	if code, _ := e.restSend("PATCH", path, tok, body); code == 200 {
+		t.Fatal("PATCH still updates the role")
+	}
+}

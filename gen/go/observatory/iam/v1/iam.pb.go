@@ -4768,7 +4768,7 @@ const file_observatory_iam_v1_iam_proto_rawDesc = "" +
 	"\x10iam.roles.manage\x12\torg/roles\x18\x01\x82\xd3\xe4\x93\x02\x16:\x01*\"\x11/orgs/{org}/roles\x12\xa3\x01\n" +
 	"\n" +
 	"UpdateRole\x12%.observatory.iam.v1.UpdateRoleRequest\x1a&.observatory.iam.v1.UpdateRoleResponse\"F\x8a\xb5\x18\x1f\n" +
-	"\x10iam.roles.manage\x12\torg/roles\x18\x01\x82\xd3\xe4\x93\x02\x1d:\x01*2\x18/orgs/{org}/roles/{role}\x12\xa0\x01\n" +
+	"\x10iam.roles.manage\x12\torg/roles\x18\x01\x82\xd3\xe4\x93\x02\x1d:\x01*\x1a\x18/orgs/{org}/roles/{role}\x12\xa0\x01\n" +
 	"\n" +
 	"DeleteRole\x12%.observatory.iam.v1.DeleteRoleRequest\x1a&.observatory.iam.v1.DeleteRoleResponse\"C\x8a\xb5\x18\x1f\n" +
 	"\x10iam.roles.manage\x12\torg/roles\x18\x01\x82\xd3\xe4\x93\x02\x1a*\x18/orgs/{org}/roles/{role}\x12\xb9\x01\n" +
