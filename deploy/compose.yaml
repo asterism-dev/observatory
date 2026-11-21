@@ -15,7 +15,6 @@ services:
     <<: *observatory
     command: ["edge"]
     environment:
-      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
       OBSERVATORY_EDGE_HUB_URL: http://hub:8091
     ports:

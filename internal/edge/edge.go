@@ -21,8 +21,8 @@ const (
 const minTokenLen = 32
 
 type Config struct {
-	Listen, PublicURL, HubURL, Token string
-	Services                         map[string]string // service name → base URL
+	HubURL, Token string
+	Services      map[string]string // service name → base URL
 }
 
 var hubPrefixes = []string{"/api/", "/auth/", "/v2/", "/otlp/", "/node/", "/grafana/"}
