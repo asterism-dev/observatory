@@ -1,13 +1,17 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -371,5 +375,31 @@ func TestConcurrentUnknownKidJoinsInFlightFetch(t *testing.T) {
 	}
 	if got := f.jwks.hits.Load() - base; got != 1 {
 		t.Fatalf("jwks requests = %d, want 1", got)
+	}
+}
+
+func TestJWKSFetchFailureLoggedOnChange(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	f := newFixture(t)
+	f.jwks.setDown(true)
+	tok := sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)
+	for range 2 {
+		if _, err := f.v.Verify(context.Background(), tok); !errors.Is(err, ErrNoKey) {
+			t.Fatalf("outage: %v, want ErrNoKey", err)
+		}
+		f.now = f.now.Add(31 * time.Second)
+	}
+	if n := strings.Count(buf.String(), "jwks fetch failed"); n != 1 {
+		t.Fatalf("failure logged %d times, want once: %s", n, buf.String())
+	}
+	f.jwks.setDown(false)
+	if _, err := f.v.Verify(context.Background(), sign(t, jwt.SigningMethodEdDSA, "k1", f.claims(), f.key)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "jwks fetch recovered") || strings.Contains(buf.String(), testToken) {
+		t.Fatalf("log: %s", buf.String())
 	}
 }

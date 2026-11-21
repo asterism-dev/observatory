@@ -298,6 +298,13 @@ the services within about a minute. Services verify the token offline against th
   stream only.
 - The hub publishes one signing key today. The key set is a list so a previous key can stay published during a
   rotation, which comes later.
+- The hub's own `/api/` routes use the same token: the edge swaps a session (the `obs_session` cookie or an
+  `obs_…` bearer) for it, removes the session cookie and the hub verifies the token offline. The hub never sees a
+  session there, so logout or a revoked session reaches hub routes within about a minute too. Other bearer tokens
+  (node, gateway, storage, builder, registry events, telemetry) pass through unchanged. A stale session is dropped
+  rather than refused, so public routes such as `/api/auth/config` keep working; protected ones answer 401. While the
+  issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` keeps using the
+  session directly.
 - Services never see the edge token. The edge overwrites `X-Observatory-Client-IP` on every request, and a service
   records it only for a call whose identity token verified. Limitation: a leaked identity token (at most 5.5 minutes)
   could be used to forge the client IP in the audit trail.

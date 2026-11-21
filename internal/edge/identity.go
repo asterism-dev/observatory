@@ -93,8 +93,9 @@ func (id *identity) hubMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// Telemetry tokens share the obs_ prefix but are not sessions (store.telemetryTokenPrefix).
 func isSession(token string) bool {
-	return strings.HasPrefix(token, "obs_")
+	return strings.HasPrefix(token, "obs_") && !strings.HasPrefix(token, "obs_grafana_")
 }
 
 func (id *identity) jwt(ctx context.Context, session string) (string, error) {

@@ -216,11 +216,9 @@ func dialAddr(addr net.Addr) string {
 	if err != nil {
 		return addr.String()
 	}
+	// Go's wildcard listener is dual-stack, and ::1 fails where IPv6 is disabled.
 	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
 		host = "127.0.0.1"
-		if ip != nil && ip.To4() == nil {
-			host = "::1"
-		}
 	}
 	return net.JoinHostPort(host, port)
 }

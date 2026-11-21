@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +28,9 @@ const (
 	maxJWKSBodySize = 1 << 20
 	fetchTimeout    = 5 * time.Second
 )
+
+// ErrNoKey means no verification key matched: the token's kid is unknown or the key set could not be fetched.
+var ErrNoKey = errors.New("no verification key")
 
 type Principal struct {
 	User           uuid.UUID
@@ -116,6 +120,7 @@ type Verifier struct {
 	mu          sync.Mutex
 	lastAttempt time.Time
 	inflight    chan struct{}
+	lastErr     string
 }
 
 // NewVerifier fetches keys from hubURL's /internal/iam/jwks; issuer is the public URL, compared without a trailing slash as the hub issues it.
@@ -188,7 +193,7 @@ func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, erro
 			return key, nil
 		}
 	}
-	return nil, errors.New("unknown kid")
+	return nil, ErrNoKey
 }
 
 // refresh joins the fetch in flight, or starts one unless the last attempt was under 30 s ago (nil channel).
@@ -211,12 +216,24 @@ func (v *Verifier) refresh(ctx context.Context) <-chan struct{} {
 		fctx, cancel := context.WithTimeout(base, v.fetchTimeout)
 		defer cancel()
 		keys, err := v.fetch(fctx)
+		msg := ""
 		if err == nil {
 			v.set.Store(&keySet{keys: keys, fetchedAt: v.now()})
+		} else {
+			msg = err.Error()
 		}
 		v.mu.Lock()
 		v.inflight = nil
+		// Logged on change only: refreshes run at most every 30 s, and a down hub would otherwise repeat itself.
+		changed := msg != v.lastErr
+		v.lastErr = msg
 		v.mu.Unlock()
+		switch {
+		case changed && err != nil:
+			slog.Warn("identity: jwks fetch failed", "url", v.jwksURL, "err", err)
+		case changed:
+			slog.Info("identity: jwks fetch recovered", "url", v.jwksURL)
+		}
 		close(done)
 	}()
 	return done

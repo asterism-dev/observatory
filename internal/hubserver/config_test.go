@@ -304,7 +304,7 @@ func TestHubConfigRequiresEdgeToken(t *testing.T) {
 }
 
 func TestDialAddr(t *testing.T) {
-	for in, want := range map[string]string{"0.0.0.0:8080": "127.0.0.1:8080", "[::]:8080": "[::1]:8080", "10.0.0.5:8080": "10.0.0.5:8080"} {
+	for in, want := range map[string]string{"0.0.0.0:8080": "127.0.0.1:8080", "[::]:8080": "127.0.0.1:8080", ":8080": "127.0.0.1:8080", "10.0.0.5:8080": "10.0.0.5:8080"} {
 		addr, err := net.ResolveTCPAddr("tcp", in)
 		if err != nil {
 			t.Fatal(err)

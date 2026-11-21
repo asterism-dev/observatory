@@ -195,7 +195,7 @@ func TestEdgeSwapsSessionOnHubRoutes(t *testing.T) {
 func TestEdgeKeepsForeignBearerOnHubRoutes(t *testing.T) {
 	hub, ch, calls := issuingHub(t, http.StatusOK)
 	edge := newEdge(t, hub.URL, nil)
-	for _, authz := range []string{"Bearer node-token", "Basic dXNlcjpwYXNz"} {
+	for _, authz := range []string{"Bearer node-token", "Basic dXNlcjpwYXNz", "Bearer obs_grafana_x"} {
 		req, _ := http.NewRequest("POST", edge.URL+"/api/nodes/health", nil)
 		req.Header.Set("Authorization", authz)
 		if code, body := get(t, req); code != 200 || body != "hub" {

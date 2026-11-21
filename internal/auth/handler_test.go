@@ -347,6 +347,12 @@ func TestRequireRejects(t *testing.T) {
 		"wrong aud": func(r *http.Request) {
 			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Audience = jwt.ClaimStrings{"other"} }))
 		},
+		"no sk": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.SK = "" }))
+		},
+		"no sx": func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.SX = 0 }))
+		},
 		"wrong iss": func(r *http.Request) {
 			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Issuer = "https://evil.test" }))
 		},

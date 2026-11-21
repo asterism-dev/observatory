@@ -3,7 +3,9 @@ package hubserver
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -142,7 +144,7 @@ func mountIdentity(ctx context.Context, mux *http.ServeMux, s *store.Store, z *a
 	}
 	policies := NewPolicyServer()
 	z.OnReload(policies.Publish)
-	if len(cfg.ServiceTokens) == 0 || len(cfg.ServiceTokens) == 1 && cfg.ServiceTokens[selfService] != "" {
+	if !slices.ContainsFunc(slices.Collect(maps.Keys(cfg.ServiceTokens)), func(name string) bool { return name != selfService }) {
 		slog.Warn("OBSERVATORY_SERVICE_TOKENS is not set; the hub refuses every /internal/iam/ call")
 	}
 	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalIAM(jwtIssuer, policies)))
