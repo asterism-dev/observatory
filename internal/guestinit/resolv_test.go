@@ -15,15 +15,24 @@ func TestWriteResolvMgmtFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(r.join("etc/resolv.conf"))
-	if want := "nameserver 10.192.0.1\nnameserver 1.1.1.1\nnameserver 9.9.9.9\n"; string(got) != want {
+	if want := "nameserver 10.192.0.1\n"; string(got) != want {
 		t.Fatalf("resolv.conf = %q, want %q", got, want)
+	}
+}
+
+func TestWriteResolvWithoutMgmtKeepsImageFile(t *testing.T) {
+	r := Root{t.TempDir()}
+	if err := os.MkdirAll(r.join("etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.join("etc/resolv.conf"), []byte("nameserver 192.0.2.53\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := r.WriteResolv([]proto.GuestNIC{{Name: "eth0"}}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = os.ReadFile(r.join("etc/resolv.conf"))
-	if want := "nameserver 1.1.1.1\nnameserver 9.9.9.9\n"; string(got) != want {
-		t.Fatalf("without mgmt: resolv.conf = %q, want %q", got, want)
+	if got, _ := os.ReadFile(r.join("etc/resolv.conf")); string(got) != "nameserver 192.0.2.53\n" {
+		t.Fatalf("without mgmt: resolv.conf = %q", got)
 	}
 }
 
@@ -39,7 +48,7 @@ func TestWriteResolvReplacesSymlink(t *testing.T) {
 	if err := os.Symlink(outside, r.join("etc/resolv.conf")); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.WriteResolv(nil); err != nil {
+	if err := r.WriteResolv([]proto.GuestNIC{{Name: "mgmt0", Mgmt: true}}); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Lstat(r.join("etc/resolv.conf"))
