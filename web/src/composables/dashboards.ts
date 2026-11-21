@@ -124,6 +124,40 @@ export const dashboardScopes = (teams: Team[], org: boolean, own: boolean): Writ
 export const dashboardScope = (d: Dashboard, teams: Team[]): WritableScope =>
   d.scope === 'team' ? { scope: 'team', teamId: d.ownerId ?? '', teamName: teams.find((x) => x.id === d.ownerId)?.name ?? '' } : { scope: d.scope }
 
+// Caps concurrent calls; dashboards share one so a full dashboard stays under the per-user query rate limit.
+export function limiter(max: number) {
+  let active = 0
+  const waiting: (() => void)[] = []
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    while (active >= max) await new Promise<void>((r) => waiting.push(r))
+    active++
+    try {
+      return await fn()
+    } finally {
+      active--
+      waiting.shift()?.()
+    }
+  }
+}
+
+export const panelQueue = limiter(6)
+
+const panelIds = new WeakMap<Panel, number>()
+let nextPanelId = 0
+
+// Stable v-for key per raw panel object, kept by edit copies, so reordering, removing or starting an edit doesn't re-query other panels.
+export function panelKey(p: Panel) {
+  let id = panelIds.get(p)
+  if (id === undefined) panelIds.set(p, (id = ++nextPanelId))
+  return id
+}
+
+export function copyPanel(p: Panel) {
+  const c = { ...p }
+  panelIds.set(c, panelKey(p))
+  return c
+}
+
 type Get = <T>(path: string) => Promise<T>
 
 // ponytail: non-admins need one team lookup each; a writableScopes field on the list API (like env) if orgs get many teams.

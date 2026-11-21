@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import TimeSeriesChart from '@/components/TimeSeriesChart.vue'
-import { chartUnits, legendLabels, stepFor, toSeries, type InstantResult, type Panel, type RangeResult } from '@/composables/dashboards'
+import { chartUnits, legendLabels, panelQueue, stepFor, toSeries, type InstantResult, type Panel, type RangeResult } from '@/composables/dashboards'
 import { formatValue, type Series } from '@/composables/telemetry'
 import { Card } from '@/ui'
 
@@ -27,9 +27,11 @@ async function load() {
   const n = ++seq
   const { query, type } = props.panel
   const url = `/api/orgs/${props.orgId}/dashboards/query`
+  // A query superseded while waiting for a slot is dropped; the catch below ignores it.
+  const post = <T,>(body: object) => panelQueue(() => (n === seq ? api<T>(url, { method: 'POST', body: JSON.stringify(body) }) : Promise.reject(new Error('stale'))))
   try {
     if (type === 'stat') {
-      const res = await api<InstantResult>(url, { method: 'POST', body: JSON.stringify({ query, time: props.to.toISOString() }) })
+      const res = await post<InstantResult>({ query, time: props.to.toISOString() })
       if (n !== seq) return
       // The first series only: a panel that wants a total says so with sum().
       const first = res.series[0]
@@ -39,7 +41,7 @@ async function load() {
           : null
     } else {
       const body = { query, from: props.from.toISOString(), to: props.to.toISOString(), step: stepFor(props.from, props.to) }
-      const res = await api<RangeResult>(url, { method: 'POST', body: JSON.stringify(body) })
+      const res = await post<RangeResult>(body)
       if (n !== seq) return
       t0.value = res.t
       series.value = toSeries(res)

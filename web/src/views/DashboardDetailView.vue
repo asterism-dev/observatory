@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { Button, Dialog, SegmentedControl, Select, TextInput } from '@asterism-dev/lumen'
 import { ArrowDown, ArrowUp, ChartLine, Pencil, Plus, Trash2 } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, ref, toRaw, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { api, ApiError } from '@/api'
 import DashboardPanel from '@/components/DashboardPanel.vue'
 import PanelEditor from '@/components/PanelEditor.vue'
-import { creatableTeams, dashboardScope, dashboardScopes, exampleQuery, nameValid, newPanel, type Dashboard, type Panel, type Team } from '@/composables/dashboards'
+import { copyPanel, creatableTeams, dashboardScope, dashboardScopes, exampleQuery, nameValid, newPanel, panelKey, type Dashboard, type Panel, type Team } from '@/composables/dashboards'
 import { scopeKey, scopeLabel, scopeRef } from '@/composables/envScopes'
 import { presets, rangeFor, type Preset } from '@/composables/telemetry'
 import { useCrumbs } from '@/composables/useCrumbs'
@@ -80,7 +80,7 @@ async function load() {
 async function startEdit() {
   const d = dash.value
   if (!d || !org.value || !me.value) return
-  draft.value = { name: d.name, scope: scopeKey(dashboardScope(d, teams.value)), panels: d.panels.map((p) => ({ ...p })) }
+  draft.value = { name: d.name, scope: scopeKey(dashboardScope(d, teams.value)), panels: d.panels.map((p) => copyPanel(toRaw(p))) }
   saveError.value = ''
   conflict.value = false
   editing.value = true
@@ -140,6 +140,13 @@ async function reload() {
   await load()
 }
 
+// Debounced: synced charts may each report a zoom, and quick re-zooms shouldn't re-query every panel each time.
+let zoomTimer = 0
+function zoomTo(a: number, b: number) {
+  window.clearTimeout(zoomTimer)
+  zoomTimer = window.setTimeout(() => (zoomed.value = { from: new Date(a * 1000), to: new Date(b * 1000) }), 300)
+}
+
 async function remove() {
   if (!dash.value || !org.value) return
   busy.value = true
@@ -176,6 +183,7 @@ const timer = window.setInterval(refresh, 30000)
 document.addEventListener('visibilitychange', refresh)
 onBeforeUnmount(() => {
   window.clearInterval(timer)
+  window.clearTimeout(zoomTimer)
   document.removeEventListener('visibilitychange', refresh)
 })
 </script>
@@ -225,7 +233,7 @@ onBeforeUnmount(() => {
           </div>
         </EmptyState>
         <div class="grid">
-          <div v-for="(p, i) in panels" :key="i" :class="['cell', p.width]">
+          <div v-for="(p, i) in panels" :key="panelKey(toRaw(p))" :class="['cell', p.width]">
             <div v-if="editing" class="cell-tools">
               <Button size="sm" variant="ghost" :icon="ArrowUp" :disabled="i === 0" :aria-label="t('dashboards.moveUp')" :title="t('dashboards.moveUp')" @click="move(i, -1)" />
               <Button
@@ -246,7 +254,7 @@ onBeforeUnmount(() => {
               :from="range.from"
               :to="range.to"
               :sync-key="`dashboard:${dash.id}`"
-              @zoom="(a, b) => (zoomed = { from: new Date(a * 1000), to: new Date(b * 1000) })"
+              @zoom="zoomTo"
               @reset="zoomed = null"
             />
           </div>

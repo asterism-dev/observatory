@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { chartUnits, dashboardScopes, legendLabels, metricMatch, panelError, stepFor, toSeries, wordAt, type Panel } from './dashboards.ts'
+import { chartUnits, copyPanel, dashboardScopes, legendLabels, limiter, metricMatch, newPanel, panelError, panelKey, stepFor, toSeries, wordAt, type Panel } from './dashboards.ts'
 import { formatValue } from './telemetry.ts'
 
 test('formatValue covers the panel units', () => {
@@ -72,4 +72,34 @@ test('dashboardScopes offers private only to the creator and org only with right
   const teams = [{ id: 't1', name: 'core' }]
   assert.deepEqual(dashboardScopes(teams, false, true), [{ scope: 'user' }, { scope: 'team', teamId: 't1', teamName: 'core' }])
   assert.deepEqual(dashboardScopes([], true, false), [{ scope: 'org' }])
+})
+
+test('limiter runs at most max calls at once and all of them', async () => {
+  const run = limiter(2)
+  let active = 0
+  let peak = 0
+  const task = (v: number) =>
+    run(async () => {
+      peak = Math.max(peak, ++active)
+      await new Promise((r) => setTimeout(r, 5))
+      active--
+      if (v === 3) throw new Error('boom')
+      return v
+    })
+  const results = await Promise.allSettled([1, 2, 3, 4, 5].map(task))
+  assert.equal(peak, 2)
+  assert.deepEqual(
+    results.map((r) => (r.status === 'fulfilled' ? r.value : 'failed')),
+    [1, 2, 'failed', 4, 5],
+  )
+})
+
+test('panelKey is stable per panel object and kept by copyPanel', () => {
+  const a = newPanel('up')
+  const b = { ...a }
+  assert.equal(panelKey(a), panelKey(a))
+  assert.notEqual(panelKey(a), panelKey(b))
+  const c = copyPanel(a)
+  assert.notEqual(c, a)
+  assert.equal(panelKey(c), panelKey(a))
 })
