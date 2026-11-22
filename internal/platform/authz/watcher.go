@@ -22,7 +22,7 @@ import (
 
 const (
 	minBackoff = time.Second
-	maxBackoff = 30 * time.Second
+	maxBackoff = 5 * time.Second
 	// maxStale matches the JWT lifetime, so a lost stream opens no revocation window beyond it.
 	maxStale = 5 * time.Minute
 )
@@ -91,9 +91,11 @@ func (w *Watcher) Run(ctx context.Context) {
 			return
 		case <-time.After(backoff):
 		}
-		backoff = min(backoff*2, maxBackoff)
+		backoff = nextBackoff(backoff)
 	}
 }
+
+func nextBackoff(d time.Duration) time.Duration { return min(d*2, maxBackoff) }
 
 func (w *Watcher) watch(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)

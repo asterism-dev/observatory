@@ -143,6 +143,21 @@ func waitApplied(t *testing.T, w *Watcher, rev uint64) {
 	}
 }
 
+func TestBackoffCapsQuickly(t *testing.T) {
+	d := minBackoff
+	var got []time.Duration
+	for range 5 {
+		got = append(got, d)
+		d = nextBackoff(d)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sequence %v, want %v", got, want)
+		}
+	}
+}
+
 func TestWatcherSilentStreamGoesStale(t *testing.T) {
 	w, clock, ch := startWatcher(t, &fakePolicy{conns: make(chan chan *iamv1.Policy)})
 	ch <- &iamv1.Policy{Revision: 3}
