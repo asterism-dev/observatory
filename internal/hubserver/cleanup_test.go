@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
@@ -215,6 +217,10 @@ func (e *cleanupEnv) publishBy(actor uuid.UUID, typ string, org *uuid.UUID, reso
 	e.t.Helper()
 	ev := &eventsv1.Event{Id: uuid.Must(uuid.NewV7()).String(), Time: timestamppb.Now(), Type: typ, Resource: resource, Result: result,
 		Actor: &eventsv1.Actor{Kind: eventsv1.ActorKind_ACTOR_KIND_USER, Id: actor.String()}}
+	if typ == store.ActionMemberRemove || typ == store.ActionMemberLeave {
+		// As iam does: the latest revision it published when the removal committed.
+		ev.Details = &structpb.Struct{Fields: map[string]*structpb.Value{"revision": structpb.NewStringValue(strconv.FormatUint(e.iam.Revision(), 10))}}
+	}
 	scope := "platform"
 	if org != nil {
 		ev.Org, scope = org.String(), org.String()
@@ -504,14 +510,20 @@ func TestRemovedCreatorsTokenStaysDeadAfterRejoin(t *testing.T) {
 	e := newIdleCleanupEnv(t)
 	ctx := context.Background()
 	bob := e.member("bob")
-	old, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "before")
+	member := e.iam.Revision()
+	old, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "before", member)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.leave(bob)
+	// Created after the removal committed, but on a hub policy that had not seen it yet.
+	late, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "late", member)
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
 	e.rejoin(bob)
-	fresh, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "after")
+	fresh, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "after", e.iam.Revision())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,8 +533,14 @@ func TestRemovedCreatorsTokenStaysDeadAfterRejoin(t *testing.T) {
 	if err != nil || len(toks) != 1 || toks[0].ID != fresh.ID {
 		t.Fatalf("active tokens %+v %v, want only %s", toks, err, fresh.ID)
 	}
-	es := storetest.Audit(t, e.pool, store.ActionGrafanaTokenRevoke)
-	if len(es) != 1 || es[0].ActorKind != store.ActorSystem || es[0].Resource != "telemetry-token/"+old.ID.String() || es[0].Details["name"] != "before" {
-		t.Fatalf("audit: %+v", es)
+	revoked := map[string]bool{}
+	for _, a := range storetest.Audit(t, e.pool, store.ActionGrafanaTokenRevoke) {
+		if a.ActorKind != store.ActorSystem {
+			t.Fatalf("audit: %+v", a)
+		}
+		revoked[a.Resource] = true
+	}
+	if len(revoked) != 2 || !revoked["telemetry-token/"+old.ID.String()] || !revoked["telemetry-token/"+late.ID.String()] {
+		t.Fatalf("revoked %v, want before and late", revoked)
 	}
 }

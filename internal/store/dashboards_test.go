@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -87,7 +86,7 @@ func TestDashboards(t *testing.T) {
 	if err := removeMember(s, ctx, org.ID, b); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PurgeMember(ctx, org.ID, b, time.Now(), memberIn(s, org.ID, b)); err != nil {
+	if _, err := s.PurgeMember(ctx, org.ID, b, 0, memberIn(s, org.ID, b)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Dashboard(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

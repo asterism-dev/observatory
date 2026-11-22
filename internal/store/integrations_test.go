@@ -336,7 +336,7 @@ func TestIntegrationPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = removeMember(s, ctx, org.ID, member)
-	if _, err := s.PurgeMember(ctx, org.ID, member, time.Now(), memberIn(s, org.ID, member)); err != nil {
+	if _, err := s.PurgeMember(ctx, org.ID, member, 0, memberIn(s, org.ID, member)); err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []store.Integration{teamInt, memberInt} {

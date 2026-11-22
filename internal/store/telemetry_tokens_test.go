@@ -19,7 +19,7 @@ func TestTelemetryTokens(t *testing.T) {
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", b.User.ID)
 
-	tok, secret, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana")
+	tok, secret, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana", 0)
 	if err != nil || !strings.HasPrefix(secret, "obs_grafana_") || len(secret) != len("obs_grafana_")+52 {
 		t.Fatalf("create %q %v", secret, err)
 	}
@@ -40,10 +40,10 @@ func TestTelemetryTokens(t *testing.T) {
 		t.Fatalf("wrong secret: %v", err)
 	}
 
-	if _, _, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana"); !errors.Is(err, store.ErrConflict) {
+	if _, _, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana", 0); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate name: %v", err)
 	}
-	if _, _, err := s.CreateTelemetryToken(ctx, orgB.ID, b.User.ID, "grafana"); err != nil {
+	if _, _, err := s.CreateTelemetryToken(ctx, orgB.ID, b.User.ID, "grafana", 0); err != nil {
 		t.Fatalf("same name in other org: %v", err)
 	}
 	list, err := s.TelemetryTokens(ctx, orgA.ID)
@@ -87,7 +87,7 @@ func TestTelemetryTokens(t *testing.T) {
 	if _, err := s.RevokeTelemetryToken(ctx, orgA.ID, tok.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("double revoke: %v", err)
 	}
-	if _, _, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana"); err != nil {
+	if _, _, err := s.CreateTelemetryToken(ctx, orgA.ID, a.User.ID, "grafana", 0); err != nil {
 		t.Fatalf("name reusable after revoke: %v", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestTelemetryTokenLimit(t *testing.T) {
 	org := mustCreateOrg(t, s, "A", a.User.ID)
 	var first store.TelemetryToken
 	for i := 0; i < 20; i++ {
-		tok, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, fmt.Sprintf("t%d", i))
+		tok, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, fmt.Sprintf("t%d", i), 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,13 +107,13 @@ func TestTelemetryTokenLimit(t *testing.T) {
 			first = tok
 		}
 	}
-	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra"); !errors.Is(err, store.ErrLimitExceeded) {
+	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra", 0); !errors.Is(err, store.ErrLimitExceeded) {
 		t.Fatalf("21st: %v", err)
 	}
 	if _, err := s.RevokeTelemetryToken(ctx, org.ID, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra"); err != nil {
+	if _, _, err := s.CreateTelemetryToken(ctx, org.ID, a.User.ID, "extra", 0); err != nil {
 		t.Fatalf("after revoke: %v", err)
 	}
 }

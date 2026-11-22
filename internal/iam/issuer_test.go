@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -279,5 +280,12 @@ func TestSigningKeySealedInIAM(t *testing.T) {
 	}
 	if _, err := NewIssuer(ctx, s, seal.Key{2}, tokenIssuer); err == nil {
 		t.Fatal("signing key opened with another OBSERVATORY_SECRETS_KEY")
+	}
+}
+
+func TestNewRefusesZeroSecretsKey(t *testing.T) {
+	_, err := New(context.Background(), Config{PublicURL: "https://hub.test", HubURL: "http://hub", ServiceToken: "t"})
+	if err == nil || !strings.Contains(err.Error(), "secrets key") {
+		t.Fatalf("zero secrets key: %v", err)
 	}
 }

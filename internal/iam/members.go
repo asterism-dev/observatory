@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -103,7 +104,7 @@ func (s *server) removeMember(ctx context.Context, req connect.AnyRequest, org, 
 	resource := "org/members/" + target.String()
 	var guard store.AuditEntry
 	var guardErr error
-	err := s.commit(ctx, func(tx *store.Store) error {
+	err := s.commitHeld(ctx, func(tx *store.Store, heldRevision func() uint64) error {
 		callerRole, e, err := lockedPolicy(ctx, tx, org)
 		if err != nil {
 			return err
@@ -132,7 +133,10 @@ func (s *server) removeMember(ctx context.Context, req connect.AnyRequest, org, 
 		if err := tx.RemoveMember(ctx, org, target); err != nil {
 			return err
 		}
-		return tx.Audit(ctx, auditEntry(ctx, req.Header(), &org, action, resource, store.ResultAllowed))
+		// Taken under the org lock, so it is the last revision that can still list target: services revoke what was granted up to it.
+		removed := auditEntry(ctx, req.Header(), &org, action, resource, store.ResultAllowed)
+		removed.Details = map[string]any{"revision": strconv.FormatUint(heldRevision(), 10)}
+		return tx.Audit(ctx, removed)
 	})
 	if err != nil {
 		if guard.Action != "" {

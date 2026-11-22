@@ -58,6 +58,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.HubURL == "" || cfg.ServiceToken == "" {
 		return nil, errors.New("iam: hub url and service token are required")
 	}
+	if cfg.SecretsKey == (seal.Key{}) {
+		return nil, errors.New("iam: secrets key is required")
+	}
 	pool, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err

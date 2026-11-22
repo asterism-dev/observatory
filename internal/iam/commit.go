@@ -88,13 +88,28 @@ func internal(what string, err error) error {
 
 // commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.
 func (s *server) commit(ctx context.Context, fn func(tx *store.Store) error) error {
+	return s.commitHeld(ctx, func(tx *store.Store, _ func() uint64) error { return fn(tx) })
+}
+
+// commitHeld is commit where fn may call heldRevision for the latest published revision; from that call until the commit no revision is published, so every later one sees the write.
+func (s *server) commitHeld(ctx context.Context, fn func(tx *store.Store, heldRevision func() uint64) error) error {
+	var release func()
+	heldRevision := func() uint64 {
+		if release == nil {
+			release = s.Policy.HoldReloads()
+		}
+		return s.Revision()
+	}
 	err := s.Store.InTx(ctx, func(tx *store.Store) error {
-		if err := fn(tx); err != nil {
+		if err := fn(tx, heldRevision); err != nil {
 			return err
 		}
 		_, err := policyEnforcer(ctx, tx)
 		return err
 	})
+	if release != nil {
+		release()
+	}
 	if err != nil {
 		return toConnect("commit", err)
 	}

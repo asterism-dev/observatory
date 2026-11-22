@@ -72,6 +72,8 @@ type Policy struct {
 	Teams []TeamRef
 	VMs   []VMRef
 	Disks []DiskRef
+	// Revision is iam's stream revision this policy came from, 0 when it was not streamed.
+	Revision uint64
 }
 
 type Enforcer struct {
@@ -89,6 +91,8 @@ type Enforcer struct {
 type teamMember struct{ org, team, user uuid.UUID }
 
 type userOrg struct{ user, org uuid.UUID }
+
+func (e *Enforcer) Revision() uint64 { return e.policy.Revision }
 
 func New(p Policy) (*Enforcer, error) {
 	if err := validate(p); err != nil {

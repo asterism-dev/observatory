@@ -85,10 +85,10 @@ func TestPurgeMemberDeletesDevices(t *testing.T) {
 	if _, err := s.Device(ctx, orgA.ID, inA.ID); err != nil {
 		t.Fatalf("org A device gone before the purge: %v", err)
 	}
-	if purged, err := s.PurgeMember(ctx, orgA.ID, m.User.ID, time.Now(), memberIn(s, orgA.ID, m.User.ID)); err != nil || !purged {
+	if purged, err := s.PurgeMember(ctx, orgA.ID, m.User.ID, 0, memberIn(s, orgA.ID, m.User.ID)); err != nil || !purged {
 		t.Fatalf("purge: %v %v", purged, err)
 	}
-	if purged, err := s.PurgeMember(ctx, orgB.ID, m.User.ID, time.Now(), memberIn(s, orgB.ID, m.User.ID)); err != nil || purged {
+	if purged, err := s.PurgeMember(ctx, orgB.ID, m.User.ID, 0, memberIn(s, orgB.ID, m.User.ID)); err != nil || purged {
 		t.Fatalf("purge of a current member: %v %v", purged, err)
 	}
 	if _, err := s.Device(ctx, orgA.ID, inA.ID); !errors.Is(err, store.ErrNotFound) {

@@ -24,7 +24,7 @@ func TestPurgeSkipsWhenIAMSaysMember(t *testing.T) {
 	mid := m.User.ID
 	v := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeUser, &mid, "P"), "p")
 	asked := false
-	purged, err := s.PurgeMember(ctx, org.ID, mid, time.Now(), func(context.Context) (bool, error) { asked = true; return true, nil })
+	purged, err := s.PurgeMember(ctx, org.ID, mid, 0, func(context.Context) (bool, error) { asked = true; return true, nil })
 	if err != nil || purged || !asked {
 		t.Fatalf("purge: purged=%v asked=%v err=%v", purged, asked, err)
 	}
@@ -116,7 +116,7 @@ func TestUserScopeCreateWaitsForPurge(t *testing.T) {
 			t.Cleanup(unblock)
 			purgeDone := make(chan error, 1)
 			go func() {
-				_, err := s.PurgeMember(ctx, org.ID, mid, time.Now(), func(context.Context) (bool, error) {
+				_, err := s.PurgeMember(ctx, org.ID, mid, 0, func(context.Context) (bool, error) {
 					close(locked)
 					<-release
 					return false, nil
@@ -155,20 +155,24 @@ func boolCount(ok bool) int {
 	return 0
 }
 
-func TestPurgeMemberRevokesTokensCreatedBeforeRemoval(t *testing.T) {
+func TestPurgeMemberRevokesTokensByRevision(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	org, bob, carol := uuid.New(), uuid.New(), uuid.New()
-	old, _, err := s.CreateTelemetryToken(ctx, org, bob, "old")
+	const removedAt = 10
+	old, _, err := s.CreateTelemetryToken(ctx, org, bob, "old", removedAt-1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.CreateTelemetryToken(ctx, org, carol, "carol"); err != nil {
+	last, _, err := s.CreateTelemetryToken(ctx, org, bob, "last", removedAt)
+	if err != nil {
 		t.Fatal(err)
 	}
-	removedAt := time.Now()
-	fresh, _, err := s.CreateTelemetryToken(ctx, org, bob, "fresh")
+	if _, _, err := s.CreateTelemetryToken(ctx, org, carol, "carol", removedAt-1); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _, err := s.CreateTelemetryToken(ctx, org, bob, "fresh", removedAt+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,15 +181,20 @@ func TestPurgeMemberRevokesTokensCreatedBeforeRemoval(t *testing.T) {
 			t.Fatal(err)
 		}
 		toks, err := s.TelemetryTokens(ctx, org)
-		if err != nil || len(toks) != 2 || slices.ContainsFunc(toks, func(tok store.TelemetryToken) bool { return tok.ID == old.ID }) {
+		if err != nil || len(toks) != 2 || !slices.ContainsFunc(toks, func(tok store.TelemetryToken) bool { return tok.ID == fresh.ID }) {
 			t.Fatalf("back=%v: active tokens %+v %v", back, toks, err)
 		}
 	}
-	es := storetest.Audit(t, pool, store.ActionGrafanaTokenRevoke)
-	if len(es) != 1 || es[0].Resource != "telemetry-token/"+old.ID.String() || es[0].ActorKind != store.ActorSystem || es[0].OrgID == nil || *es[0].OrgID != org {
-		t.Fatalf("audit: %+v", es)
+	revoked := map[string]bool{}
+	for _, a := range storetest.Audit(t, pool, store.ActionGrafanaTokenRevoke) {
+		if a.ActorKind != store.ActorSystem || a.OrgID == nil || *a.OrgID != org {
+			t.Fatalf("audit: %+v", a)
+		}
+		revoked[a.Resource] = true
 	}
-	_ = fresh
+	if len(revoked) != 2 || !revoked["telemetry-token/"+old.ID.String()] || !revoked["telemetry-token/"+last.ID.String()] {
+		t.Fatalf("revoked %v", revoked)
+	}
 }
 
 func TestPurgeMemberDropsUserLimits(t *testing.T) {
@@ -198,7 +207,7 @@ func TestPurgeMemberDropsUserLimits(t *testing.T) {
 			execSQL(t, pool, `INSERT INTO limits (org_id, scope, vcpu) VALUES ($1, $2, 1)`, org, "user:"+u.String())
 		}
 	}
-	if _, err := s.PurgeMember(ctx, orgs[0], bob, time.Now(), func(context.Context) (bool, error) { return false, nil }); err != nil {
+	if _, err := s.PurgeMember(ctx, orgs[0], bob, 0, func(context.Context) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	var left int

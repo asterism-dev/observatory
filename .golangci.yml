@@ -78,6 +78,10 @@ linters:
           # hubserver embeds iam until iam runs as its own process.
           files:
             - "**/internal/api/**"
+            - "**/internal/auth/**"
+            - "**/internal/integrations/**"
+            - "**/internal/egress/**"
+            - "**/internal/telemetry/**"
             - "**/internal/store/**"
             - "**/internal/fleet/**"
             - "**/internal/network/**"

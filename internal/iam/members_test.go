@@ -2,6 +2,8 @@ package iam
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -303,3 +305,47 @@ func TestCrossOrgMemberID(t *testing.T) {
 }
 
 // Revoked at removal, not on next use, so an idle token cannot revive when its creator is re-added.
+
+// The removal event names the last revision that could still list the member; the reload after the commit publishes a later one.
+func TestRemovalEventCarriesLastMemberRevision(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	carol, _ := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	e.addMember(org, carol, store.RoleMember)
+	for _, remove := range []func() error{
+		func() error { return e.deleteMember(ownerTok, org, carol) },
+		func() error { return e.leaveOrg(bobTok, org) },
+	} {
+		before := e.rev.Load()
+		if err := remove(); err != nil {
+			t.Fatal(err)
+		}
+		if after := e.rev.Load(); after <= before {
+			t.Fatalf("no revision published after the removal: %d then %d", before, after)
+		}
+	}
+	for _, action := range []string{store.ActionMemberRemove, store.ActionMemberLeave} {
+		es := e.audit(action)
+		if len(es) != 1 {
+			t.Fatalf("%s: %+v", action, es)
+		}
+		rev, err := strconv.ParseUint(fmt.Sprint(es[0].Details["revision"]), 10, 64)
+		if err != nil {
+			t.Fatalf("%s: revision %v: %v", action, es[0].Details["revision"], err)
+		}
+		pol, ok := e.byRev.Load(rev)
+		if !ok {
+			t.Fatalf("%s: revision %d was never published", action, rev)
+		}
+		removed := carol
+		if action == store.ActionMemberLeave {
+			removed = bob
+		}
+		if _, member := pol.(*authz.Enforcer).Role(org, removed.ID); !member {
+			t.Fatalf("%s: revision %d does not list the removed member", action, rev)
+		}
+	}
+}

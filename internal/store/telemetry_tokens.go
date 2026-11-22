@@ -33,8 +33,8 @@ func scanTelemetryToken(row pgx.Row) (t TelemetryToken, err error) {
 	return
 }
 
-// CreateTelemetryToken returns the plaintext secret, which is never stored.
-func (s *Store) CreateTelemetryToken(ctx context.Context, org, createdBy uuid.UUID, name string) (TelemetryToken, string, error) {
+// CreateTelemetryToken returns the plaintext secret, which is never stored; revision is the policy revision that authorized the create.
+func (s *Store) CreateTelemetryToken(ctx context.Context, org, createdBy uuid.UUID, name string, revision uint64) (TelemetryToken, string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return TelemetryToken{}, "", err
@@ -54,8 +54,8 @@ func (s *Store) CreateTelemetryToken(ctx context.Context, org, createdBy uuid.UU
 		}
 		var err error
 		tok, err = scanTelemetryToken(tx.q.QueryRow(ctx, `
-			INSERT INTO telemetry_tokens (org_id, name, token_hash, created_by) VALUES ($1, $2, $3, $4)
-			RETURNING `+telemetryTokenColumns, org, name, hashToken(secret), createdBy))
+			INSERT INTO telemetry_tokens (org_id, name, token_hash, created_by, authorized_revision) VALUES ($1, $2, $3, $4, $5)
+			RETURNING `+telemetryTokenColumns, org, name, hashToken(secret), createdBy, int64(revision)))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		}
@@ -94,9 +94,9 @@ func (s *Store) RevokeTelemetryToken(ctx context.Context, org, id uuid.UUID) (st
 	return name, err
 }
 
-// revokeTokensBy revokes the active tokens user created in org before before and returns them.
-func (s *Store) revokeTokensBy(ctx context.Context, org, user uuid.UUID, before time.Time) ([]TelemetryToken, error) {
-	rows, err := s.q.Query(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND created_by = $2 AND created_at < $3 AND revoked_at IS NULL RETURNING "+telemetryTokenColumns, org, user, before)
+// revokeTokensBy revokes the active tokens user created in org on a policy no later than revision and returns them.
+func (s *Store) revokeTokensBy(ctx context.Context, org, user uuid.UUID, revision uint64) ([]TelemetryToken, error) {
+	rows, err := s.q.Query(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND created_by = $2 AND authorized_revision <= $3 AND revoked_at IS NULL RETURNING "+telemetryTokenColumns, org, user, int64(revision))
 	if err != nil {
 		return nil, err
 	}

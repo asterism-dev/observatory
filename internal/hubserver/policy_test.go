@@ -1,6 +1,7 @@
 package hubserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"io"
@@ -41,7 +42,7 @@ func testHubEnv(t *testing.T, dbURL, natsURL, natsToken string) map[string]strin
 		"OBSERVATORY_GATEWAY_TOKEN":      strings.Repeat("g", 32),
 		"OBSERVATORY_STORAGE_TOKEN":      strings.Repeat("s", 32),
 		"OBSERVATORY_EDGE_TOKEN":         strings.Repeat("e", 32),
-		"OBSERVATORY_SECRETS_KEY":        base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_SECRETS_KEY":        base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
 		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
 		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
 		"OBSERVATORY_NATS_URL":           natsURL,

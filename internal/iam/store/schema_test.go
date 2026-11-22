@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"slices"
 	"testing"
@@ -68,7 +69,7 @@ func TestSecretSealedAndStable(t *testing.T) {
 		t.Fatalf("again: %q %v calls=%d", again, err, calls)
 	}
 	var sealed []byte
-	if err := pool.QueryRow(ctx, "SELECT sealed FROM secrets WHERE name = 'k'").Scan(&sealed); err != nil || slices.Equal(sealed, []byte("seed")) || len(sealed) < 12 {
+	if err := pool.QueryRow(ctx, "SELECT sealed FROM secrets WHERE name = 'k'").Scan(&sealed); err != nil || bytes.Contains(sealed, []byte("seed")) || len(sealed) < 12 {
 		t.Fatalf("stored in the clear: %x %v", sealed, err)
 	}
 	if _, err := s.Secret(ctx, [32]byte{8}, "k", gen); err == nil {

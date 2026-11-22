@@ -61,6 +61,12 @@ func (s *Service) OnReload(fn func(old, new Policy)) {
 	fn(cur, cur)
 }
 
+// HoldReloads blocks reloads, and so publishing, until release is called; a reload in flight finishes first.
+func (s *Service) HoldReloads() (release func()) {
+	s.mu.Lock()
+	return s.mu.Unlock
+}
+
 // WithFreshness makes Current report false while fresh does.
 func (s *Service) WithFreshness(fresh func() bool) *Service {
 	s.fresh.Store(&fresh)

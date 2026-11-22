@@ -64,6 +64,8 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Read before the checks: a reload in between can only stamp the token too early, so a removal revokes it rather than missing it.
+	revision := h.z.Enforcer().Revision()
 	if !h.authorize(w, r, m.OrgID, authz.ObjSettings, "telemetry.tokens.create") {
 		return
 	}
@@ -81,7 +83,7 @@ func (h *api) createTelemetryToken(w http.ResponseWriter, r *http.Request) {
 	var secret string
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
-		if tok, secret, err = tx.CreateTelemetryToken(r.Context(), m.OrgID, p.User.ID, name); err != nil {
+		if tok, secret, err = tx.CreateTelemetryToken(r.Context(), m.OrgID, p.User.ID, name, revision); err != nil {
 			return err
 		}
 		return tx.Audit(r.Context(), telemetryTokenAudit(r, store.ActionGrafanaTokenCreate, tok))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,7 +105,11 @@ func purge(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServ
 			return err
 		}
 		// A stale event, e.g. replayed to a fresh consumer, must not wipe a re-joined member's rows.
-		purged, err := s.PurgeMember(ctx, org, user, e.GetTime().AsTime(), func(ctx context.Context) (bool, error) { return iamclient.IsMember(ctx, iam, org, user) })
+		removedAt, err := strconv.ParseUint(e.GetDetails().GetFields()["revision"].GetStringValue(), 10, 64)
+		if err != nil {
+			return fmt.Errorf("%w: revision: %w", errUnparsable, err)
+		}
+		purged, err := s.PurgeMember(ctx, org, user, removedAt, func(ctx context.Context) (bool, error) { return iamclient.IsMember(ctx, iam, org, user) })
 		if err != nil {
 			return err
 		}

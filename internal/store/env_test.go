@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -293,7 +292,7 @@ func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	shared := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeOrg, nil, "S"), "s")
 	ownerVar := mustCreateEnv(t, s, envVar(org, owner.User.ID, store.EnvPlain, store.EnvScopeUser, &owner.User.ID, "O"), "o")
 	_ = removeMember(s, ctx, org.ID, mid)
-	if purged, err := s.PurgeMember(ctx, org.ID, mid, time.Now(), memberIn(s, org.ID, mid)); err != nil || !purged {
+	if purged, err := s.PurgeMember(ctx, org.ID, mid, 0, memberIn(s, org.ID, mid)); err != nil || !purged {
 		t.Fatalf("purge: %v %v", purged, err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

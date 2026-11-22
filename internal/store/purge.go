@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -12,8 +11,8 @@ import (
 
 var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
 
-// PurgeMember revokes the telemetry tokens user created in org before removedAt, then deletes their hub rows unless member, asked under the hub org lock, says they are back; running it again is harmless.
-func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, removedAt time.Time, member func(context.Context) (bool, error)) (purged bool, err error) {
+// PurgeMember revokes the telemetry tokens user created in org on a policy up to removedAt, iam's last revision that can still hold the membership, then deletes their hub rows unless member, asked under the hub org lock, says they are back; running it again is harmless.
+func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, removedAt uint64, member func(context.Context) (bool, error)) (purged bool, err error) {
 	err = s.InTx(ctx, func(tx *Store) error {
 		// User-scope creates take this lock too: one that saw the re-join committed before, one after waits and keeps its row.
 		if err := tx.LockHubOrg(ctx, org); err != nil {

@@ -124,6 +124,7 @@ func (w *Watcher) apply(m *iamv1.Policy) bool {
 		return true
 	}
 	p, err := policyFrom(m)
+	p.Revision = m.GetRevision()
 	var e *coreauthz.Enforcer
 	if err == nil {
 		e, err = coreauthz.New(p)
