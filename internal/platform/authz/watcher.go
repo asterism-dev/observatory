@@ -216,6 +216,13 @@ func (w *Watcher) Policy() (coreauthz.Policy, uint64, bool) {
 	return s.policy, s.revision, true
 }
 
+// Changed returns a channel closed by the next applied snapshot, whatever its revision.
+func (w *Watcher) Changed() <-chan struct{} {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.changed
+}
+
 // WaitRevision returns once a snapshot at rev or later is applied, or with ctx's error; rev 0 waits for the first snapshot.
 func (w *Watcher) WaitRevision(ctx context.Context, rev uint64) error {
 	for {

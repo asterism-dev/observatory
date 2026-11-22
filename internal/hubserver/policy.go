@@ -50,12 +50,15 @@ func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store, 
 	}
 	w.Require(cat.Service, digest)
 	for {
-		_, rev, _ := w.Policy()
+		// Taken before the check so a snapshot in between is not missed; revisions can go backwards after an iam restart.
+		changed := w.Changed()
 		if _, ok := w.Current(); ok {
 			break
 		}
-		if err := w.WaitRevision(wctx, rev+1); err != nil {
-			return hubPolicy{}, fmt.Errorf("no policy with the hub catalog from iam within %v: %w", firstPolicyWait, err)
+		select {
+		case <-wctx.Done():
+			return hubPolicy{}, fmt.Errorf("no policy with the hub catalog from iam within %v: %w", firstPolicyWait, wctx.Err())
+		case <-changed:
 		}
 	}
 	z, err := authz.NewService(ctx, func(ctx context.Context) (authz.Policy, error) {

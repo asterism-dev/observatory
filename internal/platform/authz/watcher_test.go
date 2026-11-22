@@ -291,3 +291,22 @@ func waitUntilCurrent(t *testing.T, w *Watcher) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestChangedFiresOnBackwardsRevision(t *testing.T) {
+	w, err := NewWatcher("http://iam.invalid", testToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.apply(&iamv1.Policy{Revision: 5}) {
+		t.Fatal("first snapshot rejected")
+	}
+	changed := w.Changed()
+	if !w.apply(&iamv1.Policy{Revision: 3}) {
+		t.Fatal("backwards snapshot rejected")
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("Changed did not fire on a lower revision")
+	}
+}
