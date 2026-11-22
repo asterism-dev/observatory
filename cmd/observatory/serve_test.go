@@ -3,16 +3,23 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
@@ -24,6 +31,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/edge"
 	iamstore "github.com/asterism-dev/observatory/internal/iam/store"
 	iamstoretest "github.com/asterism-dev/observatory/internal/iam/store/storetest"
+	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -420,66 +428,75 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	}
 }
 
-func TestServeAllIAMBoundary(t *testing.T) {
+// fakeIdP is an OIDC provider whose authorization code is the subject to log in, so a test drives the real login routes.
+type fakeIdP struct {
+	*httptest.Server
+	key *rsa.PrivateKey
+}
+
+func newFakeIdP(t *testing.T) *fakeIdP {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idp := &fakeIdP{Server: httptest.NewUnstartedServer(nil), key: key}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"issuer":"`+idp.URL+`","authorization_endpoint":"`+idp.URL+`/auth","token_endpoint":"`+idp.URL+`/token","jwks_uri":"`+idp.URL+`/keys"}`)
+	})
+	mux.HandleFunc("GET /keys", func(w http.ResponseWriter, r *http.Request) {
+		b64 := base64.RawURLEncoding.EncodeToString
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "RSA", "kid": "k", "alg": "RS256", "use": "sig",
+			"n": b64(key.N.Bytes()), "e": b64(big.NewInt(int64(key.E)).Bytes())}}})
+	})
+	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "at", "token_type": "Bearer", "id_token": idp.idToken(t, r.FormValue("code"), "web")})
+	})
+	idp.Config.Handler = mux
+	idp.Start()
+	t.Cleanup(idp.Close)
+	return idp
+}
+
+func (idp *fakeIdP) idToken(t *testing.T, subject, audience string) string {
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": idp.URL, "aud": audience, "sub": subject, "email": subject + "@x.io", "name": subject,
+		"iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
+	tok.Header["kid"] = "k"
+	raw, err := tok.SignedString(idp.key)
+	if err != nil {
+		t.Error(err)
+	}
+	return raw
+}
+
+// TestServeAllIAMService runs iam as its own service behind the edge: login through the IdP, the hub following iam's policy, member removal and session checks per registry use.
+func TestServeAllIAMService(t *testing.T) {
 	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pool := dbtest.New(t)
 	env := serveAllEnv(t, pool, edgeLn)
+	idp := newFakeIdP(t)
+	env["OBSERVATORY_OIDC_ISSUER"] = idp.URL
+	// An external bus the test can stop; serve all then skips its embedded one.
+	natsURL, natsToken, stopNATS, err := bus.Embedded(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopNATS()
+	env["OBSERVATORY_NATS_URL"], env["OBSERVATORY_NATS_TOKEN"] = natsURL, natsToken
+	env["OBSERVATORY_REGISTRY_URL"] = "http://127.0.0.1:1"
+	env["OBSERVATORY_REGISTRY_KEY_DIR"] = t.TempDir()
+	env["OBSERVATORY_REGISTRY_EVENTS_SECRET"] = strings.Repeat("e", 32)
 	master, err := seal.ParseKey(env["OBSERVATORY_SECRETS_KEY"])
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
 	hs := store.New(pool).WithMasterKey(master)
-	s, _ := iamStore(t, pool)
-	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob, err := s.Login(ctx, iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	inv, _, err := s.CreateInvite(ctx, org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
-		t.Fatal(err)
-	}
-	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, enroll, err := hs.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice.User.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := hs.EnrollNode(ctx, enroll); err != nil {
-		t.Fatal(err)
-	}
-	vm, err := hs.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &bob.User.ID, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob.User.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := hs.CreateEnvVar(ctx, store.EnvVar{OrgID: org.ID, Kind: store.EnvPlain, Scope: store.EnvScopeUser, OwnerID: &bob.User.ID, Name: "BOB_PRIVATE", CreatedBy: bob.User.ID, UpdatedBy: bob.User.ID}, "x"); err != nil {
-		t.Fatal(err)
-	}
-
-	var envRows int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", org.ID, bob.User.ID).Scan(&envRows); err != nil || envRows != 1 {
-		t.Fatalf("bob's env var rows before removal: %d, %v", envRows, err)
-	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -491,97 +508,249 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		}
 	}()
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	base := "http://" + edgeLn.Addr().String()
-	call := func(method, path, token string) (int, string) {
-		req, _ := http.NewRequest(method, base+path, nil)
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+	type auth func(*http.Request)
+	cookie := func(token string) auth {
+		return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "obs_session", Value: token}) }
+	}
+	bearerAuth := func(token string) auth {
+		return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }
+	}
+	do := func(method, path, body string, a auth) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, base+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a != nil {
+			a(req)
 		}
 		req.Header.Set("X-Observatory", "1")
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return resp
+	}
+	call := func(method, path, body string, a auth) (int, string) {
+		t.Helper()
+		resp := do(method, path, body, a)
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(body)
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+	within := func(d time.Duration, what string, ok func() (bool, string)) {
+		t.Helper()
+		deadline := time.Now().Add(d)
+		for {
+			done, state := ok()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s not within %s: %s", what, d, state)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	rpc := func(a auth) connect.ClientOption {
+		return connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+			return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+				r := &http.Request{Header: req.Header()}
+				a(r)
+				req.Header().Set("X-Observatory", "1")
+				return next(ctx, req)
+			}
+		}))
 	}
 
-	iam := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1")
-	me, err := iam.GetMe(ctx, bearer(&iamv1.GetMeRequest{}, aliceToken))
-	if err != nil || me.Msg.GetUser().GetName() != "alice" {
-		t.Fatalf("GetMe with a CLI session: %v %v", me, err)
+	// Browser login: the edge sends /auth/ to iam, iam to the IdP and back.
+	start := do("GET", "/auth/login", "", nil)
+	start.Body.Close()
+	loc, err := url.Parse(start.Header.Get("Location"))
+	if err != nil || start.StatusCode != http.StatusFound || !strings.HasPrefix(loc.String(), idp.URL+"/auth") {
+		t.Fatalf("login: %d %v", start.StatusCode, loc)
+	}
+	cb := do("GET", "/auth/callback?code=alice&state="+url.QueryEscape(loc.Query().Get("state")), "", func(r *http.Request) {
+		for _, c := range start.Cookies() {
+			r.AddCookie(c)
+		}
+	})
+	cb.Body.Close()
+	var aliceToken string
+	for _, c := range cb.Cookies() {
+		if c.Name == "obs_session" {
+			aliceToken = c.Value
+		}
+	}
+	if cb.StatusCode != http.StatusFound || cb.Header.Get("Location") != "/" || aliceToken == "" {
+		t.Fatalf("callback: %d %q, session cookie %t", cb.StatusCode, cb.Header.Get("Location"), aliceToken != "")
+	}
+	alice := cookie(aliceToken)
+	aliceIAM := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1", rpc(alice))
+	me, err := aliceIAM.GetMe(ctx, connect.NewRequest(&iamv1.GetMeRequest{}))
+	if err != nil || me.Msg.GetUser().GetName() != "alice" || len(me.Msg.GetOrgs()) != 1 || !me.Msg.GetOrgs()[0].GetPersonal() {
+		t.Fatalf("GetMe after login: %v %v", me, err)
 	}
 	// A non-session bearer is not swapped at the edge, so the 401 comes from the node auth in the hub.
-	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized || body != "Unauthorized\n" {
+	if code, body := call("GET", "/api/nodes/health", "", bearerAuth("not-a-session-token")); code != http.StatusUnauthorized || body != "Unauthorized\n" {
 		t.Fatalf("/api/nodes/health: %d %s", code, body)
 	}
 	// The edge refuses a session-less call to iam's API; with a session, iam's query guard answers.
-	if code, body := call("GET", "/api/iam/v1/me?org=x", ""); code != http.StatusUnauthorized {
+	if code, body := call("GET", "/api/iam/v1/me?org=x", "", nil); code != http.StatusUnauthorized {
 		t.Fatalf("REST query without a session: %d %s", code, body)
 	}
-	if code, body := call("GET", "/api/iam/v1/me?org=x", aliceToken); code != http.StatusBadRequest {
+	if code, body := call("GET", "/api/iam/v1/me?org=x", "", alice); code != http.StatusBadRequest {
 		t.Fatalf("REST query with a session: %d %s", code, body)
 	}
+	// Login waits for the hub to have the new personal org, so the first hub call already succeeds.
+	if code, body := call("GET", "/api/orgs/"+me.Msg.GetOrgs()[0].GetId()+"/limits", "", alice); code != http.StatusOK {
+		t.Fatalf("personal org on the hub right after login: %d %s", code, body)
+	}
 
-	_, err = iam.DeleteMember(ctx, bearer(&iamv1.DeleteMemberRequest{Org: org.ID.String(), User: bob.User.ID.String()}, aliceToken))
+	created, err := aliceIAM.CreateOrg(ctx, connect.NewRequest(&iamv1.CreateOrgRequest{Name: "acme"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := created.Msg.GetOrg().GetId()
+	within(2*time.Second, "new org on the hub", func() (bool, string) {
+		code, body := call("GET", "/api/orgs/"+org+"/limits", "", alice)
+		return code == http.StatusOK, body
+	})
+
+	// Unclean paths under iam's prefixes reach no handler with the raw cookie: iam's mux redirects to the clean path or answers 404, and the edge refuses /internal.
+	for _, c := range []struct{ method, path, clean string }{
+		{"GET", "/auth/../api/orgs/" + org + "/limits", "/api/orgs/" + org + "/limits"},
+		{"GET", "/auth/%2e%2e/api/orgs/" + org + "/limits", ""},
+		{"POST", "/api/auth/../iam/v1/observatory.iam.v1.IAMService/GetMe", "/api/iam/v1/observatory.iam.v1.IAMService/GetMe"},
+		{"GET", "/auth/../internal/iam/jwks", ""},
+	} {
+		resp := do(c.method, c.path, "{}", alice)
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if c.clean == "" {
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("%s: %d %s", c.path, resp.StatusCode, raw)
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != c.clean || strings.Contains(string(raw), "alice") {
+			t.Fatalf("%s: %d %q %s", c.path, resp.StatusCode, resp.Header.Get("Location"), raw)
+		}
+	}
+
+	// CLI login: an ID token for the CLI client, exchanged at iam through the edge.
+	cliLogin := func(subject string) (string, string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"idToken": idp.idToken(t, subject, "cli"), "accessToken": "at"})
+		code, raw := call("POST", "/api/auth/cli-token", string(body), nil)
+		var res struct{ Token string }
+		if code != http.StatusCreated || json.Unmarshal([]byte(raw), &res) != nil {
+			t.Fatalf("cli login: %d %s", code, raw)
+		}
+		sessions, err := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1", rpc(bearerAuth(res.Token))).ListSessions(ctx, connect.NewRequest(&iamv1.ListSessionsRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range sessions.Msg.GetSessions() {
+			if s.GetCurrent() {
+				return res.Token, s.GetId()
+			}
+		}
+		t.Fatal("no current session")
+		return "", ""
+	}
+	bobToken, _ := cliLogin("bob")
+	bob := bearerAuth(bobToken)
+	bobIAM := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1", rpc(bob))
+	inv, err := aliceIAM.CreateInvite(ctx, connect.NewRequest(&iamv1.CreateInviteRequest{Org: org, Role: "member"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bobIAM.AcceptInvite(ctx, connect.NewRequest(&iamv1.AcceptInviteRequest{Token: inv.Msg.GetToken()})); err != nil {
+		t.Fatal(err)
+	}
+	bobMe, err := bobIAM.GetMe(ctx, connect.NewRequest(&iamv1.GetMeRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobID := bobMe.Msg.GetUser().GetId()
+	within(5*time.Second, "bob's private env var", func() (bool, string) {
+		code, body := call("POST", "/api/orgs/"+org+"/env", `{"name":"BOB_PRIVATE","value":"x","kind":"env","scope":"user"}`, bob)
+		return code == http.StatusCreated, body
+	})
+
+	orgID, userID := uuid.MustParse(org), uuid.MustParse(bobID)
+	node, enroll, err := hs.CreateNode(ctx, store.Node{OrgID: orgID, Name: "n1", CreatedBy: userID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := hs.EnrollNode(ctx, enroll); err != nil {
+		t.Fatal(err)
+	}
+	vm, err := hs.CreateVM(ctx, store.VM{OrgID: orgID, NodeID: node.ID, UserID: &userID, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: userID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// REST answers 400 with failed precondition (code 9) here; 0.x answered 409.
+	if code, body := call("DELETE", "/api/iam/v1/orgs/"+org+"/members/"+bobID, "", alice); code != http.StatusBadRequest || !strings.Contains(body, `"code":9,`) {
+		t.Fatalf("REST remove a member that owns a VM: %d %s", code, body)
+	}
+	_, err = aliceIAM.DeleteMember(ctx, connect.NewRequest(&iamv1.DeleteMemberRequest{Org: org, User: bobID}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("remove a member that owns a VM: %v", err)
 	}
 	if _, err := pool.Exec(ctx, "DELETE FROM vms WHERE id = $1", vm.ID); err != nil {
 		t.Fatal(err)
 	}
-	member := "/api/iam/v1/orgs/" + org.ID.String() + "/members/"
-	if code, body := call("DELETE", member+bob.User.ID.String(), ""); code != http.StatusUnauthorized {
-		t.Fatalf("REST remove without a session: %d %s", code, body)
-	}
-	if code, body := call("DELETE", member+alice.User.ID.String(), bobToken); code != http.StatusForbidden {
+	if code, body := call("DELETE", "/api/iam/v1/orgs/"+org+"/members/"+me.Msg.GetUser().GetId(), "", bob); code != http.StatusForbidden {
 		t.Fatalf("REST remove by a member: %d %s", code, body)
 	}
-	if code, body := call("DELETE", member+bob.User.ID.String(), aliceToken); code != http.StatusOK {
-		t.Fatalf("REST remove by the owner: %d %s", code, body)
+	if _, err := aliceIAM.DeleteMember(ctx, connect.NewRequest(&iamv1.DeleteMemberRequest{Org: org, User: bobID})); err != nil {
+		t.Fatal(err)
 	}
-
-	// The owner's removal is one allowed iam.members.delete event, which the hub's cleanup acts on.
-	auditClient := auditv1connect.NewAuditServiceClient(client, base+"/api/audit/v1")
-	deadline := time.Now().Add(15 * time.Second)
-	for {
+	within(10*time.Second, "purge of bob's env var", func() (bool, string) {
 		var n int
-		if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", org.ID, bob.User.ID).Scan(&n); err != nil {
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM env_vars WHERE org_id = $1 AND user_id = $2", orgID, userID).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		var allowed, denied, events []*eventsv1.Event
-		resp, err := auditClient.ListEvents(ctx, bearer(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: iamstore.ActionMemberRemove}}, aliceToken))
-		// Unavailable until the audit service has its first policy snapshot from the hub.
-		if err != nil && connect.CodeOf(err) != connect.CodeUnavailable {
-			t.Fatalf("audit through the edge: %v", err)
+		return n == 0, fmt.Sprintf("%d rows", n)
+	})
+
+	// A registry credential is checked against iam on every use, so revoking its session refuses it at once, with or without the bus.
+	registryToken := func(secret string) int {
+		t.Helper()
+		req, _ := http.NewRequest("GET", base+"/v2/token", nil)
+		req.SetBasicAuth("observatory", secret)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err == nil {
-			events = resp.Msg.GetEvents()
-		}
-		for _, e := range events {
-			switch e.GetResult() {
-			case eventsv1.Result_RESULT_ALLOWED:
-				allowed = append(allowed, e)
-			case eventsv1.Result_RESULT_DENIED:
-				denied = append(denied, e)
-			}
-		}
-		if n == 0 && len(allowed) > 0 && len(denied) > 0 {
-			if len(allowed) != 1 || allowed[0].GetResource() != "org/members/"+bob.User.ID.String() || allowed[0].GetActor().GetId() != alice.User.ID.String() {
-				t.Fatalf("allowed iam.members.delete events %v", allowed)
-			}
-			if len(denied) != 1 || denied[0].GetActor().GetId() != bob.User.ID.String() {
-				t.Fatalf("denied iam.members.delete events %v", denied)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("after the removal: %d private env vars of bob, allowed %v, denied %v", n, allowed, denied)
-		}
-		time.Sleep(100 * time.Millisecond)
+		resp.Body.Close()
+		return resp.StatusCode
 	}
+	revokeRefuses := func(what string) {
+		t.Helper()
+		token, session := cliLogin("bob")
+		code, raw := call("POST", "/api/registry/credentials", "", bearerAuth(token))
+		var cred struct{ Secret string }
+		if code != http.StatusCreated || json.Unmarshal([]byte(raw), &cred) != nil {
+			t.Fatalf("registry credential: %d %s", code, raw)
+		}
+		if code := registryToken(cred.Secret); code != http.StatusOK {
+			t.Fatalf("%s: registry token before the revoke: %d", what, code)
+		}
+		if _, err := bobIAM.RevokeSession(ctx, connect.NewRequest(&iamv1.RevokeSessionRequest{Session: session})); err != nil {
+			t.Fatal(err)
+		}
+		if code := registryToken(cred.Secret); code != http.StatusUnauthorized {
+			t.Fatalf("%s: registry token after the revoke: %d", what, code)
+		}
+	}
+	revokeRefuses("bus up")
+	stopNATS()
+	revokeRefuses("bus down")
 }
 
 func bearer[T any](msg *T, token string) *connect.Request[T] {
