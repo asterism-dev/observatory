@@ -110,7 +110,7 @@ itself retries OIDC discovery while the identity provider starts, instead of exi
 
 - `/internal/iam/*` (token exchange, signing keys, policy stream, internal API) is never public: the edge answers 404,
   and iam requires a service token, answers 403 for a missing or wrong one and logs the attempt. The same holds for the
-  hub's `/internal/hub/` and the audit service's `/internal/audit/`.
+  hub's `/internal/hub/`, the audit service's `/internal/audit/` and the quota service's `/internal/quota/`.
 - iam also limits each caller to what it needs and answers 403 for anything else, also for a service token under a
   name not in this table:
 
@@ -181,7 +181,7 @@ inside the compose network only; do not publish it.
   `quota.reservations.committed`, written in the same transaction; a failed transaction cancels its holds, and a delete
   releases the resource at once, so deleting and creating again at the limit works right away.
 - The image storage limit is read from quota; the hub still computes image storage usage itself.
-- A hold lasts 5 minutes. If quota's event consumer lags further behind than that, committed usage is under-counted for the gap.
+- A hold lasts 5 minutes. If quota's event consumer lags further behind than that, or the bus is down that long, committed usage is under-counted for the gap.
 - The stream keeps events for 7 days: if quota or the bus is down longer, missed lifecycle events are lost and allocations drift.
 - The durable consumer `quota` applies the hub's lifecycle events one at a time, in order, and retries a failed event
   (1 s doubling to 30 s) until it applies. A second one, `quota-iam`, drops the limits of removed members (once iam
@@ -305,7 +305,9 @@ Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKE
 
 Upgrading to the release with the quota service: `OBSERVATORY_QUOTA_SERVICE_TOKEN` in `deploy/.env` is required
 (`openssl rand -hex 32`, different from the other tokens). The hub needs `OBSERVATORY_QUOTA_URL` (compose sets it), and
-its migration 41 drops the hub's `limits` table without copying it: set the limits again in quota.
+its migration 41 drops the hub's `limits` table without copying it: set the limits again in quota. Quota's usage starts
+empty, so existing VMs, disks and snapshots are not counted and limits hold only for resources created after the
+upgrade. 1.0 is a fresh install: reinstall rather than upgrading in place.
 
 Upgrading from 0.x to 1.0 is a fresh install. `deploy/.env` needs `OBSERVATORY_HUB_SERVICE_TOKEN` and
 `OBSERVATORY_IAM_SERVICE_TOKEN` (`openssl rand -hex 32`, different from the other tokens). The `OBSERVATORY_OIDC_*`

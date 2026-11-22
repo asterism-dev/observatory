@@ -309,7 +309,7 @@ The quota service serves the limits at `/api/quota/v1/`: `GET /orgs/{org}/limits
 or grows a VM, disk or snapshot; while quota can't answer, those requests fail with `503` "quota service unavailable",
 never unchecked. A delete frees its quota at once; if quota is down at that moment, the deleted event frees it once quota
 is back. Ceilings: if quota or the bus is down for more than 7 days, events expire from the stream and allocations drift;
-if quota's event consumer lags more than 5 minutes (the hold lifetime), usage is under-counted for the gap.
+if quota's event consumer lags, or the bus is down, for more than 5 minutes (the hold lifetime), usage is under-counted for the gap.
 
 ## Platform admins
 
