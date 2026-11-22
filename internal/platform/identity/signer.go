@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -24,8 +25,18 @@ type Signer struct {
 }
 
 // NewSigner signs with key as issuer, compared without a trailing slash as the Verifier does.
-func NewSigner(key ed25519.PrivateKey, issuer string) *Signer {
-	return &Signer{key: key, kid: thumbprint(key.Public().(ed25519.PublicKey)), issuer: strings.TrimRight(issuer, "/")}
+func NewSigner(key ed25519.PrivateKey, issuer string) (*Signer, error) {
+	if len(key) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("identity: signing key has %d bytes, want %d", len(key), ed25519.PrivateKeySize)
+	}
+	return &Signer{key: key, kid: thumbprint(key.Public().(ed25519.PublicKey)), issuer: strings.TrimRight(issuer, "/")}, nil
+}
+
+// Verifier checks tokens s signed without fetching a key set, for the service that holds the key.
+func (s *Signer) Verifier() *Verifier {
+	v := &Verifier{issuer: s.issuer, now: time.Now, local: true}
+	v.set.Store(&keySet{keys: map[string]ed25519.PublicKey{s.kid: s.key.Public().(ed25519.PublicKey)}})
+	return v
 }
 
 // thumbprint is the RFC 7638 JWK thumbprint, so the kid is stable for a key and changes with it.

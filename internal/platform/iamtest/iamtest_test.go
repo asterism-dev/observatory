@@ -2,7 +2,9 @@ package iamtest
 
 import (
 	"context"
+	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,5 +110,23 @@ func TestIAMTestSessionsAndMemberships(t *testing.T) {
 	}
 	if got := member(uuid.New()); got.Member {
 		t.Fatalf("stranger org: %+v", got)
+	}
+}
+
+func TestIAMTestRefusesTokenForUnknownUser(t *testing.T) {
+	s := New(t)
+	tok, _ := s.SessionToken(uuid.New(), "cli")
+	req, err := http.NewRequest(http.MethodPost, s.URL()+"/internal/iam/token", strings.NewReader(`{"session_token":"`+tok+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.ServiceToken())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("minted a JWT for an unknown user")
 	}
 }

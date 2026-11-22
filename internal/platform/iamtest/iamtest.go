@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -68,10 +69,14 @@ func New(t testing.TB) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	signer, err := identity.NewSigner(key, Issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{
 		t:        t,
 		token:    rand.Text() + rand.Text(),
-		signer:   identity.NewSigner(key, Issuer),
+		signer:   signer,
 		pub:      authz.NewPublisher(),
 		users:    map[uuid.UUID]User{},
 		admins:   map[uuid.UUID]bool{},
@@ -245,7 +250,10 @@ func (s *Server) JWT(user uuid.UUID, kind string) (string, uuid.UUID) {
 // mint needs s.mu held.
 func (s *Server) mint(id uuid.UUID) (string, time.Time, error) {
 	sess := s.sessions[id]
-	u := s.users[sess.user]
+	u, ok := s.users[sess.user]
+	if !ok {
+		return "", time.Time{}, fmt.Errorf("iamtest: unknown user %s", sess.user)
+	}
 	return s.signer.Mint(identity.Principal{User: u.ID, Session: id, PlatformAdmin: s.admins[u.ID], Name: u.Name, SessionKind: sess.kind, SessionExpires: sess.expires})
 }
 

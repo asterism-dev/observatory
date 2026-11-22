@@ -40,7 +40,11 @@ func NewIssuer(ctx context.Context, s *store.Store, url string) (*Issuer, error)
 	if len(seed) != ed25519.SeedSize {
 		return nil, fmt.Errorf("hub secret %s: want %d bytes, got %d", signingKeySecret, ed25519.SeedSize, len(seed))
 	}
-	return &Issuer{store: s, signer: identity.NewSigner(ed25519.NewKeyFromSeed(seed), url)}, nil
+	signer, err := identity.NewSigner(ed25519.NewKeyFromSeed(seed), url)
+	if err != nil {
+		return nil, err
+	}
+	return &Issuer{store: s, signer: signer}, nil
 }
 
 // Mint signs a JWT for u's session s and returns it with its expiry.

@@ -114,6 +114,8 @@ type Verifier struct {
 	client                        *http.Client
 	now                           func() time.Time
 	fetchTimeout                  time.Duration
+	// local verifiers hold their signer's key and never fetch.
+	local bool
 
 	set atomic.Pointer[keySet]
 
@@ -173,6 +175,12 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (Principal, error) {
 
 func (v *Verifier) key(ctx context.Context, kid string) (ed25519.PublicKey, error) {
 	cur := v.set.Load()
+	if v.local {
+		if key, ok := cur.keys[kid]; ok {
+			return key, nil
+		}
+		return nil, ErrNoKey
+	}
 	if cur != nil {
 		if key, ok := cur.keys[kid]; ok {
 			if v.now().Sub(cur.fetchedAt) >= maxKeyAge {
