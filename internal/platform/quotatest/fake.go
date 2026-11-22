@@ -129,7 +129,7 @@ func (f *Fake) Reserve(_ context.Context, r *connect.Request[quotav1.ReserveRequ
 				continue
 			}
 			if got := used[i] + int64(*a); got > int64(*m[i]) {
-				return nil, quotaclient.NewLimitExceeded("limit exceeded", &quotav1.LimitExceeded{Scope: scope, Name: dimensions[i][0], Unit: dimensions[i][1], Limit: *m[i], Got: int32(min(got, math.MaxInt32))})
+				return nil, quotaclient.NewLimitExceeded(&quotav1.LimitExceeded{Scope: scope, Name: dimensions[i][0], Unit: dimensions[i][1], Limit: *m[i], Got: int32(min(got, math.MaxInt32))})
 			}
 		}
 	}
@@ -140,7 +140,7 @@ func (f *Fake) Reserve(_ context.Context, r *connect.Request[quotav1.ReserveRequ
 
 func (f *Fake) Cancel(_ context.Context, r *connect.Request[quotav1.CancelRequest]) (*connect.Response[quotav1.CancelResponse], error) {
 	for _, id := range r.Msg.GetReservationIds() {
-		if _, err := uuid.Parse(id); err != nil {
+		if _, err := uuidx.Canonical(id); err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("reservation_ids: %w", err))
 		}
 	}

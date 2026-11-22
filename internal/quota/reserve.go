@@ -8,8 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
+	"github.com/asterism-dev/observatory/internal/platform/quotaclient"
 )
 
+// ponytail: a hold counts only for its TTL, so a consumer lagging more than 5 min behind a commit under-counts usage for the gap; holds must expire for crashed callers.
 const reservationTTL = 5 * time.Minute
 
 // Amounts are what an operation adds; nil dimensions are not checked.
@@ -29,12 +33,10 @@ type limitError struct {
 	Limit, Got int
 }
 
-func (e *limitError) Error() string {
-	owner := "the org's"
-	if e.Scope != scopeOrg {
-		owner = "the owner's"
-	}
-	return fmt.Sprintf("%s %s limit of %d%s would be exceeded (%d%s)", owner, e.Name, e.Limit, e.Unit, e.Got, e.Unit)
+func (e *limitError) Error() string { return quotaclient.Message(e.detail()) }
+
+func (e *limitError) detail() *quotav1.LimitExceeded {
+	return &quotav1.LimitExceeded{Scope: e.Scope, Name: e.Name, Unit: e.Unit, Limit: int32(e.Limit), Got: int32(e.Got)}
 }
 
 // exceeded returns the first requested dimension in which used + add is above max, else nil.
@@ -90,12 +92,6 @@ func (s *store) Reserve(ctx context.Context, org uuid.UUID, owner string, add Am
 				return e
 			}
 		}
-		val := func(p *int32) int32 {
-			if p == nil {
-				return 0
-			}
-			return *p
-		}
 		_, err = tx.Exec(ctx, "INSERT INTO reservations (id, org, owner, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
 			id, org, owner, val(add.VCPU), val(add.RAMMB), val(add.DiskGB), val(add.VMCount), val(add.SnapshotCount), expires)
 		if err != nil {
@@ -107,6 +103,13 @@ func (s *store) Reserve(ctx context.Context, org uuid.UUID, owner string, add Am
 		return uuid.Nil, time.Time{}, err
 	}
 	return id, expires, nil
+}
+
+func val(p *int32) int32 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // usage sums org's live allocations and unexpired holds, only owner's when owner is set.
@@ -131,29 +134,42 @@ func (s *store) Cancel(ctx context.Context, ids []uuid.UUID) error {
 	return nil
 }
 
-// Release tombstones org's resources and their children, unseen ones too so a late created event can't revive them (ponytail: tombstone ids use quota's clock; a hub clock ahead lets that event count until its deleted event lands).
+// Release tombstones org's resources and their children, unseen ones too, so no later event can revive them.
 func (s *store) Release(ctx context.Context, org uuid.UUID, resources []string) error {
 	if len(resources) == 0 {
 		return nil
 	}
-	tomb, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Errorf("release: %w", err)
-	}
 	now := s.now()
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO allocations (resource, org, owner, last_event_id, deleted, updated_at) SELECT r, $1, '', $3, true, $4 FROM unnest($2::text[]) r
-			ON CONFLICT (resource) DO UPDATE SET deleted = true, last_event_id = greatest(allocations.last_event_id, EXCLUDED.last_event_id), updated_at = EXCLUDED.updated_at
-				WHERE allocations.org = EXCLUDED.org`, org, resources, tomb, now)
+			INSERT INTO allocations (org, resource, owner, last_event_id, deleted, updated_at) SELECT $1, r, '', $3, true, $4 FROM unnest($2::text[]) r
+			ON CONFLICT (org, resource) DO UPDATE SET deleted = true, updated_at = EXCLUDED.updated_at`, org, resources, uuid.Nil, now)
 		if err != nil {
 			return fmt.Errorf("release: %w", err)
 		}
-		_, err = tx.Exec(ctx, "UPDATE allocations SET deleted = true, last_event_id = greatest(last_event_id, $3), updated_at = $4 WHERE org = $1 AND parent = ANY($2)",
-			org, resources, tomb, now)
-		if err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE allocations SET deleted = true, updated_at = $3 WHERE org = $1 AND parent = ANY($2)", org, resources, now); err != nil {
 			return fmt.Errorf("release: %w", err)
 		}
 		return nil
 	})
+}
+
+// setAllocation sets a resource's absolute usage from a lifecycle event: a tombstone is final, otherwise only a newer event id applies.
+func (s *store) setAllocation(ctx context.Context, org uuid.UUID, resource, owner, parent string, a Amounts, eventID uuid.UUID) error {
+	var p *string
+	if parent != "" {
+		p = &parent
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO allocations (org, resource, owner, parent, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, last_event_id, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (org, resource) DO UPDATE SET owner = EXCLUDED.owner, parent = EXCLUDED.parent, vcpu = EXCLUDED.vcpu, ram_mb = EXCLUDED.ram_mb,
+			disk_gb = EXCLUDED.disk_gb, vm_count = EXCLUDED.vm_count, snapshot_count = EXCLUDED.snapshot_count,
+			last_event_id = EXCLUDED.last_event_id, updated_at = EXCLUDED.updated_at
+			WHERE NOT allocations.deleted AND allocations.last_event_id < EXCLUDED.last_event_id`,
+		org, resource, owner, p, val(a.VCPU), val(a.RAMMB), val(a.DiskGB), val(a.VMCount), val(a.SnapshotCount), eventID, s.now())
+	if err != nil {
+		return fmt.Errorf("set allocation: %w", err)
+	}
+	return nil
 }

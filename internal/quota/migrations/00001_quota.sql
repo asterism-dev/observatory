@@ -17,10 +17,10 @@ CREATE TABLE limits (
     PRIMARY KEY (org, scope)
 );
 
--- resource is vm/<id>, disk/<id> or snapshot/<id>; deleted rows are tombstones that stop older events from reviving it.
+-- resource is vm/<id>, disk/<id> or snapshot/<id>; deleted rows are final tombstones (ids are never reused), keyed by org so a wrong-org release hides nothing.
 CREATE TABLE allocations (
-    resource text PRIMARY KEY,
     org uuid NOT NULL,
+    resource text NOT NULL,
     owner text NOT NULL,
     parent text,
     vcpu int NOT NULL DEFAULT 0 CHECK (vcpu >= 0),
@@ -30,10 +30,11 @@ CREATE TABLE allocations (
     snapshot_count int NOT NULL DEFAULT 0 CHECK (snapshot_count >= 0),
     last_event_id uuid NOT NULL,
     deleted boolean NOT NULL DEFAULT false,
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, resource)
 );
 CREATE INDEX allocations_live ON allocations (org, owner) WHERE NOT deleted;
-CREATE INDEX allocations_parent ON allocations (parent) WHERE parent IS NOT NULL;
+CREATE INDEX allocations_parent ON allocations (org, parent) WHERE parent IS NOT NULL;
 CREATE INDEX allocations_tombstones ON allocations (updated_at) WHERE deleted;
 
 CREATE TABLE reservations (

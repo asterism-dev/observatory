@@ -173,6 +173,7 @@ inside the compose network only; do not publish it.
 - Limit changes write their audit event in the same transaction as the change.
 - `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`
   (`Reserve`, `Cancel`, `Release`, `GetLimits`); every other caller is refused there.
+- A hold lasts 5 minutes. If quota's event consumer lags further behind than that, committed usage is under-counted for the gap.
 
 ## Serving modes
 

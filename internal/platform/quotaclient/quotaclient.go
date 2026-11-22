@@ -3,6 +3,7 @@ package quotaclient
 
 import (
 	"errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
@@ -25,9 +26,17 @@ func LimitExceeded(err error) (*quotav1.LimitExceeded, bool) {
 	return nil, false
 }
 
-// NewLimitExceeded is the ResourceExhausted error Reserve answers with; msg is the 0.x limit message.
-func NewLimitExceeded(msg string, d *quotav1.LimitExceeded) error {
-	ce := connect.NewError(connect.CodeResourceExhausted, errors.New(msg))
+// Message is the 0.x limit message, as the hub's store.LimitError words it.
+func Message(d *quotav1.LimitExceeded) string {
+	owner := "the org's"
+	if d.GetScope() != "org" {
+		owner = "the owner's"
+	}
+	return fmt.Sprintf("%s %s limit of %d%s would be exceeded (%d%s)", owner, d.GetName(), d.GetLimit(), d.GetUnit(), d.GetGot(), d.GetUnit())
+}
+
+func NewLimitExceeded(d *quotav1.LimitExceeded) error {
+	ce := connect.NewError(connect.CodeResourceExhausted, errors.New(Message(d)))
 	if detail, err := connect.NewErrorDetail(d); err == nil {
 		ce.AddDetail(detail)
 	}

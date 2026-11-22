@@ -73,7 +73,7 @@ func (s *internalServer) Reserve(ctx context.Context, r *connect.Request[quotav1
 	var le *limitError
 	switch {
 	case errors.As(err, &le):
-		return nil, quotaclient.NewLimitExceeded(le.Error(), &quotav1.LimitExceeded{Scope: le.Scope, Name: le.Name, Unit: le.Unit, Limit: int32(le.Limit), Got: int32(le.Got)})
+		return nil, quotaclient.NewLimitExceeded(le.detail())
 	case err != nil:
 		return nil, internalErr("reserve", err)
 	}
@@ -83,7 +83,7 @@ func (s *internalServer) Reserve(ctx context.Context, r *connect.Request[quotav1
 func (s *internalServer) Cancel(ctx context.Context, r *connect.Request[quotav1.CancelRequest]) (*connect.Response[quotav1.CancelResponse], error) {
 	ids := make([]uuid.UUID, 0, len(r.Msg.GetReservationIds()))
 	for _, raw := range r.Msg.GetReservationIds() {
-		id, err := uuid.Parse(raw)
+		id, err := uuidx.Canonical(raw)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("reservation_ids: %w", err))
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -183,17 +184,59 @@ func TestReleaseDropsChildren(t *testing.T) {
 
 func TestReleaseLeavesOtherOrgs(t *testing.T) {
 	s, ctx, org := newStore(t), context.Background(), uuid.New()
-	vm := "vm/" + uuid.NewString()
-	allocate(t, s, org, vm, "user:"+uuid.NewString(), "", 2, 0, false)
-	if err := s.Release(ctx, uuid.New(), []string{vm}); err != nil {
+	owner := "user:" + uuid.NewString()
+	vm, unseen := "vm/"+uuid.NewString(), "vm/"+uuid.NewString()
+	setLimits(t, s, org, scopeOrg, Limits{VCPU: i32(4)})
+	allocate(t, s, org, vm, owner, "", 2, 0, false)
+	if err := s.Release(ctx, uuid.New(), []string{vm, unseen}); err != nil {
 		t.Fatal(err)
 	}
-	var deleted bool
-	if err := s.pool.QueryRow(ctx, "SELECT deleted FROM allocations WHERE resource = $1", vm).Scan(&deleted); err != nil {
+	if err := s.setAllocation(ctx, org, unseen, owner, "", Amounts{VCPU: i32(2)}, uuid.Must(uuid.NewV7())); err != nil {
 		t.Fatal(err)
 	}
-	if deleted {
-		t.Fatal("another org's release tombstoned the resource")
+	_, _, err := s.Reserve(ctx, org, owner, Amounts{VCPU: i32(1)})
+	wantLimitErr(t, err, scopeOrg, "vCPU", 4, 5)
+}
+
+func TestTombstoneIsFinal(t *testing.T) {
+	s, ctx, org := newStore(t), context.Background(), uuid.New()
+	owner := "user:" + uuid.NewString()
+	setLimits(t, s, org, scopeOrg, Limits{VCPU: i32(4)})
+	live, released, unseen := "vm/"+uuid.NewString(), "vm/"+uuid.NewString(), "vm/"+uuid.NewString()
+	older, newer := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, a := range []struct {
+		resource string
+		vcpu     int32
+		id       uuid.UUID
+	}{{live, 1, newer}, {live, 3, older}, {released, 2, older}} {
+		if err := s.setAllocation(ctx, org, a.resource, owner, "", Amounts{VCPU: i32(a.vcpu)}, a.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Release(ctx, org, []string{released, unseen}); err != nil {
+		t.Fatal(err)
+	}
+	// Late created/resized events with newer ids than anything before must not revive either.
+	for _, r := range []string{released, unseen} {
+		if err := s.setAllocation(ctx, org, r, owner, "", Amounts{VCPU: i32(2)}, uuid.Must(uuid.NewV7())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.Reserve(ctx, org, owner, Amounts{VCPU: i32(3)}); err != nil {
+		t.Fatalf("only the live vm's newest state (1 vCPU) should count: %v", err)
+	}
+	_, _, err := s.Reserve(ctx, org, owner, Amounts{VCPU: i32(1)})
+	wantLimitErr(t, err, scopeOrg, "vCPU", 4, 5)
+}
+
+func TestLimitMessage(t *testing.T) {
+	for d, want := range map[*quotav1.LimitExceeded]string{
+		{Scope: "user:" + uuid.NewString(), Name: "vCPU", Limit: 4, Got: 6}: "the owner's vCPU limit of 4 would be exceeded (6)",
+		{Scope: scopeOrg, Name: "RAM", Unit: " MB", Limit: 1024, Got: 2048}: "the org's RAM limit of 1024 MB would be exceeded (2048 MB)",
+	} {
+		if got := quotaclient.Message(d); got != want {
+			t.Errorf("Message = %q, want %q", got, want)
+		}
 	}
 }
 
@@ -370,6 +413,10 @@ func TestFakeMatchesService(t *testing.T) {
 			_, err := c.Cancel(ctx, connect.NewRequest(&quotav1.CancelRequest{ReservationIds: []string{"nope"}}))
 			return "", err
 		}, code: connect.CodeInvalidArgument},
+		{name: "non-canonical cancel id", call: func(ctx context.Context, c quotav1connect.QuotaInternalServiceClient, held []string) (string, error) {
+			_, err := c.Cancel(ctx, connect.NewRequest(&quotav1.CancelRequest{ReservationIds: []string{strings.ToUpper(held[len(held)-1])}}))
+			return "", err
+		}, code: connect.CodeInvalidArgument},
 		{name: "bad resource", call: func(ctx context.Context, c quotav1connect.QuotaInternalServiceClient, _ []string) (string, error) {
 			_, err := c.Release(ctx, connect.NewRequest(&quotav1.ReleaseRequest{OrgId: org.String(), Resources: []string{"node/" + uuid.NewString()}}))
 			return "", err
@@ -399,6 +446,10 @@ func TestFakeMatchesService(t *testing.T) {
 				d, ok := quotaclient.LimitExceeded(err)
 				if !ok || !proto.Equal(d, st.exceeds) {
 					t.Fatalf("%s %s: detail = %v, want %v", name, st.name, d, st.exceeds)
+				}
+				var ce *connect.Error
+				if !errors.As(err, &ce) || ce.Message() != quotaclient.Message(st.exceeds) {
+					t.Fatalf("%s %s: message = %v, want the 0.x text", name, st.name, err)
 				}
 			}
 		}
