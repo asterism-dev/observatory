@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,26 +11,20 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
+	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
-	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const (
 	signingKeySecret = "iam-signing-key"
-	jwtAudience      = "observatory"
-	jwtTTL           = 5 * time.Minute
 	tokenCaller      = "edge"
 )
 
 // Issuer mints user JWTs for the edge until the iam service takes over.
 type Issuer struct {
-	store *store.Store
-	url   string
-	key   ed25519.PrivateKey
-	kid   string
+	store  *store.Store
+	signer *identity.Signer
 }
 
 // NewIssuer loads the Ed25519 signing key from hub_secrets, creating it on first start.
@@ -48,56 +40,12 @@ func NewIssuer(ctx context.Context, s *store.Store, url string) (*Issuer, error)
 	if len(seed) != ed25519.SeedSize {
 		return nil, fmt.Errorf("hub secret %s: want %d bytes, got %d", signingKeySecret, ed25519.SeedSize, len(seed))
 	}
-	key := ed25519.NewKeyFromSeed(seed)
-	return &Issuer{store: s, url: url, key: key, kid: thumbprint(key.Public().(ed25519.PublicKey))}, nil
-}
-
-// thumbprint is the RFC 7638 JWK thumbprint, so the kid is stable for a key and changes with it.
-func thumbprint(pub ed25519.PublicKey) string {
-	sum := sha256.Sum256([]byte(`{"crv":"Ed25519","kty":"OKP","x":"` + base64.RawURLEncoding.EncodeToString(pub) + `"}`))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-type userClaims struct {
-	jwt.RegisteredClaims
-	SID  string `json:"sid"`
-	PA   bool   `json:"pa"`
-	Name string `json:"name"`
-	SK   string `json:"sk"`
-	SX   int64  `json:"sx"`
-}
-
-func (i *Issuer) claims(u store.User, s store.Session, now time.Time) userClaims {
-	now = now.Truncate(time.Second)
-	exp := now.Add(jwtTTL)
-	// A token must not outlive its session; truncation keeps exp at or before the session's expiry.
-	if end := s.ExpiresAt.Truncate(time.Second); end.Before(exp) {
-		exp = end
-	}
-	return userClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    i.url,
-			Audience:  jwt.ClaimStrings{jwtAudience},
-			Subject:   u.ID.String(),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(exp),
-		},
-		SID:  s.ID.String(),
-		PA:   u.PlatformAdmin,
-		Name: textx.Sanitize(u.Name),
-		SK:   string(s.Kind),
-		SX:   s.ExpiresAt.Unix(),
-	}
+	return &Issuer{store: s, signer: identity.NewSigner(ed25519.NewKeyFromSeed(seed), url)}, nil
 }
 
 // Mint signs a JWT for u's session s and returns it with its expiry.
 func (i *Issuer) Mint(u store.User, s store.Session) (string, time.Time, error) {
-	c := i.claims(u, s, time.Now())
-	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, c)
-	tok.Header["kid"] = i.kid
-	signed, err := tok.SignedString(i.key)
-	return signed, c.ExpiresAt.Time, err
+	return i.signer.Mint(identity.Principal{User: u.ID, Session: s.ID, PlatformAdmin: u.PlatformAdmin, Name: u.Name, SessionKind: string(s.Kind), SessionExpires: s.ExpiresAt})
 }
 
 // TokenHandler exchanges a session token (browser cookie or CLI bearer) for a short-lived JWT.
@@ -152,25 +100,5 @@ func (i *Issuer) TokenHandler() http.Handler {
 	})
 }
 
-type jwk struct {
-	Kty string `json:"kty"`
-	Crv string `json:"crv"`
-	Alg string `json:"alg"`
-	Use string `json:"use"`
-	Kid string `json:"kid"`
-	X   string `json:"x"`
-}
-
-// JWKSHandler publishes the verification keys; a list so a previous key can stay published during a rotation.
-func (i *Issuer) JWKSHandler() http.Handler {
-	pub := i.key.Public().(ed25519.PublicKey)
-	body, err := json.Marshal(map[string][]jwk{"keys": {{Kty: "OKP", Crv: "Ed25519", Alg: "EdDSA", Use: "sig", Kid: i.kid, X: base64.RawURLEncoding.EncodeToString(pub)}}})
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
-	})
-}
+// JWKSHandler publishes the verification keys.
+func (i *Issuer) JWKSHandler() http.Handler { return i.signer.JWKSHandler() }

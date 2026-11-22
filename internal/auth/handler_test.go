@@ -312,16 +312,25 @@ func TestRequire(t *testing.T) {
 
 func TestRequireRejects(t *testing.T) {
 	e := newEnv(t)
-	user, sess, tok := e.minted(store.SessionBrowser)
+	user, _, tok := e.minted(store.SessionBrowser)
 	raw, _, err := e.store.CreateSession(context.Background(), user.ID, store.SessionCLI, time.Hour, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	sign := func(method jwt.SigningMethod, key any, edit func(*userClaims)) string {
-		c := e.iss.claims(user, sess, time.Now())
-		edit(&c)
+	seed, err := e.store.HubSecret(context.Background(), signingKeySecret, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	sign := func(method jwt.SigningMethod, key any, edit func(jwt.MapClaims)) string {
+		c := jwt.MapClaims{}
+		minted, _, err := jwt.NewParser().ParseUnverified(tok, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edit(c)
 		jt := jwt.NewWithClaims(method, c)
-		jt.Header["kid"] = e.iss.kid
+		jt.Header["kid"] = minted.Header["kid"]
 		s, err := jt.SignedString(key)
 		if err != nil {
 			t.Fatal(err)
@@ -329,34 +338,32 @@ func TestRequireRejects(t *testing.T) {
 		return s
 	}
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
-	keep := func(*userClaims) {}
+	keep := func(jwt.MapClaims) {}
 	for name, set := range map[string]func(*http.Request){
 		"none":        func(*http.Request) {},
 		"raw session": func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+raw) },
 		"jwt cookie":  func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "obs_session", Value: tok}) },
 		"basic":       func(r *http.Request) { r.Header.Set("Authorization", "Basic "+tok) },
 		"hs256": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodHS256, []byte(e.iss.key.Public().(ed25519.PublicKey)), keep))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodHS256, []byte(key.Public().(ed25519.PublicKey)), keep))
 		},
 		"forged": func(r *http.Request) {
 			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, other, keep))
 		},
 		"expired": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) {
-				c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
-			}))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, key, func(c jwt.MapClaims) { c["exp"] = time.Now().Add(-time.Minute).Unix() }))
 		},
 		"wrong aud": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Audience = jwt.ClaimStrings{"other"} }))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, key, func(c jwt.MapClaims) { c["aud"] = []string{"other"} }))
 		},
 		"no sk": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.SK = "" }))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, key, func(c jwt.MapClaims) { c["sk"] = "" }))
 		},
 		"no sx": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.SX = 0 }))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, key, func(c jwt.MapClaims) { c["sx"] = 0 }))
 		},
 		"wrong iss": func(r *http.Request) {
-			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, e.iss.key, func(c *userClaims) { c.Issuer = "https://evil.test" }))
+			r.Header.Set("Authorization", "Bearer "+sign(jwt.SigningMethodEdDSA, key, func(c jwt.MapClaims) { c["iss"] = "https://evil.test" }))
 		},
 	} {
 		if rec := e.whoami("GET", set); rec.Code != http.StatusUnauthorized || rec.Body.String() != `{"error":"unauthorized"}`+"\n" {
