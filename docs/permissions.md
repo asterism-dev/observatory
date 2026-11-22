@@ -387,7 +387,10 @@ credentials of the session. Denied events are ignored. Cleanup is idempotent and
   from the policy.
 - Telemetry tokens the removed member created are revoked when they were authorized at or below the policy revision
   the removal event carries, also if the member has rejoined since; tokens authorized after the rejoin stay. The
-  cutoff uses iam's revisions, not clocks.
+  cutoff uses iam's revisions, not clocks. iam seeds its revisions from its clock at start (microseconds), so they keep
+  increasing across restarts. If iam's clock is set back by more than the time between two starts, new revisions can
+  fall below those of tokens authorized before, and a later removal's purge misses those tokens; the check on use that
+  the token's creator still holds the grant, repeated at least every minute, revokes them anyway.
 
 - Removing a member or deleting a team is refused (failed precondition) while the hub reports that the subject owns VMs or live
   disks. The check and the delete are not one transaction, so a VM created in between is not caught.
