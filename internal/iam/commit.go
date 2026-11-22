@@ -100,16 +100,21 @@ func (s *server) commitHeld(ctx context.Context, fn func(tx *store.Store, heldRe
 		}
 		return s.Revision()
 	}
-	err := s.Store.InTx(ctx, func(tx *store.Store) error {
-		if err := fn(tx, heldRevision); err != nil {
+	// The hold must end before the Reload below, and on a panic too, or no revision is ever published again.
+	err := func() error {
+		defer func() {
+			if release != nil {
+				release()
+			}
+		}()
+		return s.Store.InTx(ctx, func(tx *store.Store) error {
+			if err := fn(tx, heldRevision); err != nil {
+				return err
+			}
+			_, err := policyEnforcer(ctx, tx)
 			return err
-		}
-		_, err := policyEnforcer(ctx, tx)
-		return err
-	})
-	if release != nil {
-		release()
-	}
+		})
+	}()
 	if err != nil {
 		return toConnect("commit", err)
 	}

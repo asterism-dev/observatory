@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -347,5 +348,27 @@ func TestRemovalEventCarriesLastMemberRevision(t *testing.T) {
 		if _, member := pol.(*authz.Enforcer).Role(org, removed.ID); !member {
 			t.Fatalf("%s: revision %d does not list the removed member", action, rev)
 		}
+	}
+}
+
+func TestCommitHeldReleasesHoldOnPanic(t *testing.T) {
+	e := newEnv(t)
+	s := &server{Deps: Deps{Store: e.store, Policy: e.z, Revision: func() uint64 { return e.rev.Load() }}}
+	func() {
+		defer func() { _ = recover() }()
+		_ = s.commitHeld(context.Background(), func(_ *store.Store, held func() uint64) error {
+			held()
+			panic("boom")
+		})
+	}()
+	done := make(chan error, 1)
+	go func() { done <- e.z.Reload(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reload blocked: the publish hold leaked past a panic")
 	}
 }
