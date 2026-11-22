@@ -181,7 +181,7 @@ func New(p Policy) (*Enforcer, error) {
 	for _, cr := range p.Roles {
 		sub, org := RoleSubject(cr.ID.String()), cr.OrgID.String()
 		for _, r := range cr.Rules {
-			// An allow naming no registered action grants nothing, so a later catalog can't revive it; denies keep covering new actions.
+			// An allow naming no registered action grants nothing until a catalog registers that action; denies keep covering new actions.
 			if r.Effect == Allow && !e.known[r.Action] {
 				continue
 			}

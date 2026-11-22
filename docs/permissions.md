@@ -75,7 +75,7 @@ custom rules against them and serves them to the role editor (`ListCatalog`, CLI
   Nodes and VMs, Disks and Devices.
 - **Unknown actions:** an action a custom rule names that no registered catalog has, for example after a service
   dropped it. The rule is kept and marked unknown in the role editor and `role catalog`, and an allow for it grants
-  nothing. If a service registers that action again, the allow grants again. A deny for it is kept as written and
+  nothing. A stored wildcard allow (`compute.*`) is marked unknown too and grants nothing. If a service registers that action again, the allow grants again. A deny for it is kept as written and
   still wins. New rules must name a registered action.
 - **Readiness:** a service holds requests or answers 503 until iam's policy stream carries its own catalog digest, so
   it never answers 403 for actions its defaults grant. All instances of a service must run the same release: an
