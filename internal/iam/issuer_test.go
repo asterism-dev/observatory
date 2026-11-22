@@ -289,3 +289,16 @@ func TestNewRefusesZeroSecretsKey(t *testing.T) {
 		t.Fatalf("zero secrets key: %v", err)
 	}
 }
+
+func TestNewRefusesShortTokens(t *testing.T) {
+	long := strings.Repeat("x", 32)
+	for name, cfg := range map[string]Config{
+		"service token": {ServiceToken: "short", EdgeToken: long},
+		"edge token":    {ServiceToken: long, EdgeToken: "short"},
+	} {
+		cfg.PublicURL, cfg.HubURL, cfg.SecretsKey = "https://hub.test", "http://hub", seal.Key{1}
+		if _, err := New(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("short %s: %v", name, err)
+		}
+	}
+}

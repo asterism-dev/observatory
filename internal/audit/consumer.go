@@ -30,11 +30,18 @@ func consume(ctx context.Context, js jetstream.JetStream, s *store) error {
 		AckWait:       ackWait,
 		MaxDeliver:    -1,
 	})
+	// Stopped while starting is a shutdown, not a lost trail.
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("audit consumer: %w", err)
 	}
 	cc, err := c.Consume(func(msg jetstream.Msg) { handle(ctx, s, msg) })
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("consume: %w", err)
 	}
 	select {

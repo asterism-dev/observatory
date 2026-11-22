@@ -4,6 +4,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
@@ -27,6 +28,8 @@ const prefix = "/api/audit/v1"
 
 const maxBody = 1 << 20
 
+const minTokenLen = 32
+
 // internalPrefix serves other services; the edge never routes /internal/.
 const internalPrefix = "/internal/audit"
 
@@ -42,6 +45,9 @@ type Config struct {
 // Run serves the read API on ln and consumes the bus until ctx ends.
 func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	defer ln.Close()
+	if len(cfg.ServiceToken) < minTokenLen {
+		return fmt.Errorf("audit: service token must be at least %d characters", minTokenLen)
+	}
 	v, err := identity.NewVerifier(cfg.IAMURL, cfg.Issuer, cfg.ServiceToken, nil)
 	if err != nil {
 		return err

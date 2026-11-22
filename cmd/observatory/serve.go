@@ -135,6 +135,11 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		}
 		defer stop()
 	}
+	if err := missingEnv(map[string]string{"OBSERVATORY_OIDC_ISSUER": iamCfg.OIDCIssuer, "OBSERVATORY_OIDC_WEB_CLIENT_ID": iamCfg.WebClientID,
+		"OBSERVATORY_OIDC_CLI_CLIENT_ID": iamCfg.CLIClientID}); err != nil {
+		edgeLn.Close()
+		return err
+	}
 	iamCfg.EdgeToken, iamCfg.ServiceToken, iamCfg.NATSURL, iamCfg.NATSToken = edgeToken, iamToken, auditCfg.NATSURL, auditCfg.NATSToken
 	iamCfg.ServiceTokens = map[string]string{"edge": edgeServiceToken, "hub": hubToken, "audit": auditToken}
 	var iamURL string

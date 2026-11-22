@@ -172,6 +172,10 @@ cannot read it.
 
 `deploy/.env.example` lists every variable with a comment. Points that are easy to miss:
 
+- Each container gets only the variables its block in `deploy/compose.yaml` lists, so the hub never holds the other
+  services' tokens. A hub setting not listed there (the `OBSERVATORY_DEV_*` ones, for example) has no effect in
+  `deploy/.env` until you add it to the hub's `environment`.
+
 - `OBSERVATORY_PUBLIC_URL` must be exactly what users open; the login redirect is registered for it.
 - `OBSERVATORY_GATEWAY_HOST` is what nodes and devices dial on UDP 51820/51821; it defaults to the host of the public
   URL.

@@ -56,8 +56,7 @@ services:
   hub:
     <<: *observatory
     command: ["hub"]
-    env_file: .env
-    # Repeats the required values from .env so a missing one stops `up` instead of leaving the hub in a restart loop.
+    # Only what the hub reads, so it never holds the other services' tokens; a missing required value stops `up`.
     environment:
       OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
       OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
@@ -75,6 +74,20 @@ services:
       OBSERVATORY_LOGS_URL: http://victorialogs:9428
       OBSERVATORY_NATS_URL: nats://nats:4222
       OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+      OBSERVATORY_GATEWAY_TOKEN: ${OBSERVATORY_GATEWAY_TOKEN:?set OBSERVATORY_GATEWAY_TOKEN in deploy/.env}
+      OBSERVATORY_STORAGE_TOKEN: ${OBSERVATORY_STORAGE_TOKEN:?set OBSERVATORY_STORAGE_TOKEN in deploy/.env}
+      OBSERVATORY_GATEWAY_HOST: ${OBSERVATORY_GATEWAY_HOST:-}
+      OBSERVATORY_NODE_URL: ${OBSERVATORY_NODE_URL:-}
+      OBSERVATORY_LOGS_RETENTION: ${OBSERVATORY_LOGS_RETENTION:-14d}
+      OBSERVATORY_REGISTRY_GC_TIME: ${OBSERVATORY_REGISTRY_GC_TIME:-}
+      OBSERVATORY_BUILDER_IMAGE: ${OBSERVATORY_BUILDER_IMAGE:-}
+      OBSERVATORY_BUILDER_HUB_URL: ${OBSERVATORY_BUILDER_HUB_URL:-}
+      OBSERVATORY_BUILDER_CPUS: ${OBSERVATORY_BUILDER_CPUS:-}
+      OBSERVATORY_BUILDER_MEMORY_MB: ${OBSERVATORY_BUILDER_MEMORY_MB:-}
+      OBSERVATORY_BUILDER_DISK_GB: ${OBSERVATORY_BUILDER_DISK_GB:-}
+      OBSERVATORY_DOCS_URL: ${OBSERVATORY_DOCS_URL:-}
+      OBSERVATORY_NO_UPDATE_CHECK: ${OBSERVATORY_NO_UPDATE_CHECK:-}
+      TZ: ${TZ:-UTC}
     volumes:
       - registry-keys:/keys
       - registry-certs:/certs

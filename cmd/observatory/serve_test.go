@@ -100,6 +100,18 @@ func TestServeAllRequiresPersistentBus(t *testing.T) {
 	}
 }
 
+func TestServeAllNamesMissingOIDC(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	env := map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0", "OBSERVATORY_DATA_DIR": t.TempDir()}
+	c.getenv = func(k string) string { return env[k] }
+	code := run(c, []string{"serve", "all"})
+	for _, k := range []string{"OBSERVATORY_OIDC_ISSUER", "OBSERVATORY_OIDC_WEB_CLIENT_ID", "OBSERVATORY_OIDC_CLI_CLIENT_ID"} {
+		if code != 1 || !strings.Contains(stderr.String(), k) {
+			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
+		}
+	}
+}
+
 func TestServeEdgeRejectsBadServices(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string {

@@ -33,6 +33,8 @@ import (
 // loginPolicyWait bounds how long a login waits for its new personal org to reach the hub's policy.
 const loginPolicyWait = 5 * time.Second
 
+const minTokenLen = 32
+
 type Config struct {
 	DatabaseURL, PublicURL, OIDCIssuer, WebClientID, CLIClientID, EdgeToken string
 	// HubURL and ServiceToken reach the hub's /internal/hub/; AuditURL (optional) the audit service's /internal/audit/.
@@ -86,6 +88,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	if cfg.SecretsKey == (seal.Key{}) {
 		return nil, errors.New("iam: secrets key is required")
+	}
+	if len(cfg.ServiceToken) < minTokenLen {
+		return nil, fmt.Errorf("iam: service token must be at least %d characters", minTokenLen)
+	}
+	if len(cfg.EdgeToken) < minTokenLen {
+		return nil, fmt.Errorf("iam: edge token must be at least %d characters", minTokenLen)
 	}
 	pool, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {

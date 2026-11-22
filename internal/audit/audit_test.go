@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,6 +265,27 @@ func TestConsumeFailsWhenConsumerCloses(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("consume kept running after its consumer was deleted")
+	}
+}
+
+func TestRunRefusesShortServiceToken(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(context.Background(), Config{IAMURL: "http://iam", Issuer: testIssuer, ServiceToken: "short"}, ln)
+	if err == nil || !strings.Contains(err.Error(), "service token") {
+		t.Fatalf("short service token: %v", err)
+	}
+}
+
+func TestConsumeStoppedDuringStartIsNoError(t *testing.T) {
+	s := openStore(t, dbtest.Empty(t))
+	_, _, js := startBus(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := consume(ctx, js, s); err != nil {
+		t.Fatalf("consume stopped before its consumer existed: %v", err)
 	}
 }
 
