@@ -104,13 +104,13 @@ func (s *Store) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID) 
 	return nil
 }
 
-// SessionState returns a session's user and expiry and whether it was revoked, also once it ended; ErrNotFound if it never existed.
-func (s *Store) SessionState(ctx context.Context, id uuid.UUID) (user uuid.UUID, expires time.Time, revoked bool, err error) {
-	err = s.q.QueryRow(ctx, "SELECT user_id, expires_at, revoked_at IS NOT NULL FROM sessions WHERE id = $1", id).Scan(&user, &expires, &revoked)
+// SessionState returns a session's user and expiry, whether it was revoked and whether it expired by the database clock, also once it ended; ErrNotFound if it never existed.
+func (s *Store) SessionState(ctx context.Context, id uuid.UUID) (user uuid.UUID, expires time.Time, revoked, expired bool, err error) {
+	err = s.q.QueryRow(ctx, "SELECT user_id, expires_at, revoked_at IS NOT NULL, expires_at <= now() FROM sessions WHERE id = $1", id).Scan(&user, &expires, &revoked, &expired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
-	return user, expires, revoked, err
+	return user, expires, revoked, expired, err
 }
 
 // SessionActive reports whether a session is neither revoked nor expired; a primary key lookup.

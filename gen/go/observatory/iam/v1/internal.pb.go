@@ -599,10 +599,12 @@ func (x *GetSessionRequest) GetSessionId() string {
 }
 
 type GetSessionResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	Revoked       bool                   `protobuf:"varint,3,opt,name=revoked,proto3" json:"revoked,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	UserId    string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Revoked   bool                   `protobuf:"varint,3,opt,name=revoked,proto3" json:"revoked,omitempty"`
+	// expired is decided by iam's clock, so callers need not trust their own against expires_at.
+	Expired       bool `protobuf:"varint,4,opt,name=expired,proto3" json:"expired,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -658,6 +660,13 @@ func (x *GetSessionResponse) GetRevoked() bool {
 	return false
 }
 
+func (x *GetSessionResponse) GetExpired() bool {
+	if x != nil {
+		return x.Expired
+	}
+	return false
+}
+
 var File_observatory_iam_v1_internal_proto protoreflect.FileDescriptor
 
 const file_observatory_iam_v1_internal_proto_rawDesc = "" +
@@ -694,12 +703,13 @@ const file_observatory_iam_v1_internal_proto_rawDesc = "" +
 	"\x04role\x18\x02 \x01(\tR\x04role\"2\n" +
 	"\x11GetSessionRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\x82\x01\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x9c\x01\n" +
 	"\x12GetSessionResponse\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x129\n" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x18\n" +
-	"\arevoked\x18\x03 \x01(\bR\arevoked2\xe8\x03\n" +
+	"\arevoked\x18\x03 \x01(\bR\arevoked\x12\x18\n" +
+	"\aexpired\x18\x04 \x01(\bR\aexpired2\xe8\x03\n" +
 	"\x12IAMInternalService\x12U\n" +
 	"\bGetUsers\x12#.observatory.iam.v1.GetUsersRequest\x1a$.observatory.iam.v1.GetUsersResponse\x12^\n" +
 	"\vListSSHKeys\x12&.observatory.iam.v1.ListSSHKeysRequest\x1a'.observatory.iam.v1.ListSSHKeysResponse\x12X\n" +

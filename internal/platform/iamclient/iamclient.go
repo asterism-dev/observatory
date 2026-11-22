@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -48,7 +47,7 @@ func IsMember(ctx context.Context, c iamv1connect.IAMInternalServiceClient, org,
 	return res.Msg.Member, nil
 }
 
-// SessionActive asks iam whether a session is neither revoked nor expired; an error means iam could not answer, and callers must refuse.
+// SessionActive asks iam whether a session is neither revoked nor expired, by iam's clock; an error means iam could not answer, and callers must refuse.
 func SessionActive(ctx context.Context, c iamv1connect.IAMInternalServiceClient, id uuid.UUID) (bool, error) {
 	res, err := c.GetSession(ctx, connect.NewRequest(&iamv1.GetSessionRequest{SessionId: id.String()}))
 	if connect.CodeOf(err) == connect.CodeNotFound {
@@ -57,7 +56,7 @@ func SessionActive(ctx context.Context, c iamv1connect.IAMInternalServiceClient,
 	if err != nil {
 		return false, err
 	}
-	return !res.Msg.Revoked && res.Msg.ExpiresAt.AsTime().After(time.Now()), nil
+	return !res.Msg.Revoked && !res.Msg.Expired, nil
 }
 
 // UserNames maps ids to display names; unknown users are absent.

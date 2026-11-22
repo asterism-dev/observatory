@@ -1,13 +1,16 @@
 package iam
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	"github.com/asterism-dev/observatory/internal/platform/iamclient"
@@ -125,5 +128,54 @@ func TestLookups(t *testing.T) {
 	ts, err := srv.ListTeams(ctx, connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}))
 	if err != nil || len(ts.Msg.Teams) != 1 || ts.Msg.Teams[0].Name != "core" {
 		t.Fatalf("ListTeams: %v %v", ts, err)
+	}
+}
+
+// fakeSession answers GetSession with res, standing in for iam on a host whose clock differs from the caller's.
+type fakeSession struct {
+	iamv1connect.UnimplementedIAMInternalServiceHandler
+	res *iamv1.GetSessionResponse
+}
+
+func (f fakeSession) GetSession(context.Context, *connect.Request[iamv1.GetSessionRequest]) (*connect.Response[iamv1.GetSessionResponse], error) {
+	return connect.NewResponse(f.res), nil
+}
+
+func TestSessionExpiryDecidedByIAM(t *testing.T) {
+	pool := storetest.NewDB(t)
+	s := store.New(pool)
+	srv := internalServer{Store: s}
+	u, err := s.Login(t.Context(), store.Identity{Subject: "u", Email: "u@x.io", Name: "u"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sess, err := s.CreateSession(t.Context(), u.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() *iamv1.GetSessionResponse {
+		t.Helper()
+		res, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: sess.ID.String()}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Msg
+	}
+	if get().Expired {
+		t.Fatal("a live session reported expired")
+	}
+	if _, err := pool.Exec(t.Context(), "UPDATE sessions SET expires_at = now() - interval '1 second' WHERE id = $1", sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !get().Expired {
+		t.Fatal("an expired session not reported expired")
+	}
+	// The caller's clock does not decide: iam's answer stands whatever expires_at says.
+	past, future := timestamppb.New(time.Now().Add(-time.Hour)), timestamppb.New(time.Now().Add(time.Hour))
+	if active, err := iamclient.SessionActive(t.Context(), fakeSession{res: &iamv1.GetSessionResponse{ExpiresAt: past}}, sess.ID); err != nil || !active {
+		t.Fatalf("iam says not expired, caller's clock says past: active=%v err=%v", active, err)
+	}
+	if active, err := iamclient.SessionActive(t.Context(), fakeSession{res: &iamv1.GetSessionResponse{ExpiresAt: future, Expired: true}}, sess.ID); err != nil || active {
+		t.Fatalf("iam says expired: active=%v err=%v", active, err)
 	}
 }

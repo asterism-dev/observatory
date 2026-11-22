@@ -75,4 +75,6 @@ message GetSessionResponse {
   string user_id = 1;
   google.protobuf.Timestamp expires_at = 2;
   bool revoked = 3;
+  // expired is decided by iam's clock, so callers need not trust their own against expires_at.
+  bool expired = 4;
 }

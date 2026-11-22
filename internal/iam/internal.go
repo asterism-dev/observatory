@@ -92,14 +92,14 @@ func (s internalServer) GetSession(ctx context.Context, req *connect.Request[iam
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("invalid session_id"))
 	}
-	user, expires, revoked, err := s.Store.SessionState(ctx, id)
+	user, expires, revoked, expired, err := s.Store.SessionState(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("no such session"))
 	}
 	if err != nil {
 		return nil, internal("session", err)
 	}
-	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: user.String(), ExpiresAt: timestamppb.New(expires), Revoked: revoked}), nil
+	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: user.String(), ExpiresAt: timestamppb.New(expires), Revoked: revoked, Expired: expired}), nil
 }
 
 func parseIDs(raw []string) ([]uuid.UUID, error) {

@@ -373,5 +373,5 @@ func (a internalAPI) GetSession(_ context.Context, req *connect.Request[iamv1.Ge
 	if !ok {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("no such session"))
 	}
-	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: sess.user.String(), ExpiresAt: timestamppb.New(sess.expires), Revoked: sess.revoked}), nil
+	return connect.NewResponse(&iamv1.GetSessionResponse{UserId: sess.user.String(), ExpiresAt: timestamppb.New(sess.expires), Revoked: sess.revoked, Expired: !sess.expires.After(time.Now())}), nil
 }
