@@ -6,9 +6,11 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/catalog"
 )
 
-func Catalog() authz.Catalog {
-	// TestRegisteredCatalogsReproduce0x proves these annotations convert without error.
-	actions, _ := catalog.FromAnnotations(auditv1.File_observatory_audit_v1_audit_proto.Services().ByName("AuditService"))
+func Catalog() (authz.Catalog, error) {
+	actions, err := catalog.FromAnnotations(auditv1.File_observatory_audit_v1_audit_proto.Services().ByName("AuditService"))
+	if err != nil {
+		return authz.Catalog{}, err
+	}
 	return authz.Catalog{
 		Service: "audit",
 		Actions: actions,
@@ -17,5 +19,5 @@ func Catalog() authz.Catalog {
 			{Role: "admin", Object: "org/audit", Action: "audit.settings.get"},
 			{Role: "admin", Object: "org/audit", Action: "audit.settings.update"},
 		},
-	}
+	}, nil
 }

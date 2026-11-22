@@ -17,7 +17,14 @@ func TestRegisteredCatalogsReproduce0x(t *testing.T) {
 	for _, c := range authztest.Legacy() {
 		want[c.Service] = catalog.Normalize(c)
 	}
-	registered := []authz.Catalog{iam.Catalog(), audit.Catalog(), hubserver.Catalog()}
+	var registered []authz.Catalog
+	for _, build := range []func() (authz.Catalog, error){iam.Catalog, audit.Catalog, hubserver.Catalog} {
+		c, err := build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		registered = append(registered, c)
+	}
 	if len(registered) != len(want) {
 		t.Fatalf("%d catalogs, legacy has %d", len(registered), len(want))
 	}

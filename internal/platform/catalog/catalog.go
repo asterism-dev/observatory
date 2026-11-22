@@ -168,6 +168,7 @@ func Digest(c authz.Catalog) string {
 }
 
 // Validate checks c's limits and patterns, and that every action it names starts with one of allowedPrefixes; the error names the first offending entry.
+// allowedPrefixes must come from the caller's service token, never from c.Service.
 func Validate(c authz.Catalog, allowedPrefixes []string) error {
 	switch {
 	case len(c.Actions) > MaxActions:
@@ -181,6 +182,7 @@ func Validate(c authz.Catalog, allowedPrefixes []string) error {
 		svc, _, _ := strings.Cut(action, ".")
 		return slices.Contains(allowedPrefixes, svc)
 	}
+	seen := map[authz.Permission]bool{}
 	declared := map[string]bool{}
 	for _, a := range c.Actions {
 		if !permission.ValidName(a.Name) || !own(a.Name) {
@@ -189,6 +191,11 @@ func Validate(c authz.Catalog, allowedPrefixes []string) error {
 		if !actionObjectRE.MatchString(a.Object) {
 			return fmt.Errorf("action %s on %s: invalid object", a.Name, a.Object)
 		}
+		key := authz.Permission{Action: a.Name, Object: a.Object}
+		if seen[key] {
+			return fmt.Errorf("action %s on %s: duplicate", a.Name, a.Object)
+		}
+		seen[key] = true
 		declared[a.Name] = true
 	}
 	// A pattern or declared action of the caller's own services; never another service's.

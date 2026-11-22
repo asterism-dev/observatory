@@ -3,7 +3,7 @@ package hubserver
 import "github.com/asterism-dev/observatory/internal/authz"
 
 // Catalog is the hub's actions, all checked by REST handlers in internal/api, so none come from annotations yet.
-func Catalog() authz.Catalog {
+func Catalog() (authz.Catalog, error) {
 	return authz.Catalog{
 		Service: "hub",
 		Actions: []authz.Action{
@@ -167,5 +167,5 @@ func Catalog() authz.Catalog {
 			{Relation: authz.RelOwnerTeam, Object: "org/disks/{id}", Actions: []string{"compute.disks.get", "compute.disks.use"}},
 			{Relation: authz.RelOwnerTeamAdmin, Object: "org/disks/{id}", Actions: []string{"compute.disks.get", "compute.disks.update", "compute.disks.delete", "compute.disks.use"}},
 		},
-	}
+	}, nil
 }

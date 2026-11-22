@@ -17,9 +17,11 @@ func AllowedPrefixes(caller string) []string {
 	return []string{caller}
 }
 
-func Catalog() authz.Catalog {
-	// TestRegisteredCatalogsReproduce0x proves these annotations convert without error.
-	actions, _ := catalog.FromAnnotations(iamv1.File_observatory_iam_v1_iam_proto.Services().ByName("IAMService"))
+func Catalog() (authz.Catalog, error) {
+	actions, err := catalog.FromAnnotations(iamv1.File_observatory_iam_v1_iam_proto.Services().ByName("IAMService"))
+	if err != nil {
+		return authz.Catalog{}, err
+	}
 	return authz.Catalog{
 		Service: "iam",
 		Actions: actions,
@@ -39,5 +41,5 @@ func Catalog() authz.Catalog {
 		Templates: []authz.OwnerTemplate{
 			{Relation: authz.RelTeamAdmin, Object: "org/teams/{team}", Actions: []string{"iam.teams.manageMembers"}},
 		},
-	}
+	}, nil
 }

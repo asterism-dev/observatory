@@ -140,6 +140,9 @@ func TestValidateCatalogRejectsForeignActions(t *testing.T) {
 		"unknown role":      func(c *authz.Catalog) { c.RoleDefaults[0].Role = "viewer" },
 		"bad action object": func(c *authz.Catalog) { c.Actions[0].Object = "platform/audit" },
 		"bad action name":   func(c *authz.Catalog) { c.Actions[0].Name = "audit.events" },
+		"duplicate action": func(c *authz.Catalog) {
+			c.Actions = append(c.Actions, authz.Action{Name: "audit.events.list", Object: "org/audit", Write: true})
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := sample()
