@@ -4,10 +4,11 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
-import { errorText } from '@/composables/apiError'
+import { errorKind, errorText } from '@/composables/apiError'
 import { iamClient } from '@/composables/iamClient'
 import { quotaClient } from '@/composables/quotaClient'
 import { fromQuota, toQuota } from '@/composables/quotaLimits'
+import { useMe } from '@/composables/useMe'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section } from '@/ui'
 
@@ -17,6 +18,7 @@ interface Named {
 }
 const { t } = useI18n()
 const { org, can } = useOrg()
+const { expire } = useMe()
 
 const orgLimits = ref<Limits>(fromQuota(undefined))
 const teams = ref<(Named & { limits: Limits; valid: boolean })[]>([])
@@ -39,6 +41,7 @@ async function refresh() {
     teams.value = ts.map((x) => ({ id: x.id, name: x.name, limits: fromQuota(ls?.teams[x.id]), valid: true }))
     members.value = ms.map((x) => ({ id: x.id, name: x.name || x.email, limits: fromQuota(ls?.members[x.id]), valid: true }))
   } catch (e) {
+    if (errorKind(e) === 'unauthenticated') return expire()
     if (id === org.value?.id) error.value = errorText(e)
   }
 }
@@ -50,6 +53,7 @@ async function save(scope: string, limits: Limits) {
     await quotaClient.updateLimits({ org: org.value?.id, scope, limits: toQuota(limits) })
     await refresh()
   } catch (e) {
+    if (errorKind(e) === 'unauthenticated') return expire()
     error.value = errorText(e)
   } finally {
     busy.value = ''
