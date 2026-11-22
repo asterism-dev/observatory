@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -47,14 +48,16 @@ func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 	inner := &Store{q: tx, master: s.master, quota: s.quota, pending: s.pending}
 	if s.pending != nil {
-		released := len(s.pending.released)
+		reserved, released := len(s.pending.reserved), len(s.pending.released)
 		err := fn(inner)
 		if err == nil {
 			err = tx.Commit(ctx)
 		}
 		if err != nil {
-			// The savepoint's deletes roll back; its holds stay for the outermost transaction to commit or cancel.
-			s.pending.released = s.pending.released[:released]
+			// The savepoint's creates and deletes roll back, so its holds go at once and its releases never happen.
+			failed := &pendingQuota{reserved: slices.Clone(s.pending.reserved[reserved:])}
+			s.pending.reserved, s.pending.released = s.pending.reserved[:reserved], s.pending.released[:released]
+			failed.cancel(ctx, s.quota)
 		}
 		return err
 	}

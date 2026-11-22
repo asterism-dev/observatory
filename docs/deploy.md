@@ -79,7 +79,9 @@ All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serv
   `OBSERVATORY_IAM_URL` (`http://iam:8093`) for signing keys, the policy stream and the internal API, and waits up to
   60 s for iam's first policy at start. It reaches quota at `OBSERVATORY_QUOTA_URL` (`http://quota:8094`, required)
   with its own service token: every VM, disk or snapshot create and every disk grow reserves quota there, inside its
-  transaction. While quota is unreachable such requests fail with 503 `quota service unavailable`; deletes still work. Compose starts it after iam with `service_started`, not a healthcheck: the
+  transaction. While quota can't answer, those requests and image pushes (the push token and the registry's push
+  events, which the registry redelivers) fail with 503 `quota service unavailable`; deletes still work. Compose
+  starts it after iam with `service_started`, not a healthcheck: the
   image has no HTTP client to probe with and an open port does not mean ready. If iam takes longer than 60 s, the hub
   exits once and `restart: unless-stopped` starts it again.
 

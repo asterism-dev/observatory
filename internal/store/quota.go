@@ -51,8 +51,9 @@ func int32p(v *int) *int32 {
 	return &n
 }
 
+// quotaErr reads every failure but a bad request or a refused caller as quota being unable to answer.
 func quotaErr(op string, err error) error {
-	if c := connect.CodeOf(err); c == connect.CodeUnavailable || c == connect.CodeDeadlineExceeded {
+	if c := connect.CodeOf(err); c != connect.CodeInvalidArgument && c != connect.CodePermissionDenied && c != connect.CodeUnauthenticated && c != connect.CodeCanceled {
 		return fmt.Errorf("quota %s: %w (%w)", op, ErrQuotaUnavailable, err)
 	}
 	return fmt.Errorf("quota %s: %w", op, err)
@@ -189,7 +190,10 @@ func (s *Store) reserve(ctx context.Context, org uuid.UUID, user, team *uuid.UUI
 	if err != nil {
 		return err
 	}
-	id, err := s.quota.Reserve(ctx, org, owner, add, resources)
+	// A client gone mid-call must not leave a hold quota stored but the hub never learned of.
+	rctx, stop := context.WithTimeout(context.WithoutCancel(ctx), quotaTimeout)
+	defer stop()
+	id, err := s.quota.Reserve(rctx, org, owner, add, resources)
 	if err != nil {
 		return err
 	}
@@ -199,6 +203,9 @@ func (s *Store) reserve(ctx context.Context, org uuid.UUID, user, team *uuid.UUI
 
 // lifecycle writes a lifecycle event for quota to the outbox, in s's transaction.
 func (s *Store) lifecycle(ctx context.Context, org uuid.UUID, typ, object string, l usage.Lifecycle) error {
+	if s.pending == nil {
+		return errors.New("lifecycle event outside a transaction")
+	}
 	return pgx.BeginFunc(ctx, s.q, func(tx pgx.Tx) error { return outbox.Write(ctx, tx, usage.Event(org, typ, object, l)) })
 }
 

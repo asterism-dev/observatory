@@ -71,7 +71,11 @@ func (h *registryEvents) serve(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// The registry redelivers the whole batch on failure, so every step is idempotent.
-		if err := h.push(r.Context(), ev); err != nil {
+		if err := h.push(r.Context(), ev); errors.Is(err, store.ErrQuotaUnavailable) {
+			slog.Warn("registry push event waits for quota", "err", err)
+			writeError(w, http.StatusServiceUnavailable, store.ErrQuotaUnavailable.Error())
+			return
+		} else if err != nil {
 			serverError(w, "registry push event", err)
 			return
 		}

@@ -506,3 +506,29 @@ func TestProxyStripsEdgeHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryQuotaUnavailable503(t *testing.T) {
+	e := newEnv(t)
+	alice, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
+	repo := "i/" + img.String()
+	e.quota.FailGetLimits(connect.NewError(connect.CodeUnavailable, errors.New("down")))
+
+	h := e.registryHandler("http://registry.invalid", fakeBuilds{})
+	if code, _ := grant(t, h, "observatory", e.registryCredential(e.cliSession(alice)), repoScope(img, "pull,push")); code != http.StatusServiceUnavailable {
+		t.Fatalf("push token while quota is down: %d", code)
+	}
+
+	fm := &fakeManifests{manifests: map[string]registry.Manifest{digestN(1): amd64Manifest(registry.Layer{Digest: "sha256:a", Size: 1})}}
+	if code := pushEvent(t, e.eventsHandler(fm), eventsSecret, repo, digestN(1), "v1", "user:"+alice.ID.String()); code != http.StatusServiceUnavailable {
+		t.Fatalf("push event while quota is down: %d", code)
+	}
+	if _, err := e.store.ImageVersion(t.Context(), img, digestN(1)); err != store.ErrNotFound {
+		t.Fatalf("version recorded unchecked: %v", err)
+	}
+	e.quota.FailGetLimits(nil)
+	if code := pushEvent(t, e.eventsHandler(fm), eventsSecret, repo, digestN(1), "v1", "user:"+alice.ID.String()); code != http.StatusOK {
+		t.Fatalf("push event once quota is back: %d", code)
+	}
+}

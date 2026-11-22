@@ -104,6 +104,10 @@ func (t *registryTokens) token(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusServiceUnavailable, err.Error())
 				return
 			}
+			if errors.Is(err, store.ErrQuotaUnavailable) {
+				writeError(w, http.StatusServiceUnavailable, store.ErrQuotaUnavailable.Error())
+				return
+			}
 			if err != nil {
 				serverError(w, "registry grant", err)
 				return

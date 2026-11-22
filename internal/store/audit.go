@@ -38,7 +38,6 @@ const (
 	ActionMemberLeave        = "iam.members.leave"
 	ActionMemberSetRole      = "iam.members.setRole"
 	ActionTeamDelete         = "iam.teams.delete"
-	ActionLimitSet           = "quota.limits.update"
 	ActionAdminRead          = "iam.platform.read"
 	ActionRegistryGC         = "artifacts.registry.collectGarbage"
 	ActionPlatformGuestMTU   = "network.settings.update"

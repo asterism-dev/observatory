@@ -281,12 +281,48 @@ func TestSnapshotCountLimit(t *testing.T) {
 
 func TestQuotaUnavailableCreatesNothing(t *testing.T) {
 	e := newVMEnv(t)
-	e.quota.FailReserves(connect.NewError(connect.CodeUnavailable, errors.New("down")))
-	if _, err := e.s.CreateVM(t.Context(), e.vm("a", nil, 1, 1, 1)); !errors.Is(err, store.ErrQuotaUnavailable) {
-		t.Fatalf("create while quota fails: %v", err)
+	for _, code := range []connect.Code{connect.CodeUnavailable, connect.CodeDeadlineExceeded, connect.CodeInternal, connect.CodeUnknown} {
+		e.quota.FailReserves(connect.NewError(code, errors.New("down")))
+		if _, err := e.s.CreateVM(t.Context(), e.vm("a", nil, 1, 1, 1)); !errors.Is(err, store.ErrQuotaUnavailable) {
+			t.Fatalf("create while quota answers %v: %v", code, err)
+		}
+	}
+	e.quota.FailReserves(connect.NewError(connect.CodeInvalidArgument, errors.New("bad")))
+	if _, err := e.s.CreateVM(t.Context(), e.vm("a", nil, 1, 1, 1)); err == nil || errors.Is(err, store.ErrQuotaUnavailable) {
+		t.Fatalf("invalid argument read as unavailable: %v", err)
 	}
 	var n int
 	if err := e.pool.QueryRow(t.Context(), "SELECT count(*) FROM vms").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("vms = %d %v", n, err)
+	}
+}
+
+func TestFailedSavepointCancelsItsHoldsAtOnce(t *testing.T) {
+	ctx := t.Context()
+	e := newVMEnv(t)
+	errRollback := errors.New("rollback")
+	if err := e.s.InTx(ctx, func(tx *store.Store) error {
+		if err := tx.InTx(ctx, func(sp *store.Store) error {
+			if _, err := sp.CreateVM(ctx, e.vm("a", nil, 1, 1, 1)); err != nil {
+				return err
+			}
+			return errRollback
+		}); !errors.Is(err, errRollback) {
+			return err
+		}
+		if n := e.quota.Holds(); n != 0 {
+			t.Errorf("holds after the failed savepoint = %d, want 0 before the outer commit", n)
+		}
+		_, err := tx.CreateVM(ctx, e.vm("b", nil, 1, 1, 1))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	evs := e.lifecycle(t)
+	if got := eventTypes(evs); !slices.Equal(got, []string{usage.InstanceCreated, usage.ReservationsCommitted}) {
+		t.Fatalf("events = %v", got)
+	}
+	if ids, err := usage.ParseCommitted(evs[1]); err != nil || len(ids) != 1 {
+		t.Fatalf("committed = %v %v, want only the kept hold", ids, err)
 	}
 }

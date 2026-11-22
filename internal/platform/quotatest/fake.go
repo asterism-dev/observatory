@@ -44,6 +44,7 @@ type Fake struct {
 	holds      map[string]hold
 	reserves   []*quotav1.ReserveRequest
 	reserveErr error
+	limitsErr  error
 }
 
 var _ quotav1connect.QuotaInternalServiceHandler = (*Fake)(nil)
@@ -71,6 +72,13 @@ func (f *Fake) FailReserves(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reserveErr = err
+}
+
+// FailGetLimits makes every GetLimits fail with err until called with nil.
+func (f *Fake) FailGetLimits(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.limitsErr = err
 }
 
 // Reserves returns the Reserve requests received, oldest first.
@@ -219,6 +227,9 @@ func (f *Fake) GetLimits(_ context.Context, r *connect.Request[quotav1.QuotaInte
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.limitsErr != nil {
+		return nil, f.limitsErr
+	}
 	out := &quotav1.OrgLimits{Org: &quotav1.Limits{}, Teams: map[string]*quotav1.Limits{}, Members: map[string]*quotav1.Limits{}}
 	for scope, l := range f.limits[org] {
 		if scope == "org" {
