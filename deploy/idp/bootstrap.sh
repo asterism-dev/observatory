@@ -43,8 +43,22 @@ post() {
   esac
 }
 
-resp=$(post /management/v1/projects '{"name":"observatory"}')
-project_id=$(printf %s "$resp" | jq -er .id)
+# find_project / find_app <project id> <name>: print the first exact-name match as JSON, nothing if absent.
+find_project() {
+  post /management/v1/projects/_search '{"queries":[{"nameQuery":{"name":"observatory","method":"TEXT_QUERY_METHOD_EQUALS"}}]}' |
+    jq -c '.result[0] // empty'
+}
+find_app() {
+  post "/management/v1/projects/$1/apps/_search" '{"queries":[{"nameQuery":{"name":"'"$2"'","method":"TEXT_QUERY_METHOD_EQUALS"}}]}' |
+    jq -c '.result[0] // empty'
+}
+
+project=$(find_project)
+if [ -n "$project" ]; then
+  project_id=$(printf %s "$project" | jq -er .id)
+else
+  project_id=$(post /management/v1/projects '{"name":"observatory"}' | jq -er .id)
+fi
 
 if [ -n "$hub_url" ]; then
   redirects="[\"$hub_url/auth/callback\"]" logouts="[\"$hub_url/\"]"
@@ -55,27 +69,40 @@ else
   logouts='["http://localhost:5173/","http://localhost:8090/"]' dev=true
 fi
 
-resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
-  "name":"observatory-web",
-  "redirectUris":'"$redirects"',
-  "postLogoutRedirectUris":'"$logouts"',
-  "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
-  "grantTypes":["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-  "appType":"OIDC_APP_TYPE_USER_AGENT",
-  "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
-  "devMode":'"$dev"',
-  "idTokenUserinfoAssertion":true}')
-web_id=$(printf %s "$resp" | jq -er .clientId)
+web=$(find_app "$project_id" observatory-web)
+if [ -n "$web" ]; then
+  web_id=$(printf %s "$web" | jq -er .oidcConfig.clientId)
+  if [ -n "$hub_url" ] && ! printf %s "$web" | jq -e --arg u "$hub_url/auth/callback" '.oidcConfig.redirectUris | index($u)' > /dev/null; then
+    echo "warning: existing observatory-web app has no redirect URI $hub_url/auth/callback; add it in the Zitadel console" >&2
+  fi
+else
+  resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
+    "name":"observatory-web",
+    "redirectUris":'"$redirects"',
+    "postLogoutRedirectUris":'"$logouts"',
+    "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
+    "grantTypes":["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+    "appType":"OIDC_APP_TYPE_USER_AGENT",
+    "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
+    "devMode":'"$dev"',
+    "idTokenUserinfoAssertion":true}')
+  web_id=$(printf %s "$resp" | jq -er .clientId)
+fi
 
-resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
-  "name":"observatory-cli",
-  "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
-  "grantTypes":["OIDC_GRANT_TYPE_DEVICE_CODE"],
-  "appType":"OIDC_APP_TYPE_NATIVE",
-  "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
-  "devMode":true,
-  "idTokenUserinfoAssertion":true}')
-cli_id=$(printf %s "$resp" | jq -er .clientId)
+cli=$(find_app "$project_id" observatory-cli)
+if [ -n "$cli" ]; then
+  cli_id=$(printf %s "$cli" | jq -er .oidcConfig.clientId)
+else
+  resp=$(post "/management/v1/projects/$project_id/apps/oidc" '{
+    "name":"observatory-cli",
+    "responseTypes":["OIDC_RESPONSE_TYPE_CODE"],
+    "grantTypes":["OIDC_GRANT_TYPE_DEVICE_CODE"],
+    "appType":"OIDC_APP_TYPE_NATIVE",
+    "authMethodType":"OIDC_AUTH_METHOD_TYPE_NONE",
+    "devMode":true,
+    "idTokenUserinfoAssertion":true}')
+  cli_id=$(printf %s "$resp" | jq -er .clientId)
+fi
 
 if [ -n "$hub_url" ]; then
   printf 'OBSERVATORY_OIDC_ISSUER=%s\nOBSERVATORY_OIDC_WEB_CLIENT_ID=%s\nOBSERVATORY_OIDC_CLI_CLIENT_ID=%s\n' "$api" "$web_id" "$cli_id"
