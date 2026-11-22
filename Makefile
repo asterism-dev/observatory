@@ -16,7 +16,7 @@ edge-token:
 	grep -q '^OBSERVATORY_EDGE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; echo "OBSERVATORY_EDGE_TOKEN=$$(openssl rand -hex 32)"; } >> deploy/dev/hub.env
 
 service-token:
-	grep -q '^OBSERVATORY_SERVICE_TOKENS\{0,1\}=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; t=$$(openssl rand -hex 32); echo "OBSERVATORY_SERVICE_TOKEN=$$t"; echo "OBSERVATORY_SERVICE_TOKENS=edge=$$t"; } >> deploy/dev/hub.env
+	grep -q '^OBSERVATORY_EDGE_SERVICE_TOKEN=' deploy/dev/hub.env || { [ ! -s deploy/dev/hub.env ] || [ -z "$$(tail -c1 deploy/dev/hub.env)" ] || echo; for s in EDGE HUB IAM AUDIT; do echo "OBSERVATORY_$${s}_SERVICE_TOKEN=$$(openssl rand -hex 32)"; done; } >> deploy/dev/hub.env
 
 gateway-up: gateway-token storage-token
 	docker compose -f deploy/dev/compose.yaml --env-file deploy/dev/hub.env --profile gateway up -d --build gateway storage

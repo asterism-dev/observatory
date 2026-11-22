@@ -7,7 +7,7 @@ with `observatory org audit`.
 
 - Every write and every authorization denial of a verified caller.
 - Reads only where the org turned on data events for that service (see below).
-- The hub records its actions through its outbox. Currently only the audit service records through the shared
+- The hub and iam record their actions through their outboxes. The audit service and iam record through the shared
   interceptor; other services follow as they are extracted.
 - Calls without a verified identity are not recorded. A handler error (including not found) is `failed`; only
   authorization denials are `denied`, and they carry the same action name as the allowed call, so filter on `result`
@@ -20,7 +20,7 @@ Event fields: `id`, `time`, `type` (the action, e.g. `compute.instances.create`)
 ## Data events
 
 Org admins with `audit.settings.update` choose per org and service whether reads are recorded. The list only offers
-services that record through the interceptor (today `audit`). A change is recorded as `audit.settings.update`, and
+services that record through the interceptor (today `audit` and `iam`, whose reads are e.g. `iam.members.list`). A change is recorded as `audit.settings.update`, and
 services pick it up without a restart.
 
 ## Retention

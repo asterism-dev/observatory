@@ -75,7 +75,9 @@ All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serv
   internal callers reach it there: the registry posts its push notifications to `http://hub:8091/internal/registry/events`,
   the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091. It reaches iam at
   `OBSERVATORY_IAM_URL` (`http://iam:8093`) for signing keys, the policy stream and the internal API, and waits up to
-  60 s for iam's first policy at start.
+  60 s for iam's first policy at start. Compose starts it after iam with `service_started`, not a healthcheck: the
+  image has no HTTP client to probe with and an open port does not mean ready. If iam takes longer than 60 s, the hub
+  exits once and `restart: unless-stopped` starts it again.
 - `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by the edge, iam and the hub: the
   edge sends it with each request, and iam and the hub take the client IP from the edge's header only when the token
   matches, otherwise the connection's address. Changing it needs all three restarted.

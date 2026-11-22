@@ -39,7 +39,7 @@ type hubIdentityKey struct{}
 
 type sessionKey struct{}
 
-// identity swaps the client's session token for a short-lived JWT from the hub's issuer.
+// identity swaps the client's session token for a short-lived JWT from iam's issuer.
 type identity struct {
 	tokenURL, serviceToken string
 	client                 *http.Client

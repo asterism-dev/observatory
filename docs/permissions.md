@@ -27,7 +27,7 @@ org the caller is not a member of returns `404`.
 
 Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. IDs must be canonical UUIDs.
 
-**Evaluation:** deny wins; no matching allow means denied. Changes apply to the next request.
+**Evaluation:** deny wins; no matching allow means denied. Changes reach every service with the policy stream's latency.
 
 ## Catalog
 
@@ -122,7 +122,7 @@ is never granted by accident. Disk actions are explicit too, never `compute.disk
 
 ## Invitations
 
-A link with a single-use token, valid 7 days; the hub sends no mail. Inviting as `admin` or `owner`
+A link with a single-use token, valid 7 days; Observatory sends no mail. Inviting as `admin` or `owner`
 requires being owner (or holding `iam.members.setRole`). At accept time the creator must still be a member and still hold `iam.invites.create`
 (plus `iam.members.setRole` for admin/owner invites); otherwise the invite is invalid and must be reissued.
 
@@ -289,16 +289,16 @@ revoked (failed precondition).
 Extracted services do not see sessions. The edge exchanges the user's session (cookie or bearer token) for a short-lived
 signed token (EdDSA, valid at most 5 minutes and never longer than the session) and sends it to the service in place of
 the client's `Authorization` header. The edge caches it for at most 60 seconds, so a revoked session reaches the
-services within about a minute. A logout through the edge, or a 401 from the hub for that session, drops the cached
-token at once. A removed platform admin role also takes up to a minute, on hub routes too, which read it from the
-token. Services verify the token offline against the hub's published keys.
+services within about a minute. A logout through the edge, or a 401 from any upstream (hub, iam or another service)
+for that session, drops the cached token at once. A removed platform admin role also takes up to a minute, on hub
+routes too, which read it from the token. Services verify the token offline against iam's published keys.
 
 - A leaked identity token stays valid at the services until it expires: at most 5 minutes plus 30 seconds of clock skew
   allowance. Revoking the session stops new tokens, not one already issued.
-- While the hub is unreachable the edge cannot exchange sessions and answers 502 for requests to extracted services.
+- While iam is unreachable the edge cannot exchange sessions and answers 502 for session requests.
 - Only the edge may exchange sessions; other services get 403 from the token endpoint and use the keys and the policy
   stream only.
-- The hub publishes one signing key today. The key set is a list so a previous key can stay published during a
+- iam publishes one signing key today. The key set is a list so a previous key can stay published during a
   rotation, which comes later.
 - The hub's own `/api/` routes use the same token: the edge swaps a session (the `obs_session` cookie or an
   `obs_…` bearer) for it, removes the session cookie and the hub verifies the token offline. The hub never sees a
@@ -307,8 +307,9 @@ token. Services verify the token offline against the hub's published keys.
   hub answers 503 rather than admit the request. Registry credentials are checked with iam the same way on every use. Other bearer tokens
   (node, gateway, storage, builder, registry events, telemetry) pass through unchanged. A stale session is dropped
   rather than refused, so public routes such as `/api/auth/config` keep working; protected ones answer 401. While the
-  issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` keeps using the
-  session directly.
+  issuer is unreachable the edge answers 502 for session requests to hub routes as well. `/auth/` and `/api/auth/` go
+  to iam with the session unchanged; a path there with dot segments reaches no handler (iam redirects to the clean
+  path or answers 404).
 - Services never see the edge token. The edge overwrites `X-Observatory-Client-IP` on every request, and a service
   records it only for a call whose identity token verified. Limitation: a leaked identity token (at most 5.5 minutes)
   could be used to forge the client IP in the audit trail.
@@ -320,9 +321,14 @@ The service's interceptor checks it before the handler runs:
 - A caller who is not a member of the request's org gets not found; a member without the permission is denied.
 - Requests without an `org` field are platform scope and only allowed for platform admins, except when the object
   starts with `user:`: then the owning user passes regardless of permission.
-- The policy (roles, bindings, teams, memberships) is streamed from the hub to every service and applies locally; a
-  change reaches them within seconds. A service refuses requests until it has received a policy, and keeps the last one
-  if the stream drops.
+- The policy (roles, bindings, teams, memberships) is streamed from iam to every service and applies locally. A
+  service refuses requests until it has received a policy.
+- On a quiet stream iam resends the current policy every 30 seconds. A stream silent for 90 seconds counts as lost,
+  and 5 minutes after the loss (the identity token's lifetime) the service has no policy and answers user requests
+  with unavailable (`503`). So a removed member keeps access for at most 90 seconds plus 5 minutes while the stream is
+  down. Exempt: the hub keeps the last policy for the gateway's allow lists and for what it pushes to nodes (SSH keys
+  and env of running VMs), since dropping those would cut every VM off. A removed member's devices therefore keep
+  reaching their VMs until the stream is back.
 
 ## IAM API
 
@@ -330,7 +336,8 @@ Users, sessions, SSH keys, orgs, members, invites, teams, roles, bindings and th
 `observatory.iam.v1.IAMService`, served at `/api/iam/v1/` over Connect and REST. Both take the same path
 through authorization and audit. REST paths follow the methods, for example `GET /api/iam/v1/me`,
 `DELETE /api/iam/v1/orgs/{org}/members/{user}` or `POST /api/iam/v1/invites:accept`; the Connect path is
-`/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. The service runs inside the hub for now.
+`/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. iam runs as its own service (`observatory serve iam`, see
+[deploy.md](deploy.md#edge-iam-and-hub)).
 
 - **`{self}`.** The calls on your own account (`GetMe`, sessions, SSH keys, `CreateOrg`, `AcceptInvite`, `LeaveOrg`)
   have the object `user:{self}`, and `{self}` is always the caller. A session or SSH key ID of another user is not
@@ -339,7 +346,8 @@ through authorization and audit. REST paths follow the methods, for example `GET
   `deny * on *` rule, and a non-member gets not found.
 - Removing yourself is `LeaveOrg` or `LeaveTeam`; `DeleteMember` and `RemoveTeamMember` refuse your own ID.
 - Errors map as follows. Not found and permission denied mean what they say. Conflicts such as the last owner or a
-  member who still owns VMs are failed precondition. Bad input is invalid argument.
+  member who still owns VMs are failed precondition, `400` over REST (0.x answered `409`). Bad input is invalid
+  argument.
 - A REST request with a query string is refused with `400` before authentication, so a query field cannot override
   the org in the path.
 - Request bodies are capped at 1 MiB; a larger one is refused (resource exhausted) before authentication.
@@ -354,17 +362,31 @@ through authorization and audit. REST paths follow the methods, for example `GET
 
 ## Hub as iam client
 
-The hub does not read users, memberships or teams for authorization. It verifies the identity token and takes an
-org's members and their roles from the same policy the other services get: a non-member gets not found, a member
-without the permission is denied. It reads user names, e-mails, SSH keys and team names through the internal iam API
-(`/internal/iam/`, service token).
+The hub has no IAM tables. Its policy is iam's streamed policy plus the grants the hub derives from what it owns
+(VMs, disks, images and the like); it rebuilds it on every stream message and after each of its own commits. At start
+it waits up to 60 seconds for iam's first policy and otherwise exits. A non-member gets not found, a member without
+the permission is denied. It reads user names, e-mails, SSH keys, team names, sessions and memberships through the
+internal iam API (`/internal/iam/`, service token).
+
+- A grant iam cannot justify from its own policy (an object the hub owns, such as a member's VM) goes to the hub
+  (`CanHold`), which answers once it has iam's latest policy revision, or unavailable after 5 seconds.
+- A login that creates a user waits up to 5 seconds for the hub to have the new personal org, so the web app's first
+  hub request succeeds. Other iam changes reach the hub with the stream's latency.
 
 What a removed member or deleted team leaves behind is cleaned up from events, not in the same transaction. The hub
 consumes the allowed `iam.members.delete`, `iam.members.leave`, `iam.teams.delete`, `iam.sessions.delete` and
 `iam.sessions.revoke` events (durable consumer `hub`) and then deletes the subject's private env vars, integrations,
 images, dashboards, limits and devices, detaches a team from its disks and VM history, or drops the registry
-credentials of the session. Denied events are ignored. Cleanup is idempotent and retried until it succeeds; if the
-member has rejoined by then, nothing is purged and their earlier rows stay.
+credentials of the session. Denied events are ignored. Cleanup is idempotent and retried until it succeeds.
+
+- Purge order: the purge takes the hub's org lock, then asks iam whether the user is a member again, and purges only if
+  not. Every create of a user-owned row takes the same lock first. A create that saw a re-join commits before the
+  purge, which then finds the member back and purges nothing; a create after the purge keeps its row. A create that
+  waited behind the purge for a user who is gone leaves a row until the next purge, with no access, since access comes
+  from the policy.
+- Telemetry tokens the removed member created are revoked when they were authorized at or below the policy revision
+  the removal event carries, also if the member has rejoined since; tokens authorized after the rejoin stay. The
+  cutoff uses iam's revisions, not clocks.
 
 - Removing a member or deleting a team is refused (failed precondition) while the hub reports that the subject owns VMs or live
   disks. The check and the delete are not one transaction, so a VM created in between is not caught.
@@ -372,13 +394,15 @@ member has rejoined by then, nothing is purged and their earlier rows stay.
 - Access ends with the membership, not the cleanup: a removed member's WireGuard device stays a gateway peer until it is
   purged, but reaches no VM, because the allow lists come from the policy.
 - Deleting a manifest (image cleanup) is best effort; a failure leaves a registry blob until garbage collection.
-- Deleting an org or a user does not clean up hub rows yet and leaves orphans until the iam service is extracted.
-- Registry credentials end with the session that issued them: the registry refuses them once the session is revoked
-  or expired, even before the credential's own expiry.
+- Orgs and users cannot be deleted yet. A future delete must publish `iam.orgs.delete` or `iam.users.delete`, and the
+  hub must then purge `dashboards`, `telemetry_tokens`, `vm_history` and `images.auto_by`.
+- Registry credentials end with the session that issued them: every use asks iam (`GetSession`), so the registry
+  refuses them as soon as the session is revoked or expired, also while the bus is down, and answers `503` while iam
+  is unreachable.
 
 ## Audit
 
-Every state change writes an audit event to the hub's outbox in the same transaction, so it is published only if the
+Every state change writes an audit event to its service's outbox (hub or iam) in the same transaction, so it is published only if the
 change commits; the relay delivers it over the event bus to the audit service, which serves the trail at
 `/api/audit/v1/`. Every denied authorization writes an event with result `denied`, actor, org, action and object. A denied row carries the same action name as the allowed one,
 so consumers must filter on `result` when they count what happened.
@@ -390,7 +414,7 @@ settings → Audit; `audit.settings.update`). Every service must build its handl
 inner interceptor runs; authz reports the verified caller and its own denials back through the context. Only authz
 denials are `denied`; a handler error (including not found) is `failed` and is recorded like any other call of its
 kind. Calls without a verified identity are not recorded. Data events are offered only for services that record
-through the interceptor (today `audit`); the list grows as services are extracted. A settings change publishes `audit.settings.changed`, and services reload without a
+through the interceptor (today `audit` and `iam`); the list grows as services are extracted. A settings change publishes `audit.settings.changed`, and services reload without a
 restart.
 
 ## Not yet built

@@ -29,15 +29,18 @@ storage-token` appends whichever is missing).
 
 `make run` stores its embedded event bus in `.data` (`OBSERVATORY_DATA_DIR`). To use a NATS server instead, run
 `make nats-up` (`nats-token` appends `OBSERVATORY_NATS_TOKEN` and `OBSERVATORY_NATS_URL` to `deploy/dev/hub.env`;
-`make nats-down` stops it). Audit events from the hub reach the audit service over it, see [docs/audit.md](docs/audit.md).
+`make nats-down` stops it). Audit events from the hub and iam reach the audit service over it, see [docs/audit.md](docs/audit.md).
 
 `make run` starts `observatory serve all`: the edge (public entry point, web app) on `OBSERVATORY_EDGE_LISTEN`
 (default `:8090`) in front of the hub, which listens on `OBSERVATORY_HUB_LISTEN` (`:8091` with `make run`) for the
 gateway, the storage server and the registry; the edge answers `/internal/*` with 404. `make edge-token` appends
 `OBSERVATORY_EDGE_TOKEN` to `deploy/dev/hub.env` if missing (`make run` does it): the token the edge proves itself
-with to the hub when the two run as separate processes (`observatory serve edge` and `observatory serve hub`); `serve all`
-generates its own per start. `make service-token` likewise appends `OBSERVATORY_SERVICE_TOKEN` (edge) and the matching
-`OBSERVATORY_SERVICE_TOKENS=edge=…` (hub) for separate processes.
+with to iam and the hub when they run as separate processes (`observatory serve edge`, `serve iam` and `serve hub`); `serve all`
+generates its own per start. `make service-token` likewise appends `OBSERVATORY_EDGE_SERVICE_TOKEN`,
+`OBSERVATORY_HUB_SERVICE_TOKEN`, `OBSERVATORY_IAM_SERVICE_TOKEN` and `OBSERVATORY_AUDIT_SERVICE_TOKEN` for separate
+processes (`serve edge`, `serve iam`, `serve hub`, `serve audit`); give each process its own as
+`OBSERVATORY_SERVICE_TOKEN` and the callers it admits as `OBSERVATORY_SERVICE_TOKENS`, as in
+[docs/deploy.md](docs/deploy.md#edge-iam-and-hub).
 `OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.
 
 Nodes need the WireGuard/OVN gateway: they reach the hub's control endpoint only through it, over the underlay.

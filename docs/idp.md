@@ -21,15 +21,17 @@ with the Vite dev server, `http://localhost:8090` with only the built hub.
 
 Put observatory's two clients in a dedicated IdP project or realm. Some IdPs
 (Zitadel among them) list every client of a project in the ID token's `aud`;
-the hub rejects CLI tokens whose `azp` names another client, or that carry
+iam rejects CLI tokens whose `azp` names another client, or that carry
 several audiences without an `azp`, but a dedicated project keeps other apps'
 tokens out entirely.
 
 ## Hub environment
 
+The three `OBSERVATORY_OIDC_*` variables are read by iam (`serve iam`, or `serve all`).
+
 | Variable | Meaning |
 |----------|---------|
-| `OBSERVATORY_OIDC_ISSUER` | issuer URL, must be identical for hub and browser |
+| `OBSERVATORY_OIDC_ISSUER` | issuer URL, must be identical for iam and browser |
 | `OBSERVATORY_OIDC_WEB_CLIENT_ID` | web client ID |
 | `OBSERVATORY_OIDC_CLI_CLIENT_ID` | CLI client ID |
 | `OBSERVATORY_PUBLIC_URL` | public URL of the hub, see above |

@@ -82,7 +82,6 @@ if [ -n "$hub_url" ]; then
   exit 0
 fi
 
-service_token=$(openssl rand -hex 32)
 cat > "$hub_env" <<ENV
 OBSERVATORY_OIDC_ISSUER=$api
 OBSERVATORY_OIDC_WEB_CLIENT_ID=$web_id
@@ -93,7 +92,9 @@ OBSERVATORY_SECRETS_KEY=$(openssl rand -base64 32)
 OBSERVATORY_GATEWAY_TOKEN=$(openssl rand -hex 32)
 OBSERVATORY_STORAGE_TOKEN=$(openssl rand -hex 32)
 OBSERVATORY_EDGE_TOKEN=$(openssl rand -hex 32)
-OBSERVATORY_SERVICE_TOKEN=$service_token
-OBSERVATORY_SERVICE_TOKENS=edge=$service_token
+OBSERVATORY_EDGE_SERVICE_TOKEN=$(openssl rand -hex 32)
+OBSERVATORY_HUB_SERVICE_TOKEN=$(openssl rand -hex 32)
+OBSERVATORY_IAM_SERVICE_TOKEN=$(openssl rand -hex 32)
+OBSERVATORY_AUDIT_SERVICE_TOKEN=$(openssl rand -hex 32)
 ENV
 echo "wrote $hub_env"
