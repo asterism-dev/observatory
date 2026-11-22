@@ -25,7 +25,7 @@ import (
 const (
 	ackWait       = 30 * time.Second
 	maxRetry      = 30 * time.Second
-	memberTimeout = 5 * time.Second
+	memberTimeout = 3 * time.Second
 
 	memberDelete = "iam.members.delete"
 	memberLeave  = "iam.members.leave"
@@ -72,10 +72,10 @@ func consume(ctx context.Context, js jetstream.JetStream, name string, subs []st
 	c, err := js.CreateOrUpdateConsumer(ctx, bus.Stream, jetstream.ConsumerConfig{
 		Durable:        name,
 		FilterSubjects: subs,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		AckWait:       ackWait,
-		MaxDeliver:    -1,
-		MaxAckPending: 1,
+		AckPolicy:      jetstream.AckExplicitPolicy,
+		AckWait:        ackWait,
+		MaxDeliver:     -1,
+		MaxAckPending:  1,
 	})
 	// Stopped while starting is a shutdown; the durable consumer resumes next start.
 	if ctx.Err() != nil {
@@ -216,7 +216,7 @@ func (s *store) dropMemberLimits(ctx context.Context, org, user uuid.UUID, membe
 		if err := lockOrg(ctx, tx, org); err != nil {
 			return err
 		}
-		// ponytail: the transaction holds a connection and the org lock during the iam call, bounded to 5 s; fine at today's removal rate.
+		// ponytail: the transaction holds a connection and the org lock during the iam call, bounded to 3 s, below the hub's 5 s reserve timeout; fine at today's removal rate.
 		mctx, cancel := context.WithTimeout(ctx, memberTimeout)
 		back, err := member(mctx)
 		cancel()
