@@ -239,3 +239,26 @@ func TestHubPolicyFreshness(t *testing.T) {
 	e.iam.AddTeam(e.org, "core")
 	waitUntil(t, "the next message to make the stream live", fresh)
 }
+
+// A reload that fails after one of the hub's own commits may miss that commit's owner refs: org routes refuse until a retry succeeds.
+func TestHubCommitReloadFailureWithholdsPolicy(t *testing.T) {
+	e := newStreamEnv(t)
+	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := func() bool { _, ok := hp.Current(); return ok }
+	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms RENAME TO vms_away"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hp.ReloadCommitted(t.Context()); err == nil {
+		t.Fatal("reload without the vms table succeeded")
+	}
+	if fresh() {
+		t.Fatal("current after a failed reload of a commit")
+	}
+	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms_away RENAME TO vms"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the retried reload", fresh)
+}

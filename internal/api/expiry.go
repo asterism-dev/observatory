@@ -58,7 +58,7 @@ func (x *VMExpiry) Tick(ctx context.Context) error {
 	}
 	// One reload covers every VM deleted in this pass.
 	if deleted {
-		if err := x.z.Reload(ctx); err != nil {
+		if err := x.z.ReloadCommitted(ctx); err != nil {
 			slog.Error("vm expiry: reload policies", "err", err)
 		}
 	}

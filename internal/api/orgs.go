@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -137,8 +136,8 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		serverError(w, "commit", err)
 		return false
 	}
-	// Committed: report success so clients don't retry and duplicate; a hang-up must not leave the enforcer stale.
-	if err := h.z.Reload(context.WithoutCancel(ctx)); err != nil {
+	// Committed: report success so clients don't retry and duplicate; a failed reload is retried, and org routes refuse meanwhile.
+	if err := h.z.ReloadCommitted(ctx); err != nil {
 		slog.Error("authz reload after commit", "err", err)
 	}
 	return true

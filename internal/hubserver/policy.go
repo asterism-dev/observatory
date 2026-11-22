@@ -58,7 +58,7 @@ func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store) 
 	var behind atomic.Bool
 	z.WithFreshness(func() bool {
 		_, ok := w.Current()
-		return ok && !behind.Load()
+		return ok && !behind.Load() && !z.Behind()
 	})
 	reload := func(ctx context.Context) error {
 		for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
