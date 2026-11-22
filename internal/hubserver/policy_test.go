@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
@@ -124,12 +126,16 @@ type streamEnv struct {
 	bob uuid.UUID
 	vm  authz.VMRef
 	w   *platformauthz.Watcher
+	// clock is the watcher's, in Unix nanoseconds.
+	clock atomic.Int64
+	pool  *pgxpool.Pool
 }
 
 func newStreamEnv(t *testing.T) *streamEnv {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})
+	pool := dbtest.New(t)
+	s := store.New(pool).WithMasterKey(seal.Key{1})
 	login := func(sub string) uuid.UUID {
 		res, err := s.Login(ctx, store.Identity{Subject: sub, Email: sub + "@x.io", Name: sub})
 		if err != nil {
@@ -160,7 +166,8 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &streamEnv{s: s, pub: platformauthz.NewPublisher(), org: org.ID, bob: bob, vm: authz.VMRef{OrgID: org.ID, ID: vm.ID, UserID: &bob}}
+	e := &streamEnv{s: s, pub: platformauthz.NewPublisher(), org: org.ID, bob: bob, vm: authz.VMRef{OrgID: org.ID, ID: vm.ID, UserID: &bob}, pool: pool}
+	e.clock.Store(time.Now().UnixNano())
 	e.publish(t, func(*authz.Policy) {})
 	mux := http.NewServeMux()
 	mux.Handle(e.pub.Handler("/internal/iam"))
@@ -169,6 +176,7 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	if e.w, err = platformauthz.NewWatcher(srv.URL, svcToken, nil); err != nil {
 		t.Fatal(err)
 	}
+	e.w.WithClock(func() time.Time { return time.Unix(0, e.clock.Load()) })
 	return e
 }
 
@@ -239,4 +247,36 @@ func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 	if !hp.Enforcer().HasTeam(e.org, team) {
 		t.Fatal("enforcer behind the revision WaitRevision returned for")
 	}
+}
+
+func TestHubPolicyFreshness(t *testing.T) {
+	e := newStreamEnv(t)
+	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobIn := func() bool { _, ok := hp.Enforcer().Role(e.org, e.bob); return ok }
+	fresh := func() bool { _, ok := hp.Current(); return ok }
+	if !fresh() || !bobIn() {
+		t.Fatal("not current after the first snapshot")
+	}
+
+	// A reload that fails after a stream message leaves the hub behind iam: it refuses until a retry succeeds.
+	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms RENAME TO vms_away"); err != nil {
+		t.Fatal(err)
+	}
+	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: e.org, ID: uuid.New()}) })
+	waitUntil(t, "the failed reload to withhold the policy", func() bool { return !fresh() && !bobIn() })
+	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms_away RENAME TO vms"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the retried reload", func() bool { return fresh() && bobIn() })
+
+	// A stream silent past the keepalive window and maxStale withholds it too.
+	e.clock.Add(int64(6*time.Minute + 31*time.Second))
+	if fresh() || bobIn() {
+		t.Fatal("still current on a silent stream")
+	}
+	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: e.org, ID: uuid.New()}) })
+	waitUntil(t, "the next message to make the stream live", fresh)
 }

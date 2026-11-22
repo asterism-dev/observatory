@@ -51,6 +51,9 @@ type Registry struct {
 // errSessionCheck means iam could not say whether a credential's session is still live.
 var errSessionCheck = errors.New("session check unavailable")
 
+// errPolicyStale means a grant depends on a policy too stale to decide on.
+var errPolicyStale = errors.New("policy unavailable")
+
 // RegistryEndpoints serves the token endpoint and the registry's push events, and proxies the rest of /v2/ to the registry.
 func RegistryEndpoints(mux *http.ServeMux, s *store.Store, z *authz.Service, reg Registry) {
 	t := &registryTokens{store: s, z: z, reg: reg}
@@ -97,6 +100,10 @@ func (t *registryTokens) token(w http.ResponseWriter, r *http.Request) {
 	for _, raw := range r.URL.Query()["scope"] {
 		for _, scope := range strings.Fields(raw) {
 			a, err := t.grant(r.Context(), p, scope)
+			if errors.Is(err, errPolicyStale) {
+				writeError(w, http.StatusServiceUnavailable, err.Error())
+				return
+			}
 			if err != nil {
 				serverError(w, "registry grant", err)
 				return
@@ -165,9 +172,12 @@ func (t *registryTokens) grant(ctx context.Context, p registryPrincipal, scope s
 		return a, err
 	}
 	var pull, push bool
+	_, fresh := t.z.Current()
 	switch {
 	case p.build.ID != uuid.Nil && img.ID == p.build.ImageID:
 		pull, push = true, true
+	case !fresh:
+		return a, errPolicyStale
 	case p.build.ID != uuid.Nil:
 		if pull, err = t.buildMayPull(ctx, p.build, img); err != nil {
 			return a, err

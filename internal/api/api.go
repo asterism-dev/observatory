@@ -54,6 +54,8 @@ type api struct {
 	grafanaInflight, grafanaTails *tokenSlots
 	// grafanaTailMax caps a Grafana logs tail; grafanaTailRecheck is how often the tail re-checks its token.
 	grafanaTailMax, grafanaTailRecheck time.Duration
+	// policyRecheck is how often a log tail checks that the policy is still fresh.
+	policyRecheck time.Duration
 	// logsLimit, logsQueries and logsTails are keyed by user ID; logsHub caps explorer queries hub-wide.
 	logsLimit              *rateLimiter
 	logsQueries, logsTails *tokenSlots
@@ -74,7 +76,7 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, a *auth.H
 	h := &api{store: s, iam: iam, z: z, publicURL: a.PublicURL, docsURL: docsURL, fleet: f, network: n, disks: d, diskErrors: f.DiskErrors,
 		ig: ig, signIns: integrations.NewSignIns[signIn](signInTTL, time.Now), newer: newer, firecracker: firecracker, manifests: manifests, tags: tags, builds: b, registryGC: gc, telemetry: tc, now: time.Now, grafanaLimit: newRateLimiter(20, 100), dashboardLimit: newRateLimiter(10, 40),
 		grafanaInflight: newTokenSlots(20), grafanaTails: newTokenSlots(5),
-		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second,
+		grafanaTailMax: 15 * time.Minute, grafanaTailRecheck: 10 * time.Second, policyRecheck: 10 * time.Second,
 		logsLimit: newRateLimiter(10, 40), logsQueries: newTokenSlots(3), logsTails: newTokenSlots(5), logsHub: make(chan struct{}, 4), logsRetention: logsRetention}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", h.info)
@@ -195,7 +197,7 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, a *auth.H
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/copy", h.copyDisk)
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/grow", h.growDisk)
 	mux.HandleFunc("POST /api/orgs/{org}/disks/{id}/release", h.releaseDisk)
-	users := a.Require(mux)
+	users := a.Require(h.freshPolicy(mux))
 	return h, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/grafana/logs/") {
 			h.logsProxy(w, r)
@@ -206,6 +208,19 @@ func newAPI(s *store.Store, iam iamv1connect.IAMInternalServiceClient, a *auth.H
 			return
 		}
 		users.ServeHTTP(w, r)
+	})
+}
+
+// freshPolicy answers a signed-in user's request 503 while the policy is stale, rather than deciding on a revoked grant.
+func (h *api) freshPolicy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, signedIn := auth.PrincipalFrom(r.Context()); signedIn {
+			if _, ok := h.z.Current(); !ok {
+				writeError(w, http.StatusServiceUnavailable, "policy unavailable")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

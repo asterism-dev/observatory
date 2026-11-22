@@ -257,7 +257,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	busCtx, stopBus := context.WithCancel(ctx)
 	busDone := make(chan struct{})
 	go func() {
-		runBus(busCtx, pool, s, iam, f.NotifyOrg, z.Enforcer, manifests, cfg.NATSURL, cfg.NATSToken)
+		runBus(busCtx, pool, s, iam, f.NotifyOrg, z.LastKnown, manifests, cfg.NATSURL, cfg.NATSToken)
 		close(busDone)
 	}()
 	// The bus must stop before the pool and fleet close under it, also when Run fails before ctx ends.
@@ -285,7 +285,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	return serveErr
 }
 
-// iamURL is where the hub reaches iam: its own listener until iam runs apart.
+// iamURL is where the hub reaches iam: its own listener until iam runs apart; tests override it and firstPolicyWait, so hubserver tests must not run in parallel.
 var iamURL = func(ln net.Listener) string { return "http://" + dialAddr(ln.Addr()) }
 
 // loginPolicyWait bounds how long a login waits for its new user to reach the hub's policy.
@@ -361,7 +361,7 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, z *authz.
 	} else {
 		slog.Info("builder image", "ref", builder)
 	}
-	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, func(org uuid.UUID, scope string) bool { return z.Enforcer().HasSubject(org, scope) })
+	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, func(org uuid.UUID, scope string) bool { return z.LastKnown().HasSubject(org, scope) })
 	sched.Size = cfg.BuilderSize
 	return sched
 }

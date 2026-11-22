@@ -82,6 +82,10 @@ func (a *AutoRebuilds) Run(ctx context.Context, every time.Duration) {
 
 // Tick looks at every image with automatic rebuilds on, one org after the other.
 func (a *AutoRebuilds) Tick(ctx context.Context) error {
+	// A stale policy would read every right as lost, so skip the round rather than refuse builds.
+	if _, ok := a.z.Current(); !ok {
+		return errors.New("policy unavailable, automatic rebuilds wait")
+	}
 	imgs, err := a.store.AutoImages(ctx)
 	if err != nil {
 		return err

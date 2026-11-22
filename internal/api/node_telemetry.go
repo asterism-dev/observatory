@@ -119,7 +119,10 @@ func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQu
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_ = rc.Flush()
-	err := h.telemetry.TailLogs(r.Context(), q, func(l telemetry.LogLine) error {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	go h.endOnStalePolicy(ctx, cancel)
+	err := h.telemetry.TailLogs(ctx, q, func(l telemetry.LogLine) error {
 		if fix != nil {
 			fix(&l)
 		}
@@ -134,6 +137,23 @@ func (h *api) tailLogs(w http.ResponseWriter, r *http.Request, q telemetry.LogQu
 	})
 	if err != nil && r.Context().Err() == nil {
 		slog.Warn("tail "+kind+" logs", kind, id, "err", err)
+	}
+}
+
+// endOnStalePolicy ends a long-lived response once the policy it was authorized on goes stale.
+func (h *api) endOnStalePolicy(ctx context.Context, cancel context.CancelFunc) {
+	t := time.NewTicker(h.policyRecheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if _, ok := h.z.Current(); !ok {
+				cancel()
+				return
+			}
+		}
 	}
 }
 

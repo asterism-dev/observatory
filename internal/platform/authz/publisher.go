@@ -16,7 +16,11 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 )
 
-const policySendTimeout = 30 * time.Second
+const (
+	policySendTimeout = 30 * time.Second
+	// keepaliveEvery resends the latest snapshot on a quiet stream, so watchers can tell silence from loss.
+	keepaliveEvery = 30 * time.Second
+)
 
 type streamControllerKey struct{}
 
@@ -104,15 +108,20 @@ func (p *Publisher) WatchPolicy(ctx context.Context, _ *connect.Request[iamv1.Wa
 	defer slog.Info("policy watch ended", "caller", caller)
 	ch := p.subscribe()
 	defer p.unsubscribe(ch)
+	keepalive := time.NewTicker(keepaliveEvery)
+	defer keepalive.Stop()
 	var sent uint64
 	for {
+		resend := false
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ch:
+		case <-keepalive.C:
+			resend = true
 		}
 		msg := p.latest()
-		if msg == nil || msg.Revision == sent {
+		if msg == nil || msg.Revision == sent && !resend {
 			continue
 		}
 		if rc, ok := ctx.Value(streamControllerKey{}).(*http.ResponseController); ok {

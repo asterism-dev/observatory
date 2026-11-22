@@ -122,6 +122,10 @@ func (h *api) grafanaAuth(r *http.Request) (uuid.UUID, store.TelemetryToken, int
 	if !ok || !strings.EqualFold(scheme, "Bearer") || secret == "" {
 		return uuid.Nil, store.TelemetryToken{}, http.StatusUnauthorized
 	}
+	// Before the cache and the revoke: a stale policy must neither serve nor revoke the token.
+	if _, ok := h.z.Current(); !ok {
+		return uuid.Nil, store.TelemetryToken{}, http.StatusServiceUnavailable
+	}
 	ctx := r.Context()
 	tok, err := h.store.TelemetryTokenBySecret(ctx, secret)
 	if errors.Is(err, store.ErrNotFound) {

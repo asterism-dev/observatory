@@ -270,6 +270,9 @@ func (h *api) followBuildLog(w http.ResponseWriter, r *http.Request, id uuid.UUI
 		}
 	}
 	for {
+		if _, ok := h.z.Current(); !ok {
+			return
+		}
 		chunk, last, finished, err := h.store.BuildLogSince(ctx, id, after)
 		if err != nil {
 			if ctx.Err() == nil {

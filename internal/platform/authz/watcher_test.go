@@ -105,3 +105,93 @@ func TestWatcherStaleAfterMaxStale(t *testing.T) {
 		t.Fatal("not current after the stream came back")
 	}
 }
+
+// startWatcher runs a watcher on a fake clock against fp and returns it with the first stream's feed.
+func startWatcher(t *testing.T, fp *fakePolicy) (*Watcher, *fakeClock, chan *iamv1.Policy) {
+	t.Helper()
+	path, h := iamv1connect.NewPolicyServiceHandler(fp)
+	mux := http.NewServeMux()
+	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	clock := &fakeClock{}
+	clock.ns.Store(time.Now().UnixNano())
+	w, err := NewWatcher(srv.URL, testToken, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WithClock(clock.now)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { w.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case ch := <-fp.conns:
+		return w, clock, ch
+	case <-time.After(10 * time.Second):
+		t.Fatal("watcher did not connect")
+		return nil, nil, nil
+	}
+}
+
+func waitApplied(t *testing.T, w *Watcher, rev uint64) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := w.WaitRevision(ctx, rev); err != nil {
+		t.Fatalf("revision %d: %v", rev, err)
+	}
+}
+
+func TestWatcherSilentStreamGoesStale(t *testing.T) {
+	w, clock, ch := startWatcher(t, &fakePolicy{conns: make(chan chan *iamv1.Policy)})
+	ch <- &iamv1.Policy{Revision: 3}
+	waitApplied(t, w, 3)
+	// The stream stays open but silent, as a half-open connection would.
+	clock.add(silentAfter + maxStale)
+	if _, ok := w.Current(); !ok {
+		t.Fatal("stale at exactly silentAfter + maxStale")
+	}
+	clock.add(time.Second)
+	if _, ok := w.Current(); ok {
+		t.Fatal("still current on a stream silent past silentAfter + maxStale")
+	}
+	// A keepalive repeats the current revision and makes the stream live again.
+	ch <- &iamv1.Policy{Revision: 3}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := w.Current(); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a keepalive did not refresh the stream")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestWatcherRejectedSnapshotIsNoLiveness(t *testing.T) {
+	w, clock, ch := startWatcher(t, &fakePolicy{conns: make(chan chan *iamv1.Policy)})
+	var changes atomic.Int32
+	w.OnChange(func() { changes.Add(1) })
+	ch <- &iamv1.Policy{Revision: 3}
+	waitApplied(t, w, 3)
+	bad := &iamv1.Policy{Revision: 4, Memberships: []*iamv1.MemberRole{{OrgId: "not-a-uuid", UserId: uuid.NewString(), Role: "member"}}}
+	ch <- bad
+	deadline := time.Now().Add(5 * time.Second)
+	for w.downSince.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("a rejected snapshot did not count as blind")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Its keepalives repeat the rejected revision and must not refresh liveness either.
+	ch <- bad
+	clock.add(maxStale + time.Second)
+	if _, ok := w.Current(); ok {
+		t.Fatal("current after maxStale of rejected snapshots")
+	}
+	if _, rev, _ := w.Policy(); rev != 3 || changes.Load() != 1 {
+		t.Fatalf("revision %d after %d changes, want 3 after 1", rev, changes.Load())
+	}
+}

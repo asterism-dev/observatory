@@ -15,10 +15,16 @@ type Service struct {
 	cur      atomic.Pointer[Enforcer]
 	onReload func(old, new Policy)
 	fresh    atomic.Pointer[func() bool]
+	// denyAll stands in for the policy while it is not fresh.
+	denyAll *Enforcer
 }
 
 func NewService(ctx context.Context, load func(context.Context) (Policy, error)) (*Service, error) {
-	s := &Service{load: load}
+	denyAll, err := New(Policy{})
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{load: load, denyAll: denyAll}
 	if err := s.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -61,14 +67,28 @@ func (s *Service) WithFreshness(fresh func() bool) *Service {
 	return s
 }
 
-func (s *Service) Enforcer() *Enforcer { return s.cur.Load() }
+// Enforcer is the current policy, or one that allows nothing while the policy is not fresh; callers that can answer Unavailable check Current.
+func (s *Service) Enforcer() *Enforcer {
+	if !s.isFresh() {
+		return s.denyAll
+	}
+	return s.cur.Load()
+}
+
+// LastKnown is the latest policy however stale; only the documented exemptions (gateway allow lists, node pushes) may use it.
+func (s *Service) LastKnown() *Enforcer { return s.cur.Load() }
 
 // Current makes the policy a platform authz source; it is loaded at construction, so only freshness can withhold it.
 func (s *Service) Current() (*Enforcer, bool) {
-	if fresh := s.fresh.Load(); fresh != nil && !(*fresh)() {
+	if !s.isFresh() {
 		return nil, false
 	}
 	return s.cur.Load(), true
+}
+
+func (s *Service) isFresh() bool {
+	fresh := s.fresh.Load()
+	return fresh == nil || (*fresh)()
 }
 
 func (s *Service) Allowed(sub string, org uuid.UUID, obj, act string) bool {

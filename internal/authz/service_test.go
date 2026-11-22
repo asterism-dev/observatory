@@ -129,18 +129,26 @@ func TestServiceCurrent(t *testing.T) {
 	}
 }
 
-func TestServiceCurrentFollowsFreshness(t *testing.T) {
-	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) { return Policy{}, nil })
+func TestServiceFailsClosedWhenNotFresh(t *testing.T) {
+	org, user := uuid.New(), uuid.New()
+	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) { return memberPolicy(org, user, "owner"), nil })
 	if err != nil {
 		t.Fatal(err)
 	}
+	sub := UserSubject(user)
 	var fresh atomic.Bool
 	svc.WithFreshness(fresh.Load)
 	if _, ok := svc.Current(); ok {
 		t.Fatal("current while not fresh")
 	}
+	if svc.Allowed(sub, org, ObjMembers, "iam.members.setRole") || len(svc.Enforcer().OrgsOf(user)) != 0 {
+		t.Fatal("a stale policy still grants")
+	}
+	if _, ok := svc.LastKnown().Role(org, user); !ok {
+		t.Fatal("LastKnown dropped the stale policy")
+	}
 	fresh.Store(true)
-	if e, ok := svc.Current(); !ok || e != svc.Enforcer() {
+	if e, ok := svc.Current(); !ok || e != svc.Enforcer() || !svc.Allowed(sub, org, ObjMembers, "iam.members.setRole") {
 		t.Fatal("not current while fresh")
 	}
 }

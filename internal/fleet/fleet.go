@@ -512,24 +512,26 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 	if v.Kind == store.VMKindBuilder {
 		return f.bootBuilder(ctx, v)
 	}
+	// Node pushes are exempt from the staleness floor: a lost stream must not strip running VMs of their keys and env.
+	e := f.authz.LastKnown()
 	var owner string
 	var users []uuid.UUID
 	switch {
 	case v.UserID != nil:
 		owner, users = authz.UserSubject(*v.UserID), []uuid.UUID{*v.UserID}
 	case v.TeamID != nil:
-		owner, users = authz.TeamSubject(*v.TeamID), f.authz.Enforcer().TeamMembers(org, *v.TeamID)
+		owner, users = authz.TeamSubject(*v.TeamID), e.TeamMembers(org, *v.TeamID)
 	}
 	keys, err := iaminternal.SSHKeys(ctx, f.iam, users)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
-	env, bound, err := f.store.ResolveVMEnv(ctx, f.authz.Enforcer(), org, owner)
+	env, bound, err := f.store.ResolveVMEnv(ctx, e, org, owner)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
 	var tokens []proto.IntegrationToken
-	res, err := f.store.ResolveVMIntegrations(ctx, f.authz.Enforcer(), org, owner)
+	res, err := f.store.ResolveVMIntegrations(ctx, e, org, owner)
 	if err != nil {
 		// Like egress, one VM's integration trouble must not stall the node's list.
 		slog.Error("integrations for vm", "vm", v.ID, "reason", "resolve failed")

@@ -42,7 +42,8 @@ func (h *Hub) State(ctx context.Context) (proto.GatewayState, error) {
 	if err != nil {
 		return proto.GatewayState{}, err
 	}
-	connect := h.authz.Enforcer().ConnectChecker()
+	// Exempt from the staleness floor: cutting allow lists on a lost stream would cut every VM off.
+	connect := h.authz.LastKnown().ConnectChecker()
 	st := proto.GatewayState{
 		UnderlayKey: h.underlay.priv,
 		ClientsKey:  h.clients.priv,

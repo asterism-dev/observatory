@@ -25,6 +25,8 @@ const (
 	maxBackoff = 30 * time.Second
 	// maxStale matches the JWT lifetime, so a lost stream opens no revocation window beyond it.
 	maxStale = 5 * time.Minute
+	// silentAfter is three missed keepalives: a half-open stream errs on nothing, so silence counts as loss.
+	silentAfter = 3 * keepaliveEvery
 )
 
 type snapshot struct {
@@ -40,6 +42,7 @@ type Watcher struct {
 	now    func() time.Time
 	// downSince is when the stream was lost, in Unix nanoseconds; 0 while it delivers.
 	downSince atomic.Int64
+	lastSeen  atomic.Int64
 
 	mu       sync.Mutex
 	changed  chan struct{} // closed and replaced on every applied snapshot
@@ -92,6 +95,10 @@ func (w *Watcher) Run(ctx context.Context) {
 }
 
 func (w *Watcher) watch(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	silent := time.AfterFunc(silentAfter, cancel)
+	defer silent.Stop()
 	stream, err := w.client.WatchPolicy(ctx, connect.NewRequest(&iamv1.WatchPolicyRequest{}))
 	if err != nil {
 		return false, err
@@ -100,14 +107,22 @@ func (w *Watcher) watch(ctx context.Context) (bool, error) {
 	received := false
 	for stream.Receive() {
 		received = true
+		if !w.apply(stream.Msg()) {
+			w.downSince.CompareAndSwap(0, w.now().UnixNano())
+			continue
+		}
 		w.downSince.Store(0)
-		w.apply(stream.Msg())
+		w.lastSeen.Store(w.now().UnixNano())
+		silent.Reset(silentAfter)
 	}
 	return received, stream.Err()
 }
 
-// apply swaps in a snapshot only if it builds an enforcer; otherwise the previous one stays.
-func (w *Watcher) apply(m *iamv1.Policy) {
+// apply swaps in a snapshot only if it builds an enforcer; false leaves the watcher as blind as a lost stream, and a repeat of the current revision is a keepalive.
+func (w *Watcher) apply(m *iamv1.Policy) bool {
+	if cur := w.cur.Load(); cur != nil && m.GetRevision() == cur.revision {
+		return true
+	}
 	p, err := policyFrom(m)
 	var e *coreauthz.Enforcer
 	if err == nil {
@@ -115,7 +130,7 @@ func (w *Watcher) apply(m *iamv1.Policy) {
 	}
 	if err != nil {
 		slog.Error("policy snapshot rejected, keeping the previous one", "revision", m.GetRevision(), "err", err)
-		return
+		return false
 	}
 	if cur := w.cur.Load(); cur != nil && m.GetRevision() < cur.revision {
 		// Still applied: the stream is the only source, and ignoring it could freeze a revoked grant.
@@ -130,18 +145,29 @@ func (w *Watcher) apply(m *iamv1.Policy) {
 	if fn != nil {
 		fn()
 	}
+	return true
 }
 
-// Current returns false until the first snapshot arrived, and once the stream has been down longer than maxStale.
+// Current returns false until the first snapshot arrived, and once the stream has been down, or silent past silentAfter, for longer than maxStale.
 func (w *Watcher) Current() (*coreauthz.Enforcer, bool) {
 	s := w.cur.Load()
 	if s == nil {
 		return nil, false
 	}
-	if down := w.downSince.Load(); down != 0 && w.now().Sub(time.Unix(0, down)) > maxStale {
+	now := w.now()
+	if down := w.downSince.Load(); down != 0 && now.Sub(time.Unix(0, down)) > maxStale {
+		return nil, false
+	}
+	if seen := w.lastSeen.Load(); seen != 0 && now.Sub(time.Unix(0, seen)) > silentAfter+maxStale {
 		return nil, false
 	}
 	return s.enforcer, true
+}
+
+// WithClock replaces the clock staleness is judged by; for tests.
+func (w *Watcher) WithClock(now func() time.Time) *Watcher {
+	w.now = now
+	return w
 }
 
 // Policy returns the latest snapshot and its revision, however old; false until the first arrived.

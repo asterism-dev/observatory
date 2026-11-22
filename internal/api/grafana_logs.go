@@ -76,7 +76,7 @@ func (h *api) endTailOnRevoke(ctx context.Context, cancel context.CancelFunc, r 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if _, _, status := h.grafanaAuth(r); status == http.StatusUnauthorized {
+			if _, _, status := h.grafanaAuth(r); status == http.StatusUnauthorized || status == http.StatusServiceUnavailable {
 				// Once the handler has returned, the connection may already serve another request.
 				if ctx.Err() == nil {
 					_ = rc.SetWriteDeadline(time.Now())

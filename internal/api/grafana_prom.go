@@ -36,6 +36,8 @@ func (h *api) grafanaRequest(w http.ResponseWriter, r *http.Request) (tok store.
 	case status == http.StatusUnauthorized:
 		writeError(w, status, "unauthorized")
 		return tok, nil, false
+	case status == http.StatusServiceUnavailable:
+		writeError(w, status, "policy unavailable")
 	case status != http.StatusOK:
 		writeError(w, status, "internal error")
 		return tok, nil, false

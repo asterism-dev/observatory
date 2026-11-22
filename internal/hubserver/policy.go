@@ -60,28 +60,30 @@ func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store) 
 		_, ok := w.Current()
 		return ok && !behind.Load()
 	})
-	reload := func() {
+	reload := func(ctx context.Context) error {
 		for wait := time.Second; ; wait = min(2*wait, 30*time.Second) {
 			err := z.Reload(ctx)
 			if err == nil {
 				behind.Store(false)
-				return
+				return nil
 			}
 			behind.Store(true)
 			if ctx.Err() != nil {
-				return
+				return err
 			}
 			slog.Error("hub policy reload failed, org routes refuse until it succeeds", "err", err, "retry_in", wait)
 			select {
 			case <-ctx.Done():
-				return
+				return err
 			case <-time.After(wait):
 			}
 		}
 	}
-	w.OnChange(reload)
-	// A snapshot that arrived before OnChange was set must not be missed.
-	reload()
+	w.OnChange(func() { _ = reload(ctx) })
+	// A snapshot that arrived before OnChange was set must not be missed; this reload shares the start budget.
+	if err := reload(wctx); err != nil {
+		return hubPolicy{}, fmt.Errorf("hub policy: %w", err)
+	}
 	return hubPolicy{z, w}, nil
 }
 
