@@ -178,6 +178,8 @@ var internalCalls = map[string][]string{
 		"/internal/iam" + iamv1connect.IAMInternalServiceListTeamsProcedure, "/internal/iam" + iamv1connect.IAMInternalServiceGetMembershipProcedure,
 		"/internal/iam" + iamv1connect.IAMInternalServiceGetSessionProcedure, "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure},
 	"audit": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure, "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure},
+	"quota": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure, "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure,
+		"/internal/iam" + iamv1connect.IAMInternalServiceGetMembershipProcedure},
 }
 
 // internalHandler serves /internal/iam/* to the callers internalCalls admits; the caller wraps it in servicetoken.Middleware.

@@ -37,8 +37,9 @@ gateway, the storage server and the registry; the edge answers `/internal/*` wit
 `OBSERVATORY_EDGE_TOKEN` to `deploy/dev/hub.env` if missing (`make run` does it): the token the edge proves itself
 with to iam and the hub when they run as separate processes (`observatory serve edge`, `serve iam` and `serve hub`); `serve all`
 generates its own per start. `make service-token` likewise appends `OBSERVATORY_EDGE_SERVICE_TOKEN`,
-`OBSERVATORY_HUB_SERVICE_TOKEN`, `OBSERVATORY_IAM_SERVICE_TOKEN` and `OBSERVATORY_AUDIT_SERVICE_TOKEN` for separate
-processes (`serve edge`, `serve iam`, `serve hub`, `serve audit`); give each process its own as
+`OBSERVATORY_HUB_SERVICE_TOKEN`, `OBSERVATORY_IAM_SERVICE_TOKEN`, `OBSERVATORY_AUDIT_SERVICE_TOKEN` and
+`OBSERVATORY_QUOTA_SERVICE_TOKEN` for separate processes (`serve edge`, `serve iam`, `serve hub`, `serve audit`,
+`serve quota`); give each process its own as
 `OBSERVATORY_SERVICE_TOKEN` and the callers it admits as `OBSERVATORY_SERVICE_TOKENS`, as in
 [docs/deploy.md](docs/deploy.md#edge-iam-and-hub).
 `OBSERVATORY_GATEWAY_HOST` is the address nodes and clients reach the gateway on; it defaults to the host of `OBSERVATORY_PUBLIC_URL`.

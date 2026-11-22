@@ -29,6 +29,7 @@ const (
 	otherTok   = "fedcba9876543210fedcba9876543210"
 	hubTok     = "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
 	computeTok = "cccccccccccccccccccccccccccccccc"
+	quotaTok   = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
 	issuerURL  = "https://hub.test"
 )
 
@@ -58,7 +59,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	}
 	ps := platformauthz.NewPublisher()
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
-	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(internalHandler(iss, ps, internalServer{Store: e.s}, catalogServer{Store: e.s, Policy: z}))
+	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok, "quota": quotaTok})(internalHandler(iss, ps, internalServer{Store: e.s}, catalogServer{Store: e.s, Policy: z}))
 	return e
 }
 
@@ -178,8 +179,9 @@ func TestInternalAllowList(t *testing.T) {
 		rpc(iamv1connect.IAMInternalServiceGetSessionProcedure),
 		rpc(iamv1connect.CatalogInternalServiceRegisterCatalogProcedure),
 	}
-	allowed := map[string][]string{"edge": paths[:1], "hub": paths[1:], "audit": append(slices.Clone(paths[1:3]), paths[8])}
-	for caller, tok := range map[string]string{"edge": svcToken, "hub": hubTok, "audit": otherTok, "compute": computeTok} {
+	allowed := map[string][]string{"edge": paths[:1], "hub": paths[1:], "audit": append(slices.Clone(paths[1:3]), paths[8]),
+		"quota": append(slices.Clone(paths[1:3]), paths[6], paths[8])}
+	for caller, tok := range map[string]string{"edge": svcToken, "hub": hubTok, "audit": otherTok, "compute": computeTok, "quota": quotaTok} {
 		for _, p := range paths {
 			method := "POST"
 			if p == "/internal/iam/jwks" {

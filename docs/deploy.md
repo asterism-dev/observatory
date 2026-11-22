@@ -1,6 +1,6 @@
 # Deploying the hub with Docker Compose
 
-`deploy/compose.yaml` runs the edge, iam, the hub and the audit service with the hub's Postgres, the WireGuard/OVN gateway, the storage server and the image
+`deploy/compose.yaml` runs the edge, iam, the hub, the audit and the quota service with the hub's Postgres, the WireGuard/OVN gateway, the storage server and the image
 registry, configured
 only through `deploy/.env`. A login service is not part of it: use any OIDC provider (see [idp.md](idp.md)) or the
 Zitadel stack in `deploy/idp/`.
@@ -99,8 +99,9 @@ itself retries OIDC discovery while the identity provider starts, instead of exi
   | `deploy/.env` | Used by | Admitted by |
   | --- | --- | --- |
   | `OBSERVATORY_EDGE_SERVICE_TOKEN` | edge (session to identity token exchange) | iam as `edge=` |
-  | `OBSERVATORY_HUB_SERVICE_TOKEN` | hub | iam as `hub=` |
+  | `OBSERVATORY_HUB_SERVICE_TOKEN` | hub | iam and quota as `hub=` |
   | `OBSERVATORY_AUDIT_SERVICE_TOKEN` | audit | iam as `audit=` |
+  | `OBSERVATORY_QUOTA_SERVICE_TOKEN` | quota | iam as `quota=` |
   | `OBSERVATORY_IAM_SERVICE_TOKEN` | iam | hub and audit as `iam=` |
 
 - `/internal/iam/*` (token exchange, signing keys, policy stream, internal API) is never public: the edge answers 404,
@@ -114,11 +115,12 @@ itself retries OIDC discovery while the identity provider starts, instead of exi
   | `edge` | `token` (session to identity token exchange) |
   | `hub` | `jwks`, the policy stream (`PolicyService/WatchPolicy`), `IAMInternalService` `GetUsers`, `ListSSHKeys`, `ListTeams`, `GetMembership` and `GetSession`, and `CatalogInternalService/RegisterCatalog` |
   | `audit` | `jwks`, the policy stream and `CatalogInternalService/RegisterCatalog` |
+  | `quota` | `jwks`, the policy stream, `IAMInternalService/GetMembership` and `CatalogInternalService/RegisterCatalog` |
 - To rotate a service token, set the new value in `deploy/.env` and restart the service that uses it and the ones that
   admit it. Until all of them run the new value, the calls between them fail.
 
-The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`), iam and the
-audit service on loopback ports, and the hub on `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is
+The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`), iam, the
+audit and the quota service on loopback ports, and the hub on `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is
 not exposed without the edge; set `:8091` only when other containers must call the hub, and keep that port off public
 networks) in one process, with the edge and service tokens generated per start. They still talk to each other over
 HTTP only.
@@ -156,6 +158,18 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
 `serve all` runs the audit service on a loopback port with a generated token. Without `OBSERVATORY_NATS_URL` it runs an
 embedded event bus stored in `OBSERVATORY_DATA_DIR/nats` (the image sets `/var/lib/observatory`; mount a volume there, `-v observatory-data:/var/lib/observatory`, or the bus
 is lost with the container) and refuses to start when neither is set.
+
+## Quota service
+
+`quota` (`serve quota`) holds the limits per org, team and member and serves them at `/api/quota/v1/` through the edge
+(`quota=http://quota:8094` in `OBSERVATORY_EDGE_SERVICES`). It listens on `OBSERVATORY_QUOTA_LISTEN` (default `:8094`)
+inside the compose network only; do not publish it.
+
+- Database: `OBSERVATORY_QUOTA_DATABASE_URL`, default `OBSERVATORY_DATABASE_URL`; the service owns schema `quota`.
+- iam and bus: `OBSERVATORY_IAM_URL`, `OBSERVATORY_PUBLIC_URL`, `OBSERVATORY_SERVICE_TOKEN`, `OBSERVATORY_NATS_URL` and
+  `OBSERVATORY_NATS_TOKEN`, as for the audit service. In compose the token is `OBSERVATORY_QUOTA_SERVICE_TOKEN`, which iam
+  also gets as `quota=<token>`.
+- `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`.
 
 ## Serving modes
 
@@ -272,6 +286,9 @@ this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); 
 Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKEN` in `deploy/.env` is required
 (`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
+Upgrading to the release with the quota service: `OBSERVATORY_QUOTA_SERVICE_TOKEN` in `deploy/.env` is required
+(`openssl rand -hex 32`, different from the other tokens).
+
 Upgrading from 0.x to 1.0 is a fresh install. `deploy/.env` needs `OBSERVATORY_HUB_SERVICE_TOKEN` and
 `OBSERVATORY_IAM_SERVICE_TOKEN` (`openssl rand -hex 32`, different from the other tokens). The `OBSERVATORY_OIDC_*`
 variables stay in `deploy/.env`; compose now passes them to iam, and the hub no longer reads them. iam keeps its data
@@ -279,7 +296,7 @@ in its own schema `iam`, and the hub migration 39 drops the 0.x users, orgs, mem
 `public` without copying them. Back up the database before you upgrade, or install 1.0 into a new one; everyone signs in
 again and orgs are created anew.
 
-Always run edge, hub, iam and audit of the same release: they share the internal APIs, the identity tokens and the
+Always run edge, hub, iam, audit and quota of the same release: they share the internal APIs, the identity tokens and the
 policy stream, and a mix of releases refuses requests. The hub's migration that drops the foreign keys from hub tables
 into iam tables has no full rollback.
 

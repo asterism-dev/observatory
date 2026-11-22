@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package observatory.quota.v1;
+
+import "google/api/annotations.proto";
+import "observatory/v1/annotations.proto";
+
+// QuotaService reads and sets the limits per org, team and member.
+service QuotaService {
+  rpc GetLimits(GetLimitsRequest) returns (GetLimitsResponse) {
+    option (observatory.v1.permission) = {
+      name: "quota.limits.get"
+      object: "org/limits"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {
+      get: "/orgs/{org}/limits"
+      response_body: "limits"
+    };
+  }
+  // UpdateLimits replaces a team:<id> or user:<id> scope (in the body: REST reads a last-segment colon as a verb).
+  rpc UpdateLimits(UpdateLimitsRequest) returns (UpdateLimitsResponse) {
+    option (observatory.v1.permission) = {
+      name: "quota.limits.update"
+      object: "org/limits"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      put: "/orgs/{org}/limits"
+      body: "*"
+    };
+  }
+  // GetOrgLimits and UpdateOrgLimits are for platform admins only.
+  rpc GetOrgLimits(GetOrgLimitsRequest) returns (GetOrgLimitsResponse) {
+    option (observatory.v1.permission) = {
+      name: "quota.limits.get"
+      object: "platform/limits"
+      kind: KIND_READ
+    };
+    option (google.api.http) = {
+      get: "/admin/orgs/{org_id}/limits"
+      response_body: "limits"
+    };
+  }
+  rpc UpdateOrgLimits(UpdateOrgLimitsRequest) returns (UpdateOrgLimitsResponse) {
+    option (observatory.v1.permission) = {
+      name: "quota.limits.update"
+      object: "platform/limits"
+      kind: KIND_WRITE
+    };
+    option (google.api.http) = {
+      put: "/admin/orgs/{org_id}/limits"
+      body: "limits"
+    };
+  }
+}
+
+// Limits holds one scope's limits; an absent field is unlimited.
+message Limits {
+  optional int32 vcpu = 1;
+  optional int32 ram_mb = 2;
+  optional int32 disk_gb = 3;
+  optional int32 vm_count = 4;
+  optional int32 snapshot_count = 5;
+  optional int32 image_storage_gb = 6;
+}
+
+// OrgLimits keys teams and members by bare UUID; scopes without limits are absent.
+message OrgLimits {
+  Limits org = 1;
+  map<string, Limits> teams = 2;
+  map<string, Limits> members = 3;
+}
+
+message GetLimitsRequest {
+  string org = 1;
+}
+
+message GetLimitsResponse {
+  OrgLimits limits = 1;
+}
+
+message UpdateLimitsRequest {
+  string org = 1;
+  // scope is team:<uuid> or user:<uuid>.
+  string scope = 2;
+  Limits limits = 3;
+}
+
+message UpdateLimitsResponse {}
+
+message GetOrgLimitsRequest {
+  string org_id = 1;
+}
+
+message GetOrgLimitsResponse {
+  OrgLimits limits = 1;
+}
+
+message UpdateOrgLimitsRequest {
+  string org_id = 1;
+  Limits limits = 2;
+}
+
+message UpdateOrgLimitsResponse {}

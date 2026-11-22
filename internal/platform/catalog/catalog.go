@@ -255,7 +255,7 @@ func validTemplateObject(rel authz.Relation, obj string) error {
 }
 
 // ponytail: hub registers the actions of services not yet extracted; drop each prefix when its service registers its own catalog.
-var hubPrefixes = []string{"compute", "network", "secrets", "artifacts", "build", "telemetry", "quota"}
+var hubPrefixes = []string{"compute", "network", "secrets", "artifacts", "build", "telemetry"}
 
 func AllowedPrefixes(caller string) []string {
 	if caller == "hub" {

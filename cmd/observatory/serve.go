@@ -23,16 +23,17 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	svcrun "github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
+	"github.com/asterism-dev/observatory/internal/quota"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/web"
 )
 
 func serveCommands() []command {
-	return []command{{"serve", "edge|hub|iam|audit|all", "run observatory services", cmdServe}}
+	return []command{{"serve", "edge|hub|iam|audit|quota|all", "run observatory services", cmdServe}}
 }
 
 func cmdServe(c *cli, args []string) error {
-	if len(args) != 1 || !slices.Contains([]string{"edge", "hub", "iam", "audit", "all"}, args[0]) {
+	if len(args) != 1 || !slices.Contains([]string{"edge", "hub", "iam", "audit", "quota", "all"}, args[0]) {
 		return usagef("%s", usageLine("serve"))
 	}
 	ctx, stop := signal.NotifyContext(c.ctx, os.Interrupt, syscall.SIGTERM)
@@ -87,6 +88,24 @@ func cmdServe(c *cli, args []string) error {
 			return err
 		}
 		return audit.Run(ctx, cfg, ln)
+	case "quota":
+		cfg := quotaConfig(c.getenv)
+		if err := missingEnv(map[string]string{"OBSERVATORY_QUOTA_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_IAM_URL": cfg.IAMURL,
+			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken}); err != nil {
+			return err
+		}
+		var err error
+		if cfg.ServiceTokens, err = servicetoken.Parse(c.getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
+			return fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
+		}
+		if cfg.ServiceTokens["hub"] == "" {
+			return errors.New("OBSERVATORY_SERVICE_TOKENS: hub= is required, the hub reserves quota")
+		}
+		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_QUOTA_LISTEN", ":8094"))
+		if err != nil {
+			return err
+		}
+		return quota.Run(ctx, cfg, ln)
 	case "edge":
 		var missing []string
 		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_EDGE_IAM_URL", "OBSERVATORY_SERVICE_TOKEN"} {
@@ -115,10 +134,10 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
-// serveAll runs iam, the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
+// serveAll runs iam, the hub, the audit and the quota service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
 	newToken := func() string { return rand.Text() + rand.Text() }
-	edgeToken, edgeServiceToken, iamToken, hubToken, auditToken := newToken(), newToken(), newToken(), newToken(), newToken()
+	edgeToken, edgeServiceToken, iamToken, hubToken, auditToken, quotaToken := newToken(), newToken(), newToken(), newToken(), newToken(), newToken()
 	iamCfg, err := iamConfig(getenv)
 	if err != nil {
 		edgeLn.Close()
@@ -141,7 +160,10 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		return err
 	}
 	iamCfg.EdgeToken, iamCfg.ServiceToken, iamCfg.NATSURL, iamCfg.NATSToken = edgeToken, iamToken, auditCfg.NATSURL, auditCfg.NATSToken
-	iamCfg.ServiceTokens = map[string]string{"edge": edgeServiceToken, "hub": hubToken, "audit": auditToken}
+	iamCfg.ServiceTokens = map[string]string{"edge": edgeServiceToken, "hub": hubToken, "audit": auditToken, "quota": quotaToken}
+	quotaCfg := quotaConfig(getenv)
+	quotaCfg.ServiceToken, quotaCfg.NATSURL, quotaCfg.NATSToken = quotaToken, auditCfg.NATSURL, auditCfg.NATSToken
+	quotaCfg.ServiceTokens = map[string]string{"hub": hubToken}
 	var iamURL string
 	hubEnv := func(k string) string {
 		switch k {
@@ -163,15 +185,16 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	iamSvc := svcrun.Service{Name: "iam", Run: func(ctx context.Context, ln net.Listener) error { return iam.Run(ctx, iamCfg, ln) }}
 	auditSvc := svcrun.Service{Name: "audit", Run: func(ctx context.Context, ln net.Listener) error { return audit.Run(ctx, auditCfg, ln) }}
+	quotaSvc := svcrun.Service{Name: "quota", Run: func(ctx context.Context, ln net.Listener) error { return quota.Run(ctx, quotaCfg, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		// All calls this before starting any service, so every service sees the others' URLs.
 		iamURL = services["iam"]
-		auditCfg.IAMURL = iamURL
+		auditCfg.IAMURL, quotaCfg.IAMURL = iamURL, iamURL
 		iamCfg.HubURL, iamCfg.AuditURL = hubURL, services["audit"]
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
 			return serveEdge(ctx, edge.Config{HubURL: hubURL, IAMURL: iamURL, Token: edgeToken, ServiceToken: edgeServiceToken, Services: services}, ln)
 		}}
-	}, []svcrun.Service{hub, iamSvc, auditSvc})
+	}, []svcrun.Service{hub, iamSvc, auditSvc, quotaSvc})
 }
 
 // iamConfig reads iam's environment; serve iam checks it is complete, serve all fills in what it generates.
@@ -215,6 +238,17 @@ func missingEnv(values map[string]string) error {
 func auditConfig(getenv func(string) string) audit.Config {
 	return audit.Config{
 		DatabaseURL:  envOr(getenv, "OBSERVATORY_AUDIT_DATABASE_URL", getenv("OBSERVATORY_DATABASE_URL")),
+		IAMURL:       getenv("OBSERVATORY_IAM_URL"),
+		Issuer:       getenv("OBSERVATORY_PUBLIC_URL"),
+		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),
+		NATSURL:      getenv("OBSERVATORY_NATS_URL"),
+		NATSToken:    getenv("OBSERVATORY_NATS_TOKEN"),
+	}
+}
+
+func quotaConfig(getenv func(string) string) quota.Config {
+	return quota.Config{
+		DatabaseURL:  envOr(getenv, "OBSERVATORY_QUOTA_DATABASE_URL", getenv("OBSERVATORY_DATABASE_URL")),
 		IAMURL:       getenv("OBSERVATORY_IAM_URL"),
 		Issuer:       getenv("OBSERVATORY_PUBLIC_URL"),
 		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),

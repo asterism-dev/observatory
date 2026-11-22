@@ -111,6 +111,22 @@ linters:
             - github.com/google/uuid
             - github.com/jackc/pgx/v5
             - github.com/nats-io/nats.go
+        quota:
+          files: ["**/internal/quota/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/quota
+            - github.com/asterism-dev/observatory/internal/platform
+            # Only for the shared catalog and policy types.
+            - github.com/asterism-dev/observatory/internal/authz
+            - github.com/asterism-dev/observatory/gen
+            - connectrpc.com/connect
+            - connectrpc.com/vanguard
+            - google.golang.org/protobuf
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/nats-io/nats.go
         platform-test:
           files: ["**/internal/platform/**/*_test.go"]
           list-mode: strict
@@ -167,5 +183,5 @@ linters:
   exclusions:
     rules:
       # ponytail: errcheck covers only the packages added with the edge; the older tree has ~700 findings to fix first.
-      - path-except: ^(internal/(audit|edge|hubserver|platform)/|cmd/observatory/serve)
+      - path-except: ^(internal/(audit|edge|hubserver|platform|quota)/|cmd/observatory/serve)
         linters: [errcheck]

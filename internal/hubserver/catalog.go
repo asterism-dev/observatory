@@ -8,8 +8,6 @@ func Catalog() (authz.Catalog, error) {
 		Service: "hub",
 		Actions: []authz.Action{
 			{Name: "telemetry.tokens.create", Object: "org/settings", Write: true},
-			{Name: "quota.limits.get", Object: "org/limits"},
-			{Name: "quota.limits.update", Object: "org/limits", Write: true},
 			{Name: "telemetry.logEntries.list", Object: "org/logs"},
 			{Name: "secrets.variables.list", Object: "org/env"},
 			{Name: "secrets.variables.set", Object: "org/env", Write: true},
@@ -93,7 +91,6 @@ func Catalog() (authz.Catalog, error) {
 			{Name: "compute.disks.use", Object: "org/disks/*", Write: true},
 		},
 		RoleDefaults: []authz.RoleDefault{
-			{Role: "member", Object: "org/limits", Action: "quota.limits.get"},
 			{Role: "member", Object: "org/env", Action: "secrets.variables.list"},
 			{Role: "member", Object: "org/env", Action: "secrets.variables.use"},
 			{Role: "member", Object: "org/integrations", Action: "secrets.integrations.list"},
@@ -110,7 +107,6 @@ func Catalog() (authz.Catalog, error) {
 			{Role: "member", Object: "org/networks/*", Action: "network.networks.use"},
 			{Role: "member", Object: "org/disks", Action: "compute.disks.create"},
 			{Role: "admin", Object: "org/settings", Action: "telemetry.tokens.create"},
-			{Role: "admin", Object: "org/limits", Action: "quota.limits.update"},
 			{Role: "admin", Object: "org/logs", Action: "telemetry.logEntries.list"},
 			{Role: "admin", Object: "org/env", Action: "secrets.variables.*"},
 			{Role: "admin", Object: "org/team-env/*", Action: "secrets.variables.*"},

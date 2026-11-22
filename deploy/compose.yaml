@@ -19,7 +19,7 @@ services:
       OBSERVATORY_EDGE_HUB_URL: http://hub:8091
       OBSERVATORY_EDGE_IAM_URL: http://iam:8093
       OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env}
-      OBSERVATORY_EDGE_SERVICES: audit=http://audit:8092,iam=http://iam:8093
+      OBSERVATORY_EDGE_SERVICES: audit=http://audit:8092,iam=http://iam:8093,quota=http://quota:8094
     ports:
       - "${OBSERVATORY_HTTP_PORT:-8090}:8090"
     depends_on:
@@ -29,7 +29,9 @@ services:
         condition: service_started
       audit:
         condition: service_started
-  # Users, orgs, sessions, login and identity tokens; serves the edge, the hub and the audit service on 8093, not published.
+      quota:
+        condition: service_started
+  # Users, orgs, sessions, login and identity tokens; serves the edge, the hub, the audit and the quota service on 8093, not published.
   iam:
     <<: *observatory
     command: ["iam"]
@@ -42,7 +44,7 @@ services:
       OBSERVATORY_SECRETS_KEY: ${OBSERVATORY_SECRETS_KEY:?set OBSERVATORY_SECRETS_KEY in deploy/.env}
       OBSERVATORY_EDGE_TOKEN: ${OBSERVATORY_EDGE_TOKEN:?set OBSERVATORY_EDGE_TOKEN in deploy/.env}
       OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_IAM_SERVICE_TOKEN:?set OBSERVATORY_IAM_SERVICE_TOKEN in deploy/.env}
-      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env},hub=${OBSERVATORY_HUB_SERVICE_TOKEN:?set OBSERVATORY_HUB_SERVICE_TOKEN in deploy/.env},audit=${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_SERVICE_TOKENS: edge=${OBSERVATORY_EDGE_SERVICE_TOKEN:?set OBSERVATORY_EDGE_SERVICE_TOKEN in deploy/.env},hub=${OBSERVATORY_HUB_SERVICE_TOKEN:?set OBSERVATORY_HUB_SERVICE_TOKEN in deploy/.env},audit=${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env},quota=${OBSERVATORY_QUOTA_SERVICE_TOKEN:?set OBSERVATORY_QUOTA_SERVICE_TOKEN in deploy/.env}
       OBSERVATORY_HUB_URL: http://hub:8091
       OBSERVATORY_AUDIT_URL: http://audit:8092
       OBSERVATORY_NATS_URL: nats://nats:4222
@@ -110,6 +112,25 @@ services:
       OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
       OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_AUDIT_SERVICE_TOKEN:?set OBSERVATORY_AUDIT_SERVICE_TOKEN in deploy/.env}
       OBSERVATORY_SERVICE_TOKENS: iam=${OBSERVATORY_IAM_SERVICE_TOKEN:?set OBSERVATORY_IAM_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_NATS_URL: nats://nats:4222
+      OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      iam:
+        condition: service_started
+  # Limits per org, team and member; serves them on 8094 to the edge (/api/quota/v1/); not published.
+  quota:
+    <<: *observatory
+    command: ["quota"]
+    environment:
+      OBSERVATORY_DATABASE_URL: postgres://observatory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/observatory?sslmode=disable
+      OBSERVATORY_IAM_URL: http://iam:8093
+      OBSERVATORY_PUBLIC_URL: ${OBSERVATORY_PUBLIC_URL:?set OBSERVATORY_PUBLIC_URL in deploy/.env}
+      OBSERVATORY_SERVICE_TOKEN: ${OBSERVATORY_QUOTA_SERVICE_TOKEN:?set OBSERVATORY_QUOTA_SERVICE_TOKEN in deploy/.env}
+      OBSERVATORY_SERVICE_TOKENS: hub=${OBSERVATORY_HUB_SERVICE_TOKEN:?set OBSERVATORY_HUB_SERVICE_TOKEN in deploy/.env}
       OBSERVATORY_NATS_URL: nats://nats:4222
       OBSERVATORY_NATS_TOKEN: ${OBSERVATORY_NATS_TOKEN:?set OBSERVATORY_NATS_TOKEN in deploy/.env}
     depends_on:

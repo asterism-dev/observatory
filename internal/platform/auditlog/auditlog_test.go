@@ -51,9 +51,12 @@ type echoServer struct {
 }
 
 // Echo fails with the code named by its text, if any.
-func (echoServer) Echo(_ context.Context, r *connect.Request[testv1.EchoRequest]) (*connect.Response[testv1.EchoResponse], error) {
-	if r.Msg.GetText() == "notfound" {
+func (echoServer) Echo(ctx context.Context, r *connect.Request[testv1.EchoRequest]) (*connect.Response[testv1.EchoResponse], error) {
+	switch r.Msg.GetText() {
+	case "notfound":
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("no such echo"))
+	case "details":
+		SetDetails(ctx, map[string]any{"vcpu": int32(4), "ramMb": nil})
 	}
 	return connect.NewResponse(&testv1.EchoResponse{}), nil
 }
@@ -244,6 +247,27 @@ func TestNilSettingsNoDataEvents(t *testing.T) {
 	}
 	if got := e.events(t); len(got) != 0 {
 		t.Fatalf("recorded %v, want nothing", got)
+	}
+}
+
+func TestSetDetailsRecorded(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.echo.Echo(context.Background(), call(t, &testv1.EchoRequest{Text: "details"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.echo.Echo(context.Background(), call(t, &testv1.EchoRequest{Text: "hi"})); err != nil {
+		t.Fatal(err)
+	}
+	got := e.events(t)
+	if len(got) != 2 {
+		t.Fatalf("recorded %v, want two events", got)
+	}
+	d := got[0].GetDetails().AsMap()
+	if v, ok := d["ramMb"]; len(d) != 2 || d["vcpu"] != float64(4) || !ok || v != nil {
+		t.Fatalf("details = %v", d)
+	}
+	if got[1].GetDetails() != nil {
+		t.Fatalf("details leaked into the next call: %v", got[1].GetDetails())
 	}
 }
 

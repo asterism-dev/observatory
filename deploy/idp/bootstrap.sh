@@ -123,5 +123,6 @@ OBSERVATORY_EDGE_SERVICE_TOKEN=$(openssl rand -hex 32)
 OBSERVATORY_HUB_SERVICE_TOKEN=$(openssl rand -hex 32)
 OBSERVATORY_IAM_SERVICE_TOKEN=$(openssl rand -hex 32)
 OBSERVATORY_AUDIT_SERVICE_TOKEN=$(openssl rand -hex 32)
+OBSERVATORY_QUOTA_SERVICE_TOKEN=$(openssl rand -hex 32)
 ENV
 echo "wrote $hub_env"

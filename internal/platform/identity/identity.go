@@ -69,6 +69,7 @@ type Caller struct {
 	ClientIP  string
 	Verified  bool
 	Denied    bool
+	Details   map[string]any
 }
 
 type callerKey struct{}
@@ -91,6 +92,13 @@ func WithVerified(ctx context.Context, p Principal, ip string) context.Context {
 func MarkDenied(ctx context.Context) {
 	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
 		c.Denied = true
+	}
+}
+
+// SetDetails gives an outer caller slot the handler's audit details.
+func SetDetails(ctx context.Context, d map[string]any) {
+	if c, ok := ctx.Value(callerKey{}).(*Caller); ok {
+		c.Details = d
 	}
 }
 

@@ -104,6 +104,31 @@ func TestServeAuditRejectsBadServiceTokens(t *testing.T) {
 	}
 }
 
+func TestServeQuotaRequiresConfig(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_QUOTA_LISTEN": "127.0.0.1:0"}[k] }
+	code := run(c, []string{"serve", "quota"})
+	for _, k := range []string{"OBSERVATORY_QUOTA_DATABASE_URL or OBSERVATORY_DATABASE_URL", "OBSERVATORY_IAM_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+		if code != 1 || !strings.Contains(stderr.String(), k) {
+			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
+		}
+	}
+}
+
+func TestServeQuotaRequiresHubServiceToken(t *testing.T) {
+	env := map[string]string{"OBSERVATORY_QUOTA_LISTEN": "127.0.0.1:0", "OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_IAM_URL": "http://iam",
+		"OBSERVATORY_PUBLIC_URL": "https://obs", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_NATS_URL": "nats://x",
+		"OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32)}
+	for _, tokens := range []string{"", "hub=short", "compute=" + strings.Repeat("c", 32)} {
+		c, _, stderr := newTestCLI(t, nil)
+		env["OBSERVATORY_SERVICE_TOKENS"] = tokens
+		c.getenv = func(k string) string { return env[k] }
+		if code := run(c, []string{"serve", "quota"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_SERVICE_TOKENS") {
+			t.Fatalf("%q: exit %d, stderr %q", tokens, code, stderr.String())
+		}
+	}
+}
+
 func TestServeAllRequiresPersistentBus(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k] }

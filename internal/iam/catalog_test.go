@@ -326,9 +326,17 @@ func TestRegisterCatalogBodyLimit(t *testing.T) {
 	}
 }
 
+// legacyCatalog is service's 0.x catalog without the actions of services extracted since, as the service registers it today.
 func legacyCatalog(service string) authz.Catalog {
 	all := authztest.Legacy()
-	return all[slices.IndexFunc(all, func(c authz.Catalog) bool { return c.Service == service })]
+	c := all[slices.IndexFunc(all, func(c authz.Catalog) bool { return c.Service == service })]
+	foreign := func(action string) bool {
+		prefix, _, _ := strings.Cut(action, ".")
+		return !slices.Contains(catalog.AllowedPrefixes(service), prefix)
+	}
+	c.Actions = slices.DeleteFunc(slices.Clone(c.Actions), func(a authz.Action) bool { return foreign(a.Name) })
+	c.RoleDefaults = slices.DeleteFunc(slices.Clone(c.RoleDefaults), func(d authz.RoleDefault) bool { return foreign(d.Action) })
+	return c
 }
 
 func TestRemovedActionKeptAsUnknown(t *testing.T) {
