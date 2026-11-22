@@ -41,7 +41,9 @@ reachable from a network: `ZITADEL_DOMAIN` (the host name browsers use), `ZITADE
 `openssl rand -hex 16`), `LOGIN_SESSION_COOKIE_SECRET` (`openssl rand -base64 32`) and `POSTGRES_ADMIN_PASSWORD`
 together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL_URL` for `bootstrap.sh` is
 `http://<ZITADEL_DOMAIN>:8080` and becomes iam's OIDC issuer (`OBSERVATORY_OIDC_ISSUER`). `bootstrap.sh` needs `curl` and `jq`, reads the admin
-token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
+token Zitadel writes to `deploy/idp/.bootstrap/`. It is safe to re-run: it reuses the `observatory` project and its
+`observatory-web` and `observatory-cli` apps when they exist and creates what is missing. An existing web app keeps its
+registered redirect URIs (the script warns if the hub URL is not among them).
 
 Step 4 is not optional. Gateway and storage join the network namespace of the `netns` service. When Docker itself
 restarts (a reboot, a Docker upgrade) it starts containers in no particular order, and one that comes up before
@@ -78,6 +80,14 @@ All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serv
   60 s for iam's first policy at start. Compose starts it after iam with `service_started`, not a healthcheck: the
   image has no HTTP client to probe with and an open port does not mean ready. If iam takes longer than 60 s, the hub
   exits once and `restart: unless-stopped` starts it again.
+
+iam is required for every signed-in request. The hub and audit check the session with iam on each request and fail
+closed, and the edge needs iam to exchange sessions, so an iam outage is a user-facing outage: requests answer 503,
+then 502 from the edge. There is no session cache, by design: a revoked session is refused at once, with no revocation
+window. Devices, the gateway and node pushes keep working from the last known policy (`LastKnown`) meanwhile. After
+iam is back the hub recovers within a few seconds (the policy stream reconnects with a backoff capped at 5 s). iam
+itself retries OIDC discovery while the identity provider starts, instead of exiting, and still refuses a malformed
+`OBSERVATORY_OIDC_ISSUER` at once.
 - `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by the edge, iam and the hub: the
   edge sends it with each request, and iam and the hub take the client IP from the edge's header only when the token
   matches, otherwise the connection's address. Changing it needs all three restarted.
