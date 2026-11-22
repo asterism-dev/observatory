@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
@@ -23,7 +24,7 @@ const (
 const minTokenLen = 32
 
 type Config struct {
-	// IAMURL serves login (/auth/, /api/auth/) and the token endpoint; its API goes through Services like any service.
+	// IAMURL serves login (/auth/, /api/auth/), the token endpoint and, unless Services names iam, iam's API.
 	HubURL, IAMURL, Token string
 	// ServiceToken authenticates the edge to iam's /internal/iam/ endpoints.
 	ServiceToken string
@@ -61,8 +62,15 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 	hub.ModifyResponse = id.forget
 	iamLogin.ModifyResponse = id.forget
 	hubAPI := id.hubMiddleware(hub)
-	services := make(map[string]http.Handler, len(cfg.Services))
-	for name, raw := range cfg.Services {
+	services := make(map[string]http.Handler, len(cfg.Services)+1)
+	upstreams := maps.Clone(cfg.Services)
+	if _, ok := upstreams["iam"]; !ok {
+		if upstreams == nil {
+			upstreams = map[string]string{}
+		}
+		upstreams["iam"] = cfg.IAMURL
+	}
+	for name, raw := range upstreams {
 		u, err := parseUpstream(raw)
 		if err != nil {
 			return nil, fmt.Errorf("service %s url: %w", name, err)

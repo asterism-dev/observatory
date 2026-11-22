@@ -105,6 +105,26 @@ func TestEdgeRoutesToService(t *testing.T) {
 	}
 }
 
+func TestEdgeRoutesIAMAPIWithoutServicesEntry(t *testing.T) {
+	hub, hubCh := recorder(t, "hub")
+	iam, iamCh, _ := issuingHub(t, http.StatusOK)
+	h, err := New(Config{HubURL: hub.URL, IAMURL: iam.URL, Token: testToken, ServiceToken: testServiceToken}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(h)
+	t.Cleanup(edge.Close)
+	req, _ := http.NewRequest("GET", edge.URL+"/api/iam/v1/orgs", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
+	if code, _ := get(t, req); code != 200 {
+		t.Fatalf("iam API: status %d", code)
+	}
+	noRequest(t, hubCh, "hub")
+	if s := <-iamCh; s.path != "/api/iam/v1/orgs" || s.header.Get("Authorization") != "Bearer jwt-"+validSession {
+		t.Fatalf("iam saw path %q, Authorization %q", s.path, s.header.Get("Authorization"))
+	}
+}
+
 func TestEdgeRoutesAuthToIAM(t *testing.T) {
 	hub, hubCh := recorder(t, "hub")
 	iam, iamCh, calls := issuingHub(t, http.StatusOK)
