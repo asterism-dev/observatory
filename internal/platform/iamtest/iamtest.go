@@ -98,7 +98,7 @@ func New(t testing.TB) *Server {
 	path, h = iamv1connect.NewCatalogInternalServiceHandler(catalogAPI{s})
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	mux.Handle(s.pub.Handler("/internal/iam"))
-	s.srv = httptest.NewServer(servicetoken.Middleware(map[string]string{"test": s.token})(mux))
+	s.srv = httptest.NewServer(servicetoken.Middleware(map[string]string{"hub": s.token})(mux))
 	t.Cleanup(s.srv.Close)
 	return s
 }
@@ -106,7 +106,7 @@ func New(t testing.TB) *Server {
 // URL is the base callers append /internal/iam/... to.
 func (s *Server) URL() string { return s.srv.URL }
 
-// ServiceToken is the bearer every call to the fake needs.
+// ServiceToken is the bearer every call to the fake needs; the fake knows its caller as hub.
 func (s *Server) ServiceToken() string { return s.token }
 
 // Client calls the fake's IAMInternalService with its service token.
@@ -141,11 +141,18 @@ func (s *Server) putCatalog(c coreauthz.Catalog) {
 	s.pol.Catalogs = append(s.pol.Catalogs, c)
 }
 
-// catalogAPI stores any caller's catalog under its own service name; the fake does not check prefixes.
+// catalogAPI checks a catalog as iam does.
 type catalogAPI struct{ s *Server }
 
-func (a catalogAPI) RegisterCatalog(_ context.Context, req *connect.Request[iamv1.RegisterCatalogRequest]) (*connect.Response[iamv1.RegisterCatalogResponse], error) {
+func (a catalogAPI) RegisterCatalog(ctx context.Context, req *connect.Request[iamv1.RegisterCatalogRequest]) (*connect.Response[iamv1.RegisterCatalogResponse], error) {
+	caller, _ := servicetoken.Caller(ctx)
 	c, err := catalog.FromProto(req.Msg.GetCatalog())
+	if err == nil && c.Service != caller {
+		err = fmt.Errorf("catalog of %q registered by %q", c.Service, caller)
+	}
+	if err == nil {
+		err = catalog.Validate(c, catalog.AllowedPrefixes(caller))
+	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}

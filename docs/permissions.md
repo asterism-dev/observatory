@@ -55,6 +55,8 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `compute.disks.get`, `compute.disks.update`, `compute.disks.delete`, `compute.disks.use` | `org/disks/*` |
 | `artifacts.images.list`, `artifacts.images.use`, `artifacts.images.update`, `artifacts.images.setDefault`, `build.builds.create` | `org/images`, `org/team-images/*`, `org/user-images/*` |
 
+Each service registers its action catalog with iam at start and answers 503 (or holds requests) until iam's policy stream carries it. All instances of a service must run the same release: an instance whose catalog differs from the last one registered stays unavailable.
+
 ## Built-in roles
 
 Defined in code, identical in every org, immutable. Each role includes the one to its left.

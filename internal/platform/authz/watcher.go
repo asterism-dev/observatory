@@ -162,6 +162,7 @@ func (w *Watcher) apply(m *iamv1.Policy) bool {
 
 // Require makes Current return false until the snapshot carries service's catalog with digest.
 func (w *Watcher) Require(service, digest string) {
+	// ponytail: one digest per service, so instances on different releases flip each other unavailable in a rolling deploy; key by release when services run replicas.
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	next := map[string]string{service: digest}
@@ -253,6 +254,7 @@ func policyFrom(m *iamv1.Policy) (coreauthz.Policy, error) {
 		p.Bindings = append(p.Bindings, coreauthz.Binding{OrgID: ids.parse(b.GetOrgId()), Subject: b.GetSubject(), RoleID: ids.parse(b.GetRoleId())})
 	}
 	for _, pc := range m.GetCatalogs() {
+		// ponytail: one undecodable catalog (a newer service's relation) rejects the whole snapshot; skip just that catalog once services ship independently.
 		c, err := catalog.FromProto(pc)
 		if err != nil {
 			return p, fmt.Errorf("catalog %s: %w", pc.GetService(), err)

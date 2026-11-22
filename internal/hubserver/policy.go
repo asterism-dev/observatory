@@ -12,8 +12,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -35,15 +37,18 @@ func (h hubPolicy) WaitRevision(ctx context.Context, rev uint64) error {
 }
 
 // watchPolicy registers the hub's catalog and returns the hub's enforcer over w, reloaded on every stream message; it fails unless a snapshot with that catalog arrives within firstPolicyWait.
-func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store, register func(context.Context) (string, error)) (hubPolicy, error) {
+func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store, cat authz.Catalog, catalogs iamv1connect.CatalogInternalServiceClient) (hubPolicy, error) {
 	go w.Run(ctx)
 	wctx, cancel := context.WithTimeout(ctx, firstPolicyWait)
 	defer cancel()
-	digest, err := register(wctx)
+	digest, err := catalog.Register(wctx, catalogs, cat)
 	if err != nil {
-		return hubPolicy{}, fmt.Errorf("no policy from iam within %v: %w", firstPolicyWait, err)
+		if wctx.Err() != nil {
+			return hubPolicy{}, fmt.Errorf("no policy from iam within %v: %w", firstPolicyWait, err)
+		}
+		return hubPolicy{}, fmt.Errorf("register hub catalog: %w", err)
 	}
-	w.Require("hub", digest)
+	w.Require(cat.Service, digest)
 	for {
 		_, rev, _ := w.Policy()
 		if _, ok := w.Current(); ok {

@@ -47,7 +47,7 @@ func newCatalogEnv(t *testing.T, pool *pgxpool.Pool) *catalogEnv {
 	}
 	ps := platformauthz.NewPublisher()
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
-	h := servicetoken.Middleware(map[string]string{"audit": otherTok, "hub": hubTok, "compute": computeTok})(
+	h := servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(
 		internalHandler(iss, ps, internalServer{Store: s}, catalogServer{Store: s, Policy: z}))
 	e := &catalogEnv{pool: pool, srv: httptest.NewServer(h)}
 	t.Cleanup(e.srv.Close)
@@ -201,6 +201,21 @@ func TestCatalogUpdateAudited(t *testing.T) {
 	if got := ups[1].Details["added"]; !slices.Equal(anyStrings(got), []string{"audit.events.get", "audit.events.list"}) {
 		t.Errorf("first registration added %v", got)
 	}
+
+	// A change to role defaults only names no action, so the digests show it.
+	c := auditCatalog("audit.events.list", "audit.settings.update")
+	c.RoleDefaults = []authz.RoleDefault{{Role: "admin", Object: "org/audit", Action: "audit.events.list"}}
+	digest, err := e.register(otherTok, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := updates(t, e.pool, "audit")[0]
+	if ev.Details["old_digest"] != ups[0].Details["new_digest"] || ev.Details["new_digest"] != digest || ev.Details["old_digest"] == digest {
+		t.Fatalf("defaults-only change details: %v", ev.Details)
+	}
+	if ups[1].Details["old_digest"] != "" {
+		t.Errorf("first registration old digest %v", ups[1].Details["old_digest"])
+	}
 }
 
 func anyStrings(v any) []string {
@@ -237,6 +252,50 @@ func TestCatalogsSurviveRestart(t *testing.T) {
 	// iam's own catalog is unchanged by the restart, so it is audited once.
 	if n := len(updates(t, pool, "iam")); n != 1 {
 		t.Fatalf("%d iam catalog events after a restart, want 1", n)
+	}
+}
+
+func TestOwnCatalogFailureFailsStart(t *testing.T) {
+	pool := storetest.NewDB(t)
+	s := store.New(pool)
+	z, err := authz.NewService(context.Background(), s.PolicySnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `DROP TABLE catalogs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := registerOwnCatalog(context.Background(), s, z); err == nil {
+		t.Fatal("iam starts without storing its own catalog")
+	}
+}
+
+func TestInternalBodyLimit(t *testing.T) {
+	e := newCatalogEnv(t, storetest.NewDB(t))
+	huge := strings.Repeat("a", maxBody)
+	// Well-formed bodies, so only the cap explains the answer: uncapped, they would get 401 and invalid user_id (400).
+	cases := []struct {
+		path, tok, body string
+		want            int
+	}{
+		{"/internal/iam/token", svcToken, `{"session_token":"` + huge + `"}`, http.StatusBadRequest},
+		{"/internal/iam" + iamv1connect.IAMInternalServiceGetUsersProcedure, hubTok, `{"user_ids":["` + huge + `"]}`, http.StatusTooManyRequests},
+	}
+	for _, c := range cases {
+		r, err := http.NewRequest("POST", e.srv.URL+c.path, strings.NewReader(c.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Authorization", "Bearer "+c.tok)
+		r.Header.Set("Content-Type", "application/json")
+		resp, err := e.srv.Client().Do(r)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Errorf("%s with an oversized body: %d, want %d", c.path, resp.StatusCode, c.want)
+		}
 	}
 }
 

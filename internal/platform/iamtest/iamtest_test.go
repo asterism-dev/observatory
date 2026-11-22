@@ -142,11 +142,14 @@ func TestIAMTestStreamsCatalogs(t *testing.T) {
 	}
 	go w.Run(ctx)
 	release := s.HoldCatalogs()
-	digest, err := catalog.Register(ctx, s.CatalogClient(), coreauthz.Catalog{Service: "audit", Actions: []coreauthz.Action{{Name: "audit.events.list", Object: "org/audit"}}})
+	if _, err := catalog.Register(ctx, s.CatalogClient(), coreauthz.Catalog{Service: "audit", Actions: []coreauthz.Action{{Name: "audit.events.list", Object: "org/audit"}}}); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("hub registering audit's catalog: %v", err)
+	}
+	digest, err := catalog.Register(ctx, s.CatalogClient(), coreauthz.Catalog{Service: "hub", Actions: []coreauthz.Action{{Name: "compute.instances.get", Object: "org/vms/*"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Require("audit", digest)
+	w.Require("hub", digest)
 	if err := w.WaitRevision(ctx, s.Revision()); err != nil {
 		t.Fatal(err)
 	}

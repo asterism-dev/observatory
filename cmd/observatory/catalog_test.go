@@ -32,7 +32,7 @@ func TestRegisteredCatalogsReproduce0x(t *testing.T) {
 		if got := catalog.Normalize(c); !reflect.DeepEqual(got, want[c.Service]) {
 			t.Errorf("%s differs from legacy:\n got  %+v\n want %+v", c.Service, got, want[c.Service])
 		}
-		if err := catalog.Validate(c, iam.AllowedPrefixes(c.Service)); err != nil {
+		if err := catalog.Validate(c, catalog.AllowedPrefixes(c.Service)); err != nil {
 			t.Errorf("%s: %v", c.Service, err)
 		}
 	}

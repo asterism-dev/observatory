@@ -188,9 +188,9 @@ func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.
 	path, h := iamv1connect.NewIAMInternalServiceHandler(iam)
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	path, h = iamv1connect.NewCatalogInternalServiceHandler(cat, connect.WithReadMaxBytes(maxBody))
-	mux.Handle("/internal/iam"+path, http.MaxBytesHandler(http.StripPrefix("/internal/iam", h), maxBody))
+	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	mux.Handle(ps.Handler("/internal/iam"))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.MaxBytesHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller, _ := servicetoken.Caller(r.Context())
 		if !slices.Contains(internalCalls[caller], r.URL.Path) {
 			slog.Warn("internal call outside the caller's allow list", "caller", caller, "path", r.URL.Path)
@@ -198,7 +198,7 @@ func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.
 			return
 		}
 		mux.ServeHTTP(w, r)
-	})
+	}), maxBody)
 }
 
 // Handler serves /api/iam/v1/, /internal/iam/, /auth/ and /api/auth/.

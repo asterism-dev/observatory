@@ -254,6 +254,16 @@ func validTemplateObject(rel authz.Relation, obj string) error {
 	return fmt.Errorf("placeholder {%s} not valid here", placeholder)
 }
 
+// ponytail: hub registers the actions of services not yet extracted; drop each prefix when its service registers its own catalog.
+var hubPrefixes = []string{"compute", "network", "secrets", "artifacts", "build", "telemetry", "quota"}
+
+func AllowedPrefixes(caller string) []string {
+	if caller == "hub" {
+		return append([]string{caller}, hubPrefixes...)
+	}
+	return []string{caller}
+}
+
 var retryBase, retryMax = time.Second, 30 * time.Second
 
 // Register sends c to iam until it answers, retrying Unavailable (which covers transport errors) with backoff until ctx ends.

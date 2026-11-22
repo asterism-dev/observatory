@@ -29,33 +29,35 @@ func (s catalogServer) RegisterCatalog(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	digest, err := registerCatalog(ctx, s.Store, s.Policy, caller, c)
+	digest, changed, err := registerCatalog(ctx, s.Store, caller, c)
 	if err != nil {
 		return nil, err
+	}
+	if changed {
+		// Committed: a failed reload is retried and withholds the stream meanwhile, as after any commit.
+		if err := s.Policy.ReloadCommitted(ctx); err != nil {
+			slog.Error("authz reload after catalog registration", "err", err)
+		}
 	}
 	return connect.NewResponse(&iamv1.RegisterCatalogResponse{Digest: digest}), nil
 }
 
-// registerCatalog stores caller's catalog and publishes it if it changed; the allowed prefixes come from caller, never from c.Service.
-func registerCatalog(ctx context.Context, s *store.Store, z *authz.Service, caller string, c authz.Catalog) (string, error) {
+// registerCatalog validates and stores caller's catalog; the allowed prefixes come from caller, never from c.Service.
+func registerCatalog(ctx context.Context, s *store.Store, caller string, c authz.Catalog) (string, bool, error) {
 	if c.Service != caller {
-		return "", connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("catalog of %q registered by %q", c.Service, caller))
+		return "", false, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("catalog of %q registered by %q", c.Service, caller))
 	}
-	if err := catalog.Validate(c, AllowedPrefixes(caller)); err != nil {
-		return "", connect.NewError(connect.CodeInvalidArgument, err)
+	if err := catalog.Validate(c, catalog.AllowedPrefixes(caller)); err != nil {
+		return "", false, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	digest, changed, err := s.PutCatalog(ctx, caller, c)
 	if err != nil {
-		return "", internal("store catalog", err)
+		return "", false, internal("store catalog", err)
 	}
 	if changed {
 		slog.Info("catalog registered", "service", caller, "digest", digest)
-		// Committed: a failed reload is retried and withholds the stream meanwhile, as after any commit.
-		if err := z.ReloadCommitted(ctx); err != nil {
-			slog.Error("authz reload after catalog registration", "err", err)
-		}
 	}
-	return digest, nil
+	return digest, changed, nil
 }
 
 // registerOwnCatalog stores iam's own catalog; iam registers it at start, before serving.
@@ -64,8 +66,14 @@ func registerOwnCatalog(ctx context.Context, s *store.Store, z *authz.Service) e
 	if err != nil {
 		return fmt.Errorf("iam catalog: %w", err)
 	}
-	if _, err := registerCatalog(ctx, s, z, "iam", c); err != nil {
+	_, changed, err := registerCatalog(ctx, s, "iam", c)
+	if err != nil {
 		return fmt.Errorf("register iam catalog: %w", err)
+	}
+	if changed {
+		if err := z.Reload(ctx); err != nil {
+			return fmt.Errorf("load iam catalog: %w", err)
+		}
 	}
 	return nil
 }

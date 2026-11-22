@@ -31,7 +31,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
-	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/run"
@@ -102,7 +101,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return fmt.Errorf("hub catalog: %w", err)
 	}
 	catalogs := iamv1connect.NewCatalogInternalServiceClient(internalClient, iamURL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
-	hp, err := watchPolicy(ctx, watcher, s, func(ctx context.Context) (string, error) { return catalog.Register(ctx, catalogs, cat) })
+	hp, err := watchPolicy(ctx, watcher, s, cat, catalogs)
 	if err != nil {
 		// Stopped before iam sent a policy is a shutdown, not a failure.
 		if ctx.Err() != nil {

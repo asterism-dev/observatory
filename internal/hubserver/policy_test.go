@@ -18,7 +18,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
-	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -206,13 +205,25 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	return e
 }
 
-// register registers the hub's catalog with the fake, as Run does.
-func (e *streamEnv) register(ctx context.Context) (string, error) {
+func hubCatalog(t *testing.T) authz.Catalog {
+	t.Helper()
 	c, err := Catalog()
 	if err != nil {
-		return "", err
+		t.Fatal(err)
 	}
-	return catalog.Register(ctx, e.iam.CatalogClient(), c)
+	return c
+}
+
+func TestHubRegistrationErrorAtStart(t *testing.T) {
+	e := newStreamEnv(t)
+	start := time.Now()
+	_, err := watchPolicy(t.Context(), e.w, e.s, authz.Catalog{Service: "audit"}, e.iam.CatalogClient())
+	if err == nil || !strings.Contains(err.Error(), "register hub catalog") || strings.Contains(err.Error(), "within") {
+		t.Fatalf("refused registration: %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("refused registration reported after %v", time.Since(start))
+	}
 }
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
@@ -228,7 +239,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 
 func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, hubCatalog(t), e.iam.CatalogClient())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +262,7 @@ func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 
 func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, hubCatalog(t), e.iam.CatalogClient())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +283,7 @@ func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 
 func TestHubPolicyFreshness(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, hubCatalog(t), e.iam.CatalogClient())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +316,7 @@ func TestHubPolicyFreshness(t *testing.T) {
 // A reload that fails after one of the hub's own commits may miss that commit's owner refs: org routes refuse until a retry succeeds.
 func TestHubCommitReloadFailureWithholdsPolicy(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, hubCatalog(t), e.iam.CatalogClient())
 	if err != nil {
 		t.Fatal(err)
 	}

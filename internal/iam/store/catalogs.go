@@ -43,7 +43,7 @@ func (s *Store) PutCatalog(ctx context.Context, caller string, c authz.Catalog) 
 		changed = true
 		was, now := actionNames(old.GetActions()), actionNames(pc.GetActions())
 		return tx.Audit(ctx, AuditEntry{ActorKind: ActorService, ActorID: caller, Action: ActionCatalogUpdate, Resource: "catalog/" + caller, Result: ResultAllowed,
-			Details: map[string]any{"added": missingFrom(now, was), "removed": missingFrom(was, now)}})
+			Details: map[string]any{"added": missingFrom(now, was), "removed": missingFrom(was, now), "old_digest": oldDigest, "new_digest": digest}})
 	})
 	if err != nil {
 		return "", false, err
