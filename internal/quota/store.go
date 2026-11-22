@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 )
@@ -86,7 +87,8 @@ func lockOrg(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
 }
 
 // SetLimits replaces scope's limits under the org lock, so team/user ≤ org holds under concurrent changes; known reports whether a team or user scope names a team or member of the org.
-func (s *store) SetLimits(ctx context.Context, org uuid.UUID, scope string, l Limits, known func(string) bool) error {
+// audit, if set, is written to the outbox in the same transaction.
+func (s *store) SetLimits(ctx context.Context, org uuid.UUID, scope string, l Limits, known func(string) bool, audit *eventsv1.Event) error {
 	if scope != scopeOrg {
 		if err := checkScopeInOrg(scope, known); err != nil {
 			return err
@@ -128,7 +130,10 @@ func (s *store) SetLimits(ctx context.Context, org uuid.UUID, scope string, l Li
 		if err != nil {
 			return fmt.Errorf("set limits: %w", err)
 		}
-		return nil
+		if audit == nil {
+			return nil
+		}
+		return outbox.Write(ctx, tx, audit)
 	})
 }
 

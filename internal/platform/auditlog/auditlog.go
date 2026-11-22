@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
@@ -67,9 +66,6 @@ func (i *interceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	}
 }
 
-// SetDetails attaches d to the call's audit event; values must suit structpb (nil, bool, numbers, strings, maps, slices).
-func SetDetails(ctx context.Context, d map[string]any) { identity.SetDetails(ctx, d) }
-
 func (i *interceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return next
 }
@@ -113,13 +109,6 @@ func (i *interceptor) record(ctx context.Context, req connect.AnyRequest, caller
 		Type: perm.Name, Org: org, Resource: resource, Result: res, Audit: true,
 		Actor:    &eventsv1.Actor{Kind: eventsv1.ActorKind_ACTOR_KIND_USER, Id: caller.Principal.User.String()},
 		ClientIp: caller.ClientIP, UserAgent: textx.Sanitize(req.Header().Get("User-Agent")),
-	}
-	if caller.Details != nil {
-		if d, err := structpb.NewStruct(caller.Details); err != nil {
-			slog.Error("audit details dropped", "type", e.GetType(), "err", err)
-		} else {
-			e.Details = d
-		}
 	}
 	// The call already happened, so the event is written even if the client went away.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)

@@ -91,7 +91,8 @@ func cmdServe(c *cli, args []string) error {
 	case "quota":
 		cfg := quotaConfig(c.getenv)
 		if err := missingEnv(map[string]string{"OBSERVATORY_QUOTA_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_IAM_URL": cfg.IAMURL,
-			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken}); err != nil {
+			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken,
+			"OBSERVATORY_AUDIT_URL": cfg.AuditURL}); err != nil {
 			return err
 		}
 		var err error
@@ -145,7 +146,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	}
 	auditCfg := auditConfig(getenv)
 	auditCfg.ServiceToken = auditToken
-	auditCfg.ServiceTokens = map[string]string{"iam": iamToken}
+	auditCfg.ServiceTokens = map[string]string{"iam": iamToken, "quota": quotaToken}
 	if auditCfg.NATSURL == "" {
 		stop, err := embeddedNATS(ctx, getenv, &auditCfg)
 		if err != nil {
@@ -190,7 +191,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		// All calls this before starting any service, so every service sees the others' URLs.
 		iamURL = services["iam"]
 		auditCfg.IAMURL, quotaCfg.IAMURL = iamURL, iamURL
-		iamCfg.HubURL, iamCfg.AuditURL = hubURL, services["audit"]
+		iamCfg.HubURL, iamCfg.AuditURL, quotaCfg.AuditURL = hubURL, services["audit"], services["audit"]
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
 			return serveEdge(ctx, edge.Config{HubURL: hubURL, IAMURL: iamURL, Token: edgeToken, ServiceToken: edgeServiceToken, Services: services}, ln)
 		}}
@@ -254,6 +255,7 @@ func quotaConfig(getenv func(string) string) quota.Config {
 		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),
 		NATSURL:      getenv("OBSERVATORY_NATS_URL"),
 		NATSToken:    getenv("OBSERVATORY_NATS_TOKEN"),
+		AuditURL:     getenv("OBSERVATORY_AUDIT_URL"),
 	}
 }
 

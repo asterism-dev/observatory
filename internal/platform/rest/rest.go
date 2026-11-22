@@ -5,6 +5,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"connectrpc.com/connect"
+	"connectrpc.com/vanguard"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // NoQuery refuses REST requests with a query string and passes Connect and gRPC requests (paths under rpcPath) through.
@@ -19,4 +24,24 @@ func NoQuery(rpcPath string, h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// Codec is the transcoder's JSON codec, answering an undecodable REST body with invalid_argument (400) instead of unknown.
+func Codec(res vanguard.TypeResolver) vanguard.Codec { return badBody{vanguard.NewJSONCodec(res)} }
+
+type badBody struct{ *vanguard.JSONCodec }
+
+func (c badBody) Unmarshal(data []byte, msg proto.Message) error {
+	return invalid(c.JSONCodec.Unmarshal(data, msg))
+}
+
+func (c badBody) UnmarshalField(data []byte, msg proto.Message, field protoreflect.FieldDescriptor) error {
+	return invalid(c.JSONCodec.UnmarshalField(data, msg, field))
+}
+
+func invalid(err error) error {
+	if err == nil {
+		return nil
+	}
+	return connect.NewError(connect.CodeInvalidArgument, err)
 }

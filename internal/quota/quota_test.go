@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
+	auditv1 "github.com/asterism-dev/observatory/gen/go/observatory/audit/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
@@ -31,7 +34,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/platform/catalog"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/pgsvc"
+	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 )
 
 const (
@@ -72,6 +77,22 @@ func wantCode(t *testing.T, err error, want connect.Code) {
 	if connect.CodeOf(err) != want {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
+}
+
+// fakeAudit serves the data events the test sets; none until then.
+type fakeAudit struct {
+	auditv1connect.UnimplementedAuditInternalServiceHandler
+	enabled atomic.Pointer[[]*auditv1.DataEvents]
+}
+
+func (f *fakeAudit) set(es ...*auditv1.DataEvents) { f.enabled.Store(&es) }
+
+func (f *fakeAudit) GetDataEvents(context.Context, *connect.Request[auditv1.GetDataEventsRequest]) (*connect.Response[auditv1.GetDataEventsResponse], error) {
+	var es []*auditv1.DataEvents
+	if p := f.enabled.Load(); p != nil {
+		es = *p
+	}
+	return connect.NewResponse(&auditv1.GetDataEventsResponse{Enabled: es}), nil
 }
 
 // fakeIAM serves the signing key, the policy stream and RegisterCatalog; a held catalog stays out of the stream until releaseCatalog.
@@ -123,6 +144,8 @@ type fixture struct {
 	store                   *store
 	iam                     *fakeIAM
 	baseURL                 string
+	audit                   *fakeAudit
+	natsURL, natsToken      string
 	orgA, orgB              uuid.UUID
 	teamA, teamB            uuid.UUID
 	admin, member, adminB   uuid.UUID
@@ -154,6 +177,12 @@ func startFixture(t *testing.T, holdCatalog bool) *fixture {
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	iam := httptest.NewServer(mux)
 	t.Cleanup(iam.Close)
+	f.audit = &fakeAudit{}
+	apath, ah := auditv1connect.NewAuditInternalServiceHandler(f.audit)
+	amux := http.NewServeMux()
+	amux.Handle("/internal/audit"+apath, http.StripPrefix("/internal/audit", servicetoken.Middleware(map[string]string{"quota": testToken})(ah)))
+	auditSrv := httptest.NewServer(amux)
+	t.Cleanup(auditSrv.Close)
 
 	dbURL := dbtest.Empty(t)
 	f.store = openStore(t, dbURL)
@@ -162,13 +191,14 @@ func startFixture(t *testing.T, holdCatalog bool) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(stop)
+	f.natsURL, f.natsToken = natsURL, natsToken
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	cfg := Config{DatabaseURL: dbURL, IAMURL: iam.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
+	cfg := Config{DatabaseURL: dbURL, IAMURL: iam.URL, AuditURL: auditSrv.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
 		ServiceTokens: map[string]string{"hub": hubToken}}
 	go func() { done <- Run(ctx, cfg, ln) }()
 	t.Cleanup(func() {
@@ -213,6 +243,7 @@ func as[T any](t *testing.T, f *fixture, user uuid.UUID, platformAdmin bool, msg
 	t.Helper()
 	r := connect.NewRequest(msg)
 	r.Header().Set("Authorization", "Bearer "+f.token(t, user, platformAdmin))
+	r.Header().Set(clientip.HeaderClientIP, "198.51.100.4")
 	return r
 }
 
@@ -362,12 +393,12 @@ func TestSetLimitsConcurrentOrgLowerVsTeamRaise(t *testing.T) {
 	s := openStore(t, dbtest.Empty(t))
 	org, team := uuid.New(), "team:"+uuid.NewString()
 	known := func(scope string) bool { return scope == team }
-	if err := s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(10)}, nil); err != nil {
+	if err := s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(10)}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	wg.Go(func() { _ = s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(5)}, nil) })
-	wg.Go(func() { _ = s.SetLimits(ctx, org, team, Limits{VCPU: i32(8)}, known) })
+	wg.Go(func() { _ = s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(5)}, nil, nil) })
+	wg.Go(func() { _ = s.SetLimits(ctx, org, team, Limits{VCPU: i32(8)}, known, nil) })
 	wg.Wait()
 	ls, err := s.limits(ctx, org)
 	if err != nil {
@@ -383,18 +414,18 @@ func TestSetLimitsErrors(t *testing.T) {
 	s := openStore(t, dbtest.Empty(t))
 	org, team := uuid.New(), uuid.New()
 	known := func(scope string) bool { return scope == "team:"+team.String() }
-	if err := s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(10)}, nil); err != nil {
+	if err := s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(10)}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetLimits(ctx, org, "team:"+team.String(), Limits{VCPU: i32(11)}, known); !errors.Is(err, errLimitExceedsOrg) {
+	if err := s.SetLimits(ctx, org, "team:"+team.String(), Limits{VCPU: i32(11)}, known, nil); !errors.Is(err, errLimitExceedsOrg) {
 		t.Fatalf("team above org: %v", err)
 	}
 	for _, scope := range []string{"team:" + uuid.NewString(), "team:nope", "bogus", "", "TEAM:" + team.String(), "team:" + strings.ToUpper(team.String())} {
-		if err := s.SetLimits(ctx, org, scope, Limits{}, known); !errors.Is(err, errNotFound) {
+		if err := s.SetLimits(ctx, org, scope, Limits{}, known, nil); !errors.Is(err, errNotFound) {
 			t.Fatalf("scope %q: %v", scope, err)
 		}
 	}
-	if err := s.SetLimits(ctx, org, "team:"+team.String(), Limits{}, nil); !errors.Is(err, errNotFound) {
+	if err := s.SetLimits(ctx, org, "team:"+team.String(), Limits{}, nil, nil); !errors.Is(err, errNotFound) {
 		t.Fatalf("nil known: %v", err)
 	}
 }
@@ -448,14 +479,14 @@ func TestUpdateLimitsInvalidValue(t *testing.T) {
 	}
 	_, err := f.client.UpdateOrgLimits(context.Background(), as(t, f, f.platformAdmin, true, &quotav1.UpdateOrgLimitsRequest{OrgId: f.orgA.String(), Limits: &quotav1.Limits{RamMb: i32(-1)}}))
 	wantCode(t, err, connect.CodeInvalidArgument)
-	if code, resp := f.rest(t, http.MethodPut, "/orgs/"+f.orgA.String()+"/limits", f.admin, false, `{"scope":"`+team+`","limits":{"vcpu":-1}}`); code != 400 {
-		t.Fatalf("negative: %d %s", code, resp)
-	}
-	// ponytail: the transcoder answers undecodable bodies with 500 (unknown), for iam too; map them to 400 in internal/platform/rest if clients need it.
-	for _, body := range []string{`{"vcpu":1.5}`, `{"vcpu":99999999999}`, `nope`} {
-		if code, resp := f.rest(t, http.MethodPut, "/orgs/"+f.orgA.String()+"/limits", f.admin, false, `{"scope":"`+team+`","limits":`+body+`}`); code < 400 {
+	for _, body := range []string{`{"scope":"` + team + `","limits":{"vcpu":-1}}`, `{"scope":"` + team + `","limits":{"vcpu":1.5}}`,
+		`{"scope":"` + team + `","limits":{"vcpu":99999999999}}`, `{"scope":"` + team + `","limits":nope}`, `nope`} {
+		if code, resp := f.rest(t, http.MethodPut, "/orgs/"+f.orgA.String()+"/limits", f.admin, false, body); code != 400 {
 			t.Fatalf("%s: %d %s", body, code, resp)
 		}
+	}
+	if code, resp := f.rest(t, http.MethodPut, "/admin/orgs/"+f.orgA.String()+"/limits", f.platformAdmin, true, `{"vcpu":"x"}`); code != 400 {
+		t.Fatalf("admin bad body: %d %s", code, resp)
 	}
 	if ls, err := f.store.limits(context.Background(), f.orgA); err != nil || len(ls) != 0 {
 		t.Fatalf("invalid limits stored: %v %v", ls, err)
@@ -517,23 +548,89 @@ func TestLimitSetAuditDetails(t *testing.T) {
 	}
 	es := f.events(t, "quota.limits.update")
 	if len(es) != 2 {
-		t.Fatalf("recorded %v", es)
+		t.Fatalf("recorded %v, want one event per write", es)
 	}
-	platform, scoped := es[0], es[1]
-	pd := platform.GetDetails().AsMap()
-	if platform.GetResult() != eventsv1.Result_RESULT_ALLOWED || platform.GetActor().GetId() != f.platformAdmin.String() ||
-		pd["org"] != f.orgA.String() || pd["vcpu"] != float64(10) || pd["ramMb"] != nil {
-		t.Fatalf("platform event %v", platform)
-	}
-	sd := scoped.GetDetails().AsMap()
-	if scoped.GetResult() != eventsv1.Result_RESULT_ALLOWED || scoped.GetOrg() != f.orgA.String() || scoped.GetActor().GetId() != f.admin.String() ||
-		sd["scope"] != team || sd["vcpu"] != float64(4) || len(sd) != 7 {
-		t.Fatalf("scoped event %v", scoped)
-	}
-	for _, k := range []string{"ramMb", "diskGb", "vmCount", "snapshotCount", "imageStorageGb"} {
-		if v, ok := sd[k]; !ok || v != nil {
-			t.Fatalf("%s = %v, want explicit null", k, v)
+	for i, want := range []struct {
+		actor    uuid.UUID
+		resource string
+		vcpu     float64
+	}{{f.platformAdmin, "org/limits/org", 10}, {f.admin, "org/limits/" + team, 4}} {
+		e := es[i]
+		d := e.GetDetails().AsMap()
+		if e.GetResult() != eventsv1.Result_RESULT_ALLOWED || e.GetOrg() != f.orgA.String() || e.GetActor().GetId() != want.actor.String() ||
+			e.GetResource() != want.resource || !e.GetAudit() || len(d) != 6 || d["vcpu"] != want.vcpu || e.GetClientIp() != "198.51.100.4" {
+			t.Fatalf("event %d = %v", i, e)
 		}
+		for _, k := range []string{"ramMb", "diskGb", "vmCount", "snapshotCount", "imageStorageGb"} {
+			if v, ok := d[k]; !ok || v != nil {
+				t.Fatalf("%s = %v, want explicit null", k, v)
+			}
+		}
+	}
+}
+
+func TestRejectedWriteRecordsNothing(t *testing.T) {
+	f := newFixture(t)
+	if err := f.setOrg(t, &quotav1.Limits{Vcpu: i32(10)}); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, f.setScope(t, f.admin, "team:"+f.teamA.String(), &quotav1.Limits{Vcpu: i32(11)}), connect.CodeInvalidArgument)
+	if es := f.events(t, "quota.limits.update"); len(es) != 1 {
+		t.Fatalf("recorded %v, want only the platform write", es)
+	}
+}
+
+func TestSetLimitsRollsBackWithItsAuditEvent(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, dbtest.Empty(t))
+	org := uuid.New()
+	if err := s.SetLimits(ctx, org, scopeOrg, Limits{VCPU: i32(1)}, nil, &eventsv1.Event{Type: "not a type"}); err == nil {
+		t.Fatal("unwritable audit event accepted")
+	}
+	if ls, err := s.limits(ctx, org); err != nil || len(ls) != 0 {
+		t.Fatalf("limits stored without their audit event: %v %v", ls, err)
+	}
+}
+
+func TestRESTPathOrgWins(t *testing.T) {
+	f := newFixture(t)
+	body := `{"org":"` + f.orgB.String() + `","scope":"team:` + f.teamB.String() + `","limits":{"vcpu":1}}`
+	// adminB may write orgB but is no member of the path's orgA.
+	if code, resp := f.rest(t, http.MethodPut, "/orgs/"+f.orgA.String()+"/limits", f.adminB, false, body); code != 404 {
+		t.Fatalf("body org: %d %s", code, resp)
+	}
+	if ls, err := f.store.limits(context.Background(), f.orgB); err != nil || len(ls) != 0 {
+		t.Fatalf("orgB written: %v %v", ls, err)
+	}
+}
+
+func TestReadsRecordedWithDataEvents(t *testing.T) {
+	f := newFixture(t)
+	read := func() {
+		t.Helper()
+		if _, err := f.client.GetLimits(context.Background(), as(t, f, f.member, false, &quotav1.GetLimitsRequest{Org: f.orgA.String()})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	if es := f.events(t, "quota.limits.get"); len(es) != 0 {
+		t.Fatalf("read recorded without data events: %v", es)
+	}
+	f.audit.set(&auditv1.DataEvents{Org: f.orgA.String(), Service: "quota"})
+	js, closeConn, err := bus.Connect(context.Background(), f.natsURL, f.natsToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeConn()
+	if err := js.Conn().Publish("events."+f.orgA.String()+".audit.settings.changed", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a recorded read", func() bool {
+		read()
+		return len(f.events(t, "quota.limits.get")) > 0
+	})
+	if e := f.events(t, "quota.limits.get")[0]; e.GetOrg() != f.orgA.String() || e.GetActor().GetId() != f.member.String() || e.GetResult() != eventsv1.Result_RESULT_ALLOWED {
+		t.Fatalf("read event %v", e)
 	}
 }
 

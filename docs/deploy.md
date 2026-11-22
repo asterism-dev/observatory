@@ -101,7 +101,7 @@ itself retries OIDC discovery while the identity provider starts, instead of exi
   | `OBSERVATORY_EDGE_SERVICE_TOKEN` | edge (session to identity token exchange) | iam as `edge=` |
   | `OBSERVATORY_HUB_SERVICE_TOKEN` | hub | iam and quota as `hub=` |
   | `OBSERVATORY_AUDIT_SERVICE_TOKEN` | audit | iam as `audit=` |
-  | `OBSERVATORY_QUOTA_SERVICE_TOKEN` | quota | iam as `quota=` |
+  | `OBSERVATORY_QUOTA_SERVICE_TOKEN` | quota | iam and audit as `quota=` |
   | `OBSERVATORY_IAM_SERVICE_TOKEN` | iam | hub and audit as `iam=` |
 
 - `/internal/iam/*` (token exchange, signing keys, policy stream, internal API) is never public: the edge answers 404,
@@ -148,9 +148,9 @@ It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose ne
 - Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`, which the hub needs too: it writes its audit events to its
   `outbox` table and relays them to the bus, retrying while the bus is down. The durable consumer `audit` acknowledges an event only once
   it is stored; a redelivered event is stored once (by event id).
-- `OBSERVATORY_SERVICE_TOKENS` (`name=token` pairs; compose sets `iam=`) admits other services to `/internal/audit/`,
-  where they load which orgs have data events on; without it every call there is refused, and iam records no data
-  events.
+- `OBSERVATORY_SERVICE_TOKENS` (`name=token` pairs; compose sets `iam=` and `quota=`) admits other services to
+  `/internal/audit/`, where they load which orgs have data events on; without it every call there is refused, and iam
+  and quota record no data events.
 - `audit.events` is append-only: a trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Only the daily retention job
   deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than the platform
   setting "Audit retention" (30–3650 days, default 365) are removed. The setting guards against mistakes in application code, not against a database user who sets it too.
@@ -168,7 +168,9 @@ inside the compose network only; do not publish it.
 - Database: `OBSERVATORY_QUOTA_DATABASE_URL`, default `OBSERVATORY_DATABASE_URL`; the service owns schema `quota`.
 - iam and bus: `OBSERVATORY_IAM_URL`, `OBSERVATORY_PUBLIC_URL`, `OBSERVATORY_SERVICE_TOKEN`, `OBSERVATORY_NATS_URL` and
   `OBSERVATORY_NATS_TOKEN`, as for the audit service. In compose the token is `OBSERVATORY_QUOTA_SERVICE_TOKEN`, which iam
-  also gets as `quota=<token>`.
+  and the audit service also get as `quota=<token>`.
+- `OBSERVATORY_AUDIT_URL` (compose: `http://audit:8092`) is where quota loads which orgs record its reads (data events).
+- Limit changes write their audit event in the same transaction as the change.
 - `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`.
 
 ## Serving modes

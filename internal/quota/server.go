@@ -5,17 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/structpb"
 
+	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/quota/v1/quotav1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/platform/auditlog"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
+	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 )
 
@@ -57,12 +60,9 @@ func (s *server) UpdateLimits(ctx context.Context, r *connect.Request[quotav1.Up
 	if err != nil {
 		return nil, err
 	}
-	if err := s.set(ctx, org, scope, l, func(sub string) bool { return e.HasSubject(org, sub) }); err != nil {
+	if err := s.set(ctx, r.Header(), org, scope, l, func(sub string) bool { return e.HasSubject(org, sub) }); err != nil {
 		return nil, err
 	}
-	d := details(l)
-	d["scope"] = scope
-	auditlog.SetDetails(ctx, d)
 	return connect.NewResponse(&quotav1.UpdateLimitsResponse{}), nil
 }
 
@@ -87,12 +87,9 @@ func (s *server) UpdateOrgLimits(ctx context.Context, r *connect.Request[quotav1
 	if err != nil {
 		return nil, err
 	}
-	if err := s.set(ctx, org, scopeOrg, l, nil); err != nil {
+	if err := s.set(ctx, r.Header(), org, scopeOrg, l, nil); err != nil {
 		return nil, err
 	}
-	d := details(l)
-	d["org"] = org.String()
-	auditlog.SetDetails(ctx, d)
 	return connect.NewResponse(&quotav1.UpdateOrgLimitsResponse{}), nil
 }
 
@@ -128,8 +125,19 @@ func parseOrg(field, raw string) (uuid.UUID, error) {
 	return org, nil
 }
 
-func (s *server) set(ctx context.Context, org uuid.UUID, scope string, l Limits, known func(string) bool) error {
-	err := s.store.SetLimits(ctx, org, scope, l, known)
+// set writes the limits and, in the same transaction, their audit event as 0.x did: resource org/limits/<scope>, the values as details.
+func (s *server) set(ctx context.Context, h http.Header, org uuid.UUID, scope string, l Limits, known func(string) bool) error {
+	d, err := structpb.NewStruct(details(l))
+	if err != nil {
+		return internalErr("audit details", err)
+	}
+	p, _ := identity.FromContext(ctx)
+	e := &eventsv1.Event{
+		Type: actionUpdate, Org: org.String(), Resource: "org/limits/" + scope, Result: eventsv1.Result_RESULT_ALLOWED, Audit: true,
+		Actor:    &eventsv1.Actor{Kind: eventsv1.ActorKind_ACTOR_KIND_USER, Id: p.User.String()},
+		ClientIp: identity.ClientIP(ctx), UserAgent: textx.Sanitize(h.Get("User-Agent")), Details: d,
+	}
+	err = s.store.SetLimits(ctx, org, scope, l, known, e)
 	switch {
 	case errors.Is(err, errLimitExceedsOrg):
 		return connect.NewError(connect.CodeInvalidArgument, err)
@@ -174,6 +182,8 @@ func fromProto(p *quotav1.Limits) (Limits, error) {
 func toProto(l Limits) *quotav1.Limits {
 	return &quotav1.Limits{Vcpu: l.VCPU, RamMb: l.RAMMB, DiskGb: l.DiskGB, VmCount: l.VMCount, SnapshotCount: l.SnapshotCount, ImageStorageGb: l.ImageStorageGB}
 }
+
+const actionUpdate = "quota.limits.update"
 
 // details names the limits as 0.x audit entries did, with null for unlimited.
 func details(l Limits) map[string]any {

@@ -288,6 +288,17 @@ func TestRESTPathOrgWinsOverQuery(t *testing.T) {
 	}
 }
 
+func TestRESTUndecodableBodyIsInvalidArgument(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	for _, body := range []string{`nope`, `{"name":5}`, `{"name":"x"`} {
+		if code, msg := e.restSend("PATCH", "/api/iam/v1/orgs/"+org.String(), ownerTok, body); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, code, msg)
+		}
+	}
+}
+
 func TestRESTDeleteMember(t *testing.T) {
 	e := newEnv(t)
 	_, ownerTok := e.user("alice")

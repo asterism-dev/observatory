@@ -39,6 +39,8 @@ type Config struct {
 	// IAMURL is iam's internal address for signing keys and the policy stream; Issuer is the public URL.
 	IAMURL, Issuer, ServiceToken string
 	NATSURL, NATSToken           string
+	// AuditURL is the audit service's internal address for the data events settings; empty records no reads.
+	AuditURL string
 	// ServiceTokens (name → token) authenticate other services' calls to /internal/quota/.
 	ServiceTokens map[string]string
 }
@@ -87,16 +89,25 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		return unlessStopped(ctx, err)
 	}
 
+	var settings *auditlog.Settings
+	if cfg.AuditURL != "" {
+		if settings, err = auditlog.NewSettings(strings.TrimRight(cfg.AuditURL, "/")+"/internal/audit", cfg.ServiceToken); err != nil {
+			return err
+		}
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
 	wg.Go(func() { w.Run(ctx) })
 	wg.Go(func() { outbox.NewRelay(pool, js).Run(ctx) })
+	if settings != nil {
+		wg.Go(func() { settings.Run(ctx, js.Conn()) })
+	}
 
-	// ponytail: no audit settings source yet, so reads are never recorded as data events; give quota an audit token when an org needs them.
 	path, h := quotav1connect.NewQuotaServiceHandler(&server{store: &store{pool: pool}, policy: w},
-		connect.WithInterceptors(auditlog.Interceptors("quota", v, w, nil, pool)...), connect.WithReadMaxBytes(maxBody))
-	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h, vanguard.WithMaxMessageBufferBytes(maxBody))})
+		connect.WithInterceptors(auditlog.Interceptors("quota", v, w, settings, pool, auditlog.HandlerRecordsWrites())...), connect.WithReadMaxBytes(maxBody))
+	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h, vanguard.WithMaxMessageBufferBytes(maxBody))}, vanguard.WithCodec(rest.Codec))
 	if err != nil {
 		return err
 	}
