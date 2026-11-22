@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -486,6 +487,7 @@ func TestServeAllIAMService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stopNATS = sync.OnceFunc(stopNATS)
 	defer stopNATS()
 	env["OBSERVATORY_NATS_URL"], env["OBSERVATORY_NATS_TOKEN"] = natsURL, natsToken
 	env["OBSERVATORY_REGISTRY_URL"] = "http://127.0.0.1:1"
@@ -717,6 +719,14 @@ func TestServeAllIAMService(t *testing.T) {
 		}
 		return n == 0, fmt.Sprintf("%d rows", n)
 	})
+	within(10*time.Second, "allowed and denied removals in the audit trail", func() (bool, string) {
+		var allowed, denied int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE result = 'allowed'), count(*) FILTER (WHERE result = 'denied')
+			FROM audit.events WHERE type = $1 AND org = $2`, iamstore.ActionMemberRemove, orgID).Scan(&allowed, &denied); err != nil {
+			t.Fatal(err)
+		}
+		return allowed == 1 && denied >= 1, fmt.Sprintf("allowed %d, denied %d", allowed, denied)
+	})
 
 	// A registry credential is checked against iam on every use, so revoking its session refuses it at once, with or without the bus.
 	registryToken := func(secret string) int {
@@ -750,6 +760,14 @@ func TestServeAllIAMService(t *testing.T) {
 	}
 	revokeRefuses("bus up")
 	stopNATS()
+	nats, err := url.Parse(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn, err := net.DialTimeout("tcp", nats.Host, time.Second); err == nil {
+		conn.Close()
+		t.Fatal("the bus still accepts connections after stopNATS")
+	}
 	revokeRefuses("bus down")
 }
 
