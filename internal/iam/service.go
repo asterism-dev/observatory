@@ -137,7 +137,9 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	}
 	login := &loginHandler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.OIDCIssuer, CLIClientID: cfg.CLIClientID, EdgeToken: cfg.EdgeToken,
 		Reload: func(ctx context.Context, user, org uuid.UUID) error {
-			if err := z.Reload(ctx); err != nil {
+			rctx, cancel := context.WithTimeout(ctx, reloadWait)
+			defer cancel()
+			if err := z.Reload(rctx); err != nil {
 				return err
 			}
 			// The SPA calls hub routes right after login; CanHold without rules answers once the hub has this revision.

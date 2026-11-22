@@ -87,10 +87,18 @@ func (f *fakeResources) setDiskOwner(subject string, owns bool) {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvOn(t, storetest.NewDB(t), nil)
+}
+
+// newEnvOn is newEnv on pool; load, if set, replaces the policy load.
+func newEnvOn(t *testing.T, pool *pgxpool.Pool, load func(context.Context) (authz.Policy, error)) *env {
+	t.Helper()
 	ctx := context.Background()
-	pool := storetest.NewDB(t)
 	s := store.New(pool)
-	z, err := authz.NewService(ctx, s.PolicySnapshot)
+	if load == nil {
+		load = s.PolicySnapshot
+	}
+	z, err := authz.NewService(ctx, load)
 	if err != nil {
 		t.Fatal(err)
 	}

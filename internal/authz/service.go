@@ -10,11 +10,14 @@ import (
 
 // Service holds the current Enforcer and swaps it atomically on Reload.
 type Service struct {
-	load     func(context.Context) (Policy, error)
-	mu       sync.Mutex
-	cur      atomic.Pointer[Enforcer]
-	onReload func(old, new Policy)
-	fresh    atomic.Pointer[func() bool]
+	load func(context.Context) (Policy, error)
+	// loads numbers loads by start; mu guards swapped (the number of the load behind cur) and heldUntil (the last load started before a hold ended).
+	loads              atomic.Uint64
+	mu                 sync.Mutex
+	swapped, heldUntil uint64
+	cur                atomic.Pointer[Enforcer]
+	onReload           func(old, new Policy)
+	fresh              atomic.Pointer[func() bool]
 	// denyAll stands in for the policy while it is not fresh.
 	denyAll *Enforcer
 }
@@ -33,23 +36,40 @@ func NewService(ctx context.Context, load func(context.Context) (Policy, error))
 
 // Reload rebuilds the enforcer from a fresh load; on any error the old one stays.
 func (s *Service) Reload(ctx context.Context) error {
-	// The lock spans load and swap so swaps happen in load order.
+	for {
+		// The load runs outside mu: holders of mu sit in transactions, and a load waiting for their connections under mu would deadlock the pool.
+		n := s.loads.Add(1)
+		p, err := s.load(ctx)
+		if err != nil {
+			return err
+		}
+		e, err := New(p)
+		if err != nil {
+			return err
+		}
+		if s.swap(n, p, e) {
+			return nil
+		}
+	}
+}
+
+// swap publishes load n unless a later load already did; it reports false when n started before a hold ended and may miss the held write.
+func (s *Service) swap(n uint64, p Policy, e *Enforcer) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, err := s.load(ctx)
-	if err != nil {
-		return err
+	if n <= s.heldUntil {
+		return false
 	}
-	e, err := New(p)
-	if err != nil {
-		return err
+	if n < s.swapped {
+		return true
 	}
+	s.swapped = n
 	old := s.cur.Load()
 	s.cur.Store(e)
 	if s.onReload != nil {
 		s.onReload(old.policy, p)
 	}
-	return nil
+	return true
 }
 
 // OnReload calls fn with the previous and the new policy after every successful Reload, in reload order, and now with the current one as both; fn runs under the reload lock and must not block.
@@ -61,10 +81,13 @@ func (s *Service) OnReload(fn func(old, new Policy)) {
 	fn(cur, cur)
 }
 
-// HoldReloads blocks reloads, and so publishing, until release is called; a reload in flight finishes first.
+// HoldReloads blocks publishing until release is called; a load started before release loads again, so every later publish includes writes committed under the hold.
 func (s *Service) HoldReloads() (release func()) {
 	s.mu.Lock()
-	return s.mu.Unlock
+	return func() {
+		s.heldUntil = s.loads.Load()
+		s.mu.Unlock()
+	}
 }
 
 // WithFreshness makes Current report false while fresh does.

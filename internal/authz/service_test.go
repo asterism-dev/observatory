@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -173,5 +174,114 @@ func TestServiceOnReloadPassesOldAndNew(t *testing.T) {
 	}
 	if want := [][2]string{{"member", "member"}, {"member", "owner"}}; !slices.Equal(got, want) {
 		t.Fatalf("OnReload calls %v, want %v", got, want)
+	}
+}
+
+// roleLoad loads memberPolicy with the current role; while gate is set, each load captures the role, then waits for gate.
+type roleLoad struct {
+	org, user uuid.UUID
+	role      atomic.Value
+	gate      atomic.Pointer[chan struct{}]
+	started   chan string
+}
+
+func newRoleLoad(role string) *roleLoad {
+	l := &roleLoad{org: uuid.New(), user: uuid.New(), started: make(chan string, 16)}
+	l.role.Store(role)
+	return l
+}
+
+func (l *roleLoad) load(ctx context.Context) (Policy, error) {
+	role := l.role.Load().(string)
+	if g := l.gate.Load(); g != nil {
+		l.started <- role
+		select {
+		case <-*g:
+		case <-ctx.Done():
+			return Policy{}, ctx.Err()
+		}
+	}
+	return memberPolicy(l.org, l.user, role), nil
+}
+
+func (l *roleLoad) roleIn(s *Service) string {
+	r, _ := s.LastKnown().Role(l.org, l.user)
+	return r
+}
+
+func TestReloadLoadsOutsideTheHold(t *testing.T) {
+	l := newRoleLoad("member")
+	svc, err := NewService(context.Background(), l.load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	l.gate.Store(&gate)
+	release := svc.HoldReloads()
+	done := make(chan error, 1)
+	go func() { done <- svc.Reload(context.Background()) }()
+	// A load waits for a database connection; under the hold that wait can starve the holders' transactions.
+	select {
+	case <-l.started:
+	case <-time.After(2 * time.Second):
+		release()
+		t.Fatal("reload waited for the hold before loading")
+	}
+	l.gate.Store(nil)
+	close(gate)
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReloadAcrossAHoldSeesTheHeldWrite(t *testing.T) {
+	l := newRoleLoad("member")
+	svc, err := NewService(context.Background(), l.load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	l.gate.Store(&gate)
+	done := make(chan error, 1)
+	go func() { done <- svc.Reload(context.Background()) }()
+	if role := <-l.started; role != "member" {
+		t.Fatalf("first load saw %q", role)
+	}
+	release := svc.HoldReloads()
+	l.role.Store("owner")
+	release()
+	l.gate.Store(nil)
+	close(gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if r := l.roleIn(svc); r != "owner" {
+		t.Fatalf("a load started before the hold ended was published: role %q", r)
+	}
+}
+
+func TestReloadKeepsLoadOrder(t *testing.T) {
+	l := newRoleLoad("member")
+	svc, err := NewService(context.Background(), l.load)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	l.gate.Store(&gate)
+	done := make(chan error, 1)
+	go func() { done <- svc.Reload(context.Background()) }()
+	<-l.started
+	l.gate.Store(nil)
+	l.role.Store("owner")
+	if err := svc.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if r := l.roleIn(svc); r != "owner" {
+		t.Fatalf("an older load replaced a newer one: role %q", r)
 	}
 }

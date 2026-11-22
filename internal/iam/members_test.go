@@ -3,15 +3,19 @@ package iam
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
@@ -370,5 +374,89 @@ func TestCommitHeldReleasesHoldOnPanic(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("reload blocked: the publish hold leaked past a panic")
+	}
+}
+
+// smallPool opens a fresh database with at most conns connections.
+func smallPool(t *testing.T, conns int) *pgxpool.Pool {
+	t.Helper()
+	u, err := url.Parse(dbtest.Empty(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("pool_max_conns", strconv.Itoa(conns))
+	u.RawQuery = q.Encode()
+	pool, err := store.Open(context.Background(), u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+// Removals hold publishing inside their transactions while escalation checks and post-commit reloads need a connection of their own; on two connections none may wait forever.
+func TestReloadsDoNotDeadlockASmallPool(t *testing.T) {
+	old := reloadWait
+	reloadWait = time.Second
+	t.Cleanup(func() { reloadWait = old })
+	e := newEnvOn(t, smallPool(t, 2), nil)
+	_, ownerTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	type removal struct {
+		org uuid.UUID
+		u   store.User
+	}
+	var orgs []uuid.UUID
+	var removals []removal
+	for i := range 3 {
+		org := e.createOrg(ownerTok, fmt.Sprintf("org%d", i))
+		e.addMember(org, bob, store.RoleMember)
+		e.bindRole(org, authz.UserSubject(bob.ID), "allow", "org/roles", "iam.roles.manage")
+		for j := range 4 {
+			u, _ := e.user(fmt.Sprintf("m%d-%d", i, j))
+			e.addMember(org, u, store.RoleMember)
+			removals = append(removals, removal{org, u})
+		}
+		orgs = append(orgs, org)
+	}
+	errs := make(chan error, 64)
+	var wg sync.WaitGroup
+	for _, r := range removals {
+		wg.Go(func() { errs <- e.deleteMember(ownerTok, r.org, r.u) })
+	}
+	for i, org := range orgs {
+		for j := range 3 {
+			wg.Go(func() {
+				// Escalation: bob lacks the VM rule, so iam reloads inside the transaction and asks the hub, which denies.
+				_, err := e.tryCreateRole(bobTok, org, &iamv1.CreateRoleRequest{Name: fmt.Sprintf("v%d", j), Rules: []*iamv1.RoleRule{rule("allow", authz.VMObject(uuid.New()), "compute.instances.get")}})
+				if c := connect.CodeOf(err); c != connect.CodePermissionDenied && c != connect.CodeUnavailable {
+					errs <- fmt.Errorf("escalation: %w", err)
+				}
+			})
+			wg.Go(func() {
+				_, err := e.client.CreateTeam(context.Background(), req(ownerTok, &iamv1.CreateTeamRequest{Org: org.String(), Name: fmt.Sprintf("t%d-%d", i, j)}))
+				errs <- err
+			})
+		}
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("iam writes hung on a two-connection pool")
+	}
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	e.reload()
+	for _, r := range removals {
+		if _, member := e.z.Enforcer().Role(r.org, r.u.ID); member {
+			t.Errorf("%s still a member of %s", r.u.Name, r.org)
+		}
 	}
 }
