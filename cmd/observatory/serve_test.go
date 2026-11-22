@@ -1222,6 +1222,7 @@ func TestServeAllQuotaLimits(t *testing.T) {
 
 // quotaGate runs quota on the listener serve all gives it and can stop and restart it there; while stopped, connections are refused at once.
 type quotaGate struct {
+	t       *testing.T
 	mu      sync.Mutex
 	cur     *chanListener
 	stop    context.CancelFunc
@@ -1230,7 +1231,7 @@ type quotaGate struct {
 }
 
 func newQuotaGate(t *testing.T) *quotaGate {
-	g := &quotaGate{start: make(chan struct{})}
+	g := &quotaGate{t: t, start: make(chan struct{})}
 	prev := runQuota
 	t.Cleanup(func() { runQuota = prev })
 	runQuota = g.run
@@ -1292,7 +1293,14 @@ func (g *quotaGate) Stop() {
 	<-stopped
 }
 
-func (g *quotaGate) Start() { g.start <- struct{}{} }
+func (g *quotaGate) Start() {
+	g.t.Helper()
+	select {
+	case g.start <- struct{}{}:
+	case <-time.After(10 * time.Second):
+		g.t.Fatal("quota did not restart: it returned an error when stopped")
+	}
+}
 
 type chanListener struct {
 	addr  net.Addr
