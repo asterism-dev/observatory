@@ -29,7 +29,9 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 
 **Evaluation:** deny wins; no matching allow means denied. Changes reach every service with the policy stream's latency.
 
-## Catalog
+## Action catalog
+
+The actions a rule can name, as registered today:
 
 | Action | Object |
 |---|---|
@@ -55,11 +57,33 @@ Org-scoped objects are `org/...`; objects owned by a user are `user:<id>/...`. I
 | `compute.disks.get`, `compute.disks.update`, `compute.disks.delete`, `compute.disks.use` | `org/disks/*` |
 | `artifacts.images.list`, `artifacts.images.use`, `artifacts.images.update`, `artifacts.images.setDefault`, `build.builds.create` | `org/images`, `org/team-images/*`, `org/user-images/*` |
 
-Each service registers its action catalog with iam at start and answers 503 (or holds requests) until iam's policy stream carries it. All instances of a service must run the same release: an instance whose catalog differs from the last one registered stays unavailable.
+Permissions are data. Each service sends iam its catalog at start: its actions (name, object, optional description),
+built-in role defaults and owner templates. iam stores one catalog per service, streams them with the policy, checks
+custom rules against them and serves them to the role editor (`ListCatalog`, CLI `role catalog`).
+
+- **Registration:** `CatalogInternalService/RegisterCatalog` with the service's token. The allowed action prefixes come
+  from the token's caller, never from the catalog: a service names only its own actions (`audit.*` for audit). The hub
+  also registers the actions of services not yet extracted (`compute`, `network`, `secrets`, `artifacts`, `build`,
+  `telemetry`, `quota`). Role defaults and templates use a concrete action, `<service>.<resource>.*` or `<service>.*`,
+  never `*`. Limits: 500 actions, 500 role defaults, 200 templates, 1 MiB per request. A violation is refused
+  (invalid argument, naming the first bad entry) and the stored catalog stays as it was. A registration that changes
+  the catalog writes the audit event `iam.catalogs.update` with the added and removed actions.
+- **Built-in roles:** a role default names the lowest role that gets it. Admin also gets member's defaults and owner
+  gets admin's, so owner ⊇ admin ⊇ member whatever the data says.
+- **Owner templates:** rules filled in per member (`{user}`), per team or team admin (`{team}`) and per owned
+  resource (`org/<kind>/{id}` for its user, team or team admins). They give owners the rights listed under
+  Nodes and VMs, Disks and Devices.
+- **Unknown actions:** an action a custom rule names that no registered catalog has, for example after a service
+  dropped it. The rule is kept and marked unknown in the role editor and `role catalog`, and an allow for it grants
+  nothing. If a service registers that action again, the allow grants again. A deny for it is kept as written and
+  still wins. New rules must name a registered action.
+- **Readiness:** a service holds requests or answers 503 until iam's policy stream carries its own catalog digest, so
+  it never answers 403 for actions its defaults grant. All instances of a service must run the same release: an
+  instance whose catalog differs from the last one registered stays unavailable.
 
 ## Built-in roles
 
-Defined in code, identical in every org, immutable. Each role includes the one to its left.
+Built from the role defaults of the registered catalogs, identical in every org, immutable. Each role includes the one to its left.
 
 | Permission | member | admin | owner |
 |---|---|---|---|
@@ -90,7 +114,7 @@ Defined in code, identical in every org, immutable. Each role includes the one t
 | `compute.disks.create` on `org/team-disks/*`; `compute.disks.get`, `compute.disks.update`, `compute.disks.delete` on `org/disks/*` | | yes | yes |
 
 No built-in role holds `compute.instances.connect`, `compute.instances.fork`, `compute.disks.use` or `network.devices.create` on others' objects; those come only from the
-generated rules below. VM actions are always granted as explicit lists, never `compute.instances.*`, so a new VM action
+owner templates below. VM actions are always granted as explicit lists, never `compute.instances.*`, so a new VM action
 is never granted by accident. Disk actions are explicit too, never `compute.disks.*`.
 
 ## Custom roles and bindings
@@ -190,7 +214,7 @@ each member's private scope (`org/user-dashboards/<user>`).
 ## Nodes and VMs
 
 Every VM object is org-scoped (`org/vms/<id>`), whether a user or a team owns it, so org-wide rules such
-as `deny compute.instances.delete@org/vms/*` also cover a member's own VMs. Owner rights come from generated rules:
+as `deny compute.instances.delete@org/vms/*` also cover a member's own VMs. Owner rights come from owner templates:
 
 - A user VM gives its user `compute.instances.get`, `compute.instances.setPower`, `compute.instances.delete`, `compute.instances.setNetworks` and `compute.instances.connect` on that VM.
 - A team VM gives the team subject `compute.instances.get`, `compute.instances.setPower` and `compute.instances.connect` on it, and each admin of that
@@ -250,7 +274,7 @@ Audit rows: `compute.instances.setPower` (details `action`, or `autoSuspendMinut
 ## Disks
 
 Every disk object is org-scoped (`org/disks/<id>`), whether a user or a team owns it, so org-wide rules such
-as `deny compute.disks.delete@org/disks/*` also cover a member's own disks. Owner rights come from generated rules:
+as `deny compute.disks.delete@org/disks/*` also cover a member's own disks. Owner rights come from owner templates:
 
 - A user disk gives its user `compute.disks.get`, `compute.disks.update`, `compute.disks.delete` and `compute.disks.use` on that disk.
 - A team disk gives the team subject `compute.disks.get` and `compute.disks.use`, and each admin of that team `compute.disks.get`,
@@ -266,7 +290,7 @@ user disks stay out of reach.
 ## Devices and networks
 
 A device is a person's WireGuard peer in one org, kept under `org/user-devices/<user>`. Every member gets
-`network.devices.create`, `network.devices.list` and `network.devices.delete` on their own object (a generated rule); admins and
+`network.devices.create`, `network.devices.list` and `network.devices.delete` on their own object (an owner template); admins and
 owners list and delete everyone's devices but never create devices for others.
 
 Networks (`org/networks/<id>`) connect VMs of one org to each other. Members read, create and use

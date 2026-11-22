@@ -167,7 +167,7 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `member list` / `member role <member> owner\|admin\|member` / `member remove <member>` | remove confirms; removing yourself leaves the org |
 | `invite list` / `invite create [--role member]` / `invite revoke <id>` | create prints the link once; revoke confirms |
 | `invite accept [--from-file F\|-]` | join an org; the token or link comes from stdin or the file |
-| `role list` / `role show <role>` / `role catalog` | roles, their rules, and the permissions a rule can name |
+| `role list` / `role show <role>` / `role catalog` | roles, their rules, and the permissions a rule can name; `role catalog` lists actions custom rules still name but no service offers as `<action>  (unknown)` |
 | `role create --file F` / `role update <role> --file F` / `role delete <role>` | rules as JSON, same shape as the API |
 | `binding list` / `binding add <subject> <role>` / `binding delete <id>` | subject `user:<member>` or `team:<team>` (name, email or ID) |
 | `limit show` | resource limits of the org, teams and members (`images` is the image storage) |
