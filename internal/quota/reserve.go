@@ -155,17 +155,18 @@ func (s *store) Release(ctx context.Context, org uuid.UUID, resources []string) 
 }
 
 // setAllocation sets a resource's absolute usage from a lifecycle event: a tombstone is final, otherwise only a newer event id applies.
+// A child of a tombstoned parent is stored as a tombstone, so a late child event can't count for a deleted vm.
 func (s *store) setAllocation(ctx context.Context, org uuid.UUID, resource, owner, parent string, a Amounts, eventID uuid.UUID) error {
 	var p *string
 	if parent != "" {
 		p = &parent
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO allocations (org, resource, owner, parent, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, last_event_id, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO allocations (org, resource, owner, parent, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, last_event_id, updated_at, deleted)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXISTS (SELECT 1 FROM allocations WHERE org = $1 AND resource = $4 AND deleted))
 		ON CONFLICT (org, resource) DO UPDATE SET owner = EXCLUDED.owner, parent = EXCLUDED.parent, vcpu = EXCLUDED.vcpu, ram_mb = EXCLUDED.ram_mb,
 			disk_gb = EXCLUDED.disk_gb, vm_count = EXCLUDED.vm_count, snapshot_count = EXCLUDED.snapshot_count,
-			last_event_id = EXCLUDED.last_event_id, updated_at = EXCLUDED.updated_at
+			last_event_id = EXCLUDED.last_event_id, updated_at = EXCLUDED.updated_at, deleted = EXCLUDED.deleted
 			WHERE NOT allocations.deleted AND allocations.last_event_id < EXCLUDED.last_event_id`,
 		org, resource, owner, p, val(a.VCPU), val(a.RAMMB), val(a.DiskGB), val(a.VMCount), val(a.SnapshotCount), eventID, s.now())
 	if err != nil {

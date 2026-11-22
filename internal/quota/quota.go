@@ -3,6 +3,7 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -45,7 +46,7 @@ type Config struct {
 	ServiceTokens map[string]string
 }
 
-// Run serves the limits API on ln and relays quota's audit events until ctx ends.
+// Run serves the limits API on ln, relays quota's audit events and applies lifecycle events until ctx ends.
 func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	defer ln.Close()
 	if len(cfg.ServiceToken) < minTokenLen {
@@ -63,8 +64,8 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	if err != nil {
 		return fmt.Errorf("quota catalog: %w", err)
 	}
-	catalogs := iamv1connect.NewCatalogInternalServiceClient(&http.Client{Timeout: 30 * time.Second}, strings.TrimRight(cfg.IAMURL, "/")+"/internal/iam",
-		connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
+	iamHTTP, iamBase, bearer := &http.Client{Timeout: 30 * time.Second}, strings.TrimRight(cfg.IAMURL, "/")+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken))
+	catalogs := iamv1connect.NewCatalogInternalServiceClient(iamHTTP, iamBase, bearer)
 	digest, err := catalog.Register(ctx, catalogs, cat)
 	if err != nil {
 		return unlessStopped(ctx, err)
@@ -106,6 +107,12 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	}
 
 	st := &store{pool: pool, now: time.Now}
+	wg.Go(func() { runSweep(ctx, st) })
+	consumeErr := make(chan error, 1)
+	wg.Go(func() {
+		consumeErr <- consume(ctx, js, st, iamv1connect.NewIAMInternalServiceClient(iamHTTP, iamBase, bearer))
+		cancel()
+	})
 	path, h := quotav1connect.NewQuotaServiceHandler(&server{store: st, policy: w},
 		connect.WithInterceptors(auditlog.Interceptors("quota", v, w, settings, pool, auditlog.HandlerRecordsWrites())...), connect.WithReadMaxBytes(maxBody))
 	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h, vanguard.WithMaxMessageBufferBytes(maxBody))}, vanguard.WithCodec(rest.Codec))
@@ -120,7 +127,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	err = run.Serve(ctx, srv, ln)
 	cancel()
 	wg.Wait()
-	return err
+	return errors.Join(err, <-consumeErr)
 }
 
 // unlessStopped drops a start-up error caused by ctx ending, so a shutdown during start is no failure.
