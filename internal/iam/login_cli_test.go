@@ -9,8 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 )
@@ -123,5 +127,46 @@ func TestLoginReloadIgnoresRequestCancel(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("reload not called")
+	}
+}
+
+// slowHub answers CanHold only after delay, like a hub still behind the login's revision.
+type slowHub struct {
+	hubv1connect.ResourceServiceClient
+	delay time.Duration
+	got   chan *hubv1.CanHoldRequest
+}
+
+func (h slowHub) CanHold(ctx context.Context, req *connect.Request[hubv1.CanHoldRequest]) (*connect.Response[hubv1.CanHoldResponse], error) {
+	h.got <- req.Msg
+	select {
+	case <-time.After(h.delay):
+		return connect.NewResponse(&hubv1.CanHoldResponse{}), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestLoginWaitsForTheHub(t *testing.T) {
+	z, err := authz.NewService(t.Context(), func(context.Context) (authz.Policy, error) { return authz.Policy{}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := slowHub{delay: 300 * time.Millisecond, got: make(chan *hubv1.CanHoldRequest, 1)}
+	user, org := uuid.New(), uuid.New()
+	start := time.Now()
+	if err := reloadAfterLogin(z, hub, func() uint64 { return 42 })(t.Context(), user, org); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < hub.delay {
+		t.Fatalf("login returned after %v, before the hub had the new org", d)
+	}
+	select {
+	case req := <-hub.got:
+		if req.MinRevision != 42 || req.OrgId != org.String() || req.Actor != authz.UserSubject(user) || len(req.Rules) != 0 {
+			t.Fatalf("CanHold %+v", req)
+		}
+	default:
+		t.Fatal("login never asked the hub")
 	}
 }

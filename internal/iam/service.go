@@ -137,16 +137,7 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 		return nil, err
 	}
 	login := &loginHandler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.OIDCIssuer, CLIClientID: cfg.CLIClientID, EdgeToken: cfg.EdgeToken,
-		Reload: func(ctx context.Context, user, org uuid.UUID) error {
-			if err := z.ReloadCommitted(ctx); err != nil {
-				return err
-			}
-			// The SPA calls hub routes right after login; CanHold without rules answers once the hub has this revision.
-			wctx, cancel := context.WithTimeout(ctx, loginPolicyWait)
-			defer cancel()
-			_, err := resources.CanHold(wctx, connect.NewRequest(&hubv1.CanHoldRequest{OrgId: org.String(), Actor: authz.UserSubject(user), MinRevision: policies.Revision()}))
-			return err
-		}}
+		Reload: reloadAfterLogin(z, resources, policies.Revision)}
 	if len(cfg.ServiceTokens) == 0 {
 		slog.Warn("iam: no service tokens configured; every /internal/iam/ call is refused")
 	}
@@ -160,6 +151,20 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	login.Routes(mux)
 	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalHandler(iss, policies, internalServer{Store: s})))
 	return &Service{cfg: cfg, pool: pool, settings: settings, handler: mux}, nil
+}
+
+// reloadAfterLogin publishes a login's new personal org and waits until the hub has it: the SPA calls hub routes right after login.
+func reloadAfterLogin(z *authz.Service, resources hubv1connect.ResourceServiceClient, revision func() uint64) func(context.Context, uuid.UUID, uuid.UUID) error {
+	return func(ctx context.Context, user, org uuid.UUID) error {
+		if err := z.ReloadCommitted(ctx); err != nil {
+			return err
+		}
+		// CanHold without rules answers once the hub has this revision.
+		wctx, cancel := context.WithTimeout(ctx, loginPolicyWait)
+		defer cancel()
+		_, err := resources.CanHold(wctx, connect.NewRequest(&hubv1.CanHoldRequest{OrgId: org.String(), Actor: authz.UserSubject(user), MinRevision: revision()}))
+		return err
+	}
 }
 
 // internalCalls lists the /internal/iam/ paths each calling service may use (docs/deploy.md has the table); any other caller is refused everything.

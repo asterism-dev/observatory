@@ -29,7 +29,7 @@ const (
 	otherTok   = "fedcba9876543210fedcba9876543210"
 	hubTok     = "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
 	computeTok = "cccccccccccccccccccccccccccccccc"
-	issuerURL = "https://hub.test"
+	issuerURL  = "https://hub.test"
 )
 
 // iamEnv serves internalHandler over a policy the test sets, published on every reload of z.
