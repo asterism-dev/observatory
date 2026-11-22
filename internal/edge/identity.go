@@ -33,10 +33,11 @@ type jwtKey struct{}
 type hubIdentity struct {
 	jwt     string
 	swapped bool
-	key     [32]byte
 }
 
 type hubIdentityKey struct{}
+
+type sessionKey struct{}
 
 // identity swaps the client's session token for a short-lived JWT from the hub's issuer.
 type identity struct {
@@ -67,7 +68,8 @@ func (id *identity) middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusBadGateway, "identity unavailable")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), jwtKey{}, jwt)))
+		ctx := context.WithValue(r.Context(), jwtKey{}, jwt)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, sessionKey{}, sha256.Sum256([]byte(session)))))
 	})
 }
 
@@ -90,15 +92,16 @@ func (id *identity) hubMiddleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusBadGateway, "identity unavailable")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{jwt: jwt, swapped: true, key: sha256.Sum256([]byte(session))})))
+		ctx := context.WithValue(r.Context(), hubIdentityKey{}, hubIdentity{jwt: jwt, swapped: true})
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, sessionKey{}, sha256.Sum256([]byte(session)))))
 	})
 }
 
-// forget drops a session's cached JWT once the hub logged it out or refused it, so the next request asks the issuer again.
+// forget drops a session's cached JWT once iam logged it out or any upstream refused it, so the next request asks the issuer again.
 func (id *identity) forget(resp *http.Response) error {
 	r := resp.Request
-	if hid, ok := r.Context().Value(hubIdentityKey{}).(hubIdentity); ok && hid.swapped && resp.StatusCode == http.StatusUnauthorized {
-		id.cache.remove(hid.key)
+	if key, ok := r.Context().Value(sessionKey{}).([32]byte); ok && resp.StatusCode == http.StatusUnauthorized {
+		id.cache.remove(key)
 	}
 	// Suffix: the hub URL may carry a base path; dropping an entry too many only costs a token exchange.
 	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/auth/logout") && resp.StatusCode < 300 {

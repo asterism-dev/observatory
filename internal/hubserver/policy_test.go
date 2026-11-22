@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -25,28 +22,22 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-// testHubEnv is the minimal environment Run starts with; the bus may be unreachable.
-func testHubEnv(t *testing.T, dbURL, natsURL, natsToken string) map[string]string {
+// testHubEnv is the minimal environment Run starts with against iam at iamURL; the bus may be unreachable.
+func testHubEnv(t *testing.T, dbURL, iamURL, serviceToken, natsURL, natsToken string) map[string]string {
 	t.Helper()
-	idp := httptest.NewServer(nil)
-	t.Cleanup(idp.Close)
-	idp.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"issuer":"`+idp.URL+`","authorization_endpoint":"`+idp.URL+`/auth","token_endpoint":"`+idp.URL+`/token","jwks_uri":"`+idp.URL+`/keys"}`)
-	})
 	return map[string]string{
-		"OBSERVATORY_DATABASE_URL":       dbURL,
-		"OBSERVATORY_PUBLIC_URL":         "http://obs.example",
-		"OBSERVATORY_OIDC_ISSUER":        idp.URL,
-		"OBSERVATORY_OIDC_WEB_CLIENT_ID": "web",
-		"OBSERVATORY_OIDC_CLI_CLIENT_ID": "cli",
-		"OBSERVATORY_GATEWAY_TOKEN":      strings.Repeat("g", 32),
-		"OBSERVATORY_STORAGE_TOKEN":      strings.Repeat("s", 32),
-		"OBSERVATORY_EDGE_TOKEN":         strings.Repeat("e", 32),
-		"OBSERVATORY_SECRETS_KEY":        base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
-		"OBSERVATORY_NO_UPDATE_CHECK":    "1",
-		"OBSERVATORY_NODE_BINARY":        t.TempDir() + "/none",
-		"OBSERVATORY_NATS_URL":           natsURL,
-		"OBSERVATORY_NATS_TOKEN":         natsToken,
+		"OBSERVATORY_DATABASE_URL":    dbURL,
+		"OBSERVATORY_PUBLIC_URL":      "http://obs.example",
+		"OBSERVATORY_IAM_URL":         iamURL,
+		"OBSERVATORY_SERVICE_TOKEN":   serviceToken,
+		"OBSERVATORY_GATEWAY_TOKEN":   strings.Repeat("g", 32),
+		"OBSERVATORY_STORAGE_TOKEN":   strings.Repeat("s", 32),
+		"OBSERVATORY_EDGE_TOKEN":      strings.Repeat("e", 32),
+		"OBSERVATORY_SECRETS_KEY":     base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)),
+		"OBSERVATORY_NO_UPDATE_CHECK": "1",
+		"OBSERVATORY_NODE_BINARY":     t.TempDir() + "/none",
+		"OBSERVATORY_NATS_URL":        natsURL,
+		"OBSERVATORY_NATS_TOKEN":      natsToken,
 	}
 }
 
@@ -57,12 +48,12 @@ func TestHubWaitsForFirstSnapshot(t *testing.T) {
 	}
 	deadURL := "http://" + dead.Addr().String()
 	dead.Close()
-	prevURL, prevWait := iamURL, firstPolicyWait
-	iamURL, firstPolicyWait = func(net.Listener) string { return deadURL }, 300*time.Millisecond
-	defer func() { iamURL, firstPolicyWait = prevURL, prevWait }()
+	prevWait := firstPolicyWait
+	firstPolicyWait = 300 * time.Millisecond
+	defer func() { firstPolicyWait = prevWait }()
 
 	pool := dbtest.New(t)
-	env := testHubEnv(t, pool.Config().ConnString(), "nats://"+dead.Addr().String(), strings.Repeat("n", 32))
+	env := testHubEnv(t, pool.Config().ConnString(), deadURL, strings.Repeat("h", 32), "nats://"+dead.Addr().String(), strings.Repeat("n", 32))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

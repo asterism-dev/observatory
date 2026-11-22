@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
+	"github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/seal"
 )
@@ -47,6 +49,30 @@ type Service struct {
 	pool     *pgxpool.Pool
 	settings *auditlog.Settings
 	handler  http.Handler
+}
+
+// Run serves iam on ln and relays its events until ctx ends.
+func Run(ctx context.Context, cfg Config, ln net.Listener) error {
+	defer ln.Close()
+	svc, err := New(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	relayed := make(chan struct{})
+	go func() {
+		if err := svc.Run(ctx); err != nil {
+			slog.Error("iam stopped relaying events, they wait in its outbox", "err", err)
+		}
+		close(relayed)
+	}()
+	srv := &http.Server{Handler: svc.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+	err = run.Serve(ctx, srv, ln)
+	cancel()
+	<-relayed
+	return err
 }
 
 // New migrates schema iam and builds iam's handlers; Run relays its events.

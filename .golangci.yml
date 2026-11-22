@@ -75,7 +75,6 @@ linters:
             - github.com/jackc/pgx/v5
             - golang.org/x/crypto/ssh
         hub-not-iam:
-          # hubserver embeds iam until iam runs as its own process.
           files:
             - "**/internal/api/**"
             - "**/internal/auth/**"
@@ -89,6 +88,11 @@ linters:
             - "**/internal/disks/**"
             - "**/internal/images/**"
             - "**/internal/registry/**"
+          deny:
+            - pkg: github.com/asterism-dev/observatory/internal/iam
+              desc: the hub reaches iam only over its internal API and policy stream
+        hubserver-not-iam:
+          files: ["**/internal/hubserver/**", "!$test"]
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/iam
               desc: the hub reaches iam only over its internal API and policy stream

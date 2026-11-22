@@ -16,11 +16,12 @@ import (
 )
 
 type config struct {
-	DatabaseURL, PublicURL, Issuer, WebClientID, CLIClientID, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken, EdgeToken string
-	SecretsKey                                                                                                                          seal.Key
-	Dev, DevSkipVerify                                                                                                                  bool
-	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                                                       string
-	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                                                  string
+	DatabaseURL, PublicURL, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken, EdgeToken string
+	IAMURL, ServiceToken                                                                              string
+	SecretsKey                                                                                        seal.Key
+	Dev, DevSkipVerify                                                                                bool
+	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                     string
+	RegistryURL, RegistryKeyDir, RegistryCertDir, RegistryEventsSecret                                string
 	// RegistryConfig is the registry's config file the hub runs garbage-collect with; RegistryGCTime is "HH:MM" or empty for manual runs.
 	RegistryConfig, RegistryGCTime string
 	// BuilderImage is the builder image repository; BuilderHubURL is the hub URL builder VMs reach, the public URL by default.
@@ -34,7 +35,7 @@ type config struct {
 	LogsRetention time.Duration
 	// NATSURL and NATSToken reach the event bus the outbox relay publishes the hub's events to.
 	NATSURL, NATSToken string
-	// ServiceTokens maps service names to the tokens they call /internal/iam/ with; empty refuses every internal call.
+	// ServiceTokens maps service names to the tokens they call /internal/hub/ with; empty refuses every internal call.
 	ServiceTokens map[string]string
 }
 
@@ -60,9 +61,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	required(&cfg.DatabaseURL, "OBSERVATORY_DATABASE_URL")
 	required(&cfg.PublicURL, "OBSERVATORY_PUBLIC_URL")
-	required(&cfg.Issuer, "OBSERVATORY_OIDC_ISSUER")
-	required(&cfg.WebClientID, "OBSERVATORY_OIDC_WEB_CLIENT_ID")
-	required(&cfg.CLIClientID, "OBSERVATORY_OIDC_CLI_CLIENT_ID")
+	required(&cfg.IAMURL, "OBSERVATORY_IAM_URL")
+	required(&cfg.ServiceToken, "OBSERVATORY_SERVICE_TOKEN")
 	required(&cfg.GatewayToken, "OBSERVATORY_GATEWAY_TOKEN")
 	required(&cfg.StorageToken, "OBSERVATORY_STORAGE_TOKEN")
 	required(&cfg.EdgeToken, "OBSERVATORY_EDGE_TOKEN")
@@ -90,6 +90,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if len(cfg.EdgeToken) < minTokenLen {
 		return config{}, fmt.Errorf("OBSERVATORY_EDGE_TOKEN must be at least %d characters", minTokenLen)
+	}
+	if len(cfg.ServiceToken) < minTokenLen {
+		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKEN must be at least %d characters", minTokenLen)
+	}
+	if u, err := url.Parse(cfg.IAMURL); err != nil || u.Host == "" || u.Scheme != "http" && u.Scheme != "https" {
+		return config{}, errors.New("OBSERVATORY_IAM_URL must be an absolute http(s) URL")
 	}
 	if cfg.GatewayHost = getenv("OBSERVATORY_GATEWAY_HOST"); cfg.GatewayHost == "" {
 		u, err := url.Parse(cfg.PublicURL)
@@ -164,9 +170,6 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if cfg.ServiceTokens, err = servicetoken.Parse(getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
 		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
-	}
-	if _, ok := cfg.ServiceTokens[selfService]; ok {
-		return config{}, fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: the name %q is reserved for the hub itself", selfService)
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")

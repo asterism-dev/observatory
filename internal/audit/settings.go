@@ -17,7 +17,7 @@ import (
 )
 
 // services record through auditlog.Interceptors and so honour data events; add a service here once it is extracted.
-var services = []string{"audit"}
+var services = []string{"audit", "iam"}
 
 const (
 	minRetentionDays = 30

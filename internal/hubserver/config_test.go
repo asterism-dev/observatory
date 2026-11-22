@@ -2,7 +2,6 @@ package hubserver
 
 import (
 	"encoding/base64"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -15,18 +14,18 @@ func TestLoadConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty env accepted")
 	}
-	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_OIDC_ISSUER", "OBSERVATORY_OIDC_WEB_CLIENT_ID", "OBSERVATORY_OIDC_CLI_CLIENT_ID", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN", "OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_IAM_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN", "OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
 		if !strings.Contains(err.Error(), k) {
 			t.Errorf("error does not name %s: %v", k, err)
 		}
 	}
-	if strings.Contains(err.Error(), "LISTEN") {
-		t.Errorf("listen reported as required: %v", err)
+	if strings.Contains(err.Error(), "LISTEN") || strings.Contains(err.Error(), "OIDC") {
+		t.Errorf("listen or OIDC reported as required: %v", err)
 	}
 
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -34,7 +33,7 @@ func TestLoadConfig(t *testing.T) {
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
 	}
 	cfg, err := loadConfig(func(k string) string { return env[k] })
-	if err != nil || cfg.WebClientID != "w" || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
+	if err != nil || cfg.IAMURL != "http://iam:8093" || cfg.ServiceToken != strings.Repeat("h", 32) || cfg.NodeBinary != "bin/observatory-node-linux-amd64" {
 		t.Fatalf("%+v, %v", cfg, err)
 	}
 	if cfg.NodeURL.String() != "http://h" {
@@ -80,19 +79,25 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("bad gc time: %v", err)
 	}
 	delete(env, "OBSERVATORY_REGISTRY_GC_TIME")
-	env["OBSERVATORY_SERVICE_TOKENS"] = "edge=short"
+	env["OBSERVATORY_SERVICE_TOKENS"] = "iam=short"
 	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_SERVICE_TOKENS") {
 		t.Fatalf("bad service tokens: %v", err)
 	}
-	env["OBSERVATORY_SERVICE_TOKENS"] = "edge=" + strings.Repeat("e", 32)
-	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.ServiceTokens["edge"] != strings.Repeat("e", 32) {
+	env["OBSERVATORY_SERVICE_TOKENS"] = "iam=" + strings.Repeat("i", 32)
+	if cfg, err = loadConfig(func(k string) string { return env[k] }); err != nil || cfg.ServiceTokens["iam"] != strings.Repeat("i", 32) {
 		t.Fatalf("service tokens: %v, %v", cfg.ServiceTokens, err)
 	}
-	env["OBSERVATORY_SERVICE_TOKENS"] = "hub=" + strings.Repeat("h", 32)
-	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "reserved") {
-		t.Fatalf("configured hub token: %v", err)
-	}
 	delete(env, "OBSERVATORY_SERVICE_TOKENS")
+	env["OBSERVATORY_SERVICE_TOKEN"] = "short"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_SERVICE_TOKEN ") {
+		t.Fatalf("short service token: %v", err)
+	}
+	env["OBSERVATORY_SERVICE_TOKEN"] = strings.Repeat("h", 32)
+	env["OBSERVATORY_IAM_URL"] = "iam:8093"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_IAM_URL") {
+		t.Fatalf("relative iam url: %v", err)
+	}
+	env["OBSERVATORY_IAM_URL"] = "http://iam:8093"
 	delete(env, "OBSERVATORY_BUILDER_CPUS")
 	delete(env, "OBSERVATORY_BUILDER_MEMORY_MB")
 	delete(env, "OBSERVATORY_BUILDER_DISK_GB")
@@ -136,7 +141,7 @@ func TestLoadConfig(t *testing.T) {
 func TestConfigGatewayToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "https://hub.example:8443",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -163,7 +168,7 @@ func TestConfigGatewayToken(t *testing.T) {
 func TestConfigStorageToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -186,7 +191,7 @@ func TestConfigStorageToken(t *testing.T) {
 func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -216,7 +221,7 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 func TestConfigTelemetryBothOrNeither(t *testing.T) {
 	base := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -257,7 +262,7 @@ func TestConfigTelemetryBothOrNeither(t *testing.T) {
 func TestConfigLogsRetention(t *testing.T) {
 	base := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -283,7 +288,7 @@ func TestConfigLogsRetention(t *testing.T) {
 func TestHubConfigRequiresEdgeToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
@@ -300,17 +305,5 @@ func TestHubConfigRequiresEdgeToken(t *testing.T) {
 	env["OBSERVATORY_EDGE_TOKEN"] = strings.Repeat("e", 32)
 	if cfg, err := load(); err != nil || cfg.EdgeToken != env["OBSERVATORY_EDGE_TOKEN"] {
 		t.Fatalf("valid token: %v", err)
-	}
-}
-
-func TestDialAddr(t *testing.T) {
-	for in, want := range map[string]string{"0.0.0.0:8080": "127.0.0.1:8080", "[::]:8080": "127.0.0.1:8080", ":8080": "127.0.0.1:8080", "10.0.0.5:8080": "10.0.0.5:8080"} {
-		addr, err := net.ResolveTCPAddr("tcp", in)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := dialAddr(addr); got != want {
-			t.Errorf("%s: %s, want %s", in, got, want)
-		}
 	}
 }

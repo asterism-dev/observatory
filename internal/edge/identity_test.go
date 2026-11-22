@@ -213,7 +213,7 @@ func TestEdgeKeepsForeignBearerOnHubRoutes(t *testing.T) {
 func TestEdgeStaleCookieOnPublicHubRoute(t *testing.T) {
 	hub, ch, _ := issuingHub(t, http.StatusOK)
 	edge := newEdge(t, hub.URL, nil)
-	req, _ := http.NewRequest("GET", edge.URL+"/api/auth/config", nil)
+	req, _ := http.NewRequest("GET", edge.URL+"/api/version", nil)
 	req.AddCookie(&http.Cookie{Name: "obs_session", Value: "obs_stale"})
 	if code, body := get(t, req); code != 200 || body != "hub" {
 		t.Fatalf("cookie: %d %q", code, body)
@@ -221,7 +221,7 @@ func TestEdgeStaleCookieOnPublicHubRoute(t *testing.T) {
 	if s := <-ch; len(s.header.Values("Authorization")) != 0 || len(s.header.Values("Cookie")) != 0 {
 		t.Fatalf("cookie: hub saw Authorization %q, Cookie %q", s.header.Values("Authorization"), s.header.Values("Cookie"))
 	}
-	req, _ = http.NewRequest("POST", edge.URL+"/api/auth/cli-token", nil)
+	req, _ = http.NewRequest("POST", edge.URL+"/api/nodes/register", nil)
 	req.Header.Set("Authorization", "Bearer obs_stale")
 	if code, _ := get(t, req); code != 200 {
 		t.Fatalf("bearer: status %d", code)
@@ -292,7 +292,7 @@ func TestEdgeIssuerFailure(t *testing.T) {
 func TestEdgeMisconfiguredServiceToken(t *testing.T) {
 	hub, _, _ := issuingHub(t, http.StatusOK)
 	svc, ch := recorder(t, "iam")
-	h, err := New(Config{HubURL: hub.URL, Token: testToken, ServiceToken: "wrong-wrong-wrong-wrong-wrong-wrong", Services: map[string]string{"iam": svc.URL}}, assets)
+	h, err := New(Config{HubURL: hub.URL, IAMURL: hub.URL, Token: testToken, ServiceToken: "wrong-wrong-wrong-wrong-wrong-wrong", Services: map[string]string{"iam": svc.URL}}, assets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,6 +352,28 @@ func TestEdgeKeepsTrustedHeadersFromServices(t *testing.T) {
 	}
 }
 
+func TestEdgeTokenFromIAM(t *testing.T) {
+	hub, hubCh := recorder(t, "hub")
+	iam, _, calls := issuingHub(t, http.StatusOK)
+	h, err := New(Config{HubURL: hub.URL, IAMURL: iam.URL, Token: testToken, ServiceToken: testServiceToken}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(h)
+	t.Cleanup(edge.Close)
+	req, _ := http.NewRequest("GET", edge.URL+"/api/me", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
+	if code, body := get(t, req); code != 200 || body != "hub" {
+		t.Fatalf("%d %q", code, body)
+	}
+	if s := <-hubCh; s.header.Get("Authorization") != "Bearer jwt-"+validSession {
+		t.Fatalf("hub saw Authorization %q", s.header.Get("Authorization"))
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("iam's token endpoint called %d times, want 1", n)
+	}
+}
+
 func TestEdgeForgetsJWTAfterLogoutOr401(t *testing.T) {
 	var calls atomic.Int32
 	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,12 +383,12 @@ func TestEdgeForgetsJWTAfterLogoutOr401(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"token": "jwt", "expires_at": time.Now().Add(5 * time.Minute).Format(time.RFC3339)})
 		case "/auth/logout":
 			w.WriteHeader(http.StatusNoContent)
-		case "/api/refused":
+		case "/api/refused", "/api/iam/v1/refused":
 			w.WriteHeader(http.StatusUnauthorized)
 		}
 	}))
 	t.Cleanup(hub.Close)
-	edge := newEdge(t, hub.URL, nil)
+	edge := newEdge(t, hub.URL, map[string]string{"iam": hub.URL})
 	for _, step := range []struct {
 		method, path string
 		calls        int32
@@ -377,6 +399,9 @@ func TestEdgeForgetsJWTAfterLogoutOr401(t *testing.T) {
 		{"GET", "/api/me", 2},
 		{"GET", "/api/refused", 2},
 		{"GET", "/api/me", 3},
+		{"GET", "/api/iam/v1/refused", 3},
+		{"GET", "/api/iam/v1/me", 4},
+		{"GET", "/api/iam/v1/me", 4},
 	} {
 		req, _ := http.NewRequest(step.method, edge.URL+step.path, nil)
 		req.Header.Set("Authorization", "Bearer "+validSession)

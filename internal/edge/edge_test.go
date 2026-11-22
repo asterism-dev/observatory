@@ -43,7 +43,8 @@ func recorder(t *testing.T, name string) (*httptest.Server, chan seen) {
 
 func newEdge(t *testing.T, hubURL string, services map[string]string) *httptest.Server {
 	t.Helper()
-	h, err := New(Config{HubURL: hubURL, Token: testToken, ServiceToken: testServiceToken, Services: services}, assets)
+	// The fake hubs here also answer the token endpoint, so they stand in for iam too.
+	h, err := New(Config{HubURL: hubURL, IAMURL: hubURL, Token: testToken, ServiceToken: testServiceToken, Services: services}, assets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func get(t *testing.T, req *http.Request) (int, string) {
 func TestEdgeRoutesToHub(t *testing.T) {
 	hub, ch := recorder(t, "hub")
 	edge := newEdge(t, hub.URL, nil)
-	for _, p := range []string{"/api/me", "/auth/login", "/v2/", "/otlp/v1/logs", "/node/install.sh", "/grafana/api/x%2Fy"} {
+	for _, p := range []string{"/api/me", "/v2/", "/otlp/v1/logs", "/node/install.sh", "/grafana/api/x%2Fy"} {
 		req, _ := http.NewRequest("GET", edge.URL+p, nil)
 		code, body := get(t, req)
 		if code != 200 || body != "hub" {
@@ -101,6 +102,55 @@ func TestEdgeRoutesToService(t *testing.T) {
 	req, _ = http.NewRequest("GET", edge.URL+"/api/iam/x", nil)
 	if _, body := get(t, req); body != "hub" {
 		t.Fatalf("non-v1 path went to %q", body)
+	}
+}
+
+func TestEdgeRoutesAuthToIAM(t *testing.T) {
+	hub, hubCh := recorder(t, "hub")
+	iam, iamCh, calls := issuingHub(t, http.StatusOK)
+	h, err := New(Config{HubURL: hub.URL, IAMURL: iam.URL, Token: testToken, ServiceToken: testServiceToken, Services: map[string]string{"iam": iam.URL}}, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(h)
+	t.Cleanup(edge.Close)
+	// Login routes reach iam as the client sent them: iam reads the session itself, and trusts the client IP by the edge token.
+	for _, p := range []string{"/auth/login", "/api/auth/config"} {
+		req, _ := http.NewRequest("GET", edge.URL+p, nil)
+		req.AddCookie(&http.Cookie{Name: "obs_session", Value: validSession})
+		if code, _ := get(t, req); code != 200 {
+			t.Fatalf("%s: status %d", p, code)
+		}
+		s := <-iamCh
+		if s.path != p || s.edge != testToken || s.header.Get("Cookie") != "obs_session="+validSession || s.header.Get("Authorization") != "" {
+			t.Fatalf("%s: iam saw path %q, edge %q, cookie %q, authorization %q", p, s.path, s.edge, s.header.Get("Cookie"), s.header.Get("Authorization"))
+		}
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("login routes swapped the session: issuer called %d times", n)
+	}
+	noRequest(t, hubCh, "hub")
+
+	req, _ := http.NewRequest("GET", edge.URL+"/api/orgs/x/vms", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
+	if code, body := get(t, req); code != 200 || body != "hub" {
+		t.Fatalf("org route: %d %q", code, body)
+	}
+	if s := <-hubCh; s.header.Get("Authorization") != "Bearer jwt-"+validSession {
+		t.Fatalf("hub saw Authorization %q", s.header.Get("Authorization"))
+	}
+
+	req, _ = http.NewRequest("GET", edge.URL+"/api/iam/v1/orgs", nil)
+	if code, _ := get(t, req); code != http.StatusUnauthorized {
+		t.Fatalf("iam API without a session: status %d, want the service middleware's 401", code)
+	}
+	req, _ = http.NewRequest("GET", edge.URL+"/api/iam/v1/orgs", nil)
+	req.Header.Set("Authorization", "Bearer "+validSession)
+	if code, _ := get(t, req); code != 200 {
+		t.Fatalf("iam API: status %d", code)
+	}
+	if s := <-iamCh; s.header.Get("Authorization") != "Bearer jwt-"+validSession || s.edge != "" {
+		t.Fatalf("iam API saw Authorization %q, edge %q", s.header.Get("Authorization"), s.edge)
 	}
 }
 
@@ -253,10 +303,11 @@ func TestEdgeServesSPA(t *testing.T) {
 
 func TestNewRejectsBadConfig(t *testing.T) {
 	for name, cfg := range map[string]Config{
-		"missing hub":         {Token: testToken, ServiceToken: testServiceToken},
-		"short token":         {HubURL: "http://hub", Token: "short", ServiceToken: testServiceToken},
-		"short service token": {HubURL: "http://hub", Token: testToken, ServiceToken: "short"},
-		"bad service":         {HubURL: "http://hub", Token: testToken, ServiceToken: testServiceToken, Services: map[string]string{"iam": "::"}},
+		"missing hub":         {IAMURL: "http://iam", Token: testToken, ServiceToken: testServiceToken},
+		"missing iam":         {HubURL: "http://hub", Token: testToken, ServiceToken: testServiceToken},
+		"short token":         {HubURL: "http://hub", IAMURL: "http://iam", Token: "short", ServiceToken: testServiceToken},
+		"short service token": {HubURL: "http://hub", IAMURL: "http://iam", Token: testToken, ServiceToken: "short"},
+		"bad service":         {HubURL: "http://hub", IAMURL: "http://iam", Token: testToken, ServiceToken: testServiceToken, Services: map[string]string{"iam": "::"}},
 	} {
 		if _, err := New(cfg, assets); err == nil {
 			t.Fatalf("%s: want error", name)

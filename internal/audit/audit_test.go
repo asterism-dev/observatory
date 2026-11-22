@@ -357,7 +357,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	cfg := Config{DatabaseURL: dbURL, HubURL: hub.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
+	cfg := Config{DatabaseURL: dbURL, IAMURL: hub.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
 		ServiceTokens: map[string]string{"compute": computeToken}}
 	go func() { done <- Run(ctx, cfg, ln) }()
 	t.Cleanup(func() {
@@ -624,6 +624,28 @@ func TestOversizedBodyRefusedBeforeAuth(t *testing.T) {
 		t.Fatalf("status %d, want 429 (resource_exhausted)", resp.StatusCode)
 	}
 	// Loose: socket buffers hold some of what the client wrote after the server stopped reading.
+	if body.read > 16<<20 {
+		t.Fatalf("server read about %d bytes before refusing", body.read)
+	}
+}
+
+func TestInternalOversizedBodyRefused(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.list(t, f.admin, &auditv1.ListEventsRequest{Org: f.orgA}); err != nil {
+		t.Fatal(err)
+	}
+	body := &spaces{n: 64 << 20}
+	req, _ := http.NewRequest(http.MethodPost, f.baseURL+"/internal/audit/observatory.audit.v1.AuditInternalService/GetDataEvents", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+computeToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429 (resource_exhausted)", resp.StatusCode)
+	}
 	if body.read > 16<<20 {
 		t.Fatalf("server read about %d bytes before refusing", body.read)
 	}

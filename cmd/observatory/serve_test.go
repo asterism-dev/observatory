@@ -40,9 +40,32 @@ func TestServeRejectsUnknownService(t *testing.T) {
 func TestServeEdgeRequiresConfig(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0"}[k] }
-	if code := run(c, []string{"serve", "edge"}); code != 1 ||
-		!strings.Contains(stderr.String(), "OBSERVATORY_EDGE_TOKEN") || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_HUB_URL") ||
-		!strings.Contains(stderr.String(), "OBSERVATORY_SERVICE_TOKEN") {
+	code := run(c, []string{"serve", "edge"})
+	for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_EDGE_IAM_URL", "OBSERVATORY_SERVICE_TOKEN"} {
+		if code != 1 || !strings.Contains(stderr.String(), k) {
+			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
+		}
+	}
+}
+
+func TestServeIAMMissingEnv(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_IAM_LISTEN": "127.0.0.1:0"}[k] }
+	code := run(c, []string{"serve", "iam"})
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_OIDC_ISSUER", "OBSERVATORY_OIDC_WEB_CLIENT_ID",
+		"OBSERVATORY_OIDC_CLI_CLIENT_ID", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_HUB_URL",
+		"OBSERVATORY_AUDIT_URL", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+		if code != 1 || !strings.Contains(stderr.String(), k) {
+			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
+		}
+	}
+}
+
+func TestServeIAMRejectsBadSecretsKey(t *testing.T) {
+	c, _, stderr := newTestCLI(t, nil)
+	env := map[string]string{"OBSERVATORY_IAM_LISTEN": "127.0.0.1:0", "OBSERVATORY_SECRETS_KEY": "short"}
+	c.getenv = func(k string) string { return env[k] }
+	if code := run(c, []string{"serve", "iam"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_SECRETS_KEY:") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
 	}
 }
@@ -51,7 +74,7 @@ func TestServeAuditRequiresConfig(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string { return map[string]string{"OBSERVATORY_AUDIT_LISTEN": "127.0.0.1:0"}[k] }
 	code := run(c, []string{"serve", "audit"})
-	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_HUB_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_IAM_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
 		if code != 1 || !strings.Contains(stderr.String(), k) {
 			t.Fatalf("exit %d, stderr %q; want %s reported missing", code, stderr.String(), k)
 		}
@@ -60,7 +83,7 @@ func TestServeAuditRequiresConfig(t *testing.T) {
 
 func TestServeAuditRejectsBadServiceTokens(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
-	env := map[string]string{"OBSERVATORY_AUDIT_LISTEN": "127.0.0.1:0", "OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_HUB_URL": "http://hub",
+	env := map[string]string{"OBSERVATORY_AUDIT_LISTEN": "127.0.0.1:0", "OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_IAM_URL": "http://iam",
 		"OBSERVATORY_PUBLIC_URL": "https://obs", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_NATS_URL": "nats://x",
 		"OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32), "OBSERVATORY_SERVICE_TOKENS": "compute=short"}
 	c.getenv = func(k string) string { return env[k] }
@@ -81,7 +104,7 @@ func TestServeEdgeRejectsBadServices(t *testing.T) {
 	c, _, stderr := newTestCLI(t, nil)
 	c.getenv = func(k string) string {
 		return map[string]string{"OBSERVATORY_EDGE_LISTEN": "127.0.0.1:0", "OBSERVATORY_EDGE_TOKEN": strings.Repeat("t", 32),
-			"OBSERVATORY_EDGE_HUB_URL": "http://hub", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_EDGE_SERVICES": "audit"}[k]
+			"OBSERVATORY_EDGE_HUB_URL": "http://hub", "OBSERVATORY_EDGE_IAM_URL": "http://iam", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("s", 32), "OBSERVATORY_EDGE_SERVICES": "audit"}[k]
 	}
 	if code := run(c, []string{"serve", "edge"}); code != 1 || !strings.Contains(stderr.String(), "OBSERVATORY_EDGE_SERVICES") {
 		t.Fatalf("exit %d, stderr %q", code, stderr.String())
@@ -156,6 +179,96 @@ func serveAllEnv(t *testing.T, pool *pgxpool.Pool, edgeLn net.Listener) map[stri
 		"OBSERVATORY_SERVICE_TOKENS": "invalid",
 	}
 	return env
+}
+
+// TestServeAllStartsIAM: the hub no longer serves login routes, so a 200 here comes from iam behind the edge.
+func TestServeAllStartsIAM(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := serveAllEnv(t, dbtest.New(t), edgeLn)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- serveAll(ctx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get("http://" + edgeLn.Addr().String() + "/api/auth/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/auth/config: %d", resp.StatusCode)
+	}
+}
+
+// TestServeAllIAMDataEvents: iam follows the audit service's data events setting, so its read calls reach the trail once an admin turns it on.
+func TestServeAllIAMDataEvents(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env := serveAllEnv(t, pool, edgeLn)
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(t.Context(), iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(t.Context(), "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := s.CreateSession(t.Context(), alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- serveAll(ctx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	base := "http://" + edgeLn.Addr().String()
+	auditClient := auditv1connect.NewAuditServiceClient(client, base+"/api/audit/v1")
+	iamClient := iamv1connect.NewIAMServiceClient(client, base+"/api/iam/v1")
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		_, err := auditClient.UpdateSettings(t.Context(), bearer(&auditv1.UpdateSettingsRequest{Org: org.ID.String(), DataEvents: map[string]bool{"iam": true}}, token))
+		if err == nil {
+			break
+		}
+		if connect.CodeOf(err) != connect.CodeUnavailable || time.Now().After(deadline) {
+			t.Fatalf("turn on iam data events: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for {
+		if _, err := iamClient.ListMembers(t.Context(), bearer(&iamv1.ListMembersRequest{Org: org.ID.String()}, token)); err != nil {
+			t.Fatalf("list members: %v", err)
+		}
+		resp, err := auditClient.ListEvents(t.Context(), bearer(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: "iam.members.list"}}, token))
+		if err != nil {
+			t.Fatalf("audit: %v", err)
+		}
+		if len(resp.Msg.GetEvents()) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("iam's read calls never reached the audit trail")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // TestServeAllRecordsClientIPThroughEdge runs the real edge, hub, bus and audit service: the client reaches the edge over ::1 while the edge reaches the hub over 127.0.0.1, so an audited ::1 proves the hub trusts the edge's header.
@@ -392,9 +505,12 @@ func TestServeAllIAMBoundary(t *testing.T) {
 	if code, body := call("GET", "/api/nodes/health", "not-a-session-token"); code != http.StatusUnauthorized || body != "Unauthorized\n" {
 		t.Fatalf("/api/nodes/health: %d %s", code, body)
 	}
-	// The query guard answers before authentication.
-	if code, body := call("GET", "/api/iam/v1/me?org=x", ""); code != http.StatusBadRequest {
+	// The edge refuses a session-less call to iam's API; with a session, iam's query guard answers.
+	if code, body := call("GET", "/api/iam/v1/me?org=x", ""); code != http.StatusUnauthorized {
 		t.Fatalf("REST query without a session: %d %s", code, body)
+	}
+	if code, body := call("GET", "/api/iam/v1/me?org=x", aliceToken); code != http.StatusBadRequest {
+		t.Fatalf("REST query with a session: %d %s", code, body)
 	}
 
 	_, err = iam.DeleteMember(ctx, bearer(&iamv1.DeleteMemberRequest{Org: org.ID.String(), User: bob.User.ID.String()}, aliceToken))

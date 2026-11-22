@@ -14,6 +14,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -52,7 +53,8 @@ func TestHubServesWithoutBusAndRelaysOnceItAppears(t *testing.T) {
 	late.Close()
 
 	pool := dbtest.New(t)
-	env := testHubEnv(t, pool.Config().ConnString(), "nats://"+lateAddr, natsToken)
+	iam := iamtest.New(t)
+	env := testHubEnv(t, pool.Config().ConnString(), iam.URL(), iam.ServiceToken(), "nats://"+lateAddr, natsToken)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +85,7 @@ func TestHubServesWithoutBusAndRelaysOnceItAppears(t *testing.T) {
 		}
 	}
 	waitFor("the hub to serve without the bus", func() bool {
-		resp, err := http.Get("http://" + ln.Addr().String() + "/api/auth/config")
+		resp, err := http.Get("http://" + ln.Addr().String() + "/node/install.sh")
 		if err != nil {
 			return false
 		}

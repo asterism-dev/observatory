@@ -32,8 +32,8 @@ const internalPrefix = "/internal/audit"
 
 type Config struct {
 	DatabaseURL string
-	// HubURL is the hub's internal address for signing keys and the policy stream; Issuer is its public URL.
-	HubURL, Issuer, ServiceToken string
+	// IAMURL is iam's internal address for signing keys and the policy stream; Issuer is the public URL.
+	IAMURL, Issuer, ServiceToken string
 	NATSURL, NATSToken           string
 	// ServiceTokens (name → token) authenticate other services' calls to /internal/audit/.
 	ServiceTokens map[string]string
@@ -42,11 +42,11 @@ type Config struct {
 // Run serves the read API on ln and consumes the bus until ctx ends.
 func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	defer ln.Close()
-	v, err := identity.NewVerifier(cfg.HubURL, cfg.Issuer, cfg.ServiceToken, nil)
+	v, err := identity.NewVerifier(cfg.IAMURL, cfg.Issuer, cfg.ServiceToken, nil)
 	if err != nil {
 		return err
 	}
-	w, err := authz.NewWatcher(cfg.HubURL, cfg.ServiceToken, nil)
+	w, err := authz.NewWatcher(cfg.IAMURL, cfg.ServiceToken, nil)
 	if err != nil {
 		return err
 	}
@@ -90,8 +90,8 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		connect.WithInterceptors(auditlog.Interceptors("audit", v, w, settings, pool)...), connect.WithReadMaxBytes(maxBody))
 	mux := http.NewServeMux()
 	mux.Handle(prefix+path, http.MaxBytesHandler(http.StripPrefix(prefix, h), maxBody))
-	ipath, ih := auditv1connect.NewAuditInternalServiceHandler(internal)
-	mux.Handle(internalPrefix+ipath, http.StripPrefix(internalPrefix, servicetoken.Middleware(cfg.ServiceTokens)(ih)))
+	ipath, ih := auditv1connect.NewAuditInternalServiceHandler(internal, connect.WithReadMaxBytes(maxBody))
+	mux.Handle(internalPrefix+ipath, http.MaxBytesHandler(http.StripPrefix(internalPrefix, servicetoken.Middleware(cfg.ServiceTokens)(ih)), maxBody))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	err = run.Serve(ctx, srv, ln)
 	cancel()

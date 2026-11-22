@@ -19,18 +19,20 @@ import (
 	"github.com/asterism-dev/observatory/internal/audit"
 	"github.com/asterism-dev/observatory/internal/edge"
 	"github.com/asterism-dev/observatory/internal/hubserver"
+	"github.com/asterism-dev/observatory/internal/iam"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	svcrun "github.com/asterism-dev/observatory/internal/platform/run"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
+	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/web"
 )
 
 func serveCommands() []command {
-	return []command{{"serve", "edge|hub|audit|all", "run observatory services", cmdServe}}
+	return []command{{"serve", "edge|hub|iam|audit|all", "run observatory services", cmdServe}}
 }
 
 func cmdServe(c *cli, args []string) error {
-	if len(args) != 1 || (args[0] != "edge" && args[0] != "hub" && args[0] != "audit" && args[0] != "all") {
+	if len(args) != 1 || !slices.Contains([]string{"edge", "hub", "iam", "audit", "all"}, args[0]) {
 		return usagef("%s", usageLine("serve"))
 	}
 	ctx, stop := signal.NotifyContext(c.ctx, os.Interrupt, syscall.SIGTERM)
@@ -47,18 +49,34 @@ func cmdServe(c *cli, args []string) error {
 			return err
 		}
 		return hubserver.Run(ctx, c.getenv, ln)
+	case "iam":
+		cfg, err := iamConfig(c.getenv)
+		if err != nil {
+			return err
+		}
+		secretsKey := ""
+		if cfg.SecretsKey != (seal.Key{}) {
+			secretsKey = "set"
+		}
+		if err := missingEnv(map[string]string{"OBSERVATORY_IAM_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_PUBLIC_URL": cfg.PublicURL,
+			"OBSERVATORY_OIDC_ISSUER": cfg.OIDCIssuer, "OBSERVATORY_OIDC_WEB_CLIENT_ID": cfg.WebClientID, "OBSERVATORY_OIDC_CLI_CLIENT_ID": cfg.CLIClientID,
+			"OBSERVATORY_SECRETS_KEY": secretsKey, "OBSERVATORY_EDGE_TOKEN": cfg.EdgeToken, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken,
+			"OBSERVATORY_HUB_URL": cfg.HubURL, "OBSERVATORY_AUDIT_URL": cfg.AuditURL, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken}); err != nil {
+			return err
+		}
+		if cfg.ServiceTokens, err = servicetoken.Parse(c.getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
+			return fmt.Errorf("OBSERVATORY_SERVICE_TOKENS: %w", err)
+		}
+		ln, err := net.Listen("tcp", envOr(c.getenv, "OBSERVATORY_IAM_LISTEN", ":8093"))
+		if err != nil {
+			return err
+		}
+		return iam.Run(ctx, cfg, ln)
 	case "audit":
 		cfg := auditConfig(c.getenv)
-		var missing []string
-		for k, v := range map[string]string{"OBSERVATORY_AUDIT_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_HUB_URL": cfg.HubURL,
-			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken} {
-			if v == "" {
-				missing = append(missing, k)
-			}
-		}
-		if len(missing) > 0 {
-			slices.Sort(missing)
-			return fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
+		if err := missingEnv(map[string]string{"OBSERVATORY_AUDIT_DATABASE_URL or OBSERVATORY_DATABASE_URL": cfg.DatabaseURL, "OBSERVATORY_IAM_URL": cfg.IAMURL,
+			"OBSERVATORY_PUBLIC_URL": cfg.Issuer, "OBSERVATORY_SERVICE_TOKEN": cfg.ServiceToken, "OBSERVATORY_NATS_URL": cfg.NATSURL, "OBSERVATORY_NATS_TOKEN": cfg.NATSToken}); err != nil {
+			return err
 		}
 		var err error
 		if cfg.ServiceTokens, err = servicetoken.Parse(c.getenv("OBSERVATORY_SERVICE_TOKENS")); err != nil {
@@ -71,7 +89,7 @@ func cmdServe(c *cli, args []string) error {
 		return audit.Run(ctx, cfg, ln)
 	case "edge":
 		var missing []string
-		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_SERVICE_TOKEN"} {
+		for _, k := range []string{"OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_EDGE_HUB_URL", "OBSERVATORY_EDGE_IAM_URL", "OBSERVATORY_SERVICE_TOKEN"} {
 			if c.getenv(k) == "" {
 				missing = append(missing, k)
 			}
@@ -87,7 +105,7 @@ func cmdServe(c *cli, args []string) error {
 		if err != nil {
 			return err
 		}
-		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN"), ServiceToken: c.getenv("OBSERVATORY_SERVICE_TOKEN"), Services: services}, ln)
+		return serveEdge(ctx, edge.Config{HubURL: c.getenv("OBSERVATORY_EDGE_HUB_URL"), IAMURL: c.getenv("OBSERVATORY_EDGE_IAM_URL"), Token: c.getenv("OBSERVATORY_EDGE_TOKEN"), ServiceToken: c.getenv("OBSERVATORY_SERVICE_TOKEN"), Services: services}, ln)
 	default:
 		ln, err := listenEdge(c.getenv)
 		if err != nil {
@@ -97,13 +115,18 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
-// serveAll runs the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
+// serveAll runs iam, the hub and the audit service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
-	token := rand.Text() + rand.Text()
-	serviceToken := rand.Text() + rand.Text()
-	auditToken := rand.Text() + rand.Text()
+	newToken := func() string { return rand.Text() + rand.Text() }
+	edgeToken, edgeServiceToken, iamToken, hubToken, auditToken := newToken(), newToken(), newToken(), newToken(), newToken()
+	iamCfg, err := iamConfig(getenv)
+	if err != nil {
+		edgeLn.Close()
+		return err
+	}
 	auditCfg := auditConfig(getenv)
 	auditCfg.ServiceToken = auditToken
+	auditCfg.ServiceTokens = map[string]string{"iam": iamToken}
 	if auditCfg.NATSURL == "" {
 		stop, err := embeddedNATS(ctx, getenv, &auditCfg)
 		if err != nil {
@@ -112,12 +135,19 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		}
 		defer stop()
 	}
+	iamCfg.EdgeToken, iamCfg.ServiceToken, iamCfg.NATSURL, iamCfg.NATSToken = edgeToken, iamToken, auditCfg.NATSURL, auditCfg.NATSToken
+	iamCfg.ServiceTokens = map[string]string{"edge": edgeServiceToken, "hub": hubToken, "audit": auditToken}
+	var iamURL string
 	hubEnv := func(k string) string {
 		switch k {
 		case "OBSERVATORY_EDGE_TOKEN":
-			return token
+			return edgeToken
+		case "OBSERVATORY_IAM_URL":
+			return iamURL
+		case "OBSERVATORY_SERVICE_TOKEN":
+			return hubToken
 		case "OBSERVATORY_SERVICE_TOKENS":
-			return "edge=" + serviceToken + ",audit=" + auditToken
+			return "iam=" + iamToken
 		case "OBSERVATORY_NATS_URL":
 			return auditCfg.NATSURL
 		case "OBSERVATORY_NATS_TOKEN":
@@ -126,20 +156,61 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 		return getenv(k)
 	}
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
+	iamSvc := svcrun.Service{Name: "iam", Run: func(ctx context.Context, ln net.Listener) error { return iam.Run(ctx, iamCfg, ln) }}
 	auditSvc := svcrun.Service{Name: "audit", Run: func(ctx context.Context, ln net.Listener) error { return audit.Run(ctx, auditCfg, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
-		// All calls this before starting any service, so the audit service sees the hub URL.
-		auditCfg.HubURL = hubURL
+		// All calls this before starting any service, so every service sees the others' URLs.
+		iamURL = services["iam"]
+		auditCfg.IAMURL = iamURL
+		iamCfg.HubURL, iamCfg.AuditURL = hubURL, services["audit"]
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {
-			return serveEdge(ctx, edge.Config{HubURL: hubURL, Token: token, ServiceToken: serviceToken, Services: services}, ln)
+			return serveEdge(ctx, edge.Config{HubURL: hubURL, IAMURL: iamURL, Token: edgeToken, ServiceToken: edgeServiceToken, Services: services}, ln)
 		}}
-	}, []svcrun.Service{hub, auditSvc})
+	}, []svcrun.Service{hub, iamSvc, auditSvc})
+}
+
+// iamConfig reads iam's environment; serve iam checks it is complete, serve all fills in what it generates.
+func iamConfig(getenv func(string) string) (iam.Config, error) {
+	cfg := iam.Config{
+		DatabaseURL:  envOr(getenv, "OBSERVATORY_IAM_DATABASE_URL", getenv("OBSERVATORY_DATABASE_URL")),
+		PublicURL:    getenv("OBSERVATORY_PUBLIC_URL"),
+		OIDCIssuer:   getenv("OBSERVATORY_OIDC_ISSUER"),
+		WebClientID:  getenv("OBSERVATORY_OIDC_WEB_CLIENT_ID"),
+		CLIClientID:  getenv("OBSERVATORY_OIDC_CLI_CLIENT_ID"),
+		EdgeToken:    getenv("OBSERVATORY_EDGE_TOKEN"),
+		HubURL:       getenv("OBSERVATORY_HUB_URL"),
+		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),
+		AuditURL:     getenv("OBSERVATORY_AUDIT_URL"),
+		NATSURL:      getenv("OBSERVATORY_NATS_URL"),
+		NATSToken:    getenv("OBSERVATORY_NATS_TOKEN"),
+	}
+	if key := getenv("OBSERVATORY_SECRETS_KEY"); key != "" {
+		var err error
+		if cfg.SecretsKey, err = seal.ParseKey(key); err != nil {
+			return iam.Config{}, fmt.Errorf("OBSERVATORY_SECRETS_KEY: %w", err)
+		}
+	}
+	return cfg, nil
+}
+
+func missingEnv(values map[string]string) error {
+	var missing []string
+	for k, v := range values {
+		if v == "" {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	slices.Sort(missing)
+	return fmt.Errorf("missing environment: %s", strings.Join(missing, ", "))
 }
 
 func auditConfig(getenv func(string) string) audit.Config {
 	return audit.Config{
 		DatabaseURL:  envOr(getenv, "OBSERVATORY_AUDIT_DATABASE_URL", getenv("OBSERVATORY_DATABASE_URL")),
-		HubURL:       getenv("OBSERVATORY_HUB_URL"),
+		IAMURL:       getenv("OBSERVATORY_IAM_URL"),
 		Issuer:       getenv("OBSERVATORY_PUBLIC_URL"),
 		ServiceToken: getenv("OBSERVATORY_SERVICE_TOKEN"),
 		NATSURL:      getenv("OBSERVATORY_NATS_URL"),

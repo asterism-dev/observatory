@@ -23,13 +23,17 @@ const (
 const minTokenLen = 32
 
 type Config struct {
-	HubURL, Token string
-	// ServiceToken authenticates the edge to the hub's /internal/iam/ endpoints.
+	// IAMURL serves login (/auth/, /api/auth/) and the token endpoint; its API goes through Services like any service.
+	HubURL, IAMURL, Token string
+	// ServiceToken authenticates the edge to iam's /internal/iam/ endpoints.
 	ServiceToken string
 	Services     map[string]string // service name → base URL
 }
 
-var hubPrefixes = []string{"/api/", "/auth/", "/v2/", "/otlp/", "/node/", "/grafana/"}
+var hubPrefixes = []string{"/api/", "/v2/", "/otlp/", "/node/", "/grafana/"}
+
+// iamPrefixes reach iam unchanged: login reads the session itself and must see it.
+var iamPrefixes = []string{"/auth/", "/api/auth/"}
 
 func New(cfg Config, assets fs.FS) (http.Handler, error) {
 	if len(cfg.Token) < minTokenLen {
@@ -42,14 +46,20 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hub url: %w", err)
 	}
+	iamURL, err := parseUpstream(cfg.IAMURL)
+	if err != nil {
+		return nil, fmt.Errorf("iam url: %w", err)
+	}
 	hub := proxy(hubURL, cfg.Token, false)
+	iamLogin := proxy(iamURL, cfg.Token, false)
 	id := &identity{
-		tokenURL:     hubURL.JoinPath("internal/iam/token").String(),
+		tokenURL:     iamURL.JoinPath("internal/iam/token").String(),
 		serviceToken: cfg.ServiceToken,
 		client:       &http.Client{Timeout: 10 * time.Second},
 		cache:        newJWTCache(jwtCacheSize),
 	}
 	hub.ModifyResponse = id.forget
+	iamLogin.ModifyResponse = id.forget
 	hubAPI := id.hubMiddleware(hub)
 	services := make(map[string]http.Handler, len(cfg.Services))
 	for name, raw := range cfg.Services {
@@ -57,7 +67,9 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 		if err != nil {
 			return nil, fmt.Errorf("service %s url: %w", name, err)
 		}
-		services[name] = id.middleware(proxy(u, "", true))
+		p := proxy(u, "", true)
+		p.ModifyResponse = id.forget
+		services[name] = id.middleware(p)
 	}
 	app := spa(assets)
 
@@ -67,6 +79,12 @@ func New(cfg Config, assets fs.FS) (http.Handler, error) {
 		if clean := path.Clean(r.URL.Path); clean == "/internal" || strings.HasPrefix(clean, "/internal/") {
 			http.NotFound(w, r)
 			return
+		}
+		for _, p := range iamPrefixes {
+			if strings.HasPrefix(r.URL.Path, p) {
+				iamLogin.ServeHTTP(w, r)
+				return
+			}
 		}
 		if rest, ok := strings.CutPrefix(r.URL.Path, "/api/"); ok {
 			if name, sub, ok := strings.Cut(rest, "/"); ok && strings.HasPrefix(sub, "v1/") {

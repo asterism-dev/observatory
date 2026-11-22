@@ -59,7 +59,7 @@ func TestIdentityEndToEnd(t *testing.T) {
 	defer svc.Close()
 
 	newEdge := func() *httptest.Server {
-		h, err := edge.New(edge.Config{HubURL: iam.URL(), Token: edgeTok, ServiceToken: iam.ServiceToken(), Services: map[string]string{"echo": svc.URL}}, fstest.MapFS{"index.html": {Data: []byte("app")}})
+		h, err := edge.New(edge.Config{HubURL: iam.URL(), IAMURL: iam.URL(), Token: edgeTok, ServiceToken: iam.ServiceToken(), Services: map[string]string{"echo": svc.URL}}, fstest.MapFS{"index.html": {Data: []byte("app")}})
 		if err != nil {
 			t.Fatal(err)
 		}

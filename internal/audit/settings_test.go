@@ -63,7 +63,7 @@ func TestInterceptorRecordsWritesAndDenials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.GetDataEvents()) != len(services) || got.GetDataEvents()["audit"] {
+	if _, iam := got.GetDataEvents()["iam"]; len(got.GetDataEvents()) != len(services) || got.GetDataEvents()["audit"] || !iam {
 		t.Fatalf("data events = %v", got.GetDataEvents())
 	}
 	f.waitRecorded(t, f.orgA, "audit.settings.update", f.admin, "allowed")
