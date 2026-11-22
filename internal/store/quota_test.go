@@ -1,10 +1,12 @@
 package store_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -325,5 +327,20 @@ func TestFailedSavepointCancelsItsHoldsAtOnce(t *testing.T) {
 	}
 	if ids, err := usage.ParseCommitted(evs[1]); err != nil || len(ids) != 1 {
 		t.Fatalf("committed = %v %v, want only the kept hold", ids, err)
+	}
+}
+
+func TestQuotaErrDeadlineReadsUnavailable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	err := store.QuotaErr(ctx, "reserve", connect.NewError(connect.CodeCanceled, errors.New("deadline")))
+	if !errors.Is(err, store.ErrQuotaUnavailable) {
+		t.Fatalf("own deadline read as %v", err)
+	}
+	cctx, stop := context.WithCancel(t.Context())
+	stop()
+	if err := store.QuotaErr(cctx, "get", connect.NewError(connect.CodeCanceled, errors.New("gone"))); errors.Is(err, store.ErrQuotaUnavailable) {
+		t.Fatalf("client cancel read as unavailable: %v", err)
 	}
 }

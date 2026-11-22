@@ -51,9 +51,9 @@ func int32p(v *int) *int32 {
 	return &n
 }
 
-// quotaErr reads every failure but a bad request, a refused caller or our own cancellation as quota being unable to answer; a reset connection also reads as canceled.
+// quotaErr reads every failure but a bad request, a refused caller or our own cancellation (not a deadline) as quota being unable to answer; a reset connection also reads as canceled.
 func quotaErr(ctx context.Context, op string, err error) error {
-	if c := connect.CodeOf(err); c != connect.CodeInvalidArgument && c != connect.CodePermissionDenied && c != connect.CodeUnauthenticated && (c != connect.CodeCanceled || ctx.Err() == nil) {
+	if c := connect.CodeOf(err); c != connect.CodeInvalidArgument && c != connect.CodePermissionDenied && c != connect.CodeUnauthenticated && (c != connect.CodeCanceled || !errors.Is(ctx.Err(), context.Canceled)) {
 		return fmt.Errorf("quota %s: %w (%w)", op, ErrQuotaUnavailable, err)
 	}
 	return fmt.Errorf("quota %s: %w", op, err)
