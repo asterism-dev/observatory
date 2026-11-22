@@ -50,7 +50,9 @@ type Scheduler struct {
 	Now  func() time.Time
 	// MayStart holds queued builds back while it returns false; heldAt restarts their queue timeout.
 	MayStart func() bool
-	heldAt   time.Time
+	// PolicyFresh holds queued builds back the same way while the owner check could only read a stale policy.
+	PolicyFresh func() bool
+	heldAt      time.Time
 }
 
 // New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it. ownerKnown checks the builder VM's owner scope against the policy.
@@ -130,7 +132,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 
 func (s *Scheduler) step(ctx context.Context, b store.ImageBuild) error {
 	now := s.Now()
-	if b.State == store.BuildQueued && s.MayStart != nil && !s.MayStart() {
+	if b.State == store.BuildQueued && (s.MayStart != nil && !s.MayStart() || s.PolicyFresh != nil && !s.PolicyFresh()) {
 		s.heldAt = now
 		return nil
 	}

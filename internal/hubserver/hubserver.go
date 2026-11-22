@@ -361,7 +361,8 @@ func newScheduler(ctx context.Context, s *store.Store, f *fleet.Fleet, z *authz.
 	} else {
 		slog.Info("builder image", "ref", builder)
 	}
-	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, func(org uuid.UUID, scope string) bool { return z.LastKnown().HasSubject(org, scope) })
+	sched := builds.New(s, cfg.BuilderHubURL, builder, err, f.NotifyOrg, f.Online, func(org uuid.UUID, scope string) bool { return z.Enforcer().HasSubject(org, scope) })
+	sched.PolicyFresh = func() bool { _, ok := z.Current(); return ok }
 	sched.Size = cfg.BuilderSize
 	return sched
 }

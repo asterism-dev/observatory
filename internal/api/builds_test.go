@@ -677,6 +677,28 @@ func TestQueuedBuildWaitsWhileHeld(t *testing.T) {
 	}
 }
 
+func TestQueuedBuildWaitsWhilePolicyStale(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "tools", `[]`)
+	id := e.startBuild(aliceTok, org, img)
+	e.sched.PolicyFresh = func() bool { _, ok := e.z.Current(); return ok }
+	fresh := e.stale()
+	e.tick()
+	e.exec("UPDATE image_builds SET queued_at = now() - interval '2 hours' WHERE id = $1", id)
+	e.tick()
+	if b := e.build(id); b.State != store.BuildQueued {
+		t.Fatalf("build on a stale policy: %s %q", b.State, b.Error)
+	}
+	fresh.Store(true)
+	e.tick()
+	if b := e.build(id); b.State != store.BuildRunning {
+		t.Fatalf("build once fresh: %s %q", b.State, b.Error)
+	}
+}
+
 func TestBuildCancelAuditsInFinishTransaction(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	_, aliceTok := e.user("alice")
