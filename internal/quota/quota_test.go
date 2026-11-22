@@ -43,6 +43,7 @@ const (
 	testIssuer = "https://obs.example"
 	testToken  = "quota-service-token-quota-service-token"
 	hubToken   = "hub-service-token-hub-service-token-hub"
+	otherToken = "audit-service-token-audit-service-token"
 )
 
 func i32(n int32) *int32 { return &n }
@@ -58,7 +59,7 @@ func openStore(t *testing.T, dbURL string) *store {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return &store{pool: pool}
+	return &store{pool: pool, now: time.Now}
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -199,7 +200,7 @@ func startFixture(t *testing.T, holdCatalog bool) *fixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	cfg := Config{DatabaseURL: dbURL, IAMURL: iam.URL, AuditURL: auditSrv.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: natsToken,
-		ServiceTokens: map[string]string{"hub": hubToken}}
+		ServiceTokens: map[string]string{"hub": hubToken, "audit": otherToken}}
 	go func() { done <- Run(ctx, cfg, ln) }()
 	t.Cleanup(func() {
 		cancel()

@@ -5,6 +5,8 @@
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_google_api_annotations } from "../../../google/api/annotations_pb";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import { file_observatory_v1_annotations } from "../../v1/annotations_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -12,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file observatory/quota/v1/quota.proto.
  */
 export const file_observatory_quota_v1_quota: GenFile = /*@__PURE__*/
-  fileDesc("CiBvYnNlcnZhdG9yeS9xdW90YS92MS9xdW90YS5wcm90bxIUb2JzZXJ2YXRvcnkucXVvdGEudjEi7gEKBkxpbWl0cxIRCgR2Y3B1GAEgASgFSACIAQESEwoGcmFtX21iGAIgASgFSAGIAQESFAoHZGlza19nYhgDIAEoBUgCiAEBEhUKCHZtX2NvdW50GAQgASgFSAOIAQESGwoOc25hcHNob3RfY291bnQYBSABKAVIBIgBARIdChBpbWFnZV9zdG9yYWdlX2diGAYgASgFSAWIAQFCBwoFX3ZjcHVCCQoHX3JhbV9tYkIKCghfZGlza19nYkILCglfdm1fY291bnRCEQoPX3NuYXBzaG90X2NvdW50QhMKEV9pbWFnZV9zdG9yYWdlX2diIsoCCglPcmdMaW1pdHMSKQoDb3JnGAEgASgLMhwub2JzZXJ2YXRvcnkucXVvdGEudjEuTGltaXRzEjkKBXRlYW1zGAIgAygLMioub2JzZXJ2YXRvcnkucXVvdGEudjEuT3JnTGltaXRzLlRlYW1zRW50cnkSPQoHbWVtYmVycxgDIAMoCzIsLm9ic2VydmF0b3J5LnF1b3RhLnYxLk9yZ0xpbWl0cy5NZW1iZXJzRW50cnkaSgoKVGVhbXNFbnRyeRILCgNrZXkYASABKAkSKwoFdmFsdWUYAiABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHM6AjgBGkwKDE1lbWJlcnNFbnRyeRILCgNrZXkYASABKAkSKwoFdmFsdWUYAiABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHM6AjgBIh8KEEdldExpbWl0c1JlcXVlc3QSCwoDb3JnGAEgASgJIkQKEUdldExpbWl0c1Jlc3BvbnNlEi8KBmxpbWl0cxgBIAEoCzIfLm9ic2VydmF0b3J5LnF1b3RhLnYxLk9yZ0xpbWl0cyJfChNVcGRhdGVMaW1pdHNSZXF1ZXN0EgsKA29yZxgBIAEoCRINCgVzY29wZRgCIAEoCRIsCgZsaW1pdHMYAyABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHMiFgoUVXBkYXRlTGltaXRzUmVzcG9uc2UiJQoTR2V0T3JnTGltaXRzUmVxdWVzdBIOCgZvcmdfaWQYASABKAkiRwoUR2V0T3JnTGltaXRzUmVzcG9uc2USLwoGbGltaXRzGAEgASgLMh8ub2JzZXJ2YXRvcnkucXVvdGEudjEuT3JnTGltaXRzIlYKFlVwZGF0ZU9yZ0xpbWl0c1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJEiwKBmxpbWl0cxgCIAEoCzIcLm9ic2VydmF0b3J5LnF1b3RhLnYxLkxpbWl0cyIZChdVcGRhdGVPcmdMaW1pdHNSZXNwb25zZTLrBQoMUXVvdGFTZXJ2aWNlEqQBCglHZXRMaW1pdHMSJi5vYnNlcnZhdG9yeS5xdW90YS52MS5HZXRMaW1pdHNSZXF1ZXN0Gicub2JzZXJ2YXRvcnkucXVvdGEudjEuR2V0TGltaXRzUmVzcG9uc2UiRoq1GCAKEHF1b3RhLmxpbWl0cy5nZXQSCm9yZy9saW1pdHMYAoLT5JMCHGIGbGltaXRzEhIvb3Jncy97b3JnfS9saW1pdHMSqwEKDFVwZGF0ZUxpbWl0cxIpLm9ic2VydmF0b3J5LnF1b3RhLnYxLlVwZGF0ZUxpbWl0c1JlcXVlc3QaKi5vYnNlcnZhdG9yeS5xdW90YS52MS5VcGRhdGVMaW1pdHNSZXNwb25zZSJEirUYIwoTcXVvdGEubGltaXRzLnVwZGF0ZRIKb3JnL2xpbWl0cxgBgtPkkwIXOgEqGhIvb3Jncy97b3JnfS9saW1pdHMSuwEKDEdldE9yZ0xpbWl0cxIpLm9ic2VydmF0b3J5LnF1b3RhLnYxLkdldE9yZ0xpbWl0c1JlcXVlc3QaKi5vYnNlcnZhdG9yeS5xdW90YS52MS5HZXRPcmdMaW1pdHNSZXNwb25zZSJUirUYJQoQcXVvdGEubGltaXRzLmdldBIPcGxhdGZvcm0vbGltaXRzGAKC0+STAiViBmxpbWl0cxIbL2FkbWluL29yZ3Mve29yZ19pZH0vbGltaXRzEscBCg9VcGRhdGVPcmdMaW1pdHMSLC5vYnNlcnZhdG9yeS5xdW90YS52MS5VcGRhdGVPcmdMaW1pdHNSZXF1ZXN0Gi0ub2JzZXJ2YXRvcnkucXVvdGEudjEuVXBkYXRlT3JnTGltaXRzUmVzcG9uc2UiV4q1GCgKE3F1b3RhLmxpbWl0cy51cGRhdGUSD3BsYXRmb3JtL2xpbWl0cxgBgtPkkwIlOgZsaW1pdHMaGy9hZG1pbi9vcmdzL3tvcmdfaWR9L2xpbWl0c0LhAQoYY29tLm9ic2VydmF0b3J5LnF1b3RhLnYxQgpRdW90YVByb3RvUAFaR2dpdGh1Yi5jb20vYXN0ZXJpc20tZGV2L29ic2VydmF0b3J5L2dlbi9nby9vYnNlcnZhdG9yeS9xdW90YS92MTtxdW90YXYxogIDT1FYqgIUT2JzZXJ2YXRvcnkuUXVvdGEuVjHKAhRPYnNlcnZhdG9yeVxRdW90YVxWMeICIE9ic2VydmF0b3J5XFF1b3RhXFYxXEdQQk1ldGFkYXRh6gIWT2JzZXJ2YXRvcnk6OlF1b3RhOjpWMWIGcHJvdG8z", [file_google_api_annotations, file_observatory_v1_annotations]);
+  fileDesc("CiBvYnNlcnZhdG9yeS9xdW90YS92MS9xdW90YS5wcm90bxIUb2JzZXJ2YXRvcnkucXVvdGEudjEi7gEKBkxpbWl0cxIRCgR2Y3B1GAEgASgFSACIAQESEwoGcmFtX21iGAIgASgFSAGIAQESFAoHZGlza19nYhgDIAEoBUgCiAEBEhUKCHZtX2NvdW50GAQgASgFSAOIAQESGwoOc25hcHNob3RfY291bnQYBSABKAVIBIgBARIdChBpbWFnZV9zdG9yYWdlX2diGAYgASgFSAWIAQFCBwoFX3ZjcHVCCQoHX3JhbV9tYkIKCghfZGlza19nYkILCglfdm1fY291bnRCEQoPX3NuYXBzaG90X2NvdW50QhMKEV9pbWFnZV9zdG9yYWdlX2diIsoCCglPcmdMaW1pdHMSKQoDb3JnGAEgASgLMhwub2JzZXJ2YXRvcnkucXVvdGEudjEuTGltaXRzEjkKBXRlYW1zGAIgAygLMioub2JzZXJ2YXRvcnkucXVvdGEudjEuT3JnTGltaXRzLlRlYW1zRW50cnkSPQoHbWVtYmVycxgDIAMoCzIsLm9ic2VydmF0b3J5LnF1b3RhLnYxLk9yZ0xpbWl0cy5NZW1iZXJzRW50cnkaSgoKVGVhbXNFbnRyeRILCgNrZXkYASABKAkSKwoFdmFsdWUYAiABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHM6AjgBGkwKDE1lbWJlcnNFbnRyeRILCgNrZXkYASABKAkSKwoFdmFsdWUYAiABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHM6AjgBIh8KEEdldExpbWl0c1JlcXVlc3QSCwoDb3JnGAEgASgJIkQKEUdldExpbWl0c1Jlc3BvbnNlEi8KBmxpbWl0cxgBIAEoCzIfLm9ic2VydmF0b3J5LnF1b3RhLnYxLk9yZ0xpbWl0cyJfChNVcGRhdGVMaW1pdHNSZXF1ZXN0EgsKA29yZxgBIAEoCRINCgVzY29wZRgCIAEoCRIsCgZsaW1pdHMYAyABKAsyHC5vYnNlcnZhdG9yeS5xdW90YS52MS5MaW1pdHMiFgoUVXBkYXRlTGltaXRzUmVzcG9uc2UiJQoTR2V0T3JnTGltaXRzUmVxdWVzdBIOCgZvcmdfaWQYASABKAkiRwoUR2V0T3JnTGltaXRzUmVzcG9uc2USLwoGbGltaXRzGAEgASgLMh8ub2JzZXJ2YXRvcnkucXVvdGEudjEuT3JnTGltaXRzIlYKFlVwZGF0ZU9yZ0xpbWl0c1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJEiwKBmxpbWl0cxgCIAEoCzIcLm9ic2VydmF0b3J5LnF1b3RhLnYxLkxpbWl0cyIZChdVcGRhdGVPcmdMaW1pdHNSZXNwb25zZSK7AQoHQW1vdW50cxIRCgR2Y3B1GAEgASgFSACIAQESEwoGcmFtX21iGAIgASgFSAGIAQESFAoHZGlza19nYhgDIAEoBUgCiAEBEhUKCHZtX2NvdW50GAQgASgFSAOIAQESGwoOc25hcHNob3RfY291bnQYBSABKAVIBIgBAUIHCgVfdmNwdUIJCgdfcmFtX21iQgoKCF9kaXNrX2diQgsKCV92bV9jb3VudEIRCg9fc25hcHNob3RfY291bnQiXwoOUmVzZXJ2ZVJlcXVlc3QSDgoGb3JnX2lkGAEgASgJEg0KBW93bmVyGAIgASgJEi4KB2Ftb3VudHMYAyABKAsyHS5vYnNlcnZhdG9yeS5xdW90YS52MS5BbW91bnRzIlkKD1Jlc2VydmVSZXNwb25zZRIWCg5yZXNlcnZhdGlvbl9pZBgBIAEoCRIuCgpleHBpcmVzX2F0GAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCIoCg1DYW5jZWxSZXF1ZXN0EhcKD3Jlc2VydmF0aW9uX2lkcxgBIAMoCSIQCg5DYW5jZWxSZXNwb25zZSIzCg5SZWxlYXNlUmVxdWVzdBIOCgZvcmdfaWQYASABKAkSEQoJcmVzb3VyY2VzGAIgAygJIhEKD1JlbGVhc2VSZXNwb25zZSI2CiRRdW90YUludGVybmFsU2VydmljZUdldExpbWl0c1JlcXVlc3QSDgoGb3JnX2lkGAEgASgJIlgKJVF1b3RhSW50ZXJuYWxTZXJ2aWNlR2V0TGltaXRzUmVzcG9uc2USLwoGbGltaXRzGAEgASgLMh8ub2JzZXJ2YXRvcnkucXVvdGEudjEuT3JnTGltaXRzIlYKDUxpbWl0RXhjZWVkZWQSDQoFc2NvcGUYASABKAkSDAoEbmFtZRgCIAEoCRIMCgR1bml0GAMgASgJEg0KBWxpbWl0GAQgASgFEgsKA2dvdBgFIAEoBTLrBQoMUXVvdGFTZXJ2aWNlEqQBCglHZXRMaW1pdHMSJi5vYnNlcnZhdG9yeS5xdW90YS52MS5HZXRMaW1pdHNSZXF1ZXN0Gicub2JzZXJ2YXRvcnkucXVvdGEudjEuR2V0TGltaXRzUmVzcG9uc2UiRoq1GCAKEHF1b3RhLmxpbWl0cy5nZXQSCm9yZy9saW1pdHMYAoLT5JMCHGIGbGltaXRzEhIvb3Jncy97b3JnfS9saW1pdHMSqwEKDFVwZGF0ZUxpbWl0cxIpLm9ic2VydmF0b3J5LnF1b3RhLnYxLlVwZGF0ZUxpbWl0c1JlcXVlc3QaKi5vYnNlcnZhdG9yeS5xdW90YS52MS5VcGRhdGVMaW1pdHNSZXNwb25zZSJEirUYIwoTcXVvdGEubGltaXRzLnVwZGF0ZRIKb3JnL2xpbWl0cxgBgtPkkwIXOgEqGhIvb3Jncy97b3JnfS9saW1pdHMSuwEKDEdldE9yZ0xpbWl0cxIpLm9ic2VydmF0b3J5LnF1b3RhLnYxLkdldE9yZ0xpbWl0c1JlcXVlc3QaKi5vYnNlcnZhdG9yeS5xdW90YS52MS5HZXRPcmdMaW1pdHNSZXNwb25zZSJUirUYJQoQcXVvdGEubGltaXRzLmdldBIPcGxhdGZvcm0vbGltaXRzGAKC0+STAiViBmxpbWl0cxIbL2FkbWluL29yZ3Mve29yZ19pZH0vbGltaXRzEscBCg9VcGRhdGVPcmdMaW1pdHMSLC5vYnNlcnZhdG9yeS5xdW90YS52MS5VcGRhdGVPcmdMaW1pdHNSZXF1ZXN0Gi0ub2JzZXJ2YXRvcnkucXVvdGEudjEuVXBkYXRlT3JnTGltaXRzUmVzcG9uc2UiV4q1GCgKE3F1b3RhLmxpbWl0cy51cGRhdGUSD3BsYXRmb3JtL2xpbWl0cxgBgtPkkwIlOgZsaW1pdHMaGy9hZG1pbi9vcmdzL3tvcmdfaWR9L2xpbWl0czKiAwoUUXVvdGFJbnRlcm5hbFNlcnZpY2USVgoHUmVzZXJ2ZRIkLm9ic2VydmF0b3J5LnF1b3RhLnYxLlJlc2VydmVSZXF1ZXN0GiUub2JzZXJ2YXRvcnkucXVvdGEudjEuUmVzZXJ2ZVJlc3BvbnNlElMKBkNhbmNlbBIjLm9ic2VydmF0b3J5LnF1b3RhLnYxLkNhbmNlbFJlcXVlc3QaJC5vYnNlcnZhdG9yeS5xdW90YS52MS5DYW5jZWxSZXNwb25zZRJWCgdSZWxlYXNlEiQub2JzZXJ2YXRvcnkucXVvdGEudjEuUmVsZWFzZVJlcXVlc3QaJS5vYnNlcnZhdG9yeS5xdW90YS52MS5SZWxlYXNlUmVzcG9uc2UShAEKCUdldExpbWl0cxI6Lm9ic2VydmF0b3J5LnF1b3RhLnYxLlF1b3RhSW50ZXJuYWxTZXJ2aWNlR2V0TGltaXRzUmVxdWVzdBo7Lm9ic2VydmF0b3J5LnF1b3RhLnYxLlF1b3RhSW50ZXJuYWxTZXJ2aWNlR2V0TGltaXRzUmVzcG9uc2VC4QEKGGNvbS5vYnNlcnZhdG9yeS5xdW90YS52MUIKUXVvdGFQcm90b1ABWkdnaXRodWIuY29tL2FzdGVyaXNtLWRldi9vYnNlcnZhdG9yeS9nZW4vZ28vb2JzZXJ2YXRvcnkvcXVvdGEvdjE7cXVvdGF2MaICA09RWKoCFE9ic2VydmF0b3J5LlF1b3RhLlYxygIUT2JzZXJ2YXRvcnlcUXVvdGFcVjHiAiBPYnNlcnZhdG9yeVxRdW90YVxWMVxHUEJNZXRhZGF0YeoCFk9ic2VydmF0b3J5OjpRdW90YTo6VjFiBnByb3RvMw", [file_google_api_annotations, file_google_protobuf_timestamp, file_observatory_v1_annotations]);
 
 /**
  * Limits holds one scope's limits; an absent field is unlimited.
@@ -233,6 +235,236 @@ export const UpdateOrgLimitsResponseSchema: GenMessage<UpdateOrgLimitsResponse> 
   messageDesc(file_observatory_quota_v1_quota, 9);
 
 /**
+ * Amounts are what an operation adds; an absent field is not checked.
+ *
+ * @generated from message observatory.quota.v1.Amounts
+ */
+export type Amounts = Message<"observatory.quota.v1.Amounts"> & {
+  /**
+   * @generated from field: optional int32 vcpu = 1;
+   */
+  vcpu?: number | undefined;
+
+  /**
+   * @generated from field: optional int32 ram_mb = 2;
+   */
+  ramMb?: number | undefined;
+
+  /**
+   * @generated from field: optional int32 disk_gb = 3;
+   */
+  diskGb?: number | undefined;
+
+  /**
+   * @generated from field: optional int32 vm_count = 4;
+   */
+  vmCount?: number | undefined;
+
+  /**
+   * @generated from field: optional int32 snapshot_count = 5;
+   */
+  snapshotCount?: number | undefined;
+};
+
+/**
+ * Describes the message observatory.quota.v1.Amounts.
+ * Use `create(AmountsSchema)` to create a new message.
+ */
+export const AmountsSchema: GenMessage<Amounts> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 10);
+
+/**
+ * @generated from message observatory.quota.v1.ReserveRequest
+ */
+export type ReserveRequest = Message<"observatory.quota.v1.ReserveRequest"> & {
+  /**
+   * @generated from field: string org_id = 1;
+   */
+  orgId: string;
+
+  /**
+   * owner is user:<uuid> or team:<uuid>.
+   *
+   * @generated from field: string owner = 2;
+   */
+  owner: string;
+
+  /**
+   * @generated from field: observatory.quota.v1.Amounts amounts = 3;
+   */
+  amounts?: Amounts | undefined;
+};
+
+/**
+ * Describes the message observatory.quota.v1.ReserveRequest.
+ * Use `create(ReserveRequestSchema)` to create a new message.
+ */
+export const ReserveRequestSchema: GenMessage<ReserveRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 11);
+
+/**
+ * @generated from message observatory.quota.v1.ReserveResponse
+ */
+export type ReserveResponse = Message<"observatory.quota.v1.ReserveResponse"> & {
+  /**
+   * @generated from field: string reservation_id = 1;
+   */
+  reservationId: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp expires_at = 2;
+   */
+  expiresAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message observatory.quota.v1.ReserveResponse.
+ * Use `create(ReserveResponseSchema)` to create a new message.
+ */
+export const ReserveResponseSchema: GenMessage<ReserveResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 12);
+
+/**
+ * @generated from message observatory.quota.v1.CancelRequest
+ */
+export type CancelRequest = Message<"observatory.quota.v1.CancelRequest"> & {
+  /**
+   * @generated from field: repeated string reservation_ids = 1;
+   */
+  reservationIds: string[];
+};
+
+/**
+ * Describes the message observatory.quota.v1.CancelRequest.
+ * Use `create(CancelRequestSchema)` to create a new message.
+ */
+export const CancelRequestSchema: GenMessage<CancelRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 13);
+
+/**
+ * @generated from message observatory.quota.v1.CancelResponse
+ */
+export type CancelResponse = Message<"observatory.quota.v1.CancelResponse"> & {
+};
+
+/**
+ * Describes the message observatory.quota.v1.CancelResponse.
+ * Use `create(CancelResponseSchema)` to create a new message.
+ */
+export const CancelResponseSchema: GenMessage<CancelResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 14);
+
+/**
+ * @generated from message observatory.quota.v1.ReleaseRequest
+ */
+export type ReleaseRequest = Message<"observatory.quota.v1.ReleaseRequest"> & {
+  /**
+   * @generated from field: string org_id = 1;
+   */
+  orgId: string;
+
+  /**
+   * resources are vm/<uuid>, disk/<uuid> or snapshot/<uuid>.
+   *
+   * @generated from field: repeated string resources = 2;
+   */
+  resources: string[];
+};
+
+/**
+ * Describes the message observatory.quota.v1.ReleaseRequest.
+ * Use `create(ReleaseRequestSchema)` to create a new message.
+ */
+export const ReleaseRequestSchema: GenMessage<ReleaseRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 15);
+
+/**
+ * @generated from message observatory.quota.v1.ReleaseResponse
+ */
+export type ReleaseResponse = Message<"observatory.quota.v1.ReleaseResponse"> & {
+};
+
+/**
+ * Describes the message observatory.quota.v1.ReleaseResponse.
+ * Use `create(ReleaseResponseSchema)` to create a new message.
+ */
+export const ReleaseResponseSchema: GenMessage<ReleaseResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 16);
+
+/**
+ * @generated from message observatory.quota.v1.QuotaInternalServiceGetLimitsRequest
+ */
+export type QuotaInternalServiceGetLimitsRequest = Message<"observatory.quota.v1.QuotaInternalServiceGetLimitsRequest"> & {
+  /**
+   * @generated from field: string org_id = 1;
+   */
+  orgId: string;
+};
+
+/**
+ * Describes the message observatory.quota.v1.QuotaInternalServiceGetLimitsRequest.
+ * Use `create(QuotaInternalServiceGetLimitsRequestSchema)` to create a new message.
+ */
+export const QuotaInternalServiceGetLimitsRequestSchema: GenMessage<QuotaInternalServiceGetLimitsRequest> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 17);
+
+/**
+ * @generated from message observatory.quota.v1.QuotaInternalServiceGetLimitsResponse
+ */
+export type QuotaInternalServiceGetLimitsResponse = Message<"observatory.quota.v1.QuotaInternalServiceGetLimitsResponse"> & {
+  /**
+   * @generated from field: observatory.quota.v1.OrgLimits limits = 1;
+   */
+  limits?: OrgLimits | undefined;
+};
+
+/**
+ * Describes the message observatory.quota.v1.QuotaInternalServiceGetLimitsResponse.
+ * Use `create(QuotaInternalServiceGetLimitsResponseSchema)` to create a new message.
+ */
+export const QuotaInternalServiceGetLimitsResponseSchema: GenMessage<QuotaInternalServiceGetLimitsResponse> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 18);
+
+/**
+ * LimitExceeded names the first limit a Reserve would cross: scope is org or the owner, got the usage it would reach.
+ *
+ * @generated from message observatory.quota.v1.LimitExceeded
+ */
+export type LimitExceeded = Message<"observatory.quota.v1.LimitExceeded"> & {
+  /**
+   * @generated from field: string scope = 1;
+   */
+  scope: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string unit = 3;
+   */
+  unit: string;
+
+  /**
+   * @generated from field: int32 limit = 4;
+   */
+  limit: number;
+
+  /**
+   * @generated from field: int32 got = 5;
+   */
+  got: number;
+};
+
+/**
+ * Describes the message observatory.quota.v1.LimitExceeded.
+ * Use `create(LimitExceededSchema)` to create a new message.
+ */
+export const LimitExceededSchema: GenMessage<LimitExceeded> = /*@__PURE__*/
+  messageDesc(file_observatory_quota_v1_quota, 19);
+
+/**
  * QuotaService reads and sets the limits per org, team and member.
  *
  * @generated from service observatory.quota.v1.QuotaService
@@ -276,4 +508,51 @@ export const QuotaService: GenService<{
   },
 }> = /*@__PURE__*/
   serviceDesc(file_observatory_quota_v1_quota, 0);
+
+/**
+ * QuotaInternalService checks and holds quota for the services that own resources; callers authenticate with a service token.
+ *
+ * @generated from service observatory.quota.v1.QuotaInternalService
+ */
+export const QuotaInternalService: GenService<{
+  /**
+   * Reserve holds amounts for owner if they fit the org and owner limits, else ResourceExhausted with a LimitExceeded detail.
+   *
+   * @generated from rpc observatory.quota.v1.QuotaInternalService.Reserve
+   */
+  reserve: {
+    methodKind: "unary";
+    input: typeof ReserveRequestSchema;
+    output: typeof ReserveResponseSchema;
+  },
+  /**
+   * Cancel drops holds; unknown ids are ignored.
+   *
+   * @generated from rpc observatory.quota.v1.QuotaInternalService.Cancel
+   */
+  cancel: {
+    methodKind: "unary";
+    input: typeof CancelRequestSchema;
+    output: typeof CancelResponseSchema;
+  },
+  /**
+   * Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+   *
+   * @generated from rpc observatory.quota.v1.QuotaInternalService.Release
+   */
+  release: {
+    methodKind: "unary";
+    input: typeof ReleaseRequestSchema;
+    output: typeof ReleaseResponseSchema;
+  },
+  /**
+   * @generated from rpc observatory.quota.v1.QuotaInternalService.GetLimits
+   */
+  getLimits: {
+    methodKind: "unary";
+    input: typeof QuotaInternalServiceGetLimitsRequestSchema;
+    output: typeof QuotaInternalServiceGetLimitsResponseSchema;
+  },
+}> = /*@__PURE__*/
+  serviceDesc(file_observatory_quota_v1_quota, 1);
 

@@ -1,4 +1,4 @@
-// Package quota is the quota service: limits per org, team and member in schema quota, served at /api/quota/v1/.
+// Package quota is the quota service: limits per org, team and member in schema quota, served at /api/quota/v1/, and the check-and-reserve API at /internal/quota/.
 package quota
 
 import (
@@ -105,7 +105,8 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		wg.Go(func() { settings.Run(ctx, js.Conn()) })
 	}
 
-	path, h := quotav1connect.NewQuotaServiceHandler(&server{store: &store{pool: pool}, policy: w},
+	st := &store{pool: pool, now: time.Now}
+	path, h := quotav1connect.NewQuotaServiceHandler(&server{store: st, policy: w},
 		connect.WithInterceptors(auditlog.Interceptors("quota", v, w, settings, pool, auditlog.HandlerRecordsWrites())...), connect.WithReadMaxBytes(maxBody))
 	tc, err := vanguard.NewTranscoder([]*vanguard.Service{vanguard.NewService(path, h, vanguard.WithMaxMessageBufferBytes(maxBody))}, vanguard.WithCodec(rest.Codec))
 	if err != nil {
@@ -114,6 +115,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	mux := http.NewServeMux()
 	// Bodies are read before authz, so cap them; MaxBytesHandler also stops Connect from draining an oversized one.
 	mux.Handle(prefix+"/", http.MaxBytesHandler(http.StripPrefix(prefix, rest.NoQuery(path, tc)), maxBody))
+	mux.Handle(internalPrefix+"/", internalHandler(st, cfg.ServiceTokens))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	err = run.Serve(ctx, srv, ln)
 	cancel()

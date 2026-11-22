@@ -171,7 +171,8 @@ inside the compose network only; do not publish it.
   and the audit service also get as `quota=<token>`.
 - `OBSERVATORY_AUDIT_URL` (compose: `http://audit:8092`) is where quota loads which orgs record its reads (data events).
 - Limit changes write their audit event in the same transaction as the change.
-- `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`.
+- `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`
+  (`Reserve`, `Cancel`, `Release`, `GetLimits`); every other caller is refused there.
 
 ## Serving modes
 

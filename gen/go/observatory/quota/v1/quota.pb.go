@@ -11,6 +11,7 @@ import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -530,11 +531,535 @@ func (*UpdateOrgLimitsResponse) Descriptor() ([]byte, []int) {
 	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{9}
 }
 
+// Amounts are what an operation adds; an absent field is not checked.
+type Amounts struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Vcpu          *int32                 `protobuf:"varint,1,opt,name=vcpu,proto3,oneof" json:"vcpu,omitempty"`
+	RamMb         *int32                 `protobuf:"varint,2,opt,name=ram_mb,json=ramMb,proto3,oneof" json:"ram_mb,omitempty"`
+	DiskGb        *int32                 `protobuf:"varint,3,opt,name=disk_gb,json=diskGb,proto3,oneof" json:"disk_gb,omitempty"`
+	VmCount       *int32                 `protobuf:"varint,4,opt,name=vm_count,json=vmCount,proto3,oneof" json:"vm_count,omitempty"`
+	SnapshotCount *int32                 `protobuf:"varint,5,opt,name=snapshot_count,json=snapshotCount,proto3,oneof" json:"snapshot_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Amounts) Reset() {
+	*x = Amounts{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Amounts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Amounts) ProtoMessage() {}
+
+func (x *Amounts) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Amounts.ProtoReflect.Descriptor instead.
+func (*Amounts) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Amounts) GetVcpu() int32 {
+	if x != nil && x.Vcpu != nil {
+		return *x.Vcpu
+	}
+	return 0
+}
+
+func (x *Amounts) GetRamMb() int32 {
+	if x != nil && x.RamMb != nil {
+		return *x.RamMb
+	}
+	return 0
+}
+
+func (x *Amounts) GetDiskGb() int32 {
+	if x != nil && x.DiskGb != nil {
+		return *x.DiskGb
+	}
+	return 0
+}
+
+func (x *Amounts) GetVmCount() int32 {
+	if x != nil && x.VmCount != nil {
+		return *x.VmCount
+	}
+	return 0
+}
+
+func (x *Amounts) GetSnapshotCount() int32 {
+	if x != nil && x.SnapshotCount != nil {
+		return *x.SnapshotCount
+	}
+	return 0
+}
+
+type ReserveRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	OrgId string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// owner is user:<uuid> or team:<uuid>.
+	Owner         string   `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Amounts       *Amounts `protobuf:"bytes,3,opt,name=amounts,proto3" json:"amounts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReserveRequest) Reset() {
+	*x = ReserveRequest{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveRequest) ProtoMessage() {}
+
+func (x *ReserveRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveRequest.ProtoReflect.Descriptor instead.
+func (*ReserveRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ReserveRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ReserveRequest) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *ReserveRequest) GetAmounts() *Amounts {
+	if x != nil {
+		return x.Amounts
+	}
+	return nil
+}
+
+type ReserveResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReserveResponse) Reset() {
+	*x = ReserveResponse{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReserveResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReserveResponse) ProtoMessage() {}
+
+func (x *ReserveResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReserveResponse.ProtoReflect.Descriptor instead.
+func (*ReserveResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ReserveResponse) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *ReserveResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type CancelRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ReservationIds []string               `protobuf:"bytes,1,rep,name=reservation_ids,json=reservationIds,proto3" json:"reservation_ids,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CancelRequest) Reset() {
+	*x = CancelRequest{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelRequest) ProtoMessage() {}
+
+func (x *CancelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelRequest.ProtoReflect.Descriptor instead.
+func (*CancelRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CancelRequest) GetReservationIds() []string {
+	if x != nil {
+		return x.ReservationIds
+	}
+	return nil
+}
+
+type CancelResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelResponse) Reset() {
+	*x = CancelResponse{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelResponse) ProtoMessage() {}
+
+func (x *CancelResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelResponse.ProtoReflect.Descriptor instead.
+func (*CancelResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{14}
+}
+
+type ReleaseRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	OrgId string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	// resources are vm/<uuid>, disk/<uuid> or snapshot/<uuid>.
+	Resources     []string `protobuf:"bytes,2,rep,name=resources,proto3" json:"resources,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseRequest) Reset() {
+	*x = ReleaseRequest{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseRequest) ProtoMessage() {}
+
+func (x *ReleaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseRequest.ProtoReflect.Descriptor instead.
+func (*ReleaseRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ReleaseRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ReleaseRequest) GetResources() []string {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+type ReleaseResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseResponse) Reset() {
+	*x = ReleaseResponse{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseResponse) ProtoMessage() {}
+
+func (x *ReleaseResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseResponse.ProtoReflect.Descriptor instead.
+func (*ReleaseResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{16}
+}
+
+type QuotaInternalServiceGetLimitsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuotaInternalServiceGetLimitsRequest) Reset() {
+	*x = QuotaInternalServiceGetLimitsRequest{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuotaInternalServiceGetLimitsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuotaInternalServiceGetLimitsRequest) ProtoMessage() {}
+
+func (x *QuotaInternalServiceGetLimitsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuotaInternalServiceGetLimitsRequest.ProtoReflect.Descriptor instead.
+func (*QuotaInternalServiceGetLimitsRequest) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *QuotaInternalServiceGetLimitsRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+type QuotaInternalServiceGetLimitsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Limits        *OrgLimits             `protobuf:"bytes,1,opt,name=limits,proto3" json:"limits,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuotaInternalServiceGetLimitsResponse) Reset() {
+	*x = QuotaInternalServiceGetLimitsResponse{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuotaInternalServiceGetLimitsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuotaInternalServiceGetLimitsResponse) ProtoMessage() {}
+
+func (x *QuotaInternalServiceGetLimitsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuotaInternalServiceGetLimitsResponse.ProtoReflect.Descriptor instead.
+func (*QuotaInternalServiceGetLimitsResponse) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *QuotaInternalServiceGetLimitsResponse) GetLimits() *OrgLimits {
+	if x != nil {
+		return x.Limits
+	}
+	return nil
+}
+
+// LimitExceeded names the first limit a Reserve would cross: scope is org or the owner, got the usage it would reach.
+type LimitExceeded struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Unit          string                 `protobuf:"bytes,3,opt,name=unit,proto3" json:"unit,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Got           int32                  `protobuf:"varint,5,opt,name=got,proto3" json:"got,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LimitExceeded) Reset() {
+	*x = LimitExceeded{}
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LimitExceeded) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LimitExceeded) ProtoMessage() {}
+
+func (x *LimitExceeded) ProtoReflect() protoreflect.Message {
+	mi := &file_observatory_quota_v1_quota_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LimitExceeded.ProtoReflect.Descriptor instead.
+func (*LimitExceeded) Descriptor() ([]byte, []int) {
+	return file_observatory_quota_v1_quota_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *LimitExceeded) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *LimitExceeded) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *LimitExceeded) GetUnit() string {
+	if x != nil {
+		return x.Unit
+	}
+	return ""
+}
+
+func (x *LimitExceeded) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *LimitExceeded) GetGot() int32 {
+	if x != nil {
+		return x.Got
+	}
+	return 0
+}
+
 var File_observatory_quota_v1_quota_proto protoreflect.FileDescriptor
 
 const file_observatory_quota_v1_quota_proto_rawDesc = "" +
 	"\n" +
-	" observatory/quota/v1/quota.proto\x12\x14observatory.quota.v1\x1a\x1cgoogle/api/annotations.proto\x1a observatory/v1/annotations.proto\"\xab\x02\n" +
+	" observatory/quota/v1/quota.proto\x12\x14observatory.quota.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a observatory/v1/annotations.proto\"\xab\x02\n" +
 	"\x06Limits\x12\x17\n" +
 	"\x04vcpu\x18\x01 \x01(\x05H\x00R\x04vcpu\x88\x01\x01\x12\x1a\n" +
 	"\x06ram_mb\x18\x02 \x01(\x05H\x01R\x05ramMb\x88\x01\x01\x12\x1c\n" +
@@ -576,7 +1101,44 @@ const file_observatory_quota_v1_quota_proto_rawDesc = "" +
 	"\x16UpdateOrgLimitsRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x124\n" +
 	"\x06limits\x18\x02 \x01(\v2\x1c.observatory.quota.v1.LimitsR\x06limits\"\x19\n" +
-	"\x17UpdateOrgLimitsResponse2\xeb\x05\n" +
+	"\x17UpdateOrgLimitsResponse\"\xe8\x01\n" +
+	"\aAmounts\x12\x17\n" +
+	"\x04vcpu\x18\x01 \x01(\x05H\x00R\x04vcpu\x88\x01\x01\x12\x1a\n" +
+	"\x06ram_mb\x18\x02 \x01(\x05H\x01R\x05ramMb\x88\x01\x01\x12\x1c\n" +
+	"\adisk_gb\x18\x03 \x01(\x05H\x02R\x06diskGb\x88\x01\x01\x12\x1e\n" +
+	"\bvm_count\x18\x04 \x01(\x05H\x03R\avmCount\x88\x01\x01\x12*\n" +
+	"\x0esnapshot_count\x18\x05 \x01(\x05H\x04R\rsnapshotCount\x88\x01\x01B\a\n" +
+	"\x05_vcpuB\t\n" +
+	"\a_ram_mbB\n" +
+	"\n" +
+	"\b_disk_gbB\v\n" +
+	"\t_vm_countB\x11\n" +
+	"\x0f_snapshot_count\"v\n" +
+	"\x0eReserveRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\x127\n" +
+	"\aamounts\x18\x03 \x01(\v2\x1d.observatory.quota.v1.AmountsR\aamounts\"s\n" +
+	"\x0fReserveResponse\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"8\n" +
+	"\rCancelRequest\x12'\n" +
+	"\x0freservation_ids\x18\x01 \x03(\tR\x0ereservationIds\"\x10\n" +
+	"\x0eCancelResponse\"E\n" +
+	"\x0eReleaseRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1c\n" +
+	"\tresources\x18\x02 \x03(\tR\tresources\"\x11\n" +
+	"\x0fReleaseResponse\"=\n" +
+	"$QuotaInternalServiceGetLimitsRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"`\n" +
+	"%QuotaInternalServiceGetLimitsResponse\x127\n" +
+	"\x06limits\x18\x01 \x01(\v2\x1f.observatory.quota.v1.OrgLimitsR\x06limits\"u\n" +
+	"\rLimitExceeded\x12\x14\n" +
+	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
+	"\x04unit\x18\x03 \x01(\tR\x04unit\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x10\n" +
+	"\x03got\x18\x05 \x01(\x05R\x03got2\xeb\x05\n" +
 	"\fQuotaService\x12\xa4\x01\n" +
 	"\tGetLimits\x12&.observatory.quota.v1.GetLimitsRequest\x1a'.observatory.quota.v1.GetLimitsResponse\"F\x8a\xb5\x18 \n" +
 	"\x10quota.limits.get\x12\n" +
@@ -587,7 +1149,12 @@ const file_observatory_quota_v1_quota_proto_rawDesc = "" +
 	"\fGetOrgLimits\x12).observatory.quota.v1.GetOrgLimitsRequest\x1a*.observatory.quota.v1.GetOrgLimitsResponse\"T\x8a\xb5\x18%\n" +
 	"\x10quota.limits.get\x12\x0fplatform/limits\x18\x02\x82\xd3\xe4\x93\x02%b\x06limits\x12\x1b/admin/orgs/{org_id}/limits\x12\xc7\x01\n" +
 	"\x0fUpdateOrgLimits\x12,.observatory.quota.v1.UpdateOrgLimitsRequest\x1a-.observatory.quota.v1.UpdateOrgLimitsResponse\"W\x8a\xb5\x18(\n" +
-	"\x13quota.limits.update\x12\x0fplatform/limits\x18\x01\x82\xd3\xe4\x93\x02%:\x06limits\x1a\x1b/admin/orgs/{org_id}/limitsB\xe1\x01\n" +
+	"\x13quota.limits.update\x12\x0fplatform/limits\x18\x01\x82\xd3\xe4\x93\x02%:\x06limits\x1a\x1b/admin/orgs/{org_id}/limits2\xa2\x03\n" +
+	"\x14QuotaInternalService\x12V\n" +
+	"\aReserve\x12$.observatory.quota.v1.ReserveRequest\x1a%.observatory.quota.v1.ReserveResponse\x12S\n" +
+	"\x06Cancel\x12#.observatory.quota.v1.CancelRequest\x1a$.observatory.quota.v1.CancelResponse\x12V\n" +
+	"\aRelease\x12$.observatory.quota.v1.ReleaseRequest\x1a%.observatory.quota.v1.ReleaseResponse\x12\x84\x01\n" +
+	"\tGetLimits\x12:.observatory.quota.v1.QuotaInternalServiceGetLimitsRequest\x1a;.observatory.quota.v1.QuotaInternalServiceGetLimitsResponseB\xe1\x01\n" +
 	"\x18com.observatory.quota.v1B\n" +
 	"QuotaProtoP\x01ZGgithub.com/asterism-dev/observatory/gen/go/observatory/quota/v1;quotav1\xa2\x02\x03OQX\xaa\x02\x14Observatory.Quota.V1\xca\x02\x14Observatory\\Quota\\V1\xe2\x02 Observatory\\Quota\\V1\\GPBMetadata\xea\x02\x16Observatory::Quota::V1b\x06proto3"
 
@@ -603,44 +1170,66 @@ func file_observatory_quota_v1_quota_proto_rawDescGZIP() []byte {
 	return file_observatory_quota_v1_quota_proto_rawDescData
 }
 
-var file_observatory_quota_v1_quota_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_observatory_quota_v1_quota_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_observatory_quota_v1_quota_proto_goTypes = []any{
-	(*Limits)(nil),                  // 0: observatory.quota.v1.Limits
-	(*OrgLimits)(nil),               // 1: observatory.quota.v1.OrgLimits
-	(*GetLimitsRequest)(nil),        // 2: observatory.quota.v1.GetLimitsRequest
-	(*GetLimitsResponse)(nil),       // 3: observatory.quota.v1.GetLimitsResponse
-	(*UpdateLimitsRequest)(nil),     // 4: observatory.quota.v1.UpdateLimitsRequest
-	(*UpdateLimitsResponse)(nil),    // 5: observatory.quota.v1.UpdateLimitsResponse
-	(*GetOrgLimitsRequest)(nil),     // 6: observatory.quota.v1.GetOrgLimitsRequest
-	(*GetOrgLimitsResponse)(nil),    // 7: observatory.quota.v1.GetOrgLimitsResponse
-	(*UpdateOrgLimitsRequest)(nil),  // 8: observatory.quota.v1.UpdateOrgLimitsRequest
-	(*UpdateOrgLimitsResponse)(nil), // 9: observatory.quota.v1.UpdateOrgLimitsResponse
-	nil,                             // 10: observatory.quota.v1.OrgLimits.TeamsEntry
-	nil,                             // 11: observatory.quota.v1.OrgLimits.MembersEntry
+	(*Limits)(nil),                                // 0: observatory.quota.v1.Limits
+	(*OrgLimits)(nil),                             // 1: observatory.quota.v1.OrgLimits
+	(*GetLimitsRequest)(nil),                      // 2: observatory.quota.v1.GetLimitsRequest
+	(*GetLimitsResponse)(nil),                     // 3: observatory.quota.v1.GetLimitsResponse
+	(*UpdateLimitsRequest)(nil),                   // 4: observatory.quota.v1.UpdateLimitsRequest
+	(*UpdateLimitsResponse)(nil),                  // 5: observatory.quota.v1.UpdateLimitsResponse
+	(*GetOrgLimitsRequest)(nil),                   // 6: observatory.quota.v1.GetOrgLimitsRequest
+	(*GetOrgLimitsResponse)(nil),                  // 7: observatory.quota.v1.GetOrgLimitsResponse
+	(*UpdateOrgLimitsRequest)(nil),                // 8: observatory.quota.v1.UpdateOrgLimitsRequest
+	(*UpdateOrgLimitsResponse)(nil),               // 9: observatory.quota.v1.UpdateOrgLimitsResponse
+	(*Amounts)(nil),                               // 10: observatory.quota.v1.Amounts
+	(*ReserveRequest)(nil),                        // 11: observatory.quota.v1.ReserveRequest
+	(*ReserveResponse)(nil),                       // 12: observatory.quota.v1.ReserveResponse
+	(*CancelRequest)(nil),                         // 13: observatory.quota.v1.CancelRequest
+	(*CancelResponse)(nil),                        // 14: observatory.quota.v1.CancelResponse
+	(*ReleaseRequest)(nil),                        // 15: observatory.quota.v1.ReleaseRequest
+	(*ReleaseResponse)(nil),                       // 16: observatory.quota.v1.ReleaseResponse
+	(*QuotaInternalServiceGetLimitsRequest)(nil),  // 17: observatory.quota.v1.QuotaInternalServiceGetLimitsRequest
+	(*QuotaInternalServiceGetLimitsResponse)(nil), // 18: observatory.quota.v1.QuotaInternalServiceGetLimitsResponse
+	(*LimitExceeded)(nil),                         // 19: observatory.quota.v1.LimitExceeded
+	nil,                                           // 20: observatory.quota.v1.OrgLimits.TeamsEntry
+	nil,                                           // 21: observatory.quota.v1.OrgLimits.MembersEntry
+	(*timestamppb.Timestamp)(nil),                 // 22: google.protobuf.Timestamp
 }
 var file_observatory_quota_v1_quota_proto_depIdxs = []int32{
 	0,  // 0: observatory.quota.v1.OrgLimits.org:type_name -> observatory.quota.v1.Limits
-	10, // 1: observatory.quota.v1.OrgLimits.teams:type_name -> observatory.quota.v1.OrgLimits.TeamsEntry
-	11, // 2: observatory.quota.v1.OrgLimits.members:type_name -> observatory.quota.v1.OrgLimits.MembersEntry
+	20, // 1: observatory.quota.v1.OrgLimits.teams:type_name -> observatory.quota.v1.OrgLimits.TeamsEntry
+	21, // 2: observatory.quota.v1.OrgLimits.members:type_name -> observatory.quota.v1.OrgLimits.MembersEntry
 	1,  // 3: observatory.quota.v1.GetLimitsResponse.limits:type_name -> observatory.quota.v1.OrgLimits
 	0,  // 4: observatory.quota.v1.UpdateLimitsRequest.limits:type_name -> observatory.quota.v1.Limits
 	1,  // 5: observatory.quota.v1.GetOrgLimitsResponse.limits:type_name -> observatory.quota.v1.OrgLimits
 	0,  // 6: observatory.quota.v1.UpdateOrgLimitsRequest.limits:type_name -> observatory.quota.v1.Limits
-	0,  // 7: observatory.quota.v1.OrgLimits.TeamsEntry.value:type_name -> observatory.quota.v1.Limits
-	0,  // 8: observatory.quota.v1.OrgLimits.MembersEntry.value:type_name -> observatory.quota.v1.Limits
-	2,  // 9: observatory.quota.v1.QuotaService.GetLimits:input_type -> observatory.quota.v1.GetLimitsRequest
-	4,  // 10: observatory.quota.v1.QuotaService.UpdateLimits:input_type -> observatory.quota.v1.UpdateLimitsRequest
-	6,  // 11: observatory.quota.v1.QuotaService.GetOrgLimits:input_type -> observatory.quota.v1.GetOrgLimitsRequest
-	8,  // 12: observatory.quota.v1.QuotaService.UpdateOrgLimits:input_type -> observatory.quota.v1.UpdateOrgLimitsRequest
-	3,  // 13: observatory.quota.v1.QuotaService.GetLimits:output_type -> observatory.quota.v1.GetLimitsResponse
-	5,  // 14: observatory.quota.v1.QuotaService.UpdateLimits:output_type -> observatory.quota.v1.UpdateLimitsResponse
-	7,  // 15: observatory.quota.v1.QuotaService.GetOrgLimits:output_type -> observatory.quota.v1.GetOrgLimitsResponse
-	9,  // 16: observatory.quota.v1.QuotaService.UpdateOrgLimits:output_type -> observatory.quota.v1.UpdateOrgLimitsResponse
-	13, // [13:17] is the sub-list for method output_type
-	9,  // [9:13] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	10, // 7: observatory.quota.v1.ReserveRequest.amounts:type_name -> observatory.quota.v1.Amounts
+	22, // 8: observatory.quota.v1.ReserveResponse.expires_at:type_name -> google.protobuf.Timestamp
+	1,  // 9: observatory.quota.v1.QuotaInternalServiceGetLimitsResponse.limits:type_name -> observatory.quota.v1.OrgLimits
+	0,  // 10: observatory.quota.v1.OrgLimits.TeamsEntry.value:type_name -> observatory.quota.v1.Limits
+	0,  // 11: observatory.quota.v1.OrgLimits.MembersEntry.value:type_name -> observatory.quota.v1.Limits
+	2,  // 12: observatory.quota.v1.QuotaService.GetLimits:input_type -> observatory.quota.v1.GetLimitsRequest
+	4,  // 13: observatory.quota.v1.QuotaService.UpdateLimits:input_type -> observatory.quota.v1.UpdateLimitsRequest
+	6,  // 14: observatory.quota.v1.QuotaService.GetOrgLimits:input_type -> observatory.quota.v1.GetOrgLimitsRequest
+	8,  // 15: observatory.quota.v1.QuotaService.UpdateOrgLimits:input_type -> observatory.quota.v1.UpdateOrgLimitsRequest
+	11, // 16: observatory.quota.v1.QuotaInternalService.Reserve:input_type -> observatory.quota.v1.ReserveRequest
+	13, // 17: observatory.quota.v1.QuotaInternalService.Cancel:input_type -> observatory.quota.v1.CancelRequest
+	15, // 18: observatory.quota.v1.QuotaInternalService.Release:input_type -> observatory.quota.v1.ReleaseRequest
+	17, // 19: observatory.quota.v1.QuotaInternalService.GetLimits:input_type -> observatory.quota.v1.QuotaInternalServiceGetLimitsRequest
+	3,  // 20: observatory.quota.v1.QuotaService.GetLimits:output_type -> observatory.quota.v1.GetLimitsResponse
+	5,  // 21: observatory.quota.v1.QuotaService.UpdateLimits:output_type -> observatory.quota.v1.UpdateLimitsResponse
+	7,  // 22: observatory.quota.v1.QuotaService.GetOrgLimits:output_type -> observatory.quota.v1.GetOrgLimitsResponse
+	9,  // 23: observatory.quota.v1.QuotaService.UpdateOrgLimits:output_type -> observatory.quota.v1.UpdateOrgLimitsResponse
+	12, // 24: observatory.quota.v1.QuotaInternalService.Reserve:output_type -> observatory.quota.v1.ReserveResponse
+	14, // 25: observatory.quota.v1.QuotaInternalService.Cancel:output_type -> observatory.quota.v1.CancelResponse
+	16, // 26: observatory.quota.v1.QuotaInternalService.Release:output_type -> observatory.quota.v1.ReleaseResponse
+	18, // 27: observatory.quota.v1.QuotaInternalService.GetLimits:output_type -> observatory.quota.v1.QuotaInternalServiceGetLimitsResponse
+	20, // [20:28] is the sub-list for method output_type
+	12, // [12:20] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_observatory_quota_v1_quota_proto_init() }
@@ -649,15 +1238,16 @@ func file_observatory_quota_v1_quota_proto_init() {
 		return
 	}
 	file_observatory_quota_v1_quota_proto_msgTypes[0].OneofWrappers = []any{}
+	file_observatory_quota_v1_quota_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_observatory_quota_v1_quota_proto_rawDesc), len(file_observatory_quota_v1_quota_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   22,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_observatory_quota_v1_quota_proto_goTypes,
 		DependencyIndexes: file_observatory_quota_v1_quota_proto_depIdxs,

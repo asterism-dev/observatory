@@ -34,7 +34,7 @@ func (s *server) GetLimits(ctx context.Context, r *connect.Request[quotav1.GetLi
 	if err != nil {
 		return nil, err
 	}
-	ls, err := s.orgLimits(ctx, org)
+	ls, err := orgLimits(ctx, s.store, org)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *server) GetOrgLimits(ctx context.Context, r *connect.Request[quotav1.Ge
 	if err != nil {
 		return nil, err
 	}
-	ls, err := s.orgLimits(ctx, org)
+	ls, err := orgLimits(ctx, s.store, org)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +149,8 @@ func (s *server) set(ctx context.Context, h http.Header, org uuid.UUID, scope st
 	return nil
 }
 
-func (s *server) orgLimits(ctx context.Context, org uuid.UUID) (*quotav1.OrgLimits, error) {
-	ls, err := s.store.limits(ctx, org)
+func orgLimits(ctx context.Context, st *store, org uuid.UUID) (*quotav1.OrgLimits, error) {
+	ls, err := st.limits(ctx, org)
 	if err != nil {
 		return nil, internalErr("get limits", err)
 	}

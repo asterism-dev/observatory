@@ -3,6 +3,7 @@ syntax = "proto3";
 package observatory.quota.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
 import "observatory/v1/annotations.proto";
 
 // QuotaService reads and sets the limits per org, team and member.
@@ -103,3 +104,66 @@ message UpdateOrgLimitsRequest {
 }
 
 message UpdateOrgLimitsResponse {}
+
+// QuotaInternalService checks and holds quota for the services that own resources; callers authenticate with a service token.
+service QuotaInternalService {
+  // Reserve holds amounts for owner if they fit the org and owner limits, else ResourceExhausted with a LimitExceeded detail.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  // Cancel drops holds; unknown ids are ignored.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  // Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+  rpc GetLimits(QuotaInternalServiceGetLimitsRequest) returns (QuotaInternalServiceGetLimitsResponse);
+}
+
+// Amounts are what an operation adds; an absent field is not checked.
+message Amounts {
+  optional int32 vcpu = 1;
+  optional int32 ram_mb = 2;
+  optional int32 disk_gb = 3;
+  optional int32 vm_count = 4;
+  optional int32 snapshot_count = 5;
+}
+
+message ReserveRequest {
+  string org_id = 1;
+  // owner is user:<uuid> or team:<uuid>.
+  string owner = 2;
+  Amounts amounts = 3;
+}
+
+message ReserveResponse {
+  string reservation_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message CancelRequest {
+  repeated string reservation_ids = 1;
+}
+
+message CancelResponse {}
+
+message ReleaseRequest {
+  string org_id = 1;
+  // resources are vm/<uuid>, disk/<uuid> or snapshot/<uuid>.
+  repeated string resources = 2;
+}
+
+message ReleaseResponse {}
+
+message QuotaInternalServiceGetLimitsRequest {
+  string org_id = 1;
+}
+
+message QuotaInternalServiceGetLimitsResponse {
+  OrgLimits limits = 1;
+}
+
+// LimitExceeded names the first limit a Reserve would cross: scope is org or the owner, got the usage it would reach.
+message LimitExceeded {
+  string scope = 1;
+  string name = 2;
+  string unit = 3;
+  int32 limit = 4;
+  int32 got = 5;
+}

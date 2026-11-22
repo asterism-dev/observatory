@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -55,6 +56,7 @@ func (l Limits) exceeds(org Limits) bool {
 
 type store struct {
 	pool *pgxpool.Pool
+	now  func() time.Time
 }
 
 // limits returns the stored rows by scope; scopes without a row are absent (all unlimited).

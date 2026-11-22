@@ -23,6 +23,8 @@ const _ = connect.IsAtLeastVersion1_13_0
 const (
 	// QuotaServiceName is the fully-qualified name of the QuotaService service.
 	QuotaServiceName = "observatory.quota.v1.QuotaService"
+	// QuotaInternalServiceName is the fully-qualified name of the QuotaInternalService service.
+	QuotaInternalServiceName = "observatory.quota.v1.QuotaInternalService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -44,6 +46,18 @@ const (
 	// QuotaServiceUpdateOrgLimitsProcedure is the fully-qualified name of the QuotaService's
 	// UpdateOrgLimits RPC.
 	QuotaServiceUpdateOrgLimitsProcedure = "/observatory.quota.v1.QuotaService/UpdateOrgLimits"
+	// QuotaInternalServiceReserveProcedure is the fully-qualified name of the QuotaInternalService's
+	// Reserve RPC.
+	QuotaInternalServiceReserveProcedure = "/observatory.quota.v1.QuotaInternalService/Reserve"
+	// QuotaInternalServiceCancelProcedure is the fully-qualified name of the QuotaInternalService's
+	// Cancel RPC.
+	QuotaInternalServiceCancelProcedure = "/observatory.quota.v1.QuotaInternalService/Cancel"
+	// QuotaInternalServiceReleaseProcedure is the fully-qualified name of the QuotaInternalService's
+	// Release RPC.
+	QuotaInternalServiceReleaseProcedure = "/observatory.quota.v1.QuotaInternalService/Release"
+	// QuotaInternalServiceGetLimitsProcedure is the fully-qualified name of the QuotaInternalService's
+	// GetLimits RPC.
+	QuotaInternalServiceGetLimitsProcedure = "/observatory.quota.v1.QuotaInternalService/GetLimits"
 )
 
 // QuotaServiceClient is a client for the observatory.quota.v1.QuotaService service.
@@ -196,4 +210,159 @@ func (UnimplementedQuotaServiceHandler) GetOrgLimits(context.Context, *connect.R
 
 func (UnimplementedQuotaServiceHandler) UpdateOrgLimits(context.Context, *connect.Request[v1.UpdateOrgLimitsRequest]) (*connect.Response[v1.UpdateOrgLimitsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.quota.v1.QuotaService.UpdateOrgLimits is not implemented"))
+}
+
+// QuotaInternalServiceClient is a client for the observatory.quota.v1.QuotaInternalService service.
+type QuotaInternalServiceClient interface {
+	// Reserve holds amounts for owner if they fit the org and owner limits, else ResourceExhausted with a LimitExceeded detail.
+	Reserve(context.Context, *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error)
+	// Cancel drops holds; unknown ids are ignored.
+	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
+	// Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+	Release(context.Context, *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error)
+	GetLimits(context.Context, *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error)
+}
+
+// NewQuotaInternalServiceClient constructs a client for the
+// observatory.quota.v1.QuotaInternalService service. By default, it uses the Connect protocol with
+// the binary Protobuf Codec, asks for gzipped responses, and sends uncompressed requests. To use
+// the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewQuotaInternalServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) QuotaInternalServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	quotaInternalServiceMethods := v1.File_observatory_quota_v1_quota_proto.Services().ByName("QuotaInternalService").Methods()
+	return &quotaInternalServiceClient{
+		reserve: connect.NewClient[v1.ReserveRequest, v1.ReserveResponse](
+			httpClient,
+			baseURL+QuotaInternalServiceReserveProcedure,
+			connect.WithSchema(quotaInternalServiceMethods.ByName("Reserve")),
+			connect.WithClientOptions(opts...),
+		),
+		cancel: connect.NewClient[v1.CancelRequest, v1.CancelResponse](
+			httpClient,
+			baseURL+QuotaInternalServiceCancelProcedure,
+			connect.WithSchema(quotaInternalServiceMethods.ByName("Cancel")),
+			connect.WithClientOptions(opts...),
+		),
+		release: connect.NewClient[v1.ReleaseRequest, v1.ReleaseResponse](
+			httpClient,
+			baseURL+QuotaInternalServiceReleaseProcedure,
+			connect.WithSchema(quotaInternalServiceMethods.ByName("Release")),
+			connect.WithClientOptions(opts...),
+		),
+		getLimits: connect.NewClient[v1.QuotaInternalServiceGetLimitsRequest, v1.QuotaInternalServiceGetLimitsResponse](
+			httpClient,
+			baseURL+QuotaInternalServiceGetLimitsProcedure,
+			connect.WithSchema(quotaInternalServiceMethods.ByName("GetLimits")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// quotaInternalServiceClient implements QuotaInternalServiceClient.
+type quotaInternalServiceClient struct {
+	reserve   *connect.Client[v1.ReserveRequest, v1.ReserveResponse]
+	cancel    *connect.Client[v1.CancelRequest, v1.CancelResponse]
+	release   *connect.Client[v1.ReleaseRequest, v1.ReleaseResponse]
+	getLimits *connect.Client[v1.QuotaInternalServiceGetLimitsRequest, v1.QuotaInternalServiceGetLimitsResponse]
+}
+
+// Reserve calls observatory.quota.v1.QuotaInternalService.Reserve.
+func (c *quotaInternalServiceClient) Reserve(ctx context.Context, req *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error) {
+	return c.reserve.CallUnary(ctx, req)
+}
+
+// Cancel calls observatory.quota.v1.QuotaInternalService.Cancel.
+func (c *quotaInternalServiceClient) Cancel(ctx context.Context, req *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error) {
+	return c.cancel.CallUnary(ctx, req)
+}
+
+// Release calls observatory.quota.v1.QuotaInternalService.Release.
+func (c *quotaInternalServiceClient) Release(ctx context.Context, req *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error) {
+	return c.release.CallUnary(ctx, req)
+}
+
+// GetLimits calls observatory.quota.v1.QuotaInternalService.GetLimits.
+func (c *quotaInternalServiceClient) GetLimits(ctx context.Context, req *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error) {
+	return c.getLimits.CallUnary(ctx, req)
+}
+
+// QuotaInternalServiceHandler is an implementation of the observatory.quota.v1.QuotaInternalService
+// service.
+type QuotaInternalServiceHandler interface {
+	// Reserve holds amounts for owner if they fit the org and owner limits, else ResourceExhausted with a LimitExceeded detail.
+	Reserve(context.Context, *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error)
+	// Cancel drops holds; unknown ids are ignored.
+	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
+	// Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+	Release(context.Context, *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error)
+	GetLimits(context.Context, *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error)
+}
+
+// NewQuotaInternalServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewQuotaInternalServiceHandler(svc QuotaInternalServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	quotaInternalServiceMethods := v1.File_observatory_quota_v1_quota_proto.Services().ByName("QuotaInternalService").Methods()
+	quotaInternalServiceReserveHandler := connect.NewUnaryHandler(
+		QuotaInternalServiceReserveProcedure,
+		svc.Reserve,
+		connect.WithSchema(quotaInternalServiceMethods.ByName("Reserve")),
+		connect.WithHandlerOptions(opts...),
+	)
+	quotaInternalServiceCancelHandler := connect.NewUnaryHandler(
+		QuotaInternalServiceCancelProcedure,
+		svc.Cancel,
+		connect.WithSchema(quotaInternalServiceMethods.ByName("Cancel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	quotaInternalServiceReleaseHandler := connect.NewUnaryHandler(
+		QuotaInternalServiceReleaseProcedure,
+		svc.Release,
+		connect.WithSchema(quotaInternalServiceMethods.ByName("Release")),
+		connect.WithHandlerOptions(opts...),
+	)
+	quotaInternalServiceGetLimitsHandler := connect.NewUnaryHandler(
+		QuotaInternalServiceGetLimitsProcedure,
+		svc.GetLimits,
+		connect.WithSchema(quotaInternalServiceMethods.ByName("GetLimits")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/observatory.quota.v1.QuotaInternalService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case QuotaInternalServiceReserveProcedure:
+			quotaInternalServiceReserveHandler.ServeHTTP(w, r)
+		case QuotaInternalServiceCancelProcedure:
+			quotaInternalServiceCancelHandler.ServeHTTP(w, r)
+		case QuotaInternalServiceReleaseProcedure:
+			quotaInternalServiceReleaseHandler.ServeHTTP(w, r)
+		case QuotaInternalServiceGetLimitsProcedure:
+			quotaInternalServiceGetLimitsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedQuotaInternalServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedQuotaInternalServiceHandler struct{}
+
+func (UnimplementedQuotaInternalServiceHandler) Reserve(context.Context, *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.quota.v1.QuotaInternalService.Reserve is not implemented"))
+}
+
+func (UnimplementedQuotaInternalServiceHandler) Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.quota.v1.QuotaInternalService.Cancel is not implemented"))
+}
+
+func (UnimplementedQuotaInternalServiceHandler) Release(context.Context, *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.quota.v1.QuotaInternalService.Release is not implemented"))
+}
+
+func (UnimplementedQuotaInternalServiceHandler) GetLimits(context.Context, *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("observatory.quota.v1.QuotaInternalService.GetLimits is not implemented"))
 }
