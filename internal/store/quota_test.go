@@ -279,9 +279,10 @@ func TestSnapshotCountLimit(t *testing.T) {
 	mustSnapshot(t, e, v.ID, "b", false)
 }
 
+// A canceled call the hub did not cancel (a reset connection while quota stops) is quota being down too.
 func TestQuotaUnavailableCreatesNothing(t *testing.T) {
 	e := newVMEnv(t)
-	for _, code := range []connect.Code{connect.CodeUnavailable, connect.CodeDeadlineExceeded, connect.CodeInternal, connect.CodeUnknown} {
+	for _, code := range []connect.Code{connect.CodeUnavailable, connect.CodeDeadlineExceeded, connect.CodeInternal, connect.CodeUnknown, connect.CodeCanceled} {
 		e.quota.FailReserves(connect.NewError(code, errors.New("down")))
 		if _, err := e.s.CreateVM(t.Context(), e.vm("a", nil, 1, 1, 1)); !errors.Is(err, store.ErrQuotaUnavailable) {
 			t.Fatalf("create while quota answers %v: %v", code, err)

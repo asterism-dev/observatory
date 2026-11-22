@@ -36,6 +36,7 @@ import (
 	iamstore "github.com/asterism-dev/observatory/internal/iam/store"
 	iamstoretest "github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/quota"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/store/storetest"
@@ -1098,4 +1099,286 @@ func iamStore(t *testing.T, pool *pgxpool.Pool) (*iamstore.Store, *pgxpool.Pool)
 	}
 	t.Cleanup(ipool.Close)
 	return iamstore.New(ipool), ipool
+}
+
+// quotaRig runs serve all with alice owning org acme and bob a member, both with CLI sessions, and returns an HTTP caller through the edge.
+type quotaRig struct {
+	t                *testing.T
+	pool             *pgxpool.Pool
+	org, alice, bob  uuid.UUID
+	aliceTok, bobTok string
+	base             string
+	client           *http.Client
+}
+
+func newQuotaRig(t *testing.T) *quotaRig {
+	t.Helper()
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env := serveAllEnv(t, pool, edgeLn)
+	ctx := t.Context()
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.Login(ctx, iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, _, err := s.CreateInvite(ctx, org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := &quotaRig{t: t, pool: pool, org: org.ID, alice: alice.User.ID, bob: bob.User.ID, base: "http://" + edgeLn.Addr().String(), client: &http.Client{Timeout: 30 * time.Second}}
+	for _, u := range []struct {
+		id  uuid.UUID
+		tok *string
+	}{{alice.User.ID, &r.aliceTok}, {bob.User.ID, &r.bobTok}} {
+		if *u.tok, _, err = s.CreateSession(ctx, u.id, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+	return r
+}
+
+func (r *quotaRig) call(method, path, token, body string) (int, string) {
+	r.t.Helper()
+	req, err := http.NewRequest(method, r.base+path, strings.NewReader(body))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Observatory", "1")
+	resp, err := r.client.Do(req)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(raw)
+}
+
+// within polls ok every 50 ms until it holds or d has passed.
+func within(t *testing.T, d time.Duration, what string, ok func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		done, state := ok()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s not within %s: %s", what, d, state)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// setLimits sets scope's limits through the edge once quota answers.
+func (r *quotaRig) setLimits(token, scope, limits string) (int, string) {
+	r.t.Helper()
+	var code int
+	var body string
+	within(r.t, 30*time.Second, "quota up", func() (bool, string) {
+		code, body = r.call("PUT", "/api/quota/v1/orgs/"+r.org.String()+"/limits", token, `{"scope":"`+scope+`","limits":`+limits+`}`)
+		return code != http.StatusServiceUnavailable && code != http.StatusBadGateway, body
+	})
+	return code, body
+}
+
+func TestServeAllQuotaLimits(t *testing.T) {
+	r := newQuotaRig(t)
+	if code, body := r.setLimits(r.aliceTok, "user:"+r.bob.String(), `{"vcpu":2}`); code != http.StatusOK {
+		t.Fatalf("admin sets a member limit: %d %s", code, body)
+	}
+	if code, body := r.setLimits(r.bobTok, "user:"+r.bob.String(), `{"vcpu":8}`); code != http.StatusForbidden {
+		t.Fatalf("member sets a limit: %d %s", code, body)
+	}
+	code, body := r.call("GET", "/api/quota/v1/orgs/"+r.org.String()+"/limits", r.bobTok, "")
+	if code != http.StatusOK || compactJSON(t, body) != `{"org":{},"teams":{},"members":{"`+r.bob.String()+`":{"vcpu":2}}}` {
+		t.Fatalf("member reads the limits: %d %s", code, body)
+	}
+}
+
+// quotaGate runs quota on the listener serve all gives it and can stop and restart it there; while stopped, connections are refused at once.
+type quotaGate struct {
+	mu      sync.Mutex
+	cur     *chanListener
+	stop    context.CancelFunc
+	stopped chan struct{}
+	start   chan struct{}
+}
+
+func newQuotaGate(t *testing.T) *quotaGate {
+	g := &quotaGate{start: make(chan struct{})}
+	prev := runQuota
+	t.Cleanup(func() { runQuota = prev })
+	runQuota = g.run
+	return g
+}
+
+func (g *quotaGate) run(ctx context.Context, cfg quota.Config, ln net.Listener) error {
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			g.mu.Lock()
+			l := g.cur
+			g.mu.Unlock()
+			if l == nil {
+				c.Close()
+				continue
+			}
+			select {
+			case l.conns <- c:
+			case <-l.done:
+				c.Close()
+			}
+		}
+	}()
+	defer ln.Close()
+	for {
+		l := &chanListener{addr: ln.Addr(), conns: make(chan net.Conn), done: make(chan struct{})}
+		runCtx, stop := context.WithCancel(ctx)
+		stopped := make(chan struct{})
+		g.mu.Lock()
+		g.cur, g.stop, g.stopped = l, stop, stopped
+		g.mu.Unlock()
+		err := quota.Run(runCtx, cfg, l)
+		g.mu.Lock()
+		g.cur = nil
+		g.mu.Unlock()
+		close(stopped)
+		stop()
+		if err != nil || ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-g.start:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+// Stop stops quota and waits until it has returned.
+func (g *quotaGate) Stop() {
+	g.mu.Lock()
+	stop, stopped := g.stop, g.stopped
+	g.mu.Unlock()
+	stop()
+	<-stopped
+}
+
+func (g *quotaGate) Start() { g.start <- struct{}{} }
+
+type chanListener struct {
+	addr  net.Addr
+	conns chan net.Conn
+	done  chan struct{}
+	once  sync.Once
+}
+
+func (l *chanListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *chanListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return nil
+}
+
+func (l *chanListener) Addr() net.Addr { return l.addr }
+
+// TestServeAllQuotaConverges: a VM deleted while quota is down frees its usage through the deleted event once quota is back, and no create is admitted unchecked meanwhile.
+func TestServeAllQuotaConverges(t *testing.T) {
+	gate := newQuotaGate(t)
+	r := newQuotaRig(t)
+	ctx := t.Context()
+	hs := storetest.New(t, r.pool)
+	node, enroll, err := hs.CreateNode(ctx, store.Node{OrgID: r.org, Name: "n1", CreatedBy: r.alice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := hs.EnrollNode(ctx, enroll); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := r.setLimits(r.aliceTok, "user:"+r.alice.String(), `{"vmCount":1}`); code != http.StatusOK {
+		t.Fatalf("set limit: %d %s", code, body)
+	}
+	vms := "/api/orgs/" + r.org.String() + "/vms"
+	create := func(name string) (int, string) {
+		return r.call("POST", vms, r.aliceTok, `{"name":"`+name+`","owner":{"kind":"user"},"nodeId":"`+node.ID.String()+`","cpus":1,"memoryMB":512,"diskGB":10}`)
+	}
+	code, body := create("a")
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var vm struct{ ID string }
+	if err := json.Unmarshal([]byte(body), &vm); err != nil {
+		t.Fatal(err)
+	}
+	// The created and committed events have landed: the allocation is live and no hold is left.
+	usage := func() (bool, string) {
+		var live, holds int
+		if err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM quota.allocations WHERE resource = $1 AND NOT deleted),
+			(SELECT count(*) FROM quota.reservations)`, "vm/"+vm.ID).Scan(&live, &holds); err != nil {
+			t.Fatal(err)
+		}
+		return live == 1 && holds == 0, fmt.Sprintf("live %d, holds %d", live, holds)
+	}
+	within(t, 10*time.Second, "allocation from the created event", usage)
+	if code, body := create("b"); code != http.StatusConflict {
+		t.Fatalf("create at the limit: %d %s", code, body)
+	}
+
+	gate.Stop()
+	if code, body := r.call("DELETE", vms+"/"+vm.ID, r.aliceTok, ""); code != http.StatusNoContent {
+		t.Fatalf("delete while quota is down: %d %s", code, body)
+	}
+	if code, body := create("b"); code != http.StatusServiceUnavailable || !strings.Contains(body, "quota service unavailable") {
+		t.Fatalf("create while quota is down: %d %s", code, body)
+	}
+	if ok, state := usage(); !ok {
+		t.Fatalf("usage changed while quota was down: %s", state)
+	}
+
+	gate.Start()
+	within(t, 10*time.Second, "usage freed by the deleted event", func() (bool, string) {
+		var deleted bool
+		if err := r.pool.QueryRow(ctx, "SELECT deleted FROM quota.allocations WHERE resource = $1", "vm/"+vm.ID).Scan(&deleted); err != nil {
+			t.Fatal(err)
+		}
+		return deleted, "allocation still live"
+	})
+	if code, body := create("b"); code != http.StatusCreated {
+		t.Fatalf("create at the old limit after quota is back: %d %s", code, body)
+	}
 }

@@ -3,9 +3,11 @@ import { Button } from '@asterism-dev/lumen'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { api } from '@/api'
-import { iamClient } from '@/composables/iamClient'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
+import { errorText } from '@/composables/apiError'
+import { iamClient } from '@/composables/iamClient'
+import { quotaClient } from '@/composables/quotaClient'
+import { fromQuota, toQuota } from '@/composables/quotaLimits'
 import { useOrg } from '@/composables/useOrg'
 import { Card, Section } from '@/ui'
 
@@ -13,18 +15,10 @@ interface Named {
   id: string
   name: string
 }
-interface LimitsResponse {
-  org: Limits
-  teams: Record<string, Limits>
-  members: Record<string, Limits>
-}
-
-const unlimited: Limits = { vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null, imageStorageGb: null }
-
 const { t } = useI18n()
 const { org, can } = useOrg()
 
-const orgLimits = ref<Limits>(unlimited)
+const orgLimits = ref<Limits>(fromQuota(undefined))
 const teams = ref<(Named & { limits: Limits; valid: boolean })[]>([])
 const members = ref<(Named & { limits: Limits; valid: boolean })[]>([])
 const busy = ref('')
@@ -33,20 +27,19 @@ const error = ref('')
 async function refresh() {
   if (!org.value) return
   const id = org.value.id
-  const base = `/api/orgs/${id}`
   try {
     const [ls, ts, ms] = await Promise.all([
-      api<LimitsResponse>(`${base}/limits`),
+      quotaClient.getLimits({ org: id }).then((r) => r.limits),
       iamClient.listTeams({ org: id }).then((r) => r.teams, () => []),
       iamClient.listMembers({ org: id }).then((r) => r.members, () => []),
     ])
     // Org switched while loading.
     if (id !== org.value?.id) return
-    orgLimits.value = ls.org
-    teams.value = ts.map((x) => ({ id: x.id, name: x.name, limits: ls.teams[x.id] ?? { ...unlimited }, valid: true }))
-    members.value = ms.map((x) => ({ id: x.id, name: x.name || x.email, limits: ls.members[x.id] ?? { ...unlimited }, valid: true }))
+    orgLimits.value = fromQuota(ls?.org)
+    teams.value = ts.map((x) => ({ id: x.id, name: x.name, limits: fromQuota(ls?.teams[x.id]), valid: true }))
+    members.value = ms.map((x) => ({ id: x.id, name: x.name || x.email, limits: fromQuota(ls?.members[x.id]), valid: true }))
   } catch (e) {
-    if (id === org.value?.id) error.value = e instanceof Error ? e.message : String(e)
+    if (id === org.value?.id) error.value = errorText(e)
   }
 }
 
@@ -54,10 +47,10 @@ async function save(scope: string, limits: Limits) {
   busy.value = scope
   error.value = ''
   try {
-    await api(`/api/orgs/${org.value?.id}/limits/${scope}`, { method: 'PUT', body: JSON.stringify(limits) })
+    await quotaClient.updateLimits({ org: org.value?.id, scope, limits: toQuota(limits) })
     await refresh()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = errorText(e)
   } finally {
     busy.value = ''
   }

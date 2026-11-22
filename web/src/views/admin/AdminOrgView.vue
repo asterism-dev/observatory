@@ -4,9 +4,10 @@ import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
-import { api } from '@/api'
 import LimitFields, { type Limits } from '@/components/LimitFields.vue'
 import { errorMessage, iamClient, isUnauthenticated } from '@/composables/iamClient'
+import { quotaClient } from '@/composables/quotaClient'
+import { fromQuota, toQuota } from '@/composables/quotaLimits'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useMe } from '@/composables/useMe'
 import { Card, DataTable, Section, Tag, ValueField } from '@/ui'
@@ -21,7 +22,7 @@ const { setCrumbs } = useCrumbs()
 watchEffect(() => {
   if (org.value) setCrumbs(route.path, [{ label: org.value.name, to: route.path }])
 })
-const limits = ref<Limits>({ vcpu: null, ramMb: null, diskGb: null, vmCount: null, snapshotCount: null, imageStorageGb: null })
+const limits = ref<Limits>(fromQuota(undefined))
 const valid = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -35,10 +36,10 @@ const columns = computed<TableColumn[]>(() => [
 async function load() {
   const id = route.params.orgId as string
   try {
-    const [res, orgLimits] = await Promise.all([iamClient.getAnyOrg({ orgId: id }), api<{ org: Limits }>(`/api/admin/orgs/${id}/limits`)])
+    const [res, orgLimits] = await Promise.all([iamClient.getAnyOrg({ orgId: id }), quotaClient.getOrgLimits({ orgId: id })])
     if (id !== route.params.orgId) return
     org.value = { id: res.org!.id, name: res.org!.name, personal: res.org!.personal, members: res.members }
-    limits.value = orgLimits.org
+    limits.value = fromQuota(orgLimits.limits?.org)
     error.value = ''
   } catch (e) {
     if (isUnauthenticated(e)) return expire()
@@ -51,10 +52,11 @@ async function save() {
   busy.value = true
   error.value = ''
   try {
-    await api(`/api/admin/orgs/${org.value.id}/limits`, { method: 'PUT', body: JSON.stringify(limits.value) })
+    await quotaClient.updateOrgLimits({ orgId: org.value.id, limits: toQuota(limits.value) })
     await load()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (isUnauthenticated(e)) return expire()
+    error.value = errorMessage(e)
   } finally {
     busy.value = false
   }

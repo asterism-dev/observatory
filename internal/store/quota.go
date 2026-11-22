@@ -51,9 +51,9 @@ func int32p(v *int) *int32 {
 	return &n
 }
 
-// quotaErr reads every failure but a bad request or a refused caller as quota being unable to answer.
-func quotaErr(op string, err error) error {
-	if c := connect.CodeOf(err); c != connect.CodeInvalidArgument && c != connect.CodePermissionDenied && c != connect.CodeUnauthenticated && c != connect.CodeCanceled {
+// quotaErr reads every failure but a bad request, a refused caller or our own cancellation as quota being unable to answer; a reset connection also reads as canceled.
+func quotaErr(ctx context.Context, op string, err error) error {
+	if c := connect.CodeOf(err); c != connect.CodeInvalidArgument && c != connect.CodePermissionDenied && c != connect.CodeUnauthenticated && (c != connect.CodeCanceled || ctx.Err() == nil) {
 		return fmt.Errorf("quota %s: %w (%w)", op, ErrQuotaUnavailable, err)
 	}
 	return fmt.Errorf("quota %s: %w", op, err)
@@ -66,7 +66,7 @@ func (q quotaClient) Reserve(ctx context.Context, org uuid.UUID, owner string, a
 		return uuid.Nil, &LimitError{Scope: d.GetScope(), Name: d.GetName(), Unit: d.GetUnit(), Limit: int(d.GetLimit()), Got: int(d.GetGot())}
 	}
 	if err != nil {
-		return uuid.Nil, quotaErr("reserve", err)
+		return uuid.Nil, quotaErr(ctx, "reserve", err)
 	}
 	id, err := uuid.Parse(res.Msg.GetReservationId())
 	if err != nil {
@@ -94,7 +94,7 @@ func (q quotaClient) Release(ctx context.Context, org uuid.UUID, resources []str
 func (q quotaClient) ImageStorageLimit(ctx context.Context, org uuid.UUID) (*int, error) {
 	res, err := q.c.GetLimits(ctx, connect.NewRequest(&quotav1.QuotaInternalServiceGetLimitsRequest{OrgId: org.String()}))
 	if err != nil {
-		return nil, quotaErr("limits", err)
+		return nil, quotaErr(ctx, "limits", err)
 	}
 	l := res.Msg.GetLimits().GetOrg().ImageStorageGb
 	if l == nil {

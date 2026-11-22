@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 )
 
 func roleRef(r *iamv1.Role) ref {
@@ -95,6 +96,11 @@ func (c *cli) simpleCall(method, rest string, body any) error {
 
 // orgRPC calls an org-scoped IAMService method on the current org, which every such request names in its org field.
 func (c *cli) orgRPC(method string, req, resp proto.Message) error {
+	return c.orgRPCAt(iamService, method, req, resp)
+}
+
+// orgRPCAt calls an org-scoped method of the Connect service at path on the current org.
+func (c *cli) orgRPCAt(service, method string, req, resp proto.Message) error {
 	o, err := c.currentOrg()
 	if err != nil {
 		return err
@@ -105,7 +111,7 @@ func (c *cli) orgRPC(method string, req, resp proto.Message) error {
 		return fmt.Errorf("%s: request has no org field", method)
 	}
 	m.Set(f, protoreflect.ValueOfString(o.GetId()))
-	return c.rpc(method, req, resp)
+	return c.connectCall(service+method, req, resp)
 }
 
 func findBy[T any](kind, key string, l []T, r func(T) ref) (T, error) {
@@ -689,20 +695,20 @@ type orgLimits struct {
 	Members map[string]limitsJSON `json:"members"`
 }
 
-func (c *cli) orgLimits() (orgLimits, json.RawMessage, error) {
-	var ol orgLimits
-	path, err := c.orgPath("/limits")
+const quotaService = "/api/quota/v1/observatory.quota.v1.QuotaService/"
+
+func (c *cli) orgLimits() (orgLimits, error) {
+	ol := orgLimits{Teams: map[string]limitsJSON{}, Members: map[string]limitsJSON{}}
+	res := &quotav1.GetLimitsResponse{}
+	if err := c.orgRPCAt(quotaService, "GetLimits", &quotav1.GetLimitsRequest{}, res); err != nil {
+		return ol, err
+	}
+	// protojson leaves unlimited values out, which limitsJSON reads as nil.
+	b, err := protojson.Marshal(res.GetLimits())
 	if err != nil {
-		return ol, nil, err
+		return ol, err
 	}
-	var raw json.RawMessage
-	if err := c.call(http.MethodGet, path, nil, &raw); err != nil {
-		return ol, nil, err
-	}
-	if err := json.Unmarshal(raw, &ol); err != nil {
-		return ol, nil, err
-	}
-	return ol, raw, nil
+	return ol, json.Unmarshal(b, &ol)
 }
 
 func sortedKeys(m map[string]limitsJSON) []string {
@@ -718,7 +724,11 @@ func cmdLimitShow(c *cli, args []string) error {
 	if _, err := c.parse(c.flags("limit show"), args, 0, 0); err != nil {
 		return err
 	}
-	ol, raw, err := c.orgLimits()
+	ol, err := c.orgLimits()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(ol)
 	if err != nil {
 		return err
 	}
@@ -815,7 +825,7 @@ func cmdLimitSet(c *cli, args []string) error {
 	default:
 		return usagef("scope must be org, team:<team> or user:<member>")
 	}
-	ol, _, err := c.orgLimits()
+	ol, err := c.orgLimits()
 	if err != nil {
 		return err
 	}
@@ -828,7 +838,15 @@ func cmdLimitSet(c *cli, args []string) error {
 			*p = parsed[name]
 		}
 	}
-	if err := c.simpleCall(http.MethodPut, "/limits/"+scope, cur); err != nil {
+	b, err := json.Marshal(cur)
+	if err != nil {
+		return err
+	}
+	limits := &quotav1.Limits{}
+	if err := protojson.Unmarshal(b, limits); err != nil {
+		return err
+	}
+	if err := c.orgRPCAt(quotaService, "UpdateLimits", &quotav1.UpdateLimitsRequest{Scope: scope, Limits: limits}, &quotav1.UpdateLimitsResponse{}); err != nil {
 		return err
 	}
 	return c.done(nil, "Limits for %s set.", pos[0])

@@ -135,6 +135,9 @@ func cmdServe(c *cli, args []string) error {
 	}
 }
 
+// runQuota is quota.Run; tests stop and restart quota under a running serve all.
+var runQuota = quota.Run
+
 // serveAll runs iam, the hub, the audit and the quota service on loopback ports behind the edge on edgeLn, sharing edge and service tokens and the bus that live only in this process.
 func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listener) error {
 	newToken := func() string { return rand.Text() + rand.Text() }
@@ -188,7 +191,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	hub := svcrun.Service{Name: "hub", Addr: hubListen(getenv, "all"), Run: func(ctx context.Context, ln net.Listener) error { return hubserver.Run(ctx, hubEnv, ln) }}
 	iamSvc := svcrun.Service{Name: "iam", Run: func(ctx context.Context, ln net.Listener) error { return iam.Run(ctx, iamCfg, ln) }}
 	auditSvc := svcrun.Service{Name: "audit", Run: func(ctx context.Context, ln net.Listener) error { return audit.Run(ctx, auditCfg, ln) }}
-	quotaSvc := svcrun.Service{Name: "quota", Run: func(ctx context.Context, ln net.Listener) error { return quota.Run(ctx, quotaCfg, ln) }}
+	quotaSvc := svcrun.Service{Name: "quota", Run: func(ctx context.Context, ln net.Listener) error { return runQuota(ctx, quotaCfg, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		// All calls this before starting any service, so every service sees the others' URLs.
 		iamURL, quotaURL = services["iam"], services["quota"]

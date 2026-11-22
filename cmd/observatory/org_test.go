@@ -174,29 +174,43 @@ func TestBindingSubjectResolution(t *testing.T) {
 	}
 }
 
-const limitsBody = `{"org":{"vcpu":8,"ramMb":16384,"diskGb":100,"vmCount":10,"snapshotCount":null},"teams":{"t1":{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":null,"snapshotCount":null}},"members":{}}`
+const quotaRPC = "POST /api/quota/v1/observatory.quota.v1.QuotaService/"
 
-func TestLimitSetKeepsOtherValues(t *testing.T) {
+const limitsBody = `{"limits":{"org":{"vcpu":8,"ramMb":16384,"diskGb":100,"vmCount":10},"teams":{"t1":{"vcpu":4}}}}`
+
+func TestLimitSetViaQuota(t *testing.T) {
 	h, c, _, errb := orgHub(t)
-	h.on("GET /api/orgs/o1/limits", 200, limitsBody)
-	h.on("PUT /api/orgs/o1/limits/team:t1", 204, "")
+	h.on(quotaRPC+"GetLimits", 200, limitsBody)
+	h.on(quotaRPC+"UpdateLimits", 200, `{}`)
 	mustRun(t, c, errb, 2, "limit", "set", "org", "--vcpu", "16")
 	mustRun(t, c, errb, 0, "limit", "set", "team:backend", "--vms", "3")
-	if got := h.calls("PUT /api/orgs/o1/limits/team:t1")[0].Body; got != `{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":3,"snapshotCount":null,"imageStorageGb":null}` {
-		t.Errorf("body %s", got)
+	if got := compactJSON(t, h.calls(quotaRPC + "GetLimits")[0].Body); got != `{"org":"o1"}` {
+		t.Errorf("get body %s", got)
 	}
-	if len(h.calls("PUT /api/admin/orgs/o1/limits")) != 0 {
-		t.Error("admin route called")
+	if got := compactJSON(t, h.calls(quotaRPC + "UpdateLimits")[0].Body); got != `{"org":"o1","scope":"team:t1","limits":{"vcpu":4,"vmCount":3}}` {
+		t.Errorf("update body %s", got)
 	}
 	mustRun(t, c, errb, 2, "limit", "set", "team:backend", "--vcpu", "-1")
 }
 
 func TestLimitShow(t *testing.T) {
 	h, c, out, errb := orgHub(t)
-	h.on("GET /api/orgs/o1/limits", 200, limitsBody)
+	h.on(quotaRPC+"GetLimits", 200, limitsBody)
 	mustRun(t, c, errb, 0, "limit", "show")
 	if !strings.Contains(out(), "team:t1 (backend)") || !strings.Contains(out(), "16 GB") {
 		t.Errorf("stdout %s", out())
+	}
+}
+
+// The --json shape is the one the hub's limits route had.
+func TestLimitShowJSON(t *testing.T) {
+	h, c, out, errb := orgHub(t)
+	h.on(quotaRPC+"GetLimits", 200, limitsBody)
+	mustRun(t, c, errb, 0, "limit", "show", "--json")
+	want := `{"org":{"vcpu":8,"ramMb":16384,"diskGb":100,"vmCount":10,"snapshotCount":null,"imageStorageGb":null},` +
+		`"teams":{"t1":{"vcpu":4,"ramMb":null,"diskGb":null,"vmCount":null,"snapshotCount":null,"imageStorageGb":null}},"members":{}}`
+	if got := compactJSON(t, out()); got != want {
+		t.Errorf("stdout %s", got)
 	}
 }
 
