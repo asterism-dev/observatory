@@ -240,3 +240,13 @@ func TestInviteAcceptRPC(t *testing.T) {
 		t.Errorf("stdout %q", out())
 	}
 }
+
+func TestRoleCatalogShowsUnknown(t *testing.T) {
+	h, c, out, errb := orgHub(t)
+	h.on(iamRPC+"ListCatalog", 200, `{"entries":[{"action":"compute.instances.get","object":"org/vms/*","write":false,"service":"hub"}],"unknownActions":["compute.instances.fork"]}`)
+	mustRun(t, c, errb, 0, "role", "catalog")
+	want := "ACTION                  OBJECT\ncompute.instances.get   org/vms/*\ncompute.instances.fork  (unknown)\n"
+	if out() != want {
+		t.Errorf("stdout:\n%s\nwant:\n%s", out(), want)
+	}
+}

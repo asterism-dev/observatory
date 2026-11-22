@@ -192,7 +192,8 @@
     "removeRule": "Remove",
     "back": "Back",
     "notFound": "Role not found",
-    "unknownEffect": "Unknown rule effect: {effects}. Change it to Allow or Deny before saving."
+    "unknownEffect": "Unknown rule effect: {effects}. Change it to Allow or Deny before saving.",
+    "unknownAction": "Unknown action: no service offers it any more, so this rule grants nothing."
   },
   "limits": {
     "org": "Organization (set by platform admins)",

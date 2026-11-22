@@ -512,9 +512,12 @@ func cmdRoleCatalog(c *cli, args []string) error {
 	if err := c.orgRPC("ListCatalog", &iamv1.ListCatalogRequest{}, res); err != nil {
 		return err
 	}
-	rows := make([][]string, len(res.GetEntries()))
-	for i, p := range res.GetEntries() {
-		rows[i] = []string{p.GetAction(), p.GetObject()}
+	rows := make([][]string, 0, len(res.GetEntries())+len(res.GetUnknownActions()))
+	for _, p := range res.GetEntries() {
+		rows = append(rows, []string{p.GetAction(), p.GetObject()})
+	}
+	for _, a := range res.GetUnknownActions() {
+		rows = append(rows, []string{a, "(unknown)"})
 	}
 	return c.emit(pj(res), []string{"action", "object"}, rows)
 }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { Button, Combobox, SegmentedControl, Textarea, TextInput } from '@asterism-dev/lumen'
+import { TriangleAlert } from '@lucide/vue'
 import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { errorMessage as message, iamClient } from '@/composables/iamClient'
-import { actionSuggestions, unknownEffects } from '@/composables/roleActions'
+import { actionHints, actionSuggestions, unknownEffects, unknownMarks } from '@/composables/roleActions'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import type { CatalogEntry as Perm, Role } from '@/gen/observatory/iam/v1/iam_pb'
@@ -26,6 +27,7 @@ const { org, can, reload } = useOrg()
 
 const roles = ref<Role[]>([])
 const catalog = ref<Perm[]>([])
+const unknownActions = ref<string[]>([])
 const name = ref('')
 const description = ref('')
 const parents = ref<string[]>([])
@@ -46,6 +48,7 @@ watchEffect(() => {
   if (label) setCrumbs(route.path, [{ label, to: route.path }])
 })
 const badEffects = computed(() => unknownEffects(rules.value))
+const unknownRules = computed(() => unknownMarks(rules.value, unknownActions.value))
 const canDeny = computed(() => ['owner', 'admin'].includes(org.value?.role ?? ''))
 
 const effectOptions = computed(() => [
@@ -62,13 +65,14 @@ const parentOptions = computed(() =>
 
 const objects = computed(() => [...new Set(catalog.value.map((p) => p.object))])
 const actions = computed(() => actionSuggestions(catalog.value.map((p) => p.action)))
+const hints = computed(() => actionHints(catalog.value))
 
 // Combobox filters are the caller's job; the typed text is offered as a pick so free-form values work.
-function suggestions(pool: string[], key: string) {
+function suggestions(pool: string[], key: string, hint?: Map<string, string>) {
   const q = (searches.value[key] ?? '').trim()
   const hits = pool.filter((v) => v.toLowerCase().includes(q.toLowerCase())).slice(0, 50)
   if (q && !pool.includes(q)) hits.unshift(q)
-  return hits.map((v) => ({ value: v, label: v }))
+  return hits.map((v) => ({ value: v, label: v, title: hint?.get(v) }))
 }
 
 async function load() {
@@ -77,12 +81,13 @@ async function load() {
   try {
     const [rs, cat] = await Promise.all([
       iamClient.listRoles({ org: id }).then((r) => r.roles),
-      iamClient.listCatalog({ org: id }).then((r) => r.entries),
+      iamClient.listCatalog({ org: id }),
     ])
     // Org switched while loading.
     if (id !== org.value?.id) return
     roles.value = rs
-    catalog.value = cat
+    catalog.value = cat.entries
+    unknownActions.value = cat.unknownActions
     const r = rs.find((x) => (x.key || x.id) === roleId.value)
     name.value = r?.name ?? ''
     description.value = r?.description ?? ''
@@ -172,10 +177,13 @@ watch(
           <Combobox
             v-model="rule.action"
             v-model:search="searches[`a${rule.uid}`]"
-            :items="suggestions(actions, `a${rule.uid}`)"
+            :items="suggestions(actions, `a${rule.uid}`, hints)"
             :placeholder="t('audit.action')"
             :disabled="readonly"
           />
+          <Tag v-if="unknownRules[i]" tone="warning" :title="t('roles.unknownAction')" role="img" :aria-label="t('roles.unknownAction')">
+            <TriangleAlert :size="12" aria-hidden="true" />
+          </Tag>
           <Button v-if="!readonly" size="sm" variant="danger" @click="rules.splice(i, 1)">{{ t('roles.removeRule') }}</Button>
         </div>
         <p v-if="!readonly"><Button @click="rules.push(withUid({ effect: 'allow', object: '', action: '' }))">{{ t('roles.addRule') }}</Button></p>

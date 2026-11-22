@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +30,7 @@ import (
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
 	iamstore "github.com/asterism-dev/observatory/internal/iam/store"
@@ -948,6 +951,115 @@ func TestHubPolicyFromStream(t *testing.T) {
 	}
 	if code := call("GET", limits, aliceToken); code != http.StatusOK {
 		t.Fatalf("alice after bob's removal: %d", code)
+	}
+}
+
+// TestServeAllCatalog: every service registers its catalog at start, the role editor's catalog lists them through the edge, and permissions stay as in 0.x.
+func TestServeAllCatalog(t *testing.T) {
+	edgeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t)
+	env := serveAllEnv(t, pool, edgeLn)
+	ctx := t.Context()
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.Login(ctx, iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, _, err := s.CreateInvite(ctx, org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
+		t.Fatal(err)
+	}
+	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stored before start: owners hold fork only on their own VMs, so the API would refuse to grant it org-wide.
+	forker, err := s.CreateRole(ctx, org.ID, authz.CustomRole{Name: "forker", Rules: []authz.Rule{{Effect: authz.Allow, Object: "org/vms/*", Action: "compute.instances.fork"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Bind(ctx, org.ID, authz.UserSubject(alice.User.ID), forker.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serveAll(runCtx, func(k string) string { return env[k] }, edgeLn) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	iam := iamv1connect.NewIAMServiceClient(&http.Client{Timeout: 30 * time.Second}, "http://"+edgeLn.Addr().String()+"/api/iam/v1")
+	// The hub registers after iam is up, so its actions arrive a moment later.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		res, err := iam.ListCatalog(ctx, bearer(&iamv1.ListCatalogRequest{Org: org.ID.String()}, bobToken))
+		entries := map[string]bool{}
+		if err == nil {
+			for _, e := range res.Msg.GetEntries() {
+				entries[e.GetAction()] = true
+			}
+		}
+		if entries["audit.settings.update"] && entries["compute.instances.create"] {
+			if len(res.Msg.GetUnknownActions()) != 0 {
+				t.Fatalf("unknown actions once the hub registered: %v", res.Msg.GetUnknownActions())
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("catalog through the edge: %v, %d entries", err, len(entries))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	golden, err := os.ReadFile("../../internal/authz/testdata/legacy_decisions.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for line := range strings.Lines(string(golden)) {
+		if f := strings.Fields(line); len(f) == 5 && f[0] == "role" && f[1] == "member" && f[2] == "allow" {
+			want = append(want, f[4])
+		}
+	}
+	slices.Sort(want)
+	want = slices.Compact(want)
+	got, err := iam.GetOrg(ctx, bearer(&iamv1.GetOrgRequest{Org: org.ID.String()}, bobToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Msg.GetPermissions(), want) {
+		t.Fatalf("member permissions:\n got %v\nwant %v", got.Msg.GetPermissions(), want)
+	}
+
+	got, err = iam.GetOrg(ctx, bearer(&iamv1.GetOrgRequest{Org: org.ID.String()}, aliceToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Msg.GetPermissions(), "compute.instances.fork") {
+		t.Fatalf("owner's permissions with the fork role: %v", got.Msg.GetPermissions())
 	}
 }
 
