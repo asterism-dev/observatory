@@ -116,3 +116,95 @@ func TestLogTailEndsWhenStale(t *testing.T) {
 		t.Fatal("tail outlived the stale policy")
 	}
 }
+
+// staleAfterFirst makes e's policy fresh for exactly one freshness read, standing in for a policy that goes stale mid-decision.
+func (e *env) staleAfterFirst() {
+	var reads atomic.Int32
+	e.z.WithFreshness(func() bool { return reads.Add(1) == 1 })
+}
+
+func TestGrafanaProxiesRefuseWhenStale(t *testing.T) {
+	te := newTelemetryEnv(t, cpuSeries)
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"status":"success","data":{}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	te.api.telemetry = &telemetry.Client{MetricsURL: upstream.URL, LogsURL: upstream.URL}
+	tok := te.createTelemetryToken(te.ownerTok, te.org, "dash")
+	te.stale()
+	for _, path := range []string{"/grafana/prometheus/api/v1/query?query=up", "/grafana/logs/select/logsql/query?query=*"} {
+		for _, bearer := range []string{tok.Token, "not-a-real-token"} {
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("Authorization", "Bearer "+bearer)
+			rec := httptest.NewRecorder()
+			te.h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "success") {
+				t.Fatalf("%s with %q while stale: %d %s", path, bearer, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("the telemetry store got %d requests while the policy was stale", n)
+	}
+}
+
+func TestTelemetryTokenDecidesOnOneSnapshot(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	now := time.Now()
+	e.api.now = func() time.Time { return now }
+	tok := e.createTelemetryToken(ownerTok, org, "dash")
+	now = now.Add(2 * telemetryTokenRecheck)
+	e.staleAfterFirst()
+	if _, status := e.grafana("Bearer " + tok.Token); status != http.StatusOK {
+		t.Fatalf("recheck across a staleness flip: %d", status)
+	}
+	if _, err := e.store.TelemetryTokenBySecret(context.Background(), tok.Token); err != nil {
+		t.Fatalf("token revoked across a staleness flip: %v", err)
+	}
+}
+
+func TestBuilderOwnerCheckDefersWhenStale(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "tools", `[]`)
+	id := e.startBuild(aliceTok, org, img)
+	// The round-level hold passes, so the owner check itself must see the stale policy and defer.
+	e.sched.PolicyFresh = func() bool { return true }
+	fresh := e.stale()
+	e.tick()
+	if b := e.build(id); b.State != store.BuildQueued {
+		t.Fatalf("build on a stale owner check: %s %q", b.State, b.Error)
+	}
+	fresh.Store(true)
+	e.tick()
+	if b := e.build(id); b.State != store.BuildRunning {
+		t.Fatalf("build once fresh: %s %q", b.State, b.Error)
+	}
+}
+
+func TestAutoRebuildSkipsWhenStaleMidTick(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	org := e.createOrg(aliceTok, "Acme")
+	e.node(org)
+	img := e.recipeImage(aliceTok, org, "basis", "")
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"daily"}`)
+	e.staleAfterFirst()
+	if err := e.auto.Tick(context.Background()); err == nil {
+		t.Fatal("a tick across a staleness flip reported no problem")
+	}
+	if bs := e.builds(img); len(bs) != 0 {
+		t.Fatalf("a staleness flip recorded builds: %+v", bs)
+	}
+	e.z.WithFreshness(func() bool { return true })
+	e.autoTick()
+	if bs := e.builds(img); len(bs) != 1 || bs[0].State != store.BuildQueued {
+		t.Fatalf("builds once fresh: %+v", bs)
+	}
+}

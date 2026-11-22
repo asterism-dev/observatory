@@ -75,7 +75,7 @@ func (s *Service) Enforcer() *Enforcer {
 	return s.cur.Load()
 }
 
-// LastKnown is the latest policy however stale; only the documented exemptions (gateway allow lists, node pushes) may use it.
+// LastKnown is the latest policy however stale; only the documented exemptions may use it: gateway allow lists, node pushes and the SSH-key re-pushes to nodes.
 func (s *Service) LastKnown() *Enforcer { return s.cur.Load() }
 
 // Current makes the policy a platform authz source; it is loaded at construction, so only freshness can withhold it.

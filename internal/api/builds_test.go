@@ -43,7 +43,10 @@ func (e *env) withBuildLogs(logs *telemetry.LogWriter) *buildEnv {
 	m.manifests = map[string]registry.Manifest{}
 	be := &buildEnv{env: e, manifests: m}
 	sched := builds.New(e.store, "http://hub.internal:8090/", builderRef, nil, e.api.fleet.NotifyOrg, func(uuid.UUID) bool { return true },
-		func(org uuid.UUID, scope string) bool { return e.z.Enforcer().HasSubject(org, scope) })
+		func(org uuid.UUID, scope string) (bool, bool) {
+			z, ok := e.z.Current()
+			return ok && z.HasSubject(org, scope), ok
+		})
 	e.api.builds = sched
 	iss, err := registry.LoadIssuer(e.t.TempDir())
 	if err != nil {

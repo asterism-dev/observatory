@@ -261,11 +261,16 @@ func (a *AutoRebuilds) problem(ctx context.Context, img store.Image, rev store.R
 }
 
 func (a *AutoRebuilds) mayBuild(ctx context.Context, img store.Image, rev store.RecipeRevision, user uuid.UUID) (string, error) {
+	// One snapshot: a policy going stale mid-tick must skip the image, not record a lost right.
+	e, ok := a.z.Current()
+	if !ok {
+		return "", errPolicyStale
+	}
 	sub := authz.UserSubject(user)
-	if !a.z.Allowed(sub, img.OrgID, imageObject(img.Scope, img.OwnerID), "build.builds.create") {
+	if !e.Allowed(sub, img.OrgID, imageObject(img.Scope, img.OwnerID), "build.builds.create") {
 		return "no right to build the image", nil
 	}
-	return refsUsable(ctx, a.store, img.OrgID, rev.Refs, func(obj, act string) bool { return a.z.Allowed(sub, img.OrgID, obj, act) })
+	return refsUsable(ctx, a.store, img.OrgID, rev.Refs, func(obj, act string) bool { return e.Allowed(sub, img.OrgID, obj, act) })
 }
 
 func (a *AutoRebuilds) userName(ctx context.Context, id uuid.UUID) string {

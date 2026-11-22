@@ -123,7 +123,8 @@ func (h *api) grafanaAuth(r *http.Request) (uuid.UUID, store.TelemetryToken, int
 		return uuid.Nil, store.TelemetryToken{}, http.StatusUnauthorized
 	}
 	// Before the cache and the revoke: a stale policy must neither serve nor revoke the token.
-	if _, ok := h.z.Current(); !ok {
+	e, ok := h.z.Current()
+	if !ok {
 		return uuid.Nil, store.TelemetryToken{}, http.StatusServiceUnavailable
 	}
 	ctx := r.Context()
@@ -137,7 +138,7 @@ func (h *api) grafanaAuth(r *http.Request) (uuid.UUID, store.TelemetryToken, int
 	}
 	now := h.now()
 	if checked, ok := h.tokenChecks.Load(tok.ID); !ok || now.Sub(checked.(time.Time)) >= telemetryTokenRecheck {
-		holds, err := h.creatorHoldsToken(ctx, tok)
+		holds, err := creatorHoldsToken(e, tok)
 		if err != nil {
 			slog.Error("telemetry token creator", "token", tok.ID, "err", err)
 			return uuid.Nil, store.TelemetryToken{}, http.StatusInternalServerError
@@ -155,8 +156,8 @@ func (h *api) grafanaAuth(r *http.Request) (uuid.UUID, store.TelemetryToken, int
 	return tok.OrgID, tok, http.StatusOK
 }
 
-func (h *api) creatorHoldsToken(ctx context.Context, tok store.TelemetryToken) (bool, error) {
-	e := h.z.Enforcer()
+// creatorHoldsToken decides on the snapshot the caller checked for freshness, so a policy going stale meanwhile can't read as lost access.
+func creatorHoldsToken(e *authz.Enforcer, tok store.TelemetryToken) (bool, error) {
 	if _, ok := e.Role(tok.OrgID, tok.CreatedBy); !ok {
 		return false, nil
 	}

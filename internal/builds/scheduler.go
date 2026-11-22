@@ -43,7 +43,7 @@ type Scheduler struct {
 	builderErr error
 	notify     func(org uuid.UUID)
 	online     func(node uuid.UUID) bool
-	ownerKnown func(org uuid.UUID, scope string) bool
+	ownerKnown func(org uuid.UUID, scope string) (known, fresh bool)
 	kick       chan struct{}
 
 	Size Size
@@ -55,8 +55,8 @@ type Scheduler struct {
 	heldAt      time.Time
 }
 
-// New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it. ownerKnown checks the builder VM's owner scope against the policy.
-func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool, ownerKnown func(org uuid.UUID, scope string) bool) *Scheduler {
+// New takes the builder image as repo@digest; builderErr says why it is empty, and every build then fails with it. ownerKnown checks the builder VM's owner scope against the policy, and reports whether that policy was fresh.
+func New(s *store.Store, hubURL, builder string, builderErr error, notify func(org uuid.UUID), online func(node uuid.UUID) bool, ownerKnown func(org uuid.UUID, scope string) (known, fresh bool)) *Scheduler {
 	return &Scheduler{store: s, hubURL: strings.TrimRight(hubURL, "/"), builder: builder, builderErr: builderErr,
 		notify: notify, online: online, ownerKnown: ownerKnown, kick: make(chan struct{}, 1), Size: DefaultSize, Now: time.Now}
 }
@@ -189,7 +189,11 @@ func (s *Scheduler) start(ctx context.Context, b store.ImageBuild) error {
 	} else if v.UserID != nil {
 		owner = authz.UserSubject(*v.UserID)
 	}
-	if !s.ownerKnown(img.OrgID, owner) {
+	known, fresh := s.ownerKnown(img.OrgID, owner)
+	if !fresh {
+		return nil
+	}
+	if !known {
 		return s.fail(ctx, b.ID, "the builder VM could not be created: its owner "+owner+" is no longer in the org")
 	}
 	secret, err := s.store.BuildSecret(ctx, img.OrgID, b.ID)
