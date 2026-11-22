@@ -18,10 +18,10 @@ func fixedID(n int) uuid.UUID { return uuid.MustParse(fmt.Sprintf("00000000-0000
 func TestLegacyDecisions(t *testing.T) {
 	orgA, orgB := fixedID(1), fixedID(2)
 	ownerA, adminA, memberA, teamAdminA, teamMemberA := fixedID(11), fixedID(12), fixedID(13), fixedID(14), fixedID(15)
-	ownerB, adminB, memberB := fixedID(21), fixedID(22), fixedID(23)
+	ownerB, adminB, memberB, teamAdminB, teamMemberB := fixedID(21), fixedID(22), fixedID(23), fixedID(24), fixedID(25)
 	teamA, emptyTeamA, teamB := fixedID(31), fixedID(32), fixedID(33)
-	vmUserA, vmTeamA, vmUserB := fixedID(41), fixedID(42), fixedID(43)
-	diskUserA, diskTeamA, diskUserB := fixedID(51), fixedID(52), fixedID(53)
+	vmUserA, vmTeamA, vmUserB, vmTeamB := fixedID(41), fixedID(42), fixedID(43), fixedID(44)
+	diskUserA, diskTeamA, diskUserB, diskTeamB := fixedID(51), fixedID(52), fixedID(53), fixedID(54)
 	roleA, foreign := fixedID(61), fixedID(99)
 
 	ptr := func(id uuid.UUID) *uuid.UUID { return &id }
@@ -30,20 +30,20 @@ func TestLegacyDecisions(t *testing.T) {
 			{orgA, ownerA, "owner"}, {orgA, adminA, "admin"}, {orgA, memberA, "member"},
 			{orgA, teamAdminA, "member"}, {orgA, teamMemberA, "member"},
 			{orgB, ownerB, "owner"}, {orgB, adminB, "admin"}, {orgB, memberB, "member"},
-			{orgB, memberA, "member"},
+			{orgB, memberA, "member"}, {orgB, teamAdminB, "member"}, {orgB, teamMemberB, "member"},
 		},
 		TeamMembers: []TeamMember{
 			{orgA, teamA, teamAdminA, true}, {orgA, teamA, teamMemberA, false},
-			{orgB, teamB, memberB, true},
+			{orgB, teamB, memberB, true}, {orgB, teamB, teamAdminB, true}, {orgB, teamB, teamMemberB, false},
 		},
 		Teams: []TeamRef{{orgA, teamA}, {orgA, emptyTeamA}, {orgB, teamB}},
 		VMs: []VMRef{
 			{OrgID: orgA, ID: vmUserA, UserID: ptr(adminA)}, {OrgID: orgA, ID: vmTeamA, TeamID: ptr(teamA)},
-			{OrgID: orgB, ID: vmUserB, UserID: ptr(memberB)},
+			{OrgID: orgB, ID: vmUserB, UserID: ptr(memberB)}, {OrgID: orgB, ID: vmTeamB, TeamID: ptr(teamB)},
 		},
 		Disks: []DiskRef{
 			{OrgID: orgA, ID: diskUserA, UserID: ptr(memberA)}, {OrgID: orgA, ID: diskTeamA, TeamID: ptr(teamA)},
-			{OrgID: orgB, ID: diskUserB, UserID: ptr(memberB)},
+			{OrgID: orgB, ID: diskUserB, UserID: ptr(memberB)}, {OrgID: orgB, ID: diskTeamB, TeamID: ptr(teamB)},
 		},
 		Roles: []CustomRole{{
 			ID: roleA, OrgID: orgA, Name: "custom",
@@ -61,7 +61,7 @@ func TestLegacyDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	users := []uuid.UUID{ownerA, adminA, memberA, teamAdminA, teamMemberA, ownerB, adminB, memberB}
+	users := []uuid.UUID{ownerA, adminA, memberA, teamAdminA, teamMemberA, ownerB, adminB, memberB, teamAdminB, teamMemberB}
 	teams := []uuid.UUID{teamA, emptyTeamA, teamB}
 	var subjects []string
 	for _, u := range users {
@@ -72,7 +72,7 @@ func TestLegacyDecisions(t *testing.T) {
 	}
 	ids := slices.Concat(
 		[]uuid.UUID{orgA, orgB, roleA, foreign}, users, teams,
-		[]uuid.UUID{vmUserA, vmTeamA, vmUserB, diskUserA, diskTeamA, diskUserB},
+		[]uuid.UUID{vmUserA, vmTeamA, vmUserB, vmTeamB, diskUserA, diskTeamA, diskUserB, diskTeamB},
 	)
 
 	var lines []string
@@ -94,6 +94,19 @@ func TestLegacyDecisions(t *testing.T) {
 					}
 					lines = append(lines, fmt.Sprintf("%s %s %s %s %s", sub, org, obj, p.Action, verdict))
 				}
+			}
+		}
+	}
+	for _, p := range Unruled {
+		for _, org := range []uuid.UUID{orgA, orgB} {
+			for _, u := range users {
+				obj := strings.ReplaceAll(p.Object, "*", u.String())
+				lines = append(lines, fmt.Sprintf("unruled %s %s %s %s %t", UserSubject(u), org, obj, p.Action, e.Allowed(UserSubject(u), org, obj, p.Action)))
+				if !strings.Contains(p.Object, "*") {
+					continue
+				}
+				other := strings.ReplaceAll(p.Object, "*", foreign.String())
+				lines = append(lines, fmt.Sprintf("unruled %s %s %s %s %t", UserSubject(u), org, other, p.Action, e.Allowed(UserSubject(u), org, other, p.Action)))
 			}
 		}
 	}
@@ -128,7 +141,10 @@ func TestLegacyDecisions(t *testing.T) {
 	grantOutcome("compute.instances.connect", []Rule{{Allow, ObjVMs + "/*", "compute.instances.connect"}})
 
 	slices.Sort(lines)
-	got := strings.Join(slices.Compact(lines), "\n") + "\n"
+	if dup := len(lines) - len(slices.Compact(slices.Clone(lines))); dup > 0 {
+		t.Fatalf("%d duplicate generated lines", dup)
+	}
+	got := strings.Join(lines, "\n") + "\n"
 
 	const path = "testdata/legacy_decisions.golden"
 	if *update {
