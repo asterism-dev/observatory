@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -694,17 +695,21 @@ func TestListAllEventsPlatformAdminOnly(t *testing.T) {
 	wantCode(t, err, connect.CodeInvalidArgument)
 }
 
-type spaces struct{ n, read int }
+type spaces struct {
+	n    int
+	read atomic.Int64
+}
 
 func (b *spaces) Read(p []byte) (int, error) {
-	if b.read >= b.n {
+	done := int(b.read.Load())
+	if done >= b.n {
 		return 0, io.EOF
 	}
-	k := min(len(p), b.n-b.read)
+	k := min(len(p), b.n-done)
 	for i := range p[:k] {
 		p[i] = ' '
 	}
-	b.read += k
+	b.read.Add(int64(k))
 	return k, nil
 }
 
@@ -726,8 +731,8 @@ func TestOversizedBodyRefusedBeforeAuth(t *testing.T) {
 		t.Fatalf("status %d, want 429 (resource_exhausted)", resp.StatusCode)
 	}
 	// Loose: socket buffers hold some of what the client wrote after the server stopped reading.
-	if body.read > 16<<20 {
-		t.Fatalf("server read about %d bytes before refusing", body.read)
+	if body.read.Load() > 16<<20 {
+		t.Fatalf("server read about %d bytes before refusing", body.read.Load())
 	}
 }
 
@@ -748,8 +753,8 @@ func TestInternalOversizedBodyRefused(t *testing.T) {
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("status %d, want 429 (resource_exhausted)", resp.StatusCode)
 	}
-	if body.read > 16<<20 {
-		t.Fatalf("server read about %d bytes before refusing", body.read)
+	if body.read.Load() > 16<<20 {
+		t.Fatalf("server read about %d bytes before refusing", body.read.Load())
 	}
 }
 
