@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,8 +21,8 @@ func TestDashboards(t *testing.T) {
 	a, b := login(t, s, "a").User.ID, login(t, s, "b").User.ID
 	org := mustCreateOrg(t, s, "D", a)
 	other := mustCreateOrg(t, s, "E", b)
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, b)
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	addMember(s, org.ID, b, store.Role("member"))
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +84,10 @@ func TestDashboards(t *testing.T) {
 		t.Fatalf("after delete: %v", err)
 	}
 
-	if err := s.RemoveMember(ctx, org.ID, b); err != nil {
+	if err := removeMember(s, ctx, org.ID, b); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PurgeMember(ctx, org.ID, b, memberIn(s, org.ID, b)); err != nil {
+	if _, err := s.PurgeMember(ctx, org.ID, b, time.Now(), memberIn(s, org.ID, b)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Dashboard(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {

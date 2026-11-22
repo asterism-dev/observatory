@@ -15,8 +15,8 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 func (e *env) createOrg(jwt, name string) uuid.UUID {

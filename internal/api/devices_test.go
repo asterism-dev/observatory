@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -159,7 +160,7 @@ func TestRemoveMemberDeletesDevicesAPI(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.createDevice(bobTok, org, "phone")
 	e.removeMember(org, bob)
-	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID, func(context.Context) (bool, error) { return false, nil }); err != nil {
+	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID, time.Now(), func(context.Context) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.listDevices(ownerTok, org); len(got) != 0 {

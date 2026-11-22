@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"time"
@@ -35,11 +34,6 @@ func scanSession(row pgx.Row) (Session, error) {
 	var s Session
 	err := row.Scan(&s.ID, &s.UserID, &s.Kind, &s.UserAgent, &s.IP, &s.CreatedAt, &s.LastUsedAt, &s.ExpiresAt)
 	return s, err
-}
-
-func hashToken(token string) []byte {
-	h := sha256.Sum256([]byte(token))
-	return h[:]
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID uuid.UUID, kind SessionKind, ttl time.Duration, userAgent, ip string) (string, Session, error) {

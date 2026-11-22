@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/asterism-dev/observatory/internal/authz"
 )
@@ -29,11 +28,6 @@ const teamColumns = `t.id, t.org_id, t.name, (SELECT count(*) FROM team_members 
 func scanTeam(r pgx.Row) (t Team, err error) {
 	err = r.Scan(&t.ID, &t.OrgID, &t.Name, &t.MemberCount, &t.CreatedAt)
 	return
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (s *Store) CreateTeam(ctx context.Context, orgID uuid.UUID, name string) (Team, error) {

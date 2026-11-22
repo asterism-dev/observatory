@@ -1,4 +1,4 @@
-package auth
+package iam
 
 import (
 	"context"
@@ -9,16 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/asterism-dev/observatory/internal/store"
-	"github.com/asterism-dev/observatory/internal/store/storetest"
+	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 )
 
-func (e *env) cliToken(body string) *httptest.ResponseRecorder {
+func (e *loginEnv) cliToken(body string) *httptest.ResponseRecorder {
 	return e.do(httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(body)))
 }
 
 func TestCLITokenExchange(t *testing.T) {
-	e := newEnv(t)
+	e := newLoginEnv(t)
 	rec := e.cliToken(`{"idToken":"good","accessToken":"at"}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d %s", rec.Code, rec.Body)
@@ -50,7 +52,7 @@ func TestCLITokenExchange(t *testing.T) {
 }
 
 func TestCLITokenRejectsInvalid(t *testing.T) {
-	e := newEnv(t)
+	e := newLoginEnv(t)
 	rec := e.cliToken(`{"idToken":"bad"}`)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status %d", rec.Code)
@@ -69,7 +71,7 @@ func TestCLITokenRejectsInvalid(t *testing.T) {
 }
 
 func TestCLITokenRejectsMalformed(t *testing.T) {
-	e := newEnv(t)
+	e := newLoginEnv(t)
 	for _, b := range []string{``, `nope`, `{}`, `{"idToken":""}`, `{"idToken":"` + strings.Repeat("a", 70<<10) + `"}`} {
 		if rec := e.cliToken(b); rec.Code != http.StatusBadRequest {
 			t.Errorf("body len %d: status %d", len(b), rec.Code)
@@ -78,7 +80,7 @@ func TestCLITokenRejectsMalformed(t *testing.T) {
 }
 
 func TestAuthConfig(t *testing.T) {
-	e := newEnv(t)
+	e := newLoginEnv(t)
 	rec := e.do(httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"cliClientId":"cli-client","issuer":"https://idp.test"}` {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -105,9 +107,9 @@ func TestCheckAZP(t *testing.T) {
 }
 
 func TestLoginReloadIgnoresRequestCancel(t *testing.T) {
-	e := newEnv(t)
+	e := newLoginEnv(t)
 	called := false
-	e.a.Reload = func(ctx context.Context) error {
+	e.a.Reload = func(ctx context.Context, _, _ uuid.UUID) error {
 		called = true
 		if ctx.Done() != nil {
 			t.Error("reload runs on a cancellable request context")

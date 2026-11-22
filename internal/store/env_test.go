@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,29 +21,20 @@ import (
 
 func testKey(b byte) seal.Key { return seal.Key(bytes.Repeat([]byte{b}, 32)) }
 
-func newEnvStore(t *testing.T) (*store.Store, store.LoginResult, store.Org, store.Team) {
+func newEnvStore(t *testing.T) (*store.Store, loginResult, testOrg, testTeam) {
 	t.Helper()
 	ctx := context.Background()
 	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
-	org, err := s.CreateOrg(ctx, "E", u.User.ID)
+	org, err := createOrg(s, ctx, "E", u.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, u, org, team
-}
-
-func mustCreateOrg(t *testing.T, s *store.Store, name string, owner uuid.UUID) store.Org {
-	t.Helper()
-	org, err := s.CreateOrg(context.Background(), name, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return org
 }
 
 func mustCreateEnv(t *testing.T, s *store.Store, v store.EnvVar, value string) store.EnvVar {
@@ -63,7 +55,7 @@ func mustEnvVar(t *testing.T, s *store.Store, org, id uuid.UUID) store.EnvVar {
 	return v
 }
 
-func envVar(org store.Org, user uuid.UUID, kind store.EnvKind, scope store.EnvScope, owner *uuid.UUID, name string) store.EnvVar {
+func envVar(org testOrg, user uuid.UUID, kind store.EnvKind, scope store.EnvScope, owner *uuid.UUID, name string) store.EnvVar {
 	return store.EnvVar{OrgID: org.ID, Kind: kind, Scope: scope, OwnerID: owner, Name: name, CreatedBy: user, UpdatedBy: user}
 }
 
@@ -295,13 +287,13 @@ func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	owner := login(t, s, "owner")
 	org := mustCreateOrg(t, s, "R", owner.User.ID)
 	m := login(t, s, "member")
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, m.User.ID)
+	addMember(s, org.ID, m.User.ID, store.Role("member"))
 	mid := m.User.ID
 	private := mustCreateEnv(t, s, envVar(org, mid, store.EnvSecret, store.EnvScopeUser, &mid, "P"), "p")
 	shared := mustCreateEnv(t, s, envVar(org, mid, store.EnvPlain, store.EnvScopeOrg, nil, "S"), "s")
 	ownerVar := mustCreateEnv(t, s, envVar(org, owner.User.ID, store.EnvPlain, store.EnvScopeUser, &owner.User.ID, "O"), "o")
-	execSQL(t, pool, `DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, mid)
-	if purged, err := s.PurgeMember(ctx, org.ID, mid, memberIn(s, org.ID, mid)); err != nil || !purged {
+	_ = removeMember(s, ctx, org.ID, mid)
+	if purged, err := s.PurgeMember(ctx, org.ID, mid, time.Now(), memberIn(s, org.ID, mid)); err != nil || !purged {
 		t.Fatalf("purge: %v %v", purged, err)
 	}
 	if _, err := s.EnvVar(ctx, org.ID, private.ID); !errors.Is(err, store.ErrNotFound) {
@@ -318,12 +310,6 @@ func TestPurgeTeamDeletesTeamEnv(t *testing.T) {
 	ctx := context.Background()
 	s, u, org, team := newEnvStore(t)
 	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeTeam, &team.ID, "T"), "t")
-	if err := s.DeleteTeam(ctx, org.ID, team.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.EnvVar(ctx, org.ID, v.ID); err != nil {
-		t.Fatalf("team env gone before the purge: %v", err)
-	}
 	if err := s.PurgeTeam(ctx, org.ID, team.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -369,18 +355,18 @@ func TestResolveEnv(t *testing.T) {
 	s := store.New(pool).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
-	team2, err := s.CreateTeam(ctx, org.ID, "other")
+	team2, err := createTeam(s, ctx, org.ID, "other")
 	if err != nil {
 		t.Fatal(err)
 	}
 	empty := mustCreateOrg(t, s, "Empty", u.User.ID)
 	uid := u.User.ID
 	other := login(t, s, "env-other").User.ID
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, other)
+	addMember(s, org.ID, other, store.Role("member"))
 	for _, c := range []struct {
 		kind  store.EnvKind
 		scope store.EnvScope
@@ -399,7 +385,7 @@ func TestResolveEnv(t *testing.T) {
 	} {
 		mustCreateEnv(t, s, envVar(org, uid, c.kind, c.scope, c.owner, c.name), c.value)
 	}
-	policy, err := s.PolicySnapshot(ctx)
+	policy, err := policySnapshot(s, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +460,7 @@ func TestResolveEnv(t *testing.T) {
 	}
 }
 
-func boundVar(org store.Org, user uuid.UUID, scope store.EnvScope, owner *uuid.UUID, name string, hosts ...string) store.EnvVar {
+func boundVar(org testOrg, user uuid.UUID, scope store.EnvScope, owner *uuid.UUID, name string, hosts ...string) store.EnvVar {
 	v := envVar(org, user, store.EnvSecret, scope, owner, name)
 	v.Hosts = hosts
 	return v
@@ -549,7 +535,7 @@ func TestPlaceholderStable(t *testing.T) {
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	uid := u.User.ID
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +592,7 @@ func TestResolveVMEnvBound(t *testing.T) {
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	uid := u.User.ID
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +600,7 @@ func TestResolveVMEnvBound(t *testing.T) {
 	hosts := []string{"api.github.com", "github.com"}
 	gh := mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeOrg, nil, "GH_TOKEN", hosts...), val)
 	mustCreateEnv(t, s, boundVar(org, uid, store.EnvScopeUser, &uid, "MINE", "m.test"), val+"m")
-	policy, err := s.PolicySnapshot(ctx)
+	policy, err := policySnapshot(s, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -57,22 +57,15 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
-	res, err := s.Login(ctx, store.Identity{Subject: "a", Email: "a@x.io", Name: "a"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	org, err := s.CreateOrg(ctx, "A", res.User.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, tok, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: res.User.ID})
+	org, user := uuid.New(), uuid.New()
+	node, tok, err := s.CreateNode(ctx, store.Node{OrgID: org, Name: "n1", CreatedBy: user})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.EnrollNode(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{s: s, org: org.ID, user: res.User.ID, node: node.ID}
+	e := &env{s: s, org: org, user: user, node: node.ID}
 	e.h = New(s, "0123456789abcdef0123456789abcdef", func(org uuid.UUID) { e.notified = append(e.notified, org) })
 	return e
 }

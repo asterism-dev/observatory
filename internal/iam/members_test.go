@@ -9,7 +9,7 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func (e *env) deleteMember(jwt string, org uuid.UUID, u store.User) error {
@@ -225,7 +225,7 @@ func TestDeleteMemberCarryingDeny(t *testing.T) {
 	}
 }
 
-func TestDeleteMemberOwningVM(t *testing.T) {
+func TestDeleteMemberOwningVMViaFake(t *testing.T) {
 	e := newEnv(t)
 	_, ownerTok := e.user("alice")
 	bob, bobTok := e.user("bob")
@@ -303,37 +303,3 @@ func TestCrossOrgMemberID(t *testing.T) {
 }
 
 // Revoked at removal, not on next use, so an idle token cannot revive when its creator is re-added.
-func TestRemovalRevokesCreatorsTelemetryTokens(t *testing.T) {
-	e := newEnv(t)
-	ctx := context.Background()
-	alice, ownerTok := e.user("alice")
-	bob, _ := e.user("bob")
-	carol, carolTok := e.user("carol")
-	org := e.createOrg(ownerTok, "Acme")
-	e.addMember(org, bob, store.RoleAdmin)
-	e.addMember(org, carol, store.RoleAdmin)
-	for _, u := range []store.User{alice, bob, carol} {
-		if _, _, err := e.store.CreateTelemetryToken(ctx, org, u.ID, u.Name); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := e.deleteMember(ownerTok, org, bob); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.leaveOrg(carolTok, org); err != nil {
-		t.Fatal(err)
-	}
-	toks, err := e.store.TelemetryTokens(ctx, org)
-	if err != nil || len(toks) != 1 || toks[0].CreatedBy != alice.ID {
-		t.Fatalf("active tokens: %+v %v", toks, err)
-	}
-	es := e.audit(store.ActionGrafanaTokenRevoke)
-	if len(es) != 2 {
-		t.Fatalf("audit: %+v", es)
-	}
-	for _, a := range es {
-		if a.ActorKind != store.ActorSystem || (a.Details["name"] != "bob" && a.Details["name"] != "carol") {
-			t.Fatalf("audit: %+v", a)
-		}
-	}
-}

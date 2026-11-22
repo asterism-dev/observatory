@@ -24,6 +24,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 type cleanupEnv struct {
@@ -495,5 +496,33 @@ func TestSSHKeyEventNotifiesOrgs(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("%s notified %v, want bob's orgs %v", action, got, want)
 		}
+	}
+}
+
+// As in 0.x, removal kills the tokens its member created, also when they re-join before the purge or the token's next use.
+func TestRemovedCreatorsTokenStaysDeadAfterRejoin(t *testing.T) {
+	e := newIdleCleanupEnv(t)
+	ctx := context.Background()
+	bob := e.member("bob")
+	old, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "before")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.leave(bob)
+	e.publish(store.ActionMemberRemove, &e.org.ID, memberResource(bob), eventsv1.Result_RESULT_ALLOWED)
+	e.rejoin(bob)
+	fresh, _, err := e.s.CreateTelemetryToken(ctx, e.org.ID, bob, "after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.start()
+	e.settled()
+	toks, err := e.s.TelemetryTokens(ctx, e.org.ID)
+	if err != nil || len(toks) != 1 || toks[0].ID != fresh.ID {
+		t.Fatalf("active tokens %+v %v, want only %s", toks, err, fresh.ID)
+	}
+	es := storetest.Audit(t, e.pool, store.ActionGrafanaTokenRevoke)
+	if len(es) != 1 || es[0].ActorKind != store.ActorSystem || es[0].Resource != "telemetry-token/"+old.ID.String() || es[0].Details["name"] != "before" {
+		t.Fatalf("audit: %+v", es)
 	}
 }

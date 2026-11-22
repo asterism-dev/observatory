@@ -9,15 +9,14 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 const week = 7 * 24 * time.Hour
 
 func TestInviteLifecycle(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	a, b, c := login(t, s, "a"), login(t, s, "b"), login(t, s, "c")
 	org, err := s.CreateOrg(ctx, "Acme", a.User.ID)
 	if err != nil {
@@ -93,7 +92,7 @@ func TestInviteLifecycle(t *testing.T) {
 
 func TestNoInvitesToPersonalOrg(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	a := login(t, s, "a")
 	if _, _, err := s.CreateInvite(ctx, a.PersonalOrg.ID, store.RoleMember, a.User.ID, week); !errors.Is(err, store.ErrPersonalOrg) {
 		t.Fatalf("personal: %v", err)

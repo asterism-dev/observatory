@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
 )
 
 type execer interface {
@@ -26,7 +25,7 @@ func mustExec(ctx context.Context, t *testing.T, q execer, sql string, args ...a
 
 func TestPolicySnapshot(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := NewTestDB(t)
 	s := New(pool)
 	var org, user, team, emptyTeam, parent, child uuid.UUID
 	must := func(err error) {
@@ -89,7 +88,7 @@ func TestPolicySnapshot(t *testing.T) {
 
 func TestPolicySnapshotSeesOwnTransaction(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := NewTestDB(t)
 	s := New(pool)
 	var org uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO orgs (name) VALUES ('o') RETURNING id`).Scan(&org); err != nil {
@@ -120,7 +119,7 @@ func TestPolicySnapshotSeesOwnTransaction(t *testing.T) {
 
 func TestRoleStore(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := NewTestDB(t)
 	s := New(pool)
 	var org, orgB, user, outsider, team, teamB uuid.UUID
 	must := func(err error) {

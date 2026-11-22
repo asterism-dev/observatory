@@ -76,10 +76,6 @@ func (h *api) auditDenied(r *http.Request, org uuid.UUID, obj, act string) {
 // errForbidden rolls back a commit whose permission check depends on rows read inside the transaction.
 var errForbidden = errors.New("forbidden")
 
-type invalidPolicyError struct{ err error }
-
-func (e invalidPolicyError) Error() string { return e.err.Error() }
-
 var storeErrorStatus = []struct {
 	err    error
 	status int
@@ -94,7 +90,6 @@ var storeErrorStatus = []struct {
 	{store.ErrLimitExceedsOrg, http.StatusBadRequest},
 	{store.ErrLimitExceeded, http.StatusConflict},
 	{store.ErrNotEnrolled, http.StatusConflict},
-	{store.ErrInvalidKey, http.StatusBadRequest},
 	{store.ErrHostsNeedSecret, http.StatusBadRequest},
 	{store.ErrValueTooShort, http.StatusBadRequest},
 	{egress.ErrInvalidHost, http.StatusBadRequest},
@@ -110,22 +105,10 @@ var storeErrorStatus = []struct {
 	{store.ErrInvalid, http.StatusBadRequest},
 }
 
-// commit runs fn in a transaction that only commits if the resulting policy still builds, then reloads the enforcer.
+// commit runs fn in a transaction, then reloads the enforcer; hub rows only add owner refs, which cannot make iam's policy invalid.
 func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.Store) error) bool {
 	ctx := r.Context()
-	err := h.store.InTx(ctx, func(tx *store.Store) error {
-		if err := fn(tx); err != nil {
-			return err
-		}
-		p, err := tx.HubPolicy(ctx)
-		if err != nil {
-			return err
-		}
-		if _, err := authz.New(p); err != nil {
-			return invalidPolicyError{err}
-		}
-		return nil
-	})
+	err := h.store.InTx(ctx, fn)
 	if err != nil {
 		var ce codedError
 		if errors.As(err, &ce) {
@@ -135,12 +118,6 @@ func (h *api) commit(w http.ResponseWriter, r *http.Request, fn func(tx *store.S
 		var he httpError
 		if errors.As(err, &he) {
 			writeError(w, he.status, he.msg)
-			return false
-		}
-		var invalid invalidPolicyError
-		if errors.As(err, &invalid) {
-			slog.Error("policy validation failed", "err", invalid)
-			writeError(w, http.StatusBadRequest, "invalid policy")
 			return false
 		}
 		for _, se := range storeErrorStatus {

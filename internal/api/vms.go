@@ -14,8 +14,8 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/images"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
@@ -95,7 +95,7 @@ type vmNames struct {
 	nics                          map[uuid.UUID][]store.VMNIC
 	vmDisks                       map[uuid.UUID][]store.VMDisk
 	disks                         map[uuid.UUID]store.Disk
-	teamList                      []store.Team
+	teamList                      []iamclient.Team
 	nodeList                      []store.Node
 	usage                         map[uuid.UUID]telemetry.VMNow
 }
@@ -107,7 +107,7 @@ func (h *api) vmNames(r *http.Request, org uuid.UUID) (vmNames, error) {
 	if n.users, err = h.memberNames(ctx, org); err != nil {
 		return n, err
 	}
-	if n.teamList, err = iaminternal.ListTeams(ctx, h.iam, org); err != nil {
+	if n.teamList, err = iamclient.ListTeams(ctx, h.iam, org); err != nil {
 		return n, err
 	}
 	for _, t := range n.teamList {

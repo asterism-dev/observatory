@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
@@ -64,22 +63,30 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	defer pool.Close()
-	oidc, err := auth.NewOIDC(ctx, cfg.Issuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
-	if err != nil {
-		return err
-	}
 	s := store.New(pool).WithMasterKey(cfg.SecretsKey)
 	if err := s.CheckMasterKey(ctx); err != nil {
-		return err
-	}
-	// iam's own policy: no owner refs, since those are the hub's to add.
-	iamZ, err := authz.NewService(ctx, s.PolicySnapshot)
-	if err != nil {
 		return err
 	}
 	selfToken := rand.Text() + rand.Text()
 	cfg.ServiceTokens[selfService] = selfToken
 	selfURL := "http://" + dialAddr(ln.Addr())
+	// ponytail: iam runs embedded on the hub's listener and database until it gets its own process.
+	iamSvc, err := iamapi.New(ctx, iamapi.Config{DatabaseURL: cfg.DatabaseURL, PublicURL: cfg.PublicURL, OIDCIssuer: cfg.Issuer, WebClientID: cfg.WebClientID, CLIClientID: cfg.CLIClientID,
+		EdgeToken: cfg.EdgeToken, HubURL: selfURL, ServiceToken: selfToken, NATSURL: cfg.NATSURL, NATSToken: cfg.NATSToken, SecretsKey: cfg.SecretsKey, ServiceTokens: cfg.ServiceTokens})
+	if err != nil {
+		return err
+	}
+	defer iamSvc.Close()
+	iamCtx, stopIAM := context.WithCancel(ctx)
+	iamDone := make(chan struct{})
+	go func() {
+		if err := iamSvc.Run(iamCtx); err != nil {
+			slog.Error("iam stopped relaying events, they wait in its outbox", "err", err)
+		}
+		close(iamDone)
+	}()
+	defer func() { stopIAM(); <-iamDone }()
+	iamHandler := iamSvc.Handler()
 	// The hub verifies edge-issued JWTs against iam's JWKS, over HTTP, like any other service.
 	verifier, err := identity.NewVerifier(iamURL(ln), cfg.PublicURL, selfToken, nil)
 	if err != nil {
@@ -90,10 +97,6 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	iam := iamv1connect.NewIAMInternalServiceClient(internalClient, iamURL(ln)+"/internal/iam", withToken)
 
 	mux := http.NewServeMux()
-	policies, err := mountIdentity(ctx, mux, s, iamZ, cfg)
-	if err != nil {
-		return err
-	}
 	// The hub serves iam's routes before its own policy exists, since it takes that policy from iam's stream; other requests wait.
 	ready := make(chan struct{})
 	var handler http.Handler
@@ -106,7 +109,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		default:
 		}
 		if strings.HasPrefix(r.URL.Path, "/internal/iam/") {
-			mux.ServeHTTP(w, r)
+			iamHandler.ServeHTTP(w, r)
 			return
 		}
 		select {
@@ -140,17 +143,10 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	slog.Info("management addresses backfilled", "vms", filled)
-	reloadAfterLogin := func(ctx context.Context) error {
-		if err := iamZ.Reload(ctx); err != nil {
-			return err
-		}
-		// The SPA calls hub routes right after login, so wait until the hub has the new user's personal org.
-		wctx, cancel := context.WithTimeout(ctx, loginPolicyWait)
-		defer cancel()
-		return hp.WaitRevision(wctx, policies.Revision())
+	a := &auth.Handler{PublicURL: publicURL, EdgeToken: cfg.EdgeToken, Verifier: verifier, IAM: iam}
+	for _, prefix := range []string{iamapi.Prefix + "/", "/internal/iam/", "/auth/", "/api/auth/"} {
+		mux.Handle(prefix, iamHandler)
 	}
-	a := &auth.Handler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.Issuer, CLIClientID: cfg.CLIClientID, Reload: reloadAfterLogin, EdgeToken: cfg.EdgeToken, Verifier: verifier, IAM: iam}
-	a.Routes(mux)
 	resources := api.ResourceServer{Store: s, Policy: hp}
 	mux.Handle("/internal/hub/", servicetoken.Middleware(cfg.ServiceTokens)(internalHub(resources)))
 	f, err := fleet.New(ctx, s, z, nh, iam)
@@ -265,12 +261,6 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
 	apiHandler := api.New(s, iam, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
 	mux.Handle("/api/", apiHandler)
-	hubResources := hubv1connect.NewResourceServiceClient(internalClient, selfURL+"/internal/hub", withToken)
-	iamHandler, err := iamapi.Handler(iamapi.Deps{Store: s, Policy: iamZ, Verifier: verifier, Resources: hubResources, Pool: pool, PublicURL: publicURL, Revision: policies.Revision})
-	if err != nil {
-		return err
-	}
-	mux.Handle(iamapi.Prefix+"/", iamHandler)
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
 	handler = a.TrustEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/grafana/") {
@@ -288,8 +278,8 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 // iamURL is where the hub reaches iam: its own listener until iam runs apart; tests override it and firstPolicyWait, so hubserver tests must not run in parallel.
 var iamURL = func(ln net.Listener) string { return "http://" + dialAddr(ln.Addr()) }
 
-// loginPolicyWait bounds how long a login waits for its new user to reach the hub's policy.
-const loginPolicyWait = 5 * time.Second
+// selfService names the token the hub and its embedded iam call each other with.
+const selfService = "hub"
 
 // dialAddr turns a listen address into one the hub can call itself on; a wildcard host becomes loopback.
 func dialAddr(addr net.Addr) string {

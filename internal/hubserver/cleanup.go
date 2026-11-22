@@ -16,8 +16,8 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -104,7 +104,7 @@ func purge(ctx context.Context, s *store.Store, iam iamv1connect.IAMInternalServ
 			return err
 		}
 		// A stale event, e.g. replayed to a fresh consumer, must not wipe a re-joined member's rows.
-		purged, err := s.PurgeMember(ctx, org, user, func(ctx context.Context) (bool, error) { return iaminternal.IsMember(ctx, iam, org, user) })
+		purged, err := s.PurgeMember(ctx, org, user, e.GetTime().AsTime(), func(ctx context.Context) (bool, error) { return iamclient.IsMember(ctx, iam, org, user) })
 		if err != nil {
 			return err
 		}

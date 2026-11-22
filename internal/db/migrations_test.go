@@ -101,8 +101,8 @@ func TestMigration00018RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		WITH u AS (INSERT INTO users (subject, email, name) VALUES ('s', 'u@example.com', 'u') RETURNING id),
-		o AS (INSERT INTO orgs (name) VALUES ('o') RETURNING id),
+		WITH u AS (SELECT gen_random_uuid() AS id),
+		o AS (SELECT gen_random_uuid() AS id),
 		i AS (INSERT INTO images (org_id, scope, name, created_by) SELECT o.id, 'org', 'img', u.id FROM o, u RETURNING id),
 		r AS (INSERT INTO recipe_revisions (image_id, number, created_by) SELECT i.id, 1, u.id FROM i, u RETURNING image_id),
 		f AS (INSERT INTO recipe_files (image_id, revision, path, mode, content) SELECT image_id, 1, 'Dockerfile', 420, '\x00' FROM r),
@@ -155,32 +155,6 @@ func TestMigration00035MovesMgmtSliceToHubOrgs(t *testing.T) {
 	}
 	if err := pool.QueryRow(ctx, "SELECT mgmt_slice::text FROM orgs WHERE id = $1", org).Scan(&slice); err != nil || slice != "100.64.8.0/24" {
 		t.Fatalf("restored: %q %v", slice, err)
-	}
-}
-
-func TestNoForeignKeysIntoIAMTables(t *testing.T) {
-	pool := dbtest.New(t)
-	// role_rules and role_parents belong to IAM's role graph; their cascades from roles stay.
-	rows, err := pool.Query(context.Background(), `
-		SELECT conrelid::regclass::text || '.' || conname || ' -> ' || confrelid::regclass::text
-		FROM pg_constraint
-		WHERE contype = 'f'
-			AND confrelid = ANY ('{users,orgs,memberships,sessions,teams,team_members,roles,role_bindings,invites,ssh_keys}'::regclass[])
-			AND NOT conrelid = ANY ('{users,orgs,memberships,sessions,teams,team_members,roles,role_bindings,invites,ssh_keys,role_rules,role_parents}'::regclass[])
-		ORDER BY 1`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var fk string
-		if err := rows.Scan(&fk); err != nil {
-			t.Fatal(err)
-		}
-		t.Errorf("foreign key into an iam table: %s", fk)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
 	}
 }
 

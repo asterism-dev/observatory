@@ -1,4 +1,4 @@
-package auth
+package iam
 
 import (
 	"context"
@@ -11,34 +11,35 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/seal"
 )
 
 const (
-	signingKeySecret = "iam-signing-key"
+	signingKeySecret = "signing-key"
 	tokenCaller      = "edge"
 )
 
-// Issuer mints user JWTs for the edge until the iam service takes over.
+// Issuer mints user JWTs for the edge.
 type Issuer struct {
 	store  *store.Store
 	signer *identity.Signer
 }
 
-// NewIssuer loads the Ed25519 signing key from hub_secrets, creating it on first start.
-func NewIssuer(ctx context.Context, s *store.Store, url string) (*Issuer, error) {
-	seed, err := s.HubSecret(ctx, signingKeySecret, func() ([]byte, error) {
+// NewIssuer loads the Ed25519 signing key, sealed under key in iam.secrets, creating it on first start.
+func NewIssuer(ctx context.Context, s *store.Store, key seal.Key, url string) (*Issuer, error) {
+	seed, err := s.Secret(ctx, key, signingKeySecret, func() ([]byte, error) {
 		seed := make([]byte, ed25519.SeedSize)
 		_, err := rand.Read(seed)
 		return seed, err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("hub secret %s: %w", signingKeySecret, err)
+		return nil, fmt.Errorf("iam secret %s: %w", signingKeySecret, err)
 	}
 	if len(seed) != ed25519.SeedSize {
-		return nil, fmt.Errorf("hub secret %s: want %d bytes, got %d", signingKeySecret, ed25519.SeedSize, len(seed))
+		return nil, fmt.Errorf("iam secret %s: want %d bytes, got %d", signingKeySecret, ed25519.SeedSize, len(seed))
 	}
 	signer, err := identity.NewSigner(ed25519.NewKeyFromSeed(seed), url)
 	if err != nil {
@@ -103,6 +104,8 @@ func (i *Issuer) TokenHandler() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{"token": signed, "expires_at": exp})
 	})
 }
+
+func (i *Issuer) Verifier() *identity.Verifier { return i.signer.Verifier() }
 
 // JWKSHandler publishes the verification keys.
 func (i *Issuer) JWKSHandler() http.Handler { return i.signer.JWKSHandler() }

@@ -29,7 +29,7 @@ func TestCreateDevice(t *testing.T) {
 	a, b := login(t, s, "a"), login(t, s, "b")
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", b.User.ID)
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, orgA.ID, b.User.ID)
+	addMember(s, orgA.ID, b.User.ID, store.Role("member"))
 
 	d1 := mustCreateDevice(t, s, orgA.ID, a.User.ID, "laptop", "k1")
 	d2 := mustCreateDevice(t, s, orgB.ID, b.User.ID, "laptop", "k2")
@@ -74,21 +74,21 @@ func TestPurgeMemberDeletesDevices(t *testing.T) {
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", a.User.ID)
 	for _, org := range []uuid.UUID{orgA.ID, orgB.ID} {
-		execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, m.User.ID)
+		addMember(s, org, m.User.ID, store.Role("member"))
 	}
 	inA := mustCreateDevice(t, s, orgA.ID, m.User.ID, "phone", "ka")
 	inB := mustCreateDevice(t, s, orgB.ID, m.User.ID, "phone", "kb")
 
-	if err := s.RemoveMember(ctx, orgA.ID, m.User.ID); err != nil {
+	if err := removeMember(s, ctx, orgA.ID, m.User.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Device(ctx, orgA.ID, inA.ID); err != nil {
 		t.Fatalf("org A device gone before the purge: %v", err)
 	}
-	if purged, err := s.PurgeMember(ctx, orgA.ID, m.User.ID, memberIn(s, orgA.ID, m.User.ID)); err != nil || !purged {
+	if purged, err := s.PurgeMember(ctx, orgA.ID, m.User.ID, time.Now(), memberIn(s, orgA.ID, m.User.ID)); err != nil || !purged {
 		t.Fatalf("purge: %v %v", purged, err)
 	}
-	if purged, err := s.PurgeMember(ctx, orgB.ID, m.User.ID, memberIn(s, orgB.ID, m.User.ID)); err != nil || purged {
+	if purged, err := s.PurgeMember(ctx, orgB.ID, m.User.ID, time.Now(), memberIn(s, orgB.ID, m.User.ID)); err != nil || purged {
 		t.Fatalf("purge of a current member: %v %v", purged, err)
 	}
 	if _, err := s.Device(ctx, orgA.ID, inA.ID); !errors.Is(err, store.ErrNotFound) {

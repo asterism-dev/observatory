@@ -1,4 +1,4 @@
-package iaminternal
+package iam
 
 import (
 	"testing"
@@ -8,39 +8,40 @@ import (
 	"github.com/google/uuid"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 )
 
 func TestGetUsersLimit(t *testing.T) {
-	ids := make([]string, MaxIDs+1)
+	ids := make([]string, iamclient.MaxIDs+1)
 	for i := range ids {
 		ids[i] = uuid.NewString()
 	}
-	_, err := Server{}.GetUsers(t.Context(), connect.NewRequest(&iamv1.GetUsersRequest{UserIds: ids}))
+	_, err := internalServer{}.GetUsers(t.Context(), connect.NewRequest(&iamv1.GetUsersRequest{UserIds: ids}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("GetUsers with %d ids: %v", len(ids), err)
 	}
-	_, err = Server{}.ListSSHKeys(t.Context(), connect.NewRequest(&iamv1.ListSSHKeysRequest{UserIds: ids}))
+	_, err = internalServer{}.ListSSHKeys(t.Context(), connect.NewRequest(&iamv1.ListSSHKeysRequest{UserIds: ids}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("ListSSHKeys with %d ids: %v", len(ids), err)
 	}
-	_, err = Server{}.GetUsers(t.Context(), connect.NewRequest(&iamv1.GetUsersRequest{UserIds: []string{"nope"}}))
+	_, err = internalServer{}.GetUsers(t.Context(), connect.NewRequest(&iamv1.GetUsersRequest{UserIds: []string{"nope"}}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("bad id: %v", err)
 	}
 }
 
 func TestListTeamsInvalidOrg(t *testing.T) {
-	_, err := Server{}.ListTeams(t.Context(), connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: "nope"}))
+	_, err := internalServer{}.ListTeams(t.Context(), connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: "nope"}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("ListTeams with a malformed org_id: %v", err)
 	}
 }
 
 func TestGetSessionUnknownNotFound(t *testing.T) {
-	s := store.New(dbtest.New(t))
-	srv := Server{Store: s}
+	s := store.New(storetest.NewDB(t))
+	srv := internalServer{Store: s}
 	_, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: uuid.NewString()}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("unknown session: %v", err)
@@ -63,17 +64,17 @@ func TestGetSessionUnknownNotFound(t *testing.T) {
 	if res, err := srv.GetSession(t.Context(), connect.NewRequest(&iamv1.GetSessionRequest{SessionId: sess.ID.String()})); err != nil || !res.Msg.Revoked {
 		t.Fatalf("revoked session: %+v %v", res, err)
 	}
-	if active, err := SessionActive(t.Context(), srv, sess.ID); err != nil || active {
+	if active, err := iamclient.SessionActive(t.Context(), srv, sess.ID); err != nil || active {
 		t.Fatalf("revoked session active=%v err=%v", active, err)
 	}
-	if active, err := SessionActive(t.Context(), srv, uuid.New()); err != nil || active {
+	if active, err := iamclient.SessionActive(t.Context(), srv, uuid.New()); err != nil || active {
 		t.Fatalf("unknown session active=%v err=%v", active, err)
 	}
 }
 
 func TestGetMembership(t *testing.T) {
-	s := store.New(dbtest.New(t))
-	srv := Server{Store: s}
+	s := store.New(storetest.NewDB(t))
+	srv := internalServer{Store: s}
 	u, err := s.Login(t.Context(), store.Identity{Subject: "u", Email: "u@x.io", Name: "u"})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestGetMembership(t *testing.T) {
 	if err != nil || !res.Msg.Member || res.Msg.Role != string(store.RoleOwner) {
 		t.Fatalf("owner: %+v %v", res, err)
 	}
-	if member, err := IsMember(t.Context(), srv, org.ID, uuid.New()); err != nil || member {
+	if member, err := iamclient.IsMember(t.Context(), srv, org.ID, uuid.New()); err != nil || member {
 		t.Fatalf("stranger member=%v err=%v", member, err)
 	}
 	if _, err := srv.GetMembership(t.Context(), connect.NewRequest(&iamv1.GetMembershipRequest{OrgId: "nope", UserId: u.User.ID.String()})); connect.CodeOf(err) != connect.CodeInvalidArgument {
@@ -96,8 +97,8 @@ func TestGetMembership(t *testing.T) {
 
 func TestLookups(t *testing.T) {
 	ctx := t.Context()
-	s := store.New(dbtest.New(t))
-	srv := Server{Store: s}
+	s := store.New(storetest.NewDB(t))
+	srv := internalServer{Store: s}
 	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
 	if err != nil {
 		t.Fatal(err)

@@ -7,13 +7,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func TestLoginCreatesUserWithPersonalOrg(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 
 	res, err := s.Login(ctx, store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Ada"})
 	if err != nil {
@@ -33,7 +32,7 @@ func TestLoginCreatesUserWithPersonalOrg(t *testing.T) {
 
 func TestFirstUserBecomesPlatformAdmin(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 
 	first, err := s.Login(ctx, store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Ada"})
 	if err != nil {
@@ -53,7 +52,7 @@ func TestFirstUserBecomesPlatformAdmin(t *testing.T) {
 
 func TestLoginIsIdempotentPerSubject(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 
 	first, err := s.Login(ctx, store.Identity{Subject: "sub-1", Email: "a@x.io", Name: "Ada"})
 	if err != nil {
@@ -83,7 +82,7 @@ func TestLoginIsIdempotentPerSubject(t *testing.T) {
 
 func TestConcurrentFirstLoginsYieldOneAdmin(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := store.NewTestDB(t)
 	s := store.New(pool)
 
 	const n = 10
@@ -123,7 +122,7 @@ func TestConcurrentFirstLoginsYieldOneAdmin(t *testing.T) {
 }
 
 func TestPersonalOrgFallsBackToEmail(t *testing.T) {
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 
 	res, err := s.Login(context.Background(), store.Identity{Subject: "sub-1", Email: "a@x.io"})
 	if err != nil {
@@ -136,7 +135,7 @@ func TestPersonalOrgFallsBackToEmail(t *testing.T) {
 
 func TestInTxRollsBack(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := store.NewTestDB(t)
 	s := store.New(pool)
 
 	boom := errors.New("boom")

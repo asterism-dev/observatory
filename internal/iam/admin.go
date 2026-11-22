@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func (s *server) ListAllOrgs(ctx context.Context, _ *connect.Request[iamv1.ListAllOrgsRequest]) (*connect.Response[iamv1.ListAllOrgsResponse], error) {

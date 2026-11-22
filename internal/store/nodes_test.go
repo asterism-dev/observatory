@@ -18,8 +18,8 @@ func TestNodeLifecycle(t *testing.T) {
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	a, b := login(t, s, "a"), login(t, s, "b")
-	orgA, _ := s.CreateOrg(ctx, "A", a.User.ID)
-	orgB, _ := s.CreateOrg(ctx, "B", b.User.ID)
+	orgA, _ := createOrg(s, ctx, "A", a.User.ID)
+	orgB, _ := createOrg(s, ctx, "B", b.User.ID)
 
 	n, token, err := s.CreateNode(ctx, store.Node{OrgID: orgA.ID, Name: "n1", CreatedBy: a.User.ID})
 	if err != nil || n.Enrolled {
@@ -93,7 +93,7 @@ func TestEnrollTokenExpires(t *testing.T) {
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	a := login(t, s, "a")
-	org, _ := s.CreateOrg(ctx, "A", a.User.ID)
+	org, _ := createOrg(s, ctx, "A", a.User.ID)
 	n, token, _ := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n", CreatedBy: a.User.ID})
 	var ttlHours float64
 	if err := pool.QueryRow(ctx, "SELECT extract(epoch FROM enroll_expires - now()) / 3600 FROM nodes WHERE id = $1", n.ID).Scan(&ttlHours); err != nil || ttlHours < 23.9 || ttlHours > 24 {
@@ -112,7 +112,7 @@ func TestDeleteNodeWithVM(t *testing.T) {
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	a := login(t, s, "a")
-	org, _ := s.CreateOrg(ctx, "A", a.User.ID)
+	org, _ := createOrg(s, ctx, "A", a.User.ID)
 	n, _, _ := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n", CreatedBy: a.User.ID})
 	if _, err := pool.Exec(ctx, "INSERT INTO vms (org_id, node_id, user_id, name, cpus, memory_mb, disk_gb) VALUES ($1, $2, $3, 'v', 1, 512, 5)", org.ID, n.ID, a.User.ID); err != nil {
 		t.Fatal(err)
@@ -135,8 +135,8 @@ func TestSetNodeImage(t *testing.T) {
 	ctx := context.Background()
 	s := store.New(dbtest.New(t))
 	a, b := login(t, s, "a"), login(t, s, "b")
-	orgA, _ := s.CreateOrg(ctx, "A", a.User.ID)
-	orgB, _ := s.CreateOrg(ctx, "B", b.User.ID)
+	orgA, _ := createOrg(s, ctx, "A", a.User.ID)
+	orgB, _ := createOrg(s, ctx, "B", b.User.ID)
 	n, _, _ := s.CreateNode(ctx, store.Node{OrgID: orgA.ID, Name: "n1", CreatedBy: a.User.ID})
 	other, _, _ := s.CreateNode(ctx, store.Node{OrgID: orgB.ID, Name: "n1", CreatedBy: b.User.ID})
 	if got, _ := s.Node(ctx, orgA.ID, n.ID); got.Image != nil {

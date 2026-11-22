@@ -7,13 +7,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func TestTeamStore(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	a, b, outsider := login(t, s, "a"), login(t, s, "b"), login(t, s, "c")
 	orgA, _ := s.CreateOrg(ctx, "A", a.User.ID)
 	orgB, _ := s.CreateOrg(ctx, "B", b.User.ID)
@@ -79,17 +78,10 @@ func TestTeamStore(t *testing.T) {
 	if err := s.DeleteTeam(ctx, orgA.ID, uuid.New()); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("delete unknown: %v", err)
 	}
-	one := 1
-	if err := s.SetLimits(ctx, orgA.ID, "team:"+other.ID.String(), store.Limits{VCPU: &one}, policyKnown(t, s, orgA.ID)); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.DeleteTeam(ctx, orgA.ID, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PurgeTeam(ctx, orgA.ID, other.ID); err != nil {
-		t.Fatal(err)
-	}
-	if ls, err := s.Limits(ctx, orgA.ID); err != nil || len(ls) != 0 {
-		t.Fatalf("limits after team delete: %+v %v", ls, err)
+	if ts, err := s.Teams(ctx, orgA.ID); err != nil || len(ts) != 1 {
+		t.Fatalf("teams after delete: %+v %v", ts, err)
 	}
 }

@@ -263,8 +263,8 @@ func TestAdminRegistryGC(t *testing.T) {
 func TestRegistryCredentialNeedsCLISession(t *testing.T) {
 	e := newEnv(t)
 	alice, _ := e.user("alice")
-	for kind, want := range map[store.SessionKind]int{store.SessionBrowser: 403, store.SessionCLI: 201} {
-		jwt, _ := e.iam.JWT(alice.ID, string(kind))
+	for kind, want := range map[string]int{"browser": 403, "cli": 201} {
+		jwt, _ := e.iam.JWT(alice.ID, kind)
 		if rec := e.do("POST", "/api/registry/credentials", jwt); rec.Code != want {
 			t.Fatalf("%s session: %d %s, want %d", kind, rec.Code, rec.Body.String(), want)
 		}

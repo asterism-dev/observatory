@@ -7,8 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 const (
@@ -18,7 +17,7 @@ const (
 
 func TestSSHKeys(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	a, b := login(t, s, "a"), login(t, s, "b")
 
 	if _, err := s.AddSSHKey(ctx, store.SSHKey{UserID: a.User.ID, Name: "x", PublicKey: "not a key"}); !errors.Is(err, store.ErrInvalidKey) {

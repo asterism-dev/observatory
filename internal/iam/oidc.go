@@ -1,4 +1,4 @@
-package auth
+package iam
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 type Authenticator interface {

@@ -94,9 +94,9 @@ func (s *Store) RevokeTelemetryToken(ctx context.Context, org, id uuid.UUID) (st
 	return name, err
 }
 
-// RevokeTelemetryTokensBy revokes the active tokens user created in org and returns them.
-func (s *Store) RevokeTelemetryTokensBy(ctx context.Context, org, user uuid.UUID) ([]TelemetryToken, error) {
-	rows, err := s.q.Query(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL RETURNING "+telemetryTokenColumns, org, user)
+// revokeTokensBy revokes the active tokens user created in org before before and returns them.
+func (s *Store) revokeTokensBy(ctx context.Context, org, user uuid.UUID, before time.Time) ([]TelemetryToken, error) {
+	rows, err := s.q.Query(ctx, "UPDATE telemetry_tokens SET revoked_at = now() WHERE org_id = $1 AND created_by = $2 AND created_at < $3 AND revoked_at IS NULL RETURNING "+telemetryTokenColumns, org, user, before)
 	if err != nil {
 		return nil, err
 	}

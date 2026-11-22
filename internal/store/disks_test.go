@@ -215,7 +215,7 @@ func TestOwnsLiveDisks(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
 	b := login(t, e.s, "b")
-	execSQL(t, e.pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, e.org.ID, b.User.ID)
+	addMember(e.s, e.org.ID, b.User.ID, store.Role("member"))
 	bd := mustCreateDisk(t, e, store.Disk{OrgID: e.org.ID, UserID: &b.User.ID, Name: "b", SizeGB: 1, CreatedBy: e.user})
 	td := mustCreateDisk(t, e, e.disk("t", &e.team.ID, 1))
 	owns := func(scope store.EnvScope, id uuid.UUID) bool {

@@ -17,7 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/builds"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -274,7 +274,7 @@ func (a *AutoRebuilds) mayBuild(ctx context.Context, img store.Image, rev store.
 }
 
 func (a *AutoRebuilds) userName(ctx context.Context, id uuid.UUID) string {
-	if names, err := iaminternal.UserNames(ctx, a.iam, []uuid.UUID{id}); err == nil && names[id] != "" {
+	if names, err := iamclient.UserNames(ctx, a.iam, []uuid.UUID{id}); err == nil && names[id] != "" {
 		return names[id]
 	}
 	return id.String()

@@ -76,3 +76,14 @@ func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 type currentPolicy struct{ *authz.Service }
 
 func (currentPolicy) WaitRevision(context.Context, uint64) error { return nil }
+
+const (
+	svcToken = "0123456789abcdef0123456789abcdef"
+	otherTok = "fedcba9876543210fedcba9876543210"
+)
+
+func withAuth[T any](msg *T, auth string) *connect.Request[T] {
+	r := connect.NewRequest(msg)
+	r.Header().Set("Authorization", auth)
+	return r
+}

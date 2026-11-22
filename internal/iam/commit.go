@@ -11,9 +11,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 // errForbidden rolls back a commit whose permission check depends on rows read inside the transaction.
@@ -47,7 +47,6 @@ var errorCodes = []struct {
 	{store.ErrLastOwner, connect.CodeFailedPrecondition},
 	{store.ErrPersonalOrg, connect.CodeFailedPrecondition},
 	{store.ErrConflict, connect.CodeFailedPrecondition},
-	{store.ErrStale, connect.CodeFailedPrecondition},
 	{store.ErrAlreadyMember, connect.CodeFailedPrecondition},
 	{store.ErrLastPlatformAdmin, connect.CodeFailedPrecondition},
 	{store.ErrOwnsResources, connect.CodeFailedPrecondition},
@@ -55,7 +54,6 @@ var errorCodes = []struct {
 	{store.ErrInviteInvalid, connect.CodeInvalidArgument},
 	{store.ErrInvalidParent, connect.CodeInvalidArgument},
 	{store.ErrInvalidKey, connect.CodeInvalidArgument},
-	{store.ErrInvalid, connect.CodeInvalidArgument},
 	{authz.ErrInvalidPattern, connect.CodeInvalidArgument},
 }
 

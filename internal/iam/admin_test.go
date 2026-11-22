@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func (e *env) setPlatformAdmin(jwt string, user uuid.UUID, admin bool) error {

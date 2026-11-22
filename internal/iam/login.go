@@ -1,4 +1,4 @@
-package auth
+package iam
 
 import (
 	"context"
@@ -16,9 +16,9 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
-	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const (
@@ -27,22 +27,20 @@ const (
 	browserSessTTL = 7 * 24 * time.Hour
 	cliSessTTL     = 30 * 24 * time.Hour
 	maxCLIBody     = 64 << 10
+	sessionCookie  = "obs_session"
 )
 
-type Handler struct {
+// loginHandler serves the OIDC login, the CLI token exchange and logout under /auth/ and /api/auth/.
+type loginHandler struct {
 	Store       *store.Store
 	Auth        Authenticator
 	PublicURL   *url.URL
 	Issuer      string
 	CLIClientID string
-	// Reload refreshes permissions after a login created a user or personal org.
-	Reload func(context.Context) error
-	// EdgeToken authenticates the edge's client IP header; TrustEdge resolves the client IP with it once per request.
+	// Reload refreshes permissions after a login created a user and its personal org.
+	Reload func(ctx context.Context, user, personalOrg uuid.UUID) error
+	// EdgeToken authenticates the edge's client IP header.
 	EdgeToken string
-	// Verifier checks the JWT the edge attaches to /api/ requests.
-	Verifier Verifier
-	// IAM answers Require's per-request session check.
-	IAM iamv1connect.IAMInternalServiceClient
 }
 
 type oidcState struct {
@@ -51,7 +49,7 @@ type oidcState struct {
 	Redirect string `json:"r"`
 }
 
-func (h *Handler) Routes(mux *http.ServeMux) {
+func (h *loginHandler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/login", h.login)
 	mux.HandleFunc("GET /auth/callback", h.callback)
 	mux.HandleFunc("GET /api/auth/config", h.config)
@@ -59,7 +57,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.Handle("POST /auth/logout", h.requireSession(http.HandlerFunc(h.logout)))
 }
 
-func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
+func (h *loginHandler) login(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	st := oidcState{State: randomString(), Verifier: oauth2.GenerateVerifier(), Redirect: safeRedirect(q.Get("redirect"))}
 	raw, err := json.Marshal(st)
@@ -71,8 +69,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.Auth.AuthCodeURL(st.State, st.Verifier, q.Get("register") == "1"), http.StatusFound)
 }
 
-func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
-	ip, ua := RequestMeta(r)
+func (h *loginHandler) callback(w http.ResponseWriter, r *http.Request) {
+	ip, ua := h.meta(r)
 	http.SetCookie(w, h.cookie(oidcCookie, "", "/auth", -1))
 	fail := func(reason string) {
 		reason = textx.Sanitize(reason)
@@ -118,10 +116,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 // startSession logs the identity in, creates a session and writes the audit entries in one transaction.
-func (h *Handler) startSession(ctx context.Context, id store.Identity, kind store.SessionKind, ttl time.Duration, action, ip, ua string) (string, time.Time, error) {
+func (h *loginHandler) startSession(ctx context.Context, id store.Identity, kind store.SessionKind, ttl time.Duration, action, ip, ua string) (string, time.Time, error) {
 	var token string
 	var expires time.Time
-	created := false
+	var user, personal uuid.UUID
 	err := h.Store.InTx(ctx, func(tx *store.Store) error {
 		res, err := tx.Login(ctx, id)
 		if err != nil {
@@ -139,7 +137,9 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, kind stor
 			}
 		}
 		expires = sess.ExpiresAt
-		created = res.Created || res.PersonalOrg != nil
+		if res.PersonalOrg != nil {
+			user, personal = res.User.ID, res.PersonalOrg.ID
+		}
 		entries := []store.AuditEntry{entry(action, "session/"+sess.ID.String(), nil)}
 		if res.Created && res.PersonalOrg != nil {
 			entries = append(entries, entry(store.ActionOrgCreate, "org/"+res.PersonalOrg.ID.String(), &res.PersonalOrg.ID))
@@ -154,21 +154,21 @@ func (h *Handler) startSession(ctx context.Context, id store.Identity, kind stor
 		}
 		return nil
 	})
-	if err == nil && created && h.Reload != nil {
-		if rerr := h.Reload(context.WithoutCancel(ctx)); rerr != nil {
+	if err == nil && personal != uuid.Nil && h.Reload != nil {
+		if rerr := h.Reload(context.WithoutCancel(ctx), user, personal); rerr != nil {
 			slog.Error("reload permissions after login", "err", rerr)
 		}
 	}
 	return token, expires, err
 }
 
-func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
+func (h *loginHandler) config(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"issuer": h.Issuer, "cliClientId": h.CLIClientID})
 }
 
-func (h *Handler) cliToken(w http.ResponseWriter, r *http.Request) {
-	ip, ua := RequestMeta(r)
+func (h *loginHandler) cliToken(w http.ResponseWriter, r *http.Request) {
+	ip, ua := h.meta(r)
 	var body struct {
 		IDToken     string `json:"idToken"`
 		AccessToken string `json:"accessToken"`
@@ -200,20 +200,20 @@ func (h *Handler) cliToken(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
 }
 
-func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	p, _ := PrincipalFrom(r.Context())
-	ip, ua := RequestMeta(r)
+func (h *loginHandler) logout(w http.ResponseWriter, r *http.Request) {
+	p, _ := r.Context().Value(sessionKey{}).(store.Session)
+	ip, ua := h.meta(r)
 	err := h.Store.InTx(r.Context(), func(tx *store.Store) error {
-		if err := tx.RevokeSession(r.Context(), p.User.ID, p.Session.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := tx.RevokeSession(r.Context(), p.UserID, p.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
 		return tx.Audit(r.Context(), store.AuditEntry{
-			ActorKind: store.ActorUser, ActorID: p.User.ID.String(), Action: store.ActionAuthLogout,
-			Resource: "session/" + p.Session.ID.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,
+			ActorKind: store.ActorUser, ActorID: p.UserID.String(), Action: store.ActionAuthLogout,
+			Resource: "session/" + p.ID.String(), Result: store.ResultAllowed, IP: ip, UserAgent: ua,
 		})
 	})
 	if err != nil {
-		slog.Error("logout", "session", p.Session.ID, "err", err)
+		slog.Error("logout", "session", p.ID, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -222,7 +222,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // cookie builds an HttpOnly, SameSite=Lax cookie; a negative ttl deletes it.
-func (h *Handler) cookie(name, value, path string, ttl time.Duration) *http.Cookie {
+func (h *loginHandler) cookie(name, value, path string, ttl time.Duration) *http.Cookie {
 	maxAge := int(ttl.Seconds())
 	if ttl < 0 {
 		maxAge = -1
@@ -262,4 +262,59 @@ func randomString() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b) // crypto/rand.Read never returns an error since Go 1.24
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// meta returns the client IP, taking the edge's header only when it carries EdgeToken, and the sanitized user agent.
+func (h *loginHandler) meta(r *http.Request) (ip, userAgent string) {
+	return clientip.From(r, h.EdgeToken), textx.Sanitize(r.UserAgent())
+}
+
+type sessionKey struct{}
+
+// requireSession guards /auth/ routes, which the edge forwards with the raw session.
+func (h *loginHandler) requireSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, fromCookie := credentials(r)
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		sess, err := h.Store.SessionByToken(r.Context(), token)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if err != nil {
+			slog.Error("session lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		// Cross-site forms can ride the cookie but cannot set custom headers without a CORS preflight.
+		if fromCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Observatory") != "1" {
+			writeError(w, http.StatusForbidden, "missing X-Observatory header")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess)))
+	})
+}
+
+// credentials prefers an Authorization header; a present but malformed one is not replaced by the cookie.
+func credentials(r *http.Request) (token string, fromCookie bool) {
+	if authz := r.Header.Get("Authorization"); authz != "" {
+		scheme, tok, ok := strings.Cut(authz, " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") {
+			return "", false
+		}
+		return strings.TrimSpace(tok), false
+	}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		return c.Value, true
+	}
+	return "", false
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

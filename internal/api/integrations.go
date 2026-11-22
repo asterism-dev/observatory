@@ -13,8 +13,8 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -229,7 +229,7 @@ func (h *api) listIntegrations(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "integrations", err)
 		return
 	}
-	teams, err := iaminternal.ListTeams(ctx, h.iam, m.OrgID)
+	teams, err := iamclient.ListTeams(ctx, h.iam, m.OrgID)
 	if err != nil {
 		serverError(w, "teams", err)
 		return

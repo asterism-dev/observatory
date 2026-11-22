@@ -208,3 +208,19 @@ func TestAutoRebuildSkipsWhenStaleMidTick(t *testing.T) {
 		t.Fatalf("builds once fresh: %+v", bs)
 	}
 }
+
+// The admin org check reads the policy too; stale, it must not claim an existing org is unknown.
+func TestAdminOrgExistsUnavailableWhenStale(t *testing.T) {
+	e := newEnv(t)
+	alice, _ := e.user("alice")
+	org := e.personalOrg(alice)
+	fresh := e.stale()
+	rec := httptest.NewRecorder()
+	if e.api.orgExists(rec, org) || rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stale: %d %s", rec.Code, rec.Body.String())
+	}
+	fresh.Store(true)
+	if rec := httptest.NewRecorder(); !e.api.orgExists(rec, org) {
+		t.Fatalf("fresh: %d %s", rec.Code, rec.Body.String())
+	}
+}

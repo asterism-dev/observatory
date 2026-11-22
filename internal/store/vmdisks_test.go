@@ -16,7 +16,9 @@ import (
 
 func newDiskEnv(t *testing.T) vmEnv {
 	e := newVMEnv(t)
-	e.s = e.s.WithMasterKey(testKey(1))
+	keyed := e.s.WithMasterKey(testKey(1))
+	policies.Store(keyed, policyOf(e.s))
+	e.s = keyed
 	return e
 }
 
@@ -138,7 +140,7 @@ func TestSetVMDisksRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	other, err := e.s.CreateOrg(ctx, "B", e.user)
+	other, err := createOrg(e.s, ctx, "B", e.user)
 	if err != nil {
 		t.Fatal(err)
 	}

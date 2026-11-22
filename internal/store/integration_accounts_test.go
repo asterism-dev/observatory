@@ -75,9 +75,15 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Migration 27 references iam's tables as they were then, which the down of 39 recreates empty.
+	seedIAM := func() {
+		execSQL(t, pool, `INSERT INTO users (id, subject, email, name) VALUES ($1, 's', 'u@x.io', 'u')`, uid)
+		execSQL(t, pool, `INSERT INTO orgs (id, name) VALUES ($1, 'o')`, org.ID)
+	}
 	if _, err := provider.DownTo(ctx, 26); err != nil {
 		t.Fatal(err)
 	}
+	seedIAM()
 	claudeID, ghID := uuid.New(), uuid.New()
 	exp := time.Now().Add(time.Hour).Truncate(time.Second)
 	n, ct := sealFor(t, pool, org.ID, claudeID, "access", dummyAccess)
@@ -125,6 +131,7 @@ func TestMigrationMovesClaudeTokenToAccount(t *testing.T) {
 	if _, err := provider.DownTo(ctx, 26); err != nil {
 		t.Fatalf("down: %v", err)
 	}
+	seedIAM()
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
@@ -205,7 +212,7 @@ func TestOneActiveAccountEnforced(t *testing.T) {
 	}
 }
 
-func newClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, scope store.EnvScope, mode integrations.Mode) store.Integration {
+func newClaude(t *testing.T, s *store.Store, org testOrg, uid uuid.UUID, scope store.EnvScope, mode integrations.Mode) store.Integration {
 	t.Helper()
 	var owner *uuid.UUID
 	if scope == store.EnvScopeUser {

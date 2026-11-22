@@ -1,4 +1,4 @@
-package hubserver
+package iam
 
 import (
 	"bytes"
@@ -16,14 +16,12 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
-	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/seal"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const (
@@ -32,7 +30,7 @@ const (
 	issuerURL = "https://hub.test"
 )
 
-// iamEnv serves internalIAM over a policy the test sets, published on every reload of z.
+// iamEnv serves internalHandler over a policy the test sets, published on every reload of z.
 type iamEnv struct {
 	s      *store.Store
 	z      *authz.Service
@@ -46,19 +44,19 @@ const sessionToken = "obs_0123456789abcdef"
 func newIAMEnv(t *testing.T) *iamEnv {
 	t.Helper()
 	ctx := context.Background()
-	e := &iamEnv{s: store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})}
+	e := &iamEnv{s: store.New(storetest.NewDB(t))}
 	e.policy.Store(&authz.Policy{})
 	z, err := authz.NewService(ctx, func(context.Context) (authz.Policy, error) { return *e.policy.Load(), nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	iss, err := auth.NewIssuer(ctx, e.s, issuerURL)
+	iss, err := NewIssuer(ctx, e.s, seal.Key{1}, issuerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ps := platformauthz.NewPublisher()
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
-	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalIAM(iss, ps, iaminternal.Server{Store: e.s}))
+	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalHandler(iss, ps, internalServer{Store: e.s}))
 	return e
 }
 
@@ -118,11 +116,11 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	}
 
 	// Without OBSERVATORY_SERVICE_TOKENS every internal call is refused.
-	iss, err := auth.NewIssuer(context.Background(), e.s, issuerURL)
+	iss, err := NewIssuer(context.Background(), e.s, seal.Key{1}, issuerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed := servicetoken.Middleware(nil)(internalIAM(iss, platformauthz.NewPublisher(), iaminternal.Server{Store: e.s}))
+	closed := servicetoken.Middleware(nil)(internalHandler(iss, platformauthz.NewPublisher(), internalServer{Store: e.s}))
 	for _, p := range paths {
 		r := httptest.NewRequest(p.method, p.path, nil)
 		r.Header.Set("Authorization", "Bearer ")

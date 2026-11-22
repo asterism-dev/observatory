@@ -1,4 +1,4 @@
-// Package iam serves the public IAMService over Connect and REST; it runs inside the hub on the hub's store for now.
+// Package iam is the iam service: users, orgs, sessions, teams, roles and SSH keys in schema iam, login, the JWT issuer and the policy stream.
 package iam
 
 import (
@@ -16,11 +16,11 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/platform/auditlog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/rest"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 // Prefix is where the hub mounts Handler.
@@ -63,7 +63,7 @@ func Handler(d Deps) (http.Handler, error) {
 	return http.MaxBytesHandler(http.StripPrefix(Prefix, rest.NoQuery(path, tc)), maxBody), nil
 }
 
-// ponytail: one session lookup per call so logout and revoke apply at once, as in auth.Require; 5b-2 moves sessions into iam's own store.
+// ponytail: one session lookup per call so logout and revoke apply at once, as in auth.Require; cache briefly if the load matters.
 func sessionActive(s *store.Store) connect.UnaryInterceptorFunc {
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {

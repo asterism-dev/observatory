@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -11,12 +12,23 @@ import (
 
 var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
 
-// PurgeMember deletes the hub rows of a user who left org unless member, asked under the hub org lock, says they are back; running it again is harmless.
-func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, member func(context.Context) (bool, error)) (purged bool, err error) {
+// PurgeMember revokes the telemetry tokens user created in org before removedAt, then deletes their hub rows unless member, asked under the hub org lock, says they are back; running it again is harmless.
+func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, removedAt time.Time, member func(context.Context) (bool, error)) (purged bool, err error) {
 	err = s.InTx(ctx, func(tx *Store) error {
 		// User-scope creates take this lock too: one that saw the re-join committed before, one after waits and keeps its row.
 		if err := tx.LockHubOrg(ctx, org); err != nil {
 			return err
+		}
+		// Re-joining does not revive them, as in 0.x where removal revoked them at once.
+		toks, err := tx.revokeTokensBy(ctx, org, user, removedAt)
+		if err != nil {
+			return err
+		}
+		for _, t := range toks {
+			if err := tx.Audit(ctx, AuditEntry{ActorKind: ActorSystem, OrgID: &t.OrgID, Action: ActionGrafanaTokenRevoke, Resource: "telemetry-token/" + t.ID.String(),
+				Result: ResultAllowed, Details: map[string]any{"name": t.Name, "reason": "creator left the organization"}}); err != nil {
+				return err
+			}
 		}
 		// ponytail: the transaction holds a connection and the org lock during the iam call; fine at today's purge rate.
 		back, err := member(ctx)

@@ -19,9 +19,9 @@ import (
 type vmEnv struct {
 	s    *store.Store
 	pool *pgxpool.Pool
-	org  store.Org
+	org  testOrg
 	user uuid.UUID
-	team store.Team
+	team testTeam
 	node store.Node
 }
 
@@ -31,8 +31,8 @@ func newVMEnv(t *testing.T) vmEnv {
 	pool := dbtest.New(t)
 	s := store.New(pool)
 	a := login(t, s, "a")
-	org, _ := s.CreateOrg(ctx, "A", a.User.ID)
-	team, _ := s.CreateTeam(ctx, org.ID, "core")
+	org, _ := createOrg(s, ctx, "A", a.User.ID)
+	team, _ := createTeam(s, ctx, org.ID, "core")
 	node, tok, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: a.User.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestVMConcurrentCreateAtBoundary(t *testing.T) {
 func TestVMLifecycleAndNodeScoping(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	other, _ := e.s.CreateOrg(ctx, "B", login(t, e.s, "b").User.ID)
+	other, _ := createOrg(e.s, ctx, "B", login(t, e.s, "b").User.ID)
 	foreign, _, _ := e.s.CreateNode(ctx, store.Node{OrgID: other.ID, Name: "fn", CreatedBy: e.user})
 	v := e.vm("a", nil, 1, 1, 1)
 	v.NodeID = foreign.ID
@@ -229,7 +229,7 @@ func TestOwnsVMs(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
 	b := login(t, e.s, "b")
-	execSQL(t, e.pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, e.org.ID, b.User.ID)
+	addMember(e.s, e.org.ID, b.User.ID, store.Role("member"))
 	v := e.vm("bvm", nil, 1, 1, 1)
 	v.UserID = &b.User.ID
 	vm, err := e.s.CreateVM(ctx, v)
@@ -271,10 +271,6 @@ func TestOwnerRefsLoadVMs(t *testing.T) {
 	tv, err := e.s.CreateVM(ctx, e.vm("t", &e.team.ID, 1, 1, 1))
 	if err != nil {
 		t.Fatal(err)
-	}
-	p, err := e.s.PolicySnapshot(ctx)
-	if err != nil || len(p.VMs) != 0 {
-		t.Fatalf("policy snapshot: %d VMs, %v", len(p.VMs), err)
 	}
 	vms, _, err := e.s.OwnerRefs(ctx)
 	if err != nil {

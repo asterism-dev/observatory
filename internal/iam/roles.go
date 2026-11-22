@@ -13,8 +13,8 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 var errLiftsOwnDeny = errors.New("only an org owner can lift a deny rule that applies to you")

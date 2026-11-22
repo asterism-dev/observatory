@@ -11,7 +11,7 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func (s *server) ListMembers(ctx context.Context, req *connect.Request[iamv1.ListMembersRequest]) (*connect.Response[iamv1.ListMembersResponse], error) {
@@ -132,16 +132,6 @@ func (s *server) removeMember(ctx context.Context, req connect.AnyRequest, org, 
 		if err := tx.RemoveMember(ctx, org, target); err != nil {
 			return err
 		}
-		// Revoked here, not on next use, so an idle token cannot revive when its creator is re-added.
-		toks, err := tx.RevokeTelemetryTokensBy(ctx, org, target)
-		if err != nil {
-			return err
-		}
-		for _, t := range toks {
-			if err := tx.Audit(ctx, lostTokenAudit(t, "creator left the organization")); err != nil {
-				return err
-			}
-		}
 		return tx.Audit(ctx, auditEntry(ctx, req.Header(), &org, action, resource, store.ResultAllowed))
 	})
 	if err != nil {
@@ -163,10 +153,4 @@ func (s *server) ownsNothing(ctx context.Context, org uuid.UUID, subject string)
 		return connect.NewError(connect.CodeFailedPrecondition, store.ErrOwnsResources)
 	}
 	return nil
-}
-
-func lostTokenAudit(tok store.TelemetryToken, reason string) store.AuditEntry {
-	return store.AuditEntry{ActorKind: store.ActorSystem, OrgID: &tok.OrgID, Action: store.ActionGrafanaTokenRevoke,
-		Resource: "telemetry-token/" + tok.ID.String(), Result: store.ResultAllowed,
-		Details: map[string]any{"name": tok.Name, "reason": reason}}
 }

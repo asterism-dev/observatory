@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func TestGetMeOrgsFromPolicy(t *testing.T) {
@@ -173,4 +173,21 @@ func TestDeleteOtherUsersSSHKeyNotFound(t *testing.T) {
 	if es := e.audit(store.ActionSSHKeyDelete); len(es) != 0 {
 		t.Fatalf("audit: %+v", es)
 	}
+}
+
+// A still-valid JWT whose session was revoked is refused at once, without waiting for it to expire.
+func TestRevokedSessionTokenRefused(t *testing.T) {
+	e := newEnv(t)
+	u, _ := e.user("alice")
+	jwt, sessTok := e.session(u)
+	must[iamv1.ListSessionsResponse](t)(e.client.ListSessions(context.Background(), req(jwt, &iamv1.ListSessionsRequest{})))
+	sess, err := e.store.SessionByToken(context.Background(), sessTok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.RevokeSession(context.Background(), u.ID, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.client.ListSessions(context.Background(), req(jwt, &iamv1.ListSessionsRequest{}))
+	wantCode(t, err, connect.CodeUnauthenticated)
 }

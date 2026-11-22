@@ -29,20 +29,20 @@ const (
 	dummyRefresh = "sk-ant-ort01-dummyrefresh000"
 )
 
-func newIntegrationStore(t *testing.T) (*store.Store, *pgxpool.Pool, uuid.UUID, store.Org, store.Team) {
+func newIntegrationStore(t *testing.T) (*store.Store, *pgxpool.Pool, uuid.UUID, testOrg, testTeam) {
 	t.Helper()
 	pool := dbtest.New(t)
 	s := store.New(pool).WithMasterKey(testKey(1))
 	u := login(t, s, "integ")
 	org := mustCreateOrg(t, s, "I", u.User.ID)
-	team, err := s.CreateTeam(context.Background(), org.ID, "core")
+	team, err := createTeam(s, context.Background(), org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, pool, u.User.ID, org, team
 }
 
-func integ(org store.Org, by uuid.UUID, kind integrations.Kind, source integrations.Source, scope store.EnvScope, owner *uuid.UUID) store.Integration {
+func integ(org testOrg, by uuid.UUID, kind integrations.Kind, source integrations.Source, scope store.EnvScope, owner *uuid.UUID) store.Integration {
 	return store.Integration{OrgID: org.ID, Kind: kind, Source: source, Scope: scope, OwnerID: owner, CreatedBy: by, UpdatedBy: by}
 }
 
@@ -66,7 +66,7 @@ func mustIntegration(t *testing.T, s *store.Store, org, id uuid.UUID) store.Inte
 
 func enforcer(t *testing.T, s *store.Store) *authz.Enforcer {
 	t.Helper()
-	policy, err := s.PolicySnapshot(context.Background())
+	policy, err := policySnapshot(s, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,10 +260,10 @@ func TestIntegrationPlaceholderStable(t *testing.T) {
 
 func TestResolveIntegrationsNarrowest(t *testing.T) {
 	ctx := context.Background()
-	s, pool, uid, org, team := newIntegrationStore(t)
+	s, _, uid, org, team := newIntegrationStore(t)
 	member := login(t, s, "integ-member").User.ID
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, member)
-	if err := s.SetTeamMember(ctx, org.ID, team.ID, member, false); err != nil {
+	addMember(s, org.ID, member, store.Role("member"))
+	if err := setTeamMember(s, ctx, org.ID, team.ID, member, false); err != nil {
 		t.Fatal(err)
 	}
 	pat := func(scope store.EnvScope, owner *uuid.UUID, tok string) store.Integration {
@@ -304,7 +304,7 @@ func TestResolveIntegrationsUseDenied(t *testing.T) {
 	s, _, uid, org, _ := newIntegrationStore(t)
 	mustCreateIntegration(t, s, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil), store.IntegrationSecret{Token: "ghp_orgA000000000000"})
 	mustCreateIntegration(t, s, integ(org, uid, integrations.Linear, integrations.SourceAPIKey, store.EnvScopeUser, &uid), store.IntegrationSecret{Token: dummyLinear})
-	policy, err := s.PolicySnapshot(ctx)
+	policy, err := policySnapshot(s, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,9 +323,9 @@ func TestResolveIntegrationsUseDenied(t *testing.T) {
 
 func TestIntegrationPurge(t *testing.T) {
 	ctx := context.Background()
-	s, pool, uid, org, team := newIntegrationStore(t)
+	s, _, uid, org, team := newIntegrationStore(t)
 	member := login(t, s, "integ-member").User.ID
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, member)
+	addMember(s, org.ID, member, store.Role("member"))
 	teamInt := mustCreateIntegration(t, s, integ(org, uid, integrations.GitHub, integrations.SourcePAT, store.EnvScopeTeam, &team.ID), store.IntegrationSecret{Token: dummyGH})
 	memberInt := mustCreateIntegration(t, s, integ(org, member, integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &member), store.IntegrationSecret{Token: dummyGH})
 	keep := []store.Integration{
@@ -335,8 +335,8 @@ func TestIntegrationPurge(t *testing.T) {
 	if err := s.PurgeTeam(ctx, org.ID, team.ID); err != nil {
 		t.Fatal(err)
 	}
-	execSQL(t, pool, `DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, member)
-	if _, err := s.PurgeMember(ctx, org.ID, member, memberIn(s, org.ID, member)); err != nil {
+	_ = removeMember(s, ctx, org.ID, member)
+	if _, err := s.PurgeMember(ctx, org.ID, member, time.Now(), memberIn(s, org.ID, member)); err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []store.Integration{teamInt, memberInt} {
@@ -458,7 +458,7 @@ func (f *fakeRefresh) calls() []string {
 	return slices.Clone(f.got)
 }
 
-func dueClaude(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.AccountRef {
+func dueClaude(t *testing.T, s *store.Store, org testOrg, uid uuid.UUID, in time.Duration) store.AccountRef {
 	t.Helper()
 	exp := time.Now().Add(in)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.Claude, integrations.SourceOAuth, store.EnvScopeUser, &uid),
@@ -617,7 +617,7 @@ func TestRefreshIntegrationNotDue(t *testing.T) {
 
 const dummyADC = `{"type":"authorized_user","client_id":"cid","client_secret":"csecret","refresh_token":"1//dummyrefresh"}`
 
-func dueGcloud(t *testing.T, s *store.Store, org store.Org, uid uuid.UUID, in time.Duration) store.AccountRef {
+func dueGcloud(t *testing.T, s *store.Store, org testOrg, uid uuid.UUID, in time.Duration) store.AccountRef {
 	t.Helper()
 	exp := time.Now().Add(in)
 	v := mustCreateIntegration(t, s, integ(org, uid, integrations.GCloud, integrations.SourceADC, store.EnvScopeUser, &uid),

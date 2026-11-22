@@ -7,13 +7,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func TestCreateAndRenameOrg(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	res, err := s.Login(ctx, store.Identity{Subject: "a", Email: "a@x.io", Name: "A"})
 	if err != nil {
 		t.Fatal(err)

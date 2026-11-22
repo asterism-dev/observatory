@@ -224,4 +224,3 @@ func TestGrafanaAuthIgnoresCookies(t *testing.T) {
 		t.Fatalf("lower-case scheme: %d", status)
 	}
 }
-

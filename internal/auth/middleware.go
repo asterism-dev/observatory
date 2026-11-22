@@ -1,3 +1,4 @@
+// Package auth admits hub requests that carry an identity JWT the edge attached, checking the session at iam.
 package auth
 
 import (
@@ -6,20 +7,36 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
-	"github.com/asterism-dev/observatory/internal/iaminternal"
+	"github.com/google/uuid"
+
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
-const sessionCookie = "obs_session"
+const SessionCLI = "cli"
+
+type User struct {
+	ID            uuid.UUID
+	Name          string
+	PlatformAdmin bool
+}
+
+type Session struct {
+	ID        uuid.UUID
+	Kind      string
+	ExpiresAt time.Time
+}
 
 type Principal struct {
-	User    store.User
-	Session store.Session
+	User    User
+	Session Session
 }
 
 type principalKey struct{}
@@ -27,6 +44,16 @@ type principalKey struct{}
 func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
+}
+
+type Handler struct {
+	PublicURL *url.URL
+	// EdgeToken authenticates the edge's client IP header; TrustEdge resolves the client IP with it once per request.
+	EdgeToken string
+	// Verifier checks the JWT the edge attaches to /api/ requests.
+	Verifier Verifier
+	// IAM answers Require's per-request session check.
+	IAM iamv1connect.IAMInternalServiceClient
 }
 
 type clientIPKey struct{}
@@ -74,7 +101,7 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			return
 		}
 		// ponytail: one iam call per hub request so logout and revoke apply at once; cache briefly if iam's load matters.
-		active, err := iaminternal.SessionActive(r.Context(), h.IAM, p.Session)
+		active, err := iamclient.SessionActive(r.Context(), h.IAM, p.Session)
 		if err != nil {
 			slog.Error("session check at iam", "err", err)
 			writeError(w, http.StatusServiceUnavailable, "session check unavailable")
@@ -85,54 +112,11 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, Principal{
-			User:    store.User{ID: p.User, Name: p.Name, PlatformAdmin: p.PlatformAdmin},
-			Session: store.Session{ID: p.Session, UserID: p.User, Kind: store.SessionKind(p.SessionKind), ExpiresAt: p.SessionExpires},
+			User:    User{ID: p.User, Name: p.Name, PlatformAdmin: p.PlatformAdmin},
+			Session: Session{ID: p.Session, Kind: p.SessionKind, ExpiresAt: p.SessionExpires},
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-// requireSession guards /auth/ routes, which the edge forwards with the raw session.
-func (h *Handler) requireSession(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, fromCookie := credentials(r)
-		if token == "" {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		sess, err := h.Store.SessionByToken(r.Context(), token)
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		if err != nil {
-			slog.Error("session lookup", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		// Cross-site forms can ride the cookie but cannot set custom headers without a CORS preflight.
-		if fromCookie && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Observatory") != "1" {
-			writeError(w, http.StatusForbidden, "missing X-Observatory header")
-			return
-		}
-		ctx := context.WithValue(r.Context(), principalKey{}, Principal{User: store.User{ID: sess.UserID}, Session: sess})
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// credentials prefers an Authorization header; a present but malformed one is not replaced by the cookie.
-func credentials(r *http.Request) (token string, fromCookie bool) {
-	if authz := r.Header.Get("Authorization"); authz != "" {
-		scheme, tok, ok := strings.Cut(authz, " ")
-		if !ok || !strings.EqualFold(scheme, "Bearer") {
-			return "", false
-		}
-		return strings.TrimSpace(tok), false
-	}
-	if c, err := r.Cookie(sessionCookie); err == nil {
-		return c.Value, true
-	}
-	return "", false
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

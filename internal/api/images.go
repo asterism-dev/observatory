@@ -22,9 +22,9 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/integrations"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/platform/textx"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -129,7 +129,7 @@ func (h *api) imageFromPath(w http.ResponseWriter, r *http.Request, act string) 
 }
 
 func (h *api) teamNames(ctx context.Context, org uuid.UUID) (map[uuid.UUID]string, error) {
-	teams, err := iaminternal.ListTeams(ctx, h.iam, org)
+	teams, err := iamclient.ListTeams(ctx, h.iam, org)
 	names := make(map[uuid.UUID]string, len(teams))
 	for _, t := range teams {
 		names[t.ID] = t.Name
@@ -348,7 +348,7 @@ func describeRef(ref store.RecipeRef) string {
 
 // memberNames maps org's members, as the policy has them, to their display names.
 func (h *api) memberNames(ctx context.Context, org uuid.UUID) (map[uuid.UUID]string, error) {
-	return iaminternal.UserNames(ctx, h.iam, h.z.Enforcer().UsersOf(org))
+	return iamclient.UserNames(ctx, h.iam, h.z.Enforcer().UsersOf(org))
 }
 
 // defaultSees reports whether a default at scope/owner may point at img.

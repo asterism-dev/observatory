@@ -22,9 +22,10 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/edge"
+	iamstore "github.com/asterism-dev/observatory/internal/iam/store"
+	iamstoretest "github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
-	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestServeRejectsUnknownService(t *testing.T) {
@@ -166,8 +167,8 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	pool := dbtest.New(t)
 	env := serveAllEnv(t, pool, edgeLn)
 	// Created before start: the hub loads its policy snapshot then and is not told about later direct writes.
-	s := store.New(pool)
-	alice, err := s.Login(t.Context(), store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	s, ipool := iamStore(t, pool)
+	alice, err := s.Login(t.Context(), iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,22 +176,22 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, _, err := s.CreateSession(t.Context(), alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	session, _, err := s.CreateSession(t.Context(), alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := s.Login(t.Context(), store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	bob, err := s.Login(t.Context(), iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, _, err := s.CreateInvite(t.Context(), org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	inv, _, err := s.CreateInvite(t.Context(), org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.AcceptInvite(t.Context(), inv, bob.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	bobSession, _, err := s.CreateSession(t.Context(), bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	bobSession, _, err := s.CreateSession(t.Context(), bob.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	}
 
 	ips := []string{}
-	for _, e := range storetest.Audit(t, pool, store.ActionAuthLogin) {
+	for _, e := range iamstoretest.Audit(t, ipool, iamstore.ActionAuthLogin) {
 		ips = append(ips, e.IP)
 	}
 	if len(ips) != 2 || ips[0] != "::1" || ips[1] != "::1" {
@@ -248,7 +249,7 @@ func TestServeAllRecordsClientIPThroughEdge(t *testing.T) {
 	var allowed, denied *eventsv1.Event
 	deadline := time.Now().Add(15 * time.Second)
 	for allowed == nil || denied == nil {
-		req := connect.NewRequest(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: store.ActionMemberInvite}})
+		req := connect.NewRequest(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: iamstore.ActionMemberInvite}})
 		req.Header().Set("Authorization", "Bearer "+session)
 		resp, err := auditClient.ListEvents(t.Context(), req)
 		// Unavailable until the audit service has its first policy snapshot from the hub.
@@ -306,8 +307,9 @@ func TestServeAllIAMBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	s := store.New(pool).WithMasterKey(master)
-	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	hs := store.New(pool).WithMasterKey(master)
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,37 +317,37 @@ func TestServeAllIAMBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	bob, err := s.Login(ctx, iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, _, err := s.CreateInvite(ctx, org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	inv, _, err := s.CreateInvite(ctx, org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, enroll, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice.User.ID})
+	node, enroll, err := hs.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice.User.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.EnrollNode(ctx, enroll); err != nil {
+	if _, _, err := hs.EnrollNode(ctx, enroll); err != nil {
 		t.Fatal(err)
 	}
-	vm, err := s.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &bob.User.ID, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob.User.ID})
+	vm, err := hs.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &bob.User.ID, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob.User.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateEnvVar(ctx, store.EnvVar{OrgID: org.ID, Kind: store.EnvPlain, Scope: store.EnvScopeUser, OwnerID: &bob.User.ID, Name: "BOB_PRIVATE", CreatedBy: bob.User.ID, UpdatedBy: bob.User.ID}, "x"); err != nil {
+	if _, err := hs.CreateEnvVar(ctx, store.EnvVar{OrgID: org.ID, Kind: store.EnvPlain, Scope: store.EnvScopeUser, OwnerID: &bob.User.ID, Name: "BOB_PRIVATE", CreatedBy: bob.User.ID, UpdatedBy: bob.User.ID}, "x"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -422,7 +424,7 @@ func TestServeAllIAMBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 		var allowed, denied, events []*eventsv1.Event
-		resp, err := auditClient.ListEvents(ctx, bearer(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: store.ActionMemberRemove}}, aliceToken))
+		resp, err := auditClient.ListEvents(ctx, bearer(&auditv1.ListEventsRequest{Org: org.ID.String(), Filter: &auditv1.EventFilter{Type: iamstore.ActionMemberRemove}}, aliceToken))
 		// Unavailable until the audit service has its first policy snapshot from the hub.
 		if err != nil && connect.CodeOf(err) != connect.CodeUnavailable {
 			t.Fatalf("audit through the edge: %v", err)
@@ -469,21 +471,21 @@ func TestServeAllRefusesEndedSessionsAtOnce(t *testing.T) {
 	pool := dbtest.New(t)
 	env := serveAllEnv(t, pool, edgeLn)
 	ctx := t.Context()
-	s := store.New(pool)
-	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newSession := func(kind store.SessionKind) (string, store.Session) {
+	newSession := func(kind iamstore.SessionKind) (string, iamstore.Session) {
 		tok, sess, err := s.CreateSession(ctx, alice.User.ID, kind, time.Hour, "test", "127.0.0.1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		return tok, sess
 	}
-	web, _ := newSession(store.SessionBrowser)
-	cli, _ := newSession(store.SessionCLI)
-	other, otherSess := newSession(store.SessionCLI)
+	web, _ := newSession(iamstore.SessionBrowser)
+	cli, _ := newSession(iamstore.SessionCLI)
+	other, otherSess := newSession(iamstore.SessionCLI)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -560,12 +562,12 @@ func TestHubPolicyFromStream(t *testing.T) {
 	pool := dbtest.New(t)
 	env := serveAllEnv(t, pool, edgeLn)
 	ctx := t.Context()
-	s := store.New(pool)
-	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	s, _ := iamStore(t, pool)
+	alice, err := s.Login(ctx, iamstore.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	bob, err := s.Login(ctx, iamstore.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,18 +575,18 @@ func TestHubPolicyFromStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, _, err := s.CreateInvite(ctx, org.ID, store.RoleMember, alice.User.ID, time.Hour)
+	inv, _, err := s.CreateInvite(ctx, org.ID, iamstore.RoleMember, alice.User.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.AcceptInvite(ctx, inv, bob.User.ID); err != nil {
 		t.Fatal(err)
 	}
-	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	aliceToken, _, err := s.CreateSession(ctx, alice.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, store.SessionCLI, time.Hour, "test", "127.0.0.1")
+	bobToken, _, err := s.CreateSession(ctx, bob.User.ID, iamstore.SessionCLI, time.Hour, "test", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,4 +634,15 @@ func TestHubPolicyFromStream(t *testing.T) {
 	if code := call("GET", limits, aliceToken); code != http.StatusOK {
 		t.Fatalf("alice after bob's removal: %d", code)
 	}
+}
+
+// iamStore opens iam's schema in the hub's database, as the embedded iam will.
+func iamStore(t *testing.T, pool *pgxpool.Pool) (*iamstore.Store, *pgxpool.Pool) {
+	t.Helper()
+	ipool, err := iamstore.Open(t.Context(), pool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ipool.Close)
+	return iamstore.New(ipool), ipool
 }

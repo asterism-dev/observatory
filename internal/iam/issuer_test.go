@@ -1,4 +1,4 @@
-package auth
+package iam
 
 import (
 	"bytes"
@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
+	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/seal"
-	"github.com/asterism-dev/observatory/internal/store"
 )
 
 const (
@@ -33,8 +35,8 @@ type tokenEnv struct {
 
 func newTokenEnv(t *testing.T) *tokenEnv {
 	t.Helper()
-	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key{1})
-	iss, err := NewIssuer(context.Background(), s, tokenIssuer)
+	s := store.New(storetest.NewDB(t))
+	iss, err := NewIssuer(context.Background(), s, seal.Key{1}, tokenIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +106,8 @@ func TestJWKSHasCurrentKey(t *testing.T) {
 	if len(keys) != 1 {
 		t.Fatalf("keys: %v", keys)
 	}
-	// The key is sealed in hub_secrets, so a second issuer (restart, another hub) publishes the same one.
-	iss, err := NewIssuer(context.Background(), e.s, tokenIssuer)
+	// The key is sealed in iam.secrets, so a second issuer (restart, another instance) publishes the same one.
+	iss, err := NewIssuer(context.Background(), e.s, seal.Key{1}, tokenIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +244,40 @@ func TestTokenEndpointRejectsRevokedSession(t *testing.T) {
 		if rec := e.do("POST", "/token", "Bearer "+tokenEdgeSecret, body); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
 		}
+	}
+}
+
+func TestSigningKeySealedInIAM(t *testing.T) {
+	ctx := context.Background()
+	pool := storetest.NewDB(t)
+	s := store.New(pool)
+	iss, err := NewIssuer(ctx, s, seal.Key{1}, tokenIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sealed []byte
+	if err := pool.QueryRow(ctx, "SELECT sealed FROM secrets WHERE name = $1", signingKeySecret).Scan(&sealed); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := s.Secret(ctx, seal.Key{1}, signingKeySecret, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(sealed, seed) {
+		t.Fatal("signing key stored in the clear")
+	}
+	stored, err := identity.NewSigner(ed25519.NewKeyFromSeed(seed), tokenIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := iss.signer.Mint(identity.Principal{User: uuid.New(), Session: uuid.New(), SessionKind: "cli", SessionExpires: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stored.Verifier().Verify(ctx, tok); err != nil {
+		t.Fatalf("issuer does not sign with the sealed key: %v", err)
+	}
+	if _, err := NewIssuer(ctx, s, seal.Key{2}, tokenIssuer); err == nil {
+		t.Fatal("signing key opened with another OBSERVATORY_SECRETS_KEY")
 	}
 }

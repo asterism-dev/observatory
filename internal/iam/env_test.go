@@ -17,13 +17,10 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
-	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/platform/identity"
+	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	"github.com/asterism-dev/observatory/internal/seal"
-	"github.com/asterism-dev/observatory/internal/store"
-	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 type env struct {
@@ -31,7 +28,7 @@ type env struct {
 	pool      *pgxpool.Pool
 	store     *store.Store
 	z         *authz.Service
-	iss       *auth.Issuer
+	iss       *Issuer
 	srv       *httptest.Server
 	client    iamv1connect.IAMServiceClient
 	resources *fakeResources
@@ -91,22 +88,17 @@ func (f *fakeResources) setDiskOwner(subject string, owns bool) {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(seal.Key{1})
+	pool := storetest.NewDB(t)
+	s := store.New(pool)
 	z, err := authz.NewService(ctx, s.PolicySnapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	iss, err := auth.NewIssuer(ctx, s, "https://hub.test")
+	iss, err := NewIssuer(ctx, s, seal.Key{1}, "https://hub.test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	jwks := httptest.NewServer(iss.JWKSHandler())
-	t.Cleanup(jwks.Close)
-	v, err := identity.NewVerifier(jwks.URL, "https://hub.test", "unused-service-token", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	v := iss.Verifier()
 	e := &env{t: t, pool: pool, store: s, z: z, iss: iss, resources: &fakeResources{owners: map[string]bool{}, diskOwners: map[string]bool{}}}
 	z.OnReload(func(_, _ authz.Policy) { e.byRev.Store(e.rev.Add(1), z.Enforcer()) })
 	h, err := Handler(Deps{Store: s, Policy: z, Verifier: v, Resources: e.resources, Pool: pool,

@@ -14,13 +14,13 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-func newImageEnv(t *testing.T) (*store.Store, store.Org, uuid.UUID, store.Team) {
+func newImageEnv(t *testing.T) (*store.Store, testOrg, uuid.UUID, testTeam) {
 	t.Helper()
 	s, u, org, team := newEnvStore(t)
 	return s, org, u.User.ID, team
 }
 
-func newImage(t *testing.T, s *store.Store, org store.Org, user uuid.UUID, name string) store.Image {
+func newImage(t *testing.T, s *store.Store, org testOrg, user uuid.UUID, name string) store.Image {
 	t.Helper()
 	img, err := s.CreateImage(context.Background(), store.Image{OrgID: org.ID, Scope: store.EnvScopeOrg, Name: name, CreatedBy: user})
 	if err != nil {
@@ -36,8 +36,8 @@ func TestImageNameUniquePerScopeOwner(t *testing.T) {
 	a := login(t, s, "a").User.ID
 	b := login(t, s, "b").User.ID
 	org := mustCreateOrg(t, s, "I", a)
-	execSQL(t, pool, `INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org.ID, b)
-	team, err := s.CreateTeam(ctx, org.ID, "core")
+	addMember(s, org.ID, b, store.Role("member"))
+	team, err := createTeam(s, ctx, org.ID, "core")
 	if err != nil {
 		t.Fatal(err)
 	}

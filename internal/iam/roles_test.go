@@ -16,9 +16,8 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/db"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func rule(effect, object, action string) *iamv1.RoleRule {
@@ -747,13 +746,10 @@ func TestFallbackReloadBoundedOnBusyPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Migrate(ctx, u.String()); err != nil {
-		t.Fatal(err)
-	}
 	q := u.Query()
 	q.Set("pool_max_conns", "1")
 	u.RawQuery = q.Encode()
-	pool, err := db.Open(ctx, u.String())
+	pool, err := store.Open(ctx, u.String())
 	if err != nil {
 		t.Fatal(err)
 	}

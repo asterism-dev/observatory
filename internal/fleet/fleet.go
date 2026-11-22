@@ -19,10 +19,10 @@ import (
 
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -522,7 +522,7 @@ func (f *Fleet) boot(ctx context.Context, org uuid.UUID, v store.VM) (_ *proto.B
 	case v.TeamID != nil:
 		owner, users = authz.TeamSubject(*v.TeamID), e.TeamMembers(org, *v.TeamID)
 	}
-	keys, err := iaminternal.SSHKeys(ctx, f.iam, users)
+	keys, err := iamclient.SSHKeys(ctx, f.iam, users)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}

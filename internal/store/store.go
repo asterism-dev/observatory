@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -11,7 +12,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/seal"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("already exists")
+)
 
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
@@ -42,4 +46,14 @@ func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func hashToken(token string) []byte {
+	h := sha256.Sum256([]byte(token))
+	return h[:]
 }

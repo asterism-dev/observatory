@@ -18,8 +18,8 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -136,7 +136,7 @@ func (t *registryTokens) principal(r *http.Request) (registryPrincipal, error) {
 	}
 	id, session, err := t.store.RegistryCredentialUser(r.Context(), secret)
 	if err == nil {
-		active, err := iaminternal.SessionActive(r.Context(), t.reg.IAM, session)
+		active, err := iamclient.SessionActive(r.Context(), t.reg.IAM, session)
 		if err != nil {
 			return registryPrincipal{}, fmt.Errorf("%w: %w", errSessionCheck, err)
 		}
@@ -267,7 +267,7 @@ func registryProxy(upstream, public *url.URL, others []*url.URL) http.Handler {
 
 func (h *api) createRegistryCredential(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
-	if p.Session.Kind != store.SessionCLI {
+	if p.Session.Kind != auth.SessionCLI {
 		writeError(w, http.StatusForbidden, "registry credentials are issued to CLI sessions only")
 		return
 	}

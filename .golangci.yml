@@ -38,6 +38,56 @@ linters:
           deny:
             - pkg: github.com/asterism-dev/observatory/internal/edge
               desc: the hub must not depend on the edge; shared code belongs in internal/platform
+        iam:
+          files: ["**/internal/iam/**", "!$test", "!**/internal/iam/store/storetest/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/iam
+            - github.com/asterism-dev/observatory/internal/authz
+            - github.com/asterism-dev/observatory/internal/seal
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/gen
+            - connectrpc.com/connect
+            - connectrpc.com/vanguard
+            - google.golang.org/protobuf
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - github.com/coreos/go-oidc/v3
+            - golang.org/x/oauth2
+            - golang.org/x/crypto/ssh
+        iam-test:
+          # Tests may also build a throwaway database and check the hub's migrations leave iam's tables alone.
+          files: ["**/internal/iam/**/*_test.go", "**/internal/iam/store/storetest/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/asterism-dev/observatory/internal/iam
+            - github.com/asterism-dev/observatory/internal/authz
+            - github.com/asterism-dev/observatory/internal/seal
+            - github.com/asterism-dev/observatory/internal/platform
+            - github.com/asterism-dev/observatory/internal/db
+            - github.com/asterism-dev/observatory/gen
+            - connectrpc.com/connect
+            - google.golang.org/protobuf
+            - github.com/golang-jwt/jwt/v5
+            - github.com/google/uuid
+            - github.com/jackc/pgx/v5
+            - golang.org/x/crypto/ssh
+        hub-not-iam:
+          # hubserver embeds iam until iam runs as its own process.
+          files:
+            - "**/internal/api/**"
+            - "**/internal/store/**"
+            - "**/internal/fleet/**"
+            - "**/internal/network/**"
+            - "**/internal/builds/**"
+            - "**/internal/disks/**"
+            - "**/internal/images/**"
+            - "**/internal/registry/**"
+          deny:
+            - pkg: github.com/asterism-dev/observatory/internal/iam
+              desc: the hub reaches iam only over its internal API and policy stream
         audit:
           files: ["**/internal/audit/**", "!$test"]
           list-mode: strict

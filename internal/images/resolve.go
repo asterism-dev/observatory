@@ -11,7 +11,7 @@ import (
 
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
+	"github.com/asterism-dev/observatory/internal/platform/iamclient"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -97,7 +97,7 @@ func (r Resolver) find(ctx context.Context, org, caller uuid.UUID, owner Owner, 
 	case "":
 		return r.findBare(ctx, org, caller, owner, p.Name)
 	}
-	teams, err := iaminternal.ListTeams(ctx, r.IAM, org)
+	teams, err := iamclient.ListTeams(ctx, r.IAM, org)
 	if err != nil {
 		return store.Image{}, err
 	}
@@ -127,11 +127,11 @@ func (r Resolver) findBare(ctx context.Context, org, caller uuid.UUID, owner Own
 		return store.Image{}, err
 	}
 	if owner.TeamID != nil {
-		teams, err := iaminternal.ListTeams(ctx, r.IAM, org)
+		teams, err := iamclient.ListTeams(ctx, r.IAM, org)
 		if err != nil {
 			return store.Image{}, err
 		}
-		i := slices.IndexFunc(teams, func(t store.Team) bool { return t.ID == *owner.TeamID })
+		i := slices.IndexFunc(teams, func(t iamclient.Team) bool { return t.ID == *owner.TeamID })
 		if i < 0 {
 			return store.Image{}, fmt.Errorf("team %s: %w", *owner.TeamID, store.ErrNotFound)
 		}

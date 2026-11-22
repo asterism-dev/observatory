@@ -59,7 +59,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Verifier: jwts, IAM: fake.Client()}
+	a := &auth.Handler{PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Verifier: jwts, IAM: fake.Client()}
 	nh, err := network.Load(context.Background(), s, z, network.Config{GatewayHost: "hub.test", GatewayToken: gatewayToken})
 	if err != nil {
 		t.Fatal(err)
@@ -127,24 +127,6 @@ func (e *env) audit(action string) []store.AuditEntry {
 // canReadAudit is the check the audit service makes for the org's trail.
 func (e *env) canReadAudit(user, org uuid.UUID) bool {
 	return e.z.Enforcer().Allowed(authz.UserSubject(user), org, authz.ObjAudit, "audit.events.list")
-}
-
-func TestAuthRoutesWinOverAPIMount(t *testing.T) {
-	e := newEnv(t)
-	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
-	mux := http.NewServeMux()
-	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, e.api.iam, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, nil, nil, nil, nil, "", func() string { return "" }, "v1.18.0", nil, 14*24*time.Hour))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {
-		t.Fatalf("/api/auth/config: %d %s", rec.Code, rec.Body.String())
-	}
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/info", nil))
-	if rec.Code != 401 {
-		t.Fatalf("/api/info unauthenticated: %d", rec.Code)
-	}
 }
 
 func TestInfoEndpoint(t *testing.T) {

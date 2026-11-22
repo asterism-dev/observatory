@@ -26,7 +26,12 @@ func (h *api) requirePlatformAdmin(w http.ResponseWriter, r *http.Request, actio
 
 // orgExists 404s an org without members in the policy: iam keeps an owner in every org.
 func (h *api) orgExists(w http.ResponseWriter, org uuid.UUID) bool {
-	if len(h.z.Enforcer().UsersOf(org)) == 0 {
+	e, ok := h.z.Current()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "policy unavailable")
+		return false
+	}
+	if len(e.UsersOf(org)) == 0 {
 		writeError(w, http.StatusNotFound, "not found")
 		return false
 	}

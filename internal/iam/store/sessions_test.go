@@ -10,8 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/iam/store"
 )
 
 func newSessionUser(t *testing.T, s *store.Store, sub string) uuid.UUID {
@@ -25,7 +24,7 @@ func newSessionUser(t *testing.T, s *store.Store, sub string) uuid.UUID {
 
 func TestSessionRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := store.NewTestDB(t)
 	s := store.New(pool)
 	uid := newSessionUser(t, s, "a")
 
@@ -57,7 +56,7 @@ func TestSessionRoundTrip(t *testing.T) {
 
 func TestExpiredSessionIsNotFound(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	uid := newSessionUser(t, s, "a")
 
 	token, _, err := s.CreateSession(ctx, uid, store.SessionCLI, -time.Second, "", "")
@@ -71,7 +70,7 @@ func TestExpiredSessionIsNotFound(t *testing.T) {
 
 func TestRevokedSessionIsNotFound(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	uid := newSessionUser(t, s, "a")
 
 	token, sess, err := s.CreateSession(ctx, uid, store.SessionBrowser, time.Hour, "", "")
@@ -95,7 +94,7 @@ func TestRevokedSessionIsNotFound(t *testing.T) {
 
 func TestCannotRevokeOtherUsersSession(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := store.New(store.NewTestDB(t))
 	a := newSessionUser(t, s, "a")
 	b := newSessionUser(t, s, "b")
 
@@ -113,7 +112,7 @@ func TestCannotRevokeOtherUsersSession(t *testing.T) {
 
 func TestSessionLastUsedBumpedOnlyWhenStale(t *testing.T) {
 	ctx := context.Background()
-	pool := dbtest.New(t)
+	pool := store.NewTestDB(t)
 	s := store.New(pool)
 	uid := newSessionUser(t, s, "a")
 
