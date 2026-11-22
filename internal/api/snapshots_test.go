@@ -115,11 +115,9 @@ func TestTeamMemberSnapshotNotRestore(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	core := e.createTeam(ownerTok, org, "core")
-	e.makeTeamAdmin(ownerTok, org, core, carol)
-	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
+	core := e.createTeam(org, "core")
+	e.setTeamMember(org, core, carol, true)
+	e.setTeamMember(org, core, bob, false)
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(core), e.enrolledNode(ownerTok, org, "n1")))
 	sn := e.takeSnapshot(bobTok, org, v.ID, `{"name":"base"}`)
 	e.snapshotsReady()
@@ -157,8 +155,8 @@ func TestForkDenyRule(t *testing.T) {
 	v := e.createVM(bobTok, org, vmBody("bobvm", userOwner(), e.enrolledNode(ownerTok, org, "n1")))
 	sn := e.takeSnapshot(bobTok, org, v.ID, `{"name":"base"}`)
 	e.snapshotsReady()
-	role := e.createRole(ownerTok, org, `{"name":"nofork","rules":[{"effect":"deny","object":"org/vms/*","action":"compute.instances.fork"}]}`)
-	e.bind(ownerTok, org, "user:"+bob.ID.String(), role)
+	role := e.createRole(org, `{"name":"nofork","rules":[{"effect":"deny","object":"org/vms/*","action":"compute.instances.fork"}]}`)
+	e.bind(org, "user:"+bob.ID.String(), role)
 	if rec := e.send("POST", snapshotsPath(org, v.ID)+"/"+sn.ID+"/fork", bobTok, `{"name":"copy"}`); rec.Code != 403 {
 		t.Fatalf("denied fork: %d %s", rec.Code, rec.Body.String())
 	}

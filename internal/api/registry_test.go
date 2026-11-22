@@ -19,8 +19,8 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -41,7 +41,7 @@ func (e *env) registryHandler(upstream string, builds BuildCredentials) http.Han
 
 func (e *env) registryHandlerGC(upstream string, builds BuildCredentials, gc *registry.GC) http.Handler {
 	e.t.Helper()
-	return e.registryHandlerIAM(upstream, builds, gc, iaminternal.Server{Store: e.store})
+	return e.registryHandlerIAM(upstream, builds, gc, e.iam.Client())
 }
 
 func (e *env) registryHandlerIAM(upstream string, builds BuildCredentials, gc *registry.GC, iam iamv1connect.IAMInternalServiceClient) http.Handler {
@@ -56,13 +56,10 @@ func (e *env) registryHandlerIAM(upstream string, builds BuildCredentials, gc *r
 	return mux
 }
 
-func (e *env) cliSession(u store.User) string {
+func (e *env) cliSession(u iamtest.User) string {
 	e.t.Helper()
-	tok, _, err := e.store.CreateSession(context.Background(), u.ID, store.SessionCLI, time.Hour, "ua", "1.2.3.4")
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return tok
+	jwt, _ := e.iam.JWT(u.ID, "cli")
+	return jwt
 }
 
 func (e *env) registryCredential(cliTok string) string {
@@ -236,11 +233,8 @@ func TestTokenRefusesPushWhileRegistryClosed(t *testing.T) {
 
 func TestAdminRegistryGC(t *testing.T) {
 	e := newEnv(t)
-	admin, adminTok := e.user("root")
+	_, adminTok := e.user("root")
 	_, userTok := e.user("bob")
-	if err := e.store.SetPlatformAdmin(context.Background(), admin.ID, true); err != nil {
-		t.Fatal(err)
-	}
 	if rec := e.do("GET", "/api/admin/registry-gc", adminTok); rec.Code != 404 {
 		t.Fatalf("without gc: %d", rec.Code)
 	}
@@ -269,18 +263,8 @@ func TestAdminRegistryGC(t *testing.T) {
 func TestRegistryCredentialNeedsCLISession(t *testing.T) {
 	e := newEnv(t)
 	alice, _ := e.user("alice")
-	_, sess, err := e.store.CreateSession(t.Context(), alice.ID, store.SessionCLI, time.Hour, "ua", "1.2.3.4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The hub decides from the JWT's sk claim alone, not from the session row.
 	for kind, want := range map[store.SessionKind]int{store.SessionBrowser: 403, store.SessionCLI: 201} {
-		s := sess
-		s.Kind = kind
-		jwt, _, err := e.iss.Mint(alice, s)
-		if err != nil {
-			t.Fatal(err)
-		}
+		jwt, _ := e.iam.JWT(alice.ID, string(kind))
 		if rec := e.do("POST", "/api/registry/credentials", jwt); rec.Code != want {
 			t.Fatalf("%s session: %d %s, want %d", kind, rec.Code, rec.Body.String(), want)
 		}
@@ -311,8 +295,8 @@ func TestCredentialExchangeExpiry(t *testing.T) {
 		t.Fatalf("stored hashed: %d %v", stored, err)
 	}
 	var bound bool
-	if err := e.pool.QueryRow(t.Context(), `SELECT bool_and(c.user_id = s.user_id AND abs(extract(epoch FROM c.session_expires_at - s.expires_at)) < 1)
-		FROM registry_credentials c JOIN sessions s ON s.id = c.session_id`).Scan(&bound); err != nil || !bound {
+	if err := e.pool.QueryRow(t.Context(), `SELECT bool_and(user_id = $1 AND session_expires_at BETWEEN now() + interval '59 minutes' AND now() + interval '1 hour')
+		FROM registry_credentials`, alice.ID).Scan(&bound); err != nil || !bound {
 		t.Fatalf("credential bound to the session's user and expiry: %v %v", bound, err)
 	}
 	if code, _ := grant(t, h, "observatory", got.Secret, repoScope(a, "pull")); code != 200 {
@@ -384,20 +368,10 @@ func TestRegistryCredentialRefusedAtSessionRevoke(t *testing.T) {
 	org := e.createOrg(aliceTok, "Acme")
 	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
 	h := e.registryHandler("http://registry.invalid", nil)
-	cli := e.cliSession(alice)
-	cred := e.registryCredential(cli)
-	sess, err := e.store.SessionByToken(t.Context(), cli)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The edge may still hold a JWT minted before the revoke.
-	jwt, _, err := e.iss.Mint(alice, sess)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec := e.do("DELETE", "/api/iam/v1/me/sessions/"+sess.ID.String(), aliceTok); rec.Code != 200 {
-		t.Fatalf("revoke: %d", rec.Code)
-	}
+	// The edge may still hold this JWT after the revoke.
+	jwt, sess := e.iam.JWT(alice.ID, "cli")
+	cred := e.registryCredential(jwt)
+	e.iam.RevokeSession(sess)
 	if code, _ := grant(t, h, "observatory", cred, repoScope(a, "pull")); code != 401 {
 		t.Fatalf("credential of a revoked session: %d", code)
 	}

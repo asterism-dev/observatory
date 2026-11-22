@@ -17,30 +17,27 @@ const storageToken = "fedcba9876543210fedcba9876543210"
 func TestStorageEndpointsAuth(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	u, _ := e.user("alice")
-	org, err := e.store.CreateOrg(ctx, "Acme", u.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, tok, err := e.store.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: u.ID})
+	u, utok := e.user("alice")
+	org := e.createOrg(utok, "Acme")
+	node, tok, err := e.store.CreateNode(ctx, store.Node{OrgID: org, Name: "n1", CreatedBy: u.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.store.EnrollNode(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
-	vm, err := e.store.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &u.ID, Name: "v", CPUs: 1, MemoryMB: 1, DiskGB: 1, CreatedBy: u.ID})
+	vm, err := e.store.CreateVM(ctx, store.VM{OrgID: org, NodeID: node.ID, UserID: &u.ID, Name: "v", CPUs: 1, MemoryMB: 1, DiskGB: 1, CreatedBy: u.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.SetVMPower(ctx, org.ID, vm.ID, proto.PowerStopped, proto.StopHard); err != nil {
+	if _, err := e.store.SetVMPower(ctx, org, vm.ID, proto.PowerStopped, proto.StopHard); err != nil {
 		t.Fatal(err)
 	}
-	d, err := e.store.CreateDisk(ctx, store.Disk{OrgID: org.ID, UserID: &u.ID, Name: "data", SizeGB: 1, CreatedBy: u.ID})
+	d, err := e.store.CreateDisk(ctx, store.Disk{OrgID: org, UserID: &u.ID, Name: "data", SizeGB: 1, CreatedBy: u.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.store.SetVMDisks(ctx, org.ID, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
+	if _, _, err := e.store.SetVMDisks(ctx, org, vm.ID, []store.VMDisk{{DiskID: d.ID, MountPath: "/data"}}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,7 +57,7 @@ func TestStorageEndpointsAuth(t *testing.T) {
 	if rec := gatewayDo(mux, "POST", "/api/storage/status", "Bearer "+storageToken, body); rec.Code != 204 {
 		t.Fatalf("status: %d %s", rec.Code, rec.Body)
 	}
-	if len(notified) != 1 || notified[0] != org.ID {
+	if len(notified) != 1 || notified[0] != org {
 		t.Fatalf("notified %v", notified)
 	}
 	rec := gatewayDo(mux, "GET", "/api/storage/state", "Bearer "+storageToken, "")

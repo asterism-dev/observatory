@@ -29,9 +29,6 @@ func TestAdminEndpointsRequirePlatformAdmin(t *testing.T) {
 			t.Fatalf("%s %s audit: %+v", c.method, c.path, es)
 		}
 	}
-	if got, _ := e.store.Users(t.Context()); got[0].PlatformAdmin == got[1].PlatformAdmin {
-		t.Fatalf("alice must not have become admin: %+v", got)
-	}
 }
 
 func TestPlatformAdminHasNoTenantAccess(t *testing.T) {
@@ -95,7 +92,7 @@ func TestAdminOrgLimitsEndpoint(t *testing.T) {
 	_, rootTok := e.user("root")
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
-	team := e.createTeam(tok, org, "core")
+	team := e.createTeam(org, "core")
 	e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", rootTok, `{"vcpu":8}`)
 	e.send("PUT", "/api/orgs/"+org.String()+"/limits/team:"+team.String(), tok, `{"vcpu":2}`)
 	path := "/api/admin/orgs/" + org.String() + "/limits"

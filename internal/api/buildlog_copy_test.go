@@ -184,7 +184,7 @@ func TestBuildLogTeamImageCopied(t *testing.T) {
 	e, fake, stop := buildLogEnv(t)
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
-	team := e.createTeam(tok, org, "core")
+	team := e.createTeam(org, "core")
 	img := e.createImage(tok, org, `{"name":"teamimg","scope":"team","teamId":"`+team.String()+`"}`)
 	if rec := e.putRecipe(tok, org, img, recipeTar(t, dockerfile), ""); rec.Code != 200 {
 		t.Fatalf("recipe: %d", rec.Code)

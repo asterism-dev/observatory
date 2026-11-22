@@ -64,16 +64,7 @@ func TestLoadRejectsConfig(t *testing.T) {
 
 func underlayNode(t *testing.T, s *store.Store) store.Node {
 	t.Helper()
-	ctx := context.Background()
-	u, err := s.Login(ctx, store.Identity{Subject: "u", Email: "u@x.io", Name: "u"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	org, err := s.CreateOrg(ctx, uuid.NewString(), u.User.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, _, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n", CreatedBy: u.User.ID})
+	n, _, err := s.CreateNode(context.Background(), store.Node{OrgID: uuid.New(), Name: "n", CreatedBy: uuid.New()})
 	if err != nil {
 		t.Fatal(err)
 	}

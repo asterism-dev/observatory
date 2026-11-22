@@ -22,7 +22,7 @@ func TestLimitsStack(t *testing.T) {
 	member, memberTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, member, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
+	team := e.createTeam(org, "core")
 	base := "/api/orgs/" + org.String() + "/limits"
 
 	if rec := e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", adminTok, `{"vcpu":10,"diskGb":100,"imageStorageGb":20}`); rec.Code != 204 {
@@ -83,12 +83,11 @@ func TestLimitsStack(t *testing.T) {
 func TestLimitsScopeForeignTeam(t *testing.T) {
 	e := newEnv(t)
 	_, aTok := e.user("alice")
-	_, bTok := e.user("bob")
+	bob, bTok := e.user("bob")
 	orgA, orgB := e.createOrg(aTok, "A"), e.createOrg(bTok, "B")
-	foreign := e.createTeam(bTok, orgB, "x")
-	bob, _ := e.store.Users(t.Context())
+	foreign := e.createTeam(orgB, "x")
 	base := "/api/orgs/" + orgA.String() + "/limits/"
-	for _, scope := range []string{"team:" + foreign.String(), "team:" + uuid.NewString(), "user:" + bob[1].ID.String(),
+	for _, scope := range []string{"team:" + foreign.String(), "team:" + uuid.NewString(), "user:" + bob.ID.String(),
 		"user:" + uuid.NewString(), "team:nope", "bogus", "team:" + strings.ToUpper(foreign.String())} {
 		if rec := e.send("PUT", base+scope, aTok, `{"vcpu":1}`); rec.Code != 404 {
 			t.Fatalf("%s: %d %s", scope, rec.Code, rec.Body.String())

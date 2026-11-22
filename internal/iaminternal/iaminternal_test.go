@@ -93,3 +93,36 @@ func TestGetMembership(t *testing.T) {
 		t.Fatalf("bad org: %v", err)
 	}
 }
+
+func TestLookups(t *testing.T) {
+	ctx := t.Context()
+	s := store.New(dbtest.New(t))
+	srv := Server{Store: s}
+	alice, err := s.Login(ctx, store.Identity{Subject: "alice", Email: "alice@x.io", Name: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddSSHKey(ctx, store.SSHKey{UserID: alice.User.ID, Name: "k", PublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO+6yIP+G69X+7mX0h8gSHrNNG4s+hDeXmzGTGYeH6nA laptop"}); err != nil {
+		t.Fatal(err)
+	}
+	org, err := s.CreateOrg(ctx, "acme", alice.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateTeam(ctx, org.ID, "core"); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{alice.User.ID.String()}
+	us, err := srv.GetUsers(ctx, connect.NewRequest(&iamv1.GetUsersRequest{UserIds: ids}))
+	if err != nil || len(us.Msg.Users) != 1 || us.Msg.Users[0].Name != "alice" || us.Msg.Users[0].Email != "alice@x.io" {
+		t.Fatalf("GetUsers: %v %v", us, err)
+	}
+	ks, err := srv.ListSSHKeys(ctx, connect.NewRequest(&iamv1.ListSSHKeysRequest{UserIds: ids}))
+	if err != nil || len(ks.Msg.Keys) != 1 || ks.Msg.Keys[0].UserId != alice.User.ID.String() {
+		t.Fatalf("ListSSHKeys: %v %v", ks, err)
+	}
+	ts, err := srv.ListTeams(ctx, connect.NewRequest(&iamv1.ListTeamsRequest{OrgId: org.ID.String()}))
+	if err != nil || len(ts.Msg.Teams) != 1 || ts.Msg.Teams[0].Name != "core" {
+		t.Fatalf("ListTeams: %v %v", ts, err)
+	}
+}

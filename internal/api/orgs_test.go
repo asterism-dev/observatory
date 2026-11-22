@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -20,80 +22,80 @@ func (e *env) exec(sql string, args ...any) {
 	}
 }
 
+// reload waits until the hub's enforcer has iam's latest revision, plus the hub's own owner refs.
 func (e *env) reload() {
 	e.t.Helper()
-	if err := e.z.Reload(context.Background()); err != nil {
-		e.t.Fatal(err)
-	}
+	e.pol.Sync(e.t)
 }
 
 // createOrg creates an org owned by token's user, as iam's CreateOrg would.
 func (e *env) createOrg(token, name string) uuid.UUID {
 	e.t.Helper()
-	sess, err := e.store.SessionByToken(context.Background(), token)
+	p, err := e.jwts.Verify(context.Background(), token)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	o, err := e.store.CreateOrg(context.Background(), name, sess.UserID)
-	if err != nil {
+	org := e.iam.CreateOrg(p.User, name)
+	e.reload()
+	return org
+}
+
+func (e *env) addMember(org uuid.UUID, u iamtest.User, role store.Role) {
+	e.t.Helper()
+	e.iam.AddMember(org, u.ID, string(role))
+	e.reload()
+}
+
+func (e *env) removeMember(org uuid.UUID, u iamtest.User) {
+	e.t.Helper()
+	e.iam.RemoveMember(org, u.ID)
+	e.reload()
+}
+
+func (e *env) personalOrg(u iamtest.User) uuid.UUID {
+	e.t.Helper()
+	return e.iam.PersonalOrg(u.ID)
+}
+
+func (e *env) createTeam(org uuid.UUID, name string) uuid.UUID {
+	e.t.Helper()
+	team := e.iam.AddTeam(org, name)
+	e.reload()
+	return team
+}
+
+func (e *env) removeTeam(org, team uuid.UUID) {
+	e.t.Helper()
+	e.iam.RemoveTeam(org, team)
+	e.reload()
+}
+
+func (e *env) setTeamMember(org, team uuid.UUID, u iamtest.User, admin bool) {
+	e.t.Helper()
+	e.iam.SetTeamMember(org, team, u.ID, admin)
+	e.reload()
+}
+
+// createRole keeps a custom role from its JSON body until bind puts it into iam with its binding.
+func (e *env) createRole(org uuid.UUID, body string) uuid.UUID {
+	e.t.Helper()
+	var role authz.CustomRole
+	if err := json.Unmarshal([]byte(body), &role); err != nil {
 		e.t.Fatal(err)
 	}
+	role.ID, role.OrgID = uuid.New(), org
+	e.roles[role.ID] = role
+	return role.ID
+}
+
+func (e *env) bind(org uuid.UUID, subject string, role uuid.UUID) {
+	e.t.Helper()
+	r, ok := e.roles[role]
+	if !ok {
+		e.t.Fatalf("unknown role %s", role)
+	}
+	e.iam.Bind(org, subject, r)
 	e.reload()
-	return o.ID
-}
-
-func (e *env) addMember(org uuid.UUID, u store.User, role store.Role) {
-	e.t.Helper()
-	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)`, org, u.ID, role)
-	e.reload()
-}
-
-func (e *env) personalOrg(u store.User) uuid.UUID {
-	e.t.Helper()
-	ms, err := e.store.Memberships(context.Background(), u.ID)
-	if err != nil || len(ms) == 0 || !ms[0].Org.Personal {
-		e.t.Fatalf("personal org: %+v %v", ms, err)
-	}
-	return ms[0].Org.ID
-}
-
-// iamPath is a REST path of the iam API, which newEnv mounts next to the hub's routes.
-func iamPath(org uuid.UUID, rest string) string { return "/api/iam/v1/orgs/" + org.String() + rest }
-
-func memberPath(org uuid.UUID, u store.User) string { return iamPath(org, "/members/"+u.ID.String()) }
-
-func teamPath(org, team uuid.UUID) string { return iamPath(org, "/teams/"+team.String()) }
-
-func teamMemberPath(org, team uuid.UUID, u store.User) string {
-	return teamPath(org, team) + "/members/" + u.ID.String()
-}
-
-// iamCreate posts body to the iam API and returns the id of the created entity, the response's only field.
-func (e *env) iamCreate(tok, path, body string) uuid.UUID {
-	e.t.Helper()
-	rec := e.send("POST", path, tok, body)
-	if rec.Code != 200 {
-		e.t.Fatalf("POST %s: %d %s", path, rec.Code, rec.Body.String())
-	}
-	var got map[string]struct{ ID uuid.UUID }
-	decode(e.t, rec, &got)
-	for _, v := range got {
-		return v.ID
-	}
-	e.t.Fatalf("POST %s: %s", path, rec.Body.String())
-	return uuid.Nil
-}
-
-func (e *env) createTeam(tok string, org uuid.UUID, name string) uuid.UUID {
-	return e.iamCreate(tok, iamPath(org, "/teams"), `{"name":"`+name+`"}`)
-}
-
-func (e *env) createRole(tok string, org uuid.UUID, body string) uuid.UUID {
-	return e.iamCreate(tok, iamPath(org, "/roles"), body)
-}
-
-func (e *env) bind(tok string, org uuid.UUID, subject string, role uuid.UUID) uuid.UUID {
-	return e.iamCreate(tok, iamPath(org, "/roleBindings"), `{"subject":"`+subject+`","roleId":"`+role.String()+`"}`)
 }
 
 func mapValues(m map[string]any) []string {
@@ -115,44 +117,10 @@ func TestPermissionChangeIsImmediate(t *testing.T) {
 	if e.canReadAudit(member.ID, org) {
 		t.Fatal("member reads the audit trail before the grant")
 	}
-	var role uuid.UUID
-	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'auditor') RETURNING id`, org).Scan(&role); err != nil {
-		t.Fatal(err)
-	}
-	e.exec(`INSERT INTO role_rules (role_id, position, effect, object, action) VALUES ($1, 0, 'allow', 'org/audit', 'audit.events.list')`, role)
-	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, $2, $3)`, org, "user:"+member.ID.String(), role)
-	e.reload()
+	role := e.createRole(org, `{"name":"auditor","rules":[{"effect":"allow","object":"org/audit","action":"audit.events.list"}]}`)
+	e.bind(org, "user:"+member.ID.String(), role)
 	if !e.canReadAudit(member.ID, org) {
 		t.Fatal("grant not applied")
-	}
-}
-
-func TestCommitRejectsInvalidPolicy(t *testing.T) {
-	e := newEnv(t)
-	u, tok := e.user("alice")
-	org := e.createOrg(tok, "Acme")
-	var role uuid.UUID
-	if err := e.pool.QueryRow(context.Background(), `INSERT INTO roles (org_id, name) VALUES ($1, 'r') RETURNING id`, org).Scan(&role); err != nil {
-		t.Fatal(err)
-	}
-	e.reload()
-	before := e.z.Enforcer()
-	// A poison row committed behind the API's back: any write that would commit it must fail.
-	e.exec(`INSERT INTO role_bindings (org_id, subject, role_id) VALUES ($1, 'bogus', $2)`, org, role)
-
-	h := &api{store: e.store, z: e.z}
-	rec := httptest.NewRecorder()
-	ok := h.commit(rec, httptest.NewRequest("POST", "/", nil), func(tx *store.Store) error {
-		return tx.Audit(context.Background(), store.AuditEntry{ActorKind: store.ActorUser, ActorID: u.ID.String(), Action: "test.poison", Result: store.ResultAllowed})
-	})
-	if ok || rec.Code != 400 || !strings.Contains(rec.Body.String(), `"invalid policy"`) || strings.Contains(rec.Body.String(), "bogus") {
-		t.Fatalf("commit: %v %d %s", ok, rec.Code, rec.Body.String())
-	}
-	if len(e.audit("test.poison")) != 0 {
-		t.Fatal("audit row of rolled back tx stored")
-	}
-	if e.z.Enforcer() != before {
-		t.Fatal("enforcer swapped")
 	}
 }
 
@@ -161,7 +129,7 @@ func TestOrgFromPathUsesPolicy(t *testing.T) {
 	_, ownerTok := e.user("alice")
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
-	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.ID)
+	e.iam.AddMember(org, bob.ID, "member")
 	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 404 {
 		t.Fatalf("before reload: %d %s", rec.Code, rec.Body.String())
 	}

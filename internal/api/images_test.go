@@ -183,8 +183,8 @@ func TestCreateImageScopes(t *testing.T) {
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(aliceTok, org, "core")
-	e.makeTeamAdmin(aliceTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, carol, true)
 
 	e.createImage(aliceTok, org, `{"name":"base","description":"shared","scope":"org"}`)
 	if rec := e.send("POST", imagesPath(org), bobTok, `{"name":"mine","scope":"org"}`); rec.Code != 403 {
@@ -302,9 +302,9 @@ func TestRefsScopeRule(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	team := e.createTeam(aliceTok, org, "core")
-	other := e.createTeam(aliceTok, org, "other")
-	e.makeTeamAdmin(aliceTok, org, team, bob)
+	team := e.createTeam(org, "core")
+	other := e.createTeam(org, "other")
+	e.setTeamMember(org, team, bob, true)
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	e.createEnv(aliceTok, org, `{"name":"TEAM_TOKEN","value":"v","kind":"secret","scope":"team","teamId":"`+team.String()+`"}`)
 	e.createEnv(aliceTok, org, `{"name":"SHARED","value":"v","kind":"secret","scope":"org"}`)
@@ -363,8 +363,8 @@ func TestWidenVisibilityNeedsConfirm(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	team := e.createTeam(aliceTok, org, "core")
-	e.makeTeamAdmin(aliceTok, org, team, bob)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, true)
 	id := e.createImage(bobTok, org, `{"name":"tools","scope":"user"}`)
 	e.addVersion(id, 1, "latest")
 	e.addVersion(id, 2)
@@ -406,8 +406,8 @@ func TestWidenRefusedWithPrivateRefs(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	team := e.createTeam(aliceTok, org, "core")
-	e.makeTeamAdmin(aliceTok, org, team, bob)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, true)
 	e.createEnv(bobTok, org, `{"name":"MY_TOKEN","value":"v","kind":"secret","scope":"user"}`)
 	id := e.createImage(bobTok, org, `{"name":"tools","scope":"user"}`)
 	if rec := e.putRecipe(bobTok, org, id, recipeTar(t, dockerfile), `[{"kind":"secret","scope":"user","name":"MY_TOKEN"}]`); rec.Code != 200 {
@@ -593,9 +593,9 @@ func TestImageDefaultsIntegrity(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(aliceTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	core := e.createTeam(aliceTok, org, "core")
-	other := e.createTeam(aliceTok, org, "other")
-	foreign := e.createTeam(aliceTok, e.createOrg(aliceTok, "Elsewhere"), "core")
+	core := e.createTeam(org, "core")
+	other := e.createTeam(org, "other")
+	foreign := e.createTeam(e.createOrg(aliceTok, "Elsewhere"), "core")
 	e.addVersion(e.createImage(aliceTok, org, `{"name":"coreimg","scope":"team","teamId":"`+core.String()+`"}`), 1, "latest")
 	e.addVersion(e.createImage(aliceTok, org, `{"name":"base","scope":"org"}`), 2, "latest")
 	e.addVersion(e.createImage(bobTok, org, `{"name":"mine","scope":"user"}`), 3, "latest")
@@ -640,9 +640,7 @@ func TestRemoveMemberLeavesPrivateImagesToPurge(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	id := e.createImage(bobTok, org, `{"name":"tools","scope":"user"}`)
 	e.addVersion(id, 1, "latest")
-	if rec := e.do("DELETE", memberPath(org, bob), aliceTok); rec.Code != 200 {
-		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
-	}
+	e.removeMember(org, bob)
 	if _, err := e.store.Image(context.Background(), org, id); err != nil {
 		t.Fatalf("image gone before the purge: %v", err)
 	}
@@ -656,12 +654,10 @@ func TestDeleteTeamLeavesTeamImagesToPurge(t *testing.T) {
 	m := e.withManifests()
 	_, aliceTok := e.user("alice")
 	org := e.createOrg(aliceTok, "Acme")
-	team := e.createTeam(aliceTok, org, "core")
+	team := e.createTeam(org, "core")
 	id := e.createImage(aliceTok, org, `{"name":"tools","scope":"team","teamId":"`+team.String()+`"}`)
 	e.addVersion(id, 1, "latest")
-	if rec := e.do("DELETE", teamPath(org, team), aliceTok); rec.Code != 200 {
-		t.Fatalf("delete team: %d %s", rec.Code, rec.Body.String())
-	}
+	e.removeTeam(org, team)
 	if _, err := e.store.Image(context.Background(), org, id); err != nil {
 		t.Fatalf("team image gone before the purge: %v", err)
 	}

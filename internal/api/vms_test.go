@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -139,11 +140,9 @@ func TestVMTeamPermissions(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 	node := e.enrolledNode(ownerTok, org, "n1")
 
 	if rec := e.send("POST", vmsPath(org), bobTok, vmBody("t1", teamOwner(team), node)); rec.Code != 403 {
@@ -292,18 +291,14 @@ func TestPausePermission(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	core, other := e.createTeam(ownerTok, org, "core"), e.createTeam(ownerTok, org, "other")
-	e.makeTeamAdmin(ownerTok, org, core, carol)
-	if rec := e.send("PUT", teamMemberPath(org, other, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
+	core, other := e.createTeam(org, "core"), e.createTeam(org, "other")
+	e.setTeamMember(org, core, carol, true)
+	e.setTeamMember(org, other, bob, false)
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(core), e.enrolledNode(ownerTok, org, "n1")))
 	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 403 {
 		t.Fatalf("other team pause: %d", rec.Code)
 	}
-	if rec := e.send("PUT", teamMemberPath(org, core, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
+	e.setTeamMember(org, core, bob, false)
 	if rec := e.do("POST", vmsPath(org)+"/"+v.ID+"/pause", bobTok); rec.Code != 200 {
 		t.Fatalf("owning team pause: %d %s", rec.Code, rec.Body.String())
 	}
@@ -371,8 +366,8 @@ func TestSetVMDisksAPI(t *testing.T) {
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	node := e.enrolledNode(tok, org, "n1")
-	team := e.createTeam(tok, org, "core")
-	e.makeTeamAdmin(tok, org, team, alice)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, alice, true)
 	d := e.createDisk(tok, org, diskBody("data", userOwner(), 1))
 	td := e.createDisk(tok, org, diskBody("shared", teamOwner(team), 1))
 	v := e.createVM(tok, org, vmBody("dev", userOwner(), node))
@@ -433,7 +428,7 @@ func TestVMDisksAuthorizationDenied(t *testing.T) {
 	carol, carolTok := e.user("carol")
 	admin, adminTok := e.user("dave")
 	org := e.createOrg(ownerTok, "Acme")
-	for u, r := range map[store.User]store.Role{bob: store.RoleMember, carol: store.RoleMember, admin: store.RoleAdmin} {
+	for u, r := range map[iamtest.User]store.Role{bob: store.RoleMember, carol: store.RoleMember, admin: store.RoleAdmin} {
 		e.addMember(org, u, r)
 	}
 	node := e.enrolledNode(ownerTok, org, "n1")
@@ -699,7 +694,7 @@ func TestCreateTeamVMUsesTeamDefault(t *testing.T) {
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	node := e.enrolledNode(tok, org, "n1")
-	team := e.createTeam(tok, org, "core")
+	team := e.createTeam(org, "core")
 	userImg := e.createImage(tok, org, `{"name":"mine","scope":"user"}`)
 	e.addVersion(userImg, 1, "latest")
 	teamImg := e.createImage(tok, org, `{"name":"shared","scope":"team","teamId":"`+team.String()+`"}`)
@@ -761,10 +756,7 @@ func TestCreateForTeamNotInPolicy404(t *testing.T) {
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
 	node := e.enrolledNode(tok, org, "n1")
-	var team uuid.UUID
-	if err := e.pool.QueryRow(context.Background(), `INSERT INTO teams (org_id, name) VALUES ($1, 't') RETURNING id`, org).Scan(&team); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(org, "t")
 	if rec := e.send("POST", vmsPath(org), tok, vmBody("vm1", teamOwner(team), node)); rec.Code != 404 {
 		t.Fatalf("vm for unknown team: %d %s", rec.Code, rec.Body.String())
 	}

@@ -103,3 +103,23 @@ func TestCheckAZP(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginReloadIgnoresRequestCancel(t *testing.T) {
+	e := newEnv(t)
+	called := false
+	e.a.Reload = func(ctx context.Context) error {
+		called = true
+		if ctx.Done() != nil {
+			t.Error("reload runs on a cancellable request context")
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if rec := e.do(httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(`{"idToken":"good","accessToken":"at"}`)).WithContext(ctx)); rec.Code != http.StatusCreated {
+		t.Fatalf("status %d %s", rec.Code, rec.Body)
+	}
+	if !called {
+		t.Fatal("reload not called")
+	}
+}

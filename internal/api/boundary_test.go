@@ -19,7 +19,7 @@ var iamReads = map[string]bool{"Membership": true, "Members": true, "Memberships
 	"Sessions": true, "Invites": true, "Org": true, "Orgs": true}
 
 // iamFiles lists per file the functions that may read IAM tables; nil allows the whole file.
-var iamFiles = map[string][]string{"admin.go": {"adminGetOrgLimits", "adminSetOrgLimits"}}
+var iamFiles = map[string][]string{}
 
 func TestNoIAMReadsOutsideIAMFiles(t *testing.T) {
 	fset := token.NewFileSet()

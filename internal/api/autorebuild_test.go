@@ -110,8 +110,8 @@ func TestAutoSettings(t *testing.T) {
 	e.addMember(org, bob, store.RoleAdmin)
 	img := e.recipeImage(aliceTok, org, "basis", "")
 	bare := e.createImage(aliceTok, org, `{"name":"bare","scope":"org"}`)
-	noBuild := e.createRole(aliceTok, org, `{"name":"no builds","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(bob.ID), noBuild)
+	noBuild := e.createRole(org, `{"name":"no builds","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), noBuild)
 
 	if rec := e.send("PATCH", imagePath(org, img), aliceTok, `{"autoSchedule":"hourly"}`); rec.Code != 400 {
 		t.Fatalf("invalid schedule: %d", rec.Code)
@@ -318,8 +318,8 @@ func TestAutoRunsWithStarterRights(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "basis", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	e.setAuto(bobTok, org, img, `{"autoSchedule":"weekly"}`)
-	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
+	deny := e.createRole(org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), deny)
 
 	e.autoTick()
 	bs := e.builds(img)
@@ -364,8 +364,8 @@ func TestAutoEditorCannotBorrowRefs(t *testing.T) {
 	refs := `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`
 	img := e.recipeImage(aliceTok, org, "basis", refs)
 	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly"}`)
-	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
+	editOnly := e.createRole(org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), editOnly)
 	// "RlJPTSBhbHBpbmU=" is "FROM alpine"; the references stay as alice added them.
 	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
@@ -478,8 +478,8 @@ func TestAutoApprovalIsPersonal(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "basis", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly","approveRevision":1}`)
-	editOnly := e.createRole(aliceTok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(bob.ID), editOnly)
+	editOnly := e.createRole(org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"build.builds.create"},{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), editOnly)
 	if rec := e.send("POST", imagePath(org, img)+"/recipe/edits", bobTok, `{"base":1,"put":[{"path":"Dockerfile","content":"RlJPTSBhbHBpbmU="}]}`); rec.Code != 200 {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
 	}

@@ -42,7 +42,7 @@ func TestVMListOwnerNamesViaIAM(t *testing.T) {
 	e := newEnv(t)
 	_, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
-	team := e.createTeam(tok, org, "core")
+	team := e.createTeam(org, "core")
 	node := e.enrolledNode(tok, org, "n1")
 	e.createVM(tok, org, vmBody("u1", userOwner(), node))
 	e.createVM(tok, org, vmBody("t1", teamOwner(team), node))

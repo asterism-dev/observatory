@@ -57,13 +57,6 @@ func (e *env) listEnv(tok string, org uuid.UUID) envListJSON {
 	return got
 }
 
-func (e *env) makeTeamAdmin(ownerTok string, org, team uuid.UUID, u store.User) {
-	e.t.Helper()
-	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":true}`); rec.Code != 200 {
-		e.t.Fatalf("make team admin: %d %s", rec.Code, rec.Body.String())
-	}
-}
-
 func (e *env) resolve(org uuid.UUID, owner string) map[string]string {
 	e.t.Helper()
 	got, err := e.store.ResolveEnv(context.Background(), e.z.Enforcer(), org, owner)
@@ -228,9 +221,9 @@ func TestEnvTeamScope(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	otherOrg := e.createOrg(ownerTok, "Other")
 	e.addMember(org, bob, store.RoleMember)
-	core, ops := e.createTeam(ownerTok, org, "core"), e.createTeam(ownerTok, org, "ops")
-	foreign := e.createTeam(ownerTok, otherOrg, "foreign")
-	e.makeTeamAdmin(ownerTok, org, core, bob)
+	core, ops := e.createTeam(org, "core"), e.createTeam(org, "ops")
+	foreign := e.createTeam(otherOrg, "foreign")
+	e.setTeamMember(org, core, bob, true)
 
 	id := e.createEnv(bobTok, org, `{"name":"DB_URL","value":"x","kind":"secret","scope":"team","teamId":"`+core.String()+`"}`)
 	if es := e.audit(store.ActionEnvSet); es[0].Resource != authz.TeamEnvObject(core) || es[0].Details["ownerId"] != core.String() || es[0].Details["scope"] != "team" {
@@ -332,7 +325,7 @@ func TestEnvWritableScopes(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	a, b := e.createTeam(ownerTok, org, "a"), e.createTeam(ownerTok, org, "b")
+	a, b := e.createTeam(org, "a"), e.createTeam(org, "b")
 
 	if got := e.listEnv(bobTok, org).WritableScopes; len(got) != 1 || got[0].Scope != "user" || got[0].TeamID != nil {
 		t.Fatalf("member: %+v", got)
@@ -478,7 +471,7 @@ func TestEnvHostsPermission(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
+	team := e.createTeam(org, "core")
 	teamVar := e.createEnv(ownerTok, org, `{"name":"T","value":"`+boundValue+`","kind":"secret","scope":"team","teamId":"`+team.String()+`"}`)
 
 	mine := e.createEnv(bobTok, org, `{"name":"M","value":"`+boundValue+`","kind":"secret","scope":"user"}`)
@@ -489,8 +482,8 @@ func TestEnvHostsPermission(t *testing.T) {
 		t.Fatalf("bind team var without secrets.variables.set: %d", rec.Code)
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"nohosts","rules":[{"effect":"deny","object":"org/user-env/*","action":"secrets.variables.set"}]}`)
-	e.bind(ownerTok, org, authz.UserSubject(bob.ID), role)
+	role := e.createRole(org, `{"name":"nohosts","rules":[{"effect":"deny","object":"org/user-env/*","action":"secrets.variables.set"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), role)
 	for _, body := range []string{`{"hosts":["example.com"]}`, `{"hosts":[]}`} {
 		if rec := e.send("PATCH", envVarPath(org, mine), bobTok, body); rec.Code != 403 {
 			t.Fatalf("%s with deny: %d", body, rec.Code)
@@ -551,7 +544,7 @@ func TestEnvOwnerMustBeMember(t *testing.T) {
 	_, ownerTok := e.user("alice")
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
-	e.exec(`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')`, org, bob.ID)
+	e.iam.AddMember(org, bob.ID, "member")
 	body := `{"name":"GH_TOKEN","value":"v","kind":"secret","scope":"user"}`
 	if rec := e.send("POST", envPath(org), bobTok, body); rec.Code != 404 {
 		t.Fatalf("not yet in the policy: %d %s", rec.Code, rec.Body.String())
@@ -560,7 +553,7 @@ func TestEnvOwnerMustBeMember(t *testing.T) {
 	if rec := e.send("POST", envPath(org), bobTok, body); rec.Code != 201 {
 		t.Fatalf("member: %d %s", rec.Code, rec.Body.String())
 	}
-	e.exec(`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org, bob.ID)
+	e.iam.RemoveMember(org, bob.ID)
 	e.reload()
 	if rec := e.send("POST", envPath(org), bobTok, `{"name":"OTHER","value":"v","kind":"secret","scope":"user"}`); rec.Code != 404 {
 		t.Fatalf("removed: %d %s", rec.Code, rec.Body.String())

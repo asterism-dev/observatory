@@ -38,20 +38,13 @@ func TestBootKeysViaIAM(t *testing.T) {
 	e.f, e.srv = f, httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(e.srv.Close)
 
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, false); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.iam.SetTeamMember(e.org.ID, team, e.owner, false)
+	e.pol.Sync(t)
 	e.sshKey(e.owner) // A key only in the store must not reach the boot.
 	n, cred := e.node(e.org.ID, "n")
 	e.vm(e.org.ID, n.ID, "user-vm", &e.owner, nil)
-	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team)
 
 	want := []string{"key-" + e.owner.String()}
 	for _, d := range e.connect(cred).desired().Desired {

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
@@ -27,7 +28,7 @@ type dashQueryEnv struct {
 	*env
 	org                                 uuid.UUID
 	vmA, vmB                            string
-	bob                                 store.User
+	bob                                 iamtest.User
 	aliceTok, bobTok, carolTok, daveTok string
 
 	mu     sync.Mutex
@@ -68,7 +69,7 @@ func newDashQueryEnv(t *testing.T) *dashQueryEnv {
 	dave, daveTok := d.user("dave")
 	d.bob, d.bobTok, d.carolTok, d.daveTok = bob, bobTok, carolTok, daveTok
 	d.org = d.createOrg(d.aliceTok, "Acme")
-	for _, u := range []store.User{bob, carol, dave} {
+	for _, u := range []iamtest.User{bob, carol, dave} {
 		d.addMember(d.org, u, store.RoleMember)
 	}
 	node := d.enrolledNode(d.aliceTok, d.org, "n1")
@@ -94,8 +95,8 @@ func (d *dashQueryEnv) upstream() ([]string, []url.Values) {
 }
 
 func (d *dashQueryEnv) grantNodeMetrics() {
-	role := d.createRole(d.aliceTok, d.org, `{"name":"nodes","rules":[{"effect":"allow","object":"org/nodes/*","action":"compute.nodes.getMetrics"}]}`)
-	d.bind(d.aliceTok, d.org, authz.UserSubject(d.bob.ID), role)
+	role := d.createRole(d.org, `{"name":"nodes","rules":[{"effect":"allow","object":"org/nodes/*","action":"compute.nodes.getMetrics"}]}`)
+	d.bind(d.org, authz.UserSubject(d.bob.ID), role)
 }
 
 func checkScope(t *testing.T, form url.Values, org uuid.UUID, filters ...string) {

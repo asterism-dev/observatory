@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -78,13 +79,6 @@ func (e *env) putDashboard(tok string, org uuid.UUID, d dashboardTest, name stri
 	return got, rec.Code
 }
 
-func (e *env) setTeamMember(ownerTok string, org, team uuid.UUID, u store.User) {
-	e.t.Helper()
-	if rec := e.send("PUT", teamMemberPath(org, team, u), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		e.t.Fatalf("add team member: %d %s", rec.Code, rec.Body.String())
-	}
-}
-
 func listed(ds []dashboardTest, id uuid.UUID) *dashboardTest {
 	for i := range ds {
 		if ds[i].ID == id {
@@ -135,12 +129,12 @@ func TestTeamDashboardMemberRead(t *testing.T) {
 	carol, carolTok := e.user("carol")
 	dave, daveTok := e.user("dave")
 	org := e.createOrg(ownerTok, "Acme")
-	for _, u := range []store.User{bob, carol, dave} {
+	for _, u := range []iamtest.User{bob, carol, dave} {
 		e.addMember(org, u, store.RoleMember)
 	}
-	team := e.createTeam(ownerTok, org, "core")
-	e.setTeamMember(ownerTok, org, team, bob)
-	e.setTeamMember(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, false)
 
 	d := e.createDashboard(bobTok, org, `{"name":"Shop","scope":"team","teamId":"`+team.String()+`","panels":`+testPanels+`}`)
 	if d.Scope != "team" || *d.OwnerID != team || !d.CanEdit {
@@ -178,9 +172,9 @@ func TestTeamDashboardCreatorEdit(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
-	e.setTeamMember(ownerTok, org, team, bob)
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 
 	d := e.createDashboard(bobTok, org, `{"name":"Shop","scope":"team","teamId":"`+team.String()+`","panels":[]}`)
 	d, code := e.putDashboard(bobTok, org, d, "Shop 2")
@@ -197,9 +191,8 @@ func TestTeamDashboardCreatorEdit(t *testing.T) {
 		t.Fatalf("update audit: %+v", es)
 	}
 
-	if rec := e.do("DELETE", teamMemberPath(org, team, bob), ownerTok); rec.Code != 200 {
-		t.Fatalf("remove bob: %d", rec.Code)
-	}
+	e.iam.RemoveTeamMember(org, team, bob.ID)
+	e.reload()
 	if _, code := e.putDashboard(bobTok, org, d, "Mine again"); code != 403 {
 		t.Fatalf("ex-member creator edit: %d", code)
 	}
@@ -238,9 +231,7 @@ func TestOrgDashboardMemberCannotCreate(t *testing.T) {
 		t.Fatalf("member edit org: %d", code)
 	}
 	// The creator keeps edit rights on an org dashboard after losing the admin role.
-	if rec := e.send("PATCH", memberPath(org, bob), ownerTok, `{"role":"member"}`); rec.Code != 200 {
-		t.Fatalf("demote: %d %s", rec.Code, rec.Body.String())
-	}
+	e.addMember(org, bob, store.RoleMember)
 	if got, code := e.putDashboard(bobTok, org, d, "All 2"); code != 200 || !got.CanEdit {
 		t.Fatalf("creator edit after demotion: %d %+v", code, got)
 	}
@@ -253,10 +244,10 @@ func TestDashboardShareNeedsTargetCreate(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	other := e.createOrg(ownerTok, "Other")
 	e.addMember(org, bob, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
-	foreign := e.createTeam(ownerTok, org, "ops")
-	otherTeam := e.createTeam(ownerTok, other, "x")
-	e.setTeamMember(ownerTok, org, team, bob)
+	team := e.createTeam(org, "core")
+	foreign := e.createTeam(org, "ops")
+	otherTeam := e.createTeam(other, "x")
+	e.setTeamMember(org, team, bob, false)
 
 	d := e.createDashboard(bobTok, org, `{"name":"Mine","scope":"user","panels":[]}`)
 	move := func(target string) int {
@@ -370,9 +361,9 @@ func TestDashboardMoveToPrivateCreatorOnly(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
 	e.addMember(org, dan, store.RoleAdmin)
-	team := e.createTeam(ownerTok, org, "core")
-	e.setTeamMember(ownerTok, org, team, bob)
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 
 	toPrivate := func(tok string, d dashboardTest) (dashboardTest, int) {
 		e.t.Helper()

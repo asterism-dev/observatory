@@ -47,13 +47,10 @@ func TestGatewayStateRequiresToken(t *testing.T) {
 
 func TestGatewayStatusSetsHandshakes(t *testing.T) {
 	e := newEnv(t)
-	u, _ := e.user("alice")
-	org, err := e.store.CreateOrg(context.Background(), "Acme", u.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	u, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
 	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	d, err := e.store.CreateDevice(context.Background(), store.Device{OrgID: org.ID, UserID: u.ID, Name: "laptop", PublicKey: key})
+	d, err := e.store.CreateDevice(context.Background(), store.Device{OrgID: org, UserID: u.ID, Name: "laptop", PublicKey: key})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +63,7 @@ func TestGatewayStatusSetsHandshakes(t *testing.T) {
 	if rec := gatewayDo(mux, "POST", "/api/gateway/status", "Bearer "+gatewayToken, string(body)); rec.Code != 204 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	got, err := e.store.Device(context.Background(), org.ID, d.ID)
+	got, err := e.store.Device(context.Background(), org, d.ID)
 	if err != nil || got.LastHandshake == nil || !got.LastHandshake.Equal(at) {
 		t.Fatalf("%+v %v", got, err)
 	}

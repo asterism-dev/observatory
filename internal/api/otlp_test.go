@@ -21,6 +21,7 @@ import (
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	gproto "google.golang.org/protobuf/proto"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
@@ -62,7 +63,7 @@ type otlpEnv struct {
 	node       string
 	credential string
 	vm, vl     *fakeStore
-	alice      store.User
+	alice      iamtest.User
 	tok        string
 }
 

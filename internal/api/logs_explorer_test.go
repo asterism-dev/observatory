@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
 )
@@ -20,7 +21,7 @@ import (
 type logsExplorerEnv struct {
 	*env
 	org                                           uuid.UUID
-	admin                                         store.User
+	admin                                         iamtest.User
 	adminTok, memberTok, platformTok, outsiderTok string
 	node                                          string
 	mu                                            sync.Mutex

@@ -19,9 +19,9 @@ import (
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -31,7 +31,9 @@ type cleanupEnv struct {
 	pool *pgxpool.Pool
 	s    *store.Store
 	js   jetstream.JetStream
-	org  store.Org
+	iam  *iamtest.Server
+	pol  *iamtest.Policy
+	org  struct{ ID uuid.UUID }
 
 	mu        sync.Mutex
 	notified  []uuid.UUID
@@ -81,11 +83,9 @@ func newIdleCleanupEnv(t *testing.T) *cleanupEnv {
 		t.Fatal(err)
 	}
 	pool := dbtest.New(t)
-	e := &cleanupEnv{t: t, pool: pool, s: store.New(pool).WithMasterKey(seal.Key{1}), js: js}
-	e.org, err = e.s.CreateOrg(ctx, "acme", e.user("owner"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := &cleanupEnv{t: t, pool: pool, s: store.New(pool).WithMasterKey(seal.Key{1}), js: js, iam: iamtest.New(t)}
+	e.pol = e.iam.Policy(t, e.s.OwnerRefs)
+	e.org.ID = e.iam.CreateOrg(e.user("owner"), "acme")
 	return e
 }
 
@@ -93,7 +93,7 @@ func (e *cleanupEnv) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- consumeIAMEvents(ctx, e.js, e.s, iaminternal.Server{Store: e.s}, func(org uuid.UUID) {
+		done <- consumeIAMEvents(ctx, e.js, e.s, e.iam.Client(), func(org uuid.UUID) {
 			e.mu.Lock()
 			e.notified = append(e.notified, org)
 			e.mu.Unlock()
@@ -108,29 +108,15 @@ func (e *cleanupEnv) start() {
 }
 
 // leave drops the membership as the iam side does before its event is published.
-func (e *cleanupEnv) leave(user uuid.UUID) {
-	e.t.Helper()
-	e.exec("DELETE FROM memberships WHERE org_id = $1 AND user_id = $2", e.org.ID, user)
-}
+func (e *cleanupEnv) leave(user uuid.UUID) { e.iam.RemoveMember(e.org.ID, user) }
 
-func (e *cleanupEnv) rejoin(user uuid.UUID) {
-	e.t.Helper()
-	e.exec("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", e.org.ID, user)
-}
+func (e *cleanupEnv) rejoin(user uuid.UUID) { e.iam.AddMember(e.org.ID, user, "member") }
 
-func (e *cleanupEnv) user(sub string) uuid.UUID {
-	e.t.Helper()
-	res, err := e.s.Login(context.Background(), store.Identity{Subject: sub, Email: sub + "@x.io", Name: sub})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return res.User.ID
-}
+func (e *cleanupEnv) user(sub string) uuid.UUID { return e.iam.AddUser(sub).ID }
 
 func (e *cleanupEnv) member(sub string) uuid.UUID {
-	e.t.Helper()
 	id := e.user(sub)
-	e.exec("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'member')", e.org.ID, id)
+	e.rejoin(id)
 	return id
 }
 
@@ -216,18 +202,8 @@ func total(rows map[string]int) int {
 	return n
 }
 
-// policy is the enforcer over the committed IAM tables, standing in for the hub's streamed one.
-func (e *cleanupEnv) policy() *authz.Enforcer {
-	p, err := e.s.PolicySnapshot(context.Background())
-	if err != nil {
-		e.t.Error(err)
-	}
-	en, err := authz.New(p)
-	if err != nil {
-		e.t.Error(err)
-	}
-	return en
-}
+// policy is the hub's streamed enforcer as of the test's last Sync.
+func (e *cleanupEnv) policy() *authz.Enforcer { return e.pol.Enforcer() }
 
 func (e *cleanupEnv) publish(typ string, org *uuid.UUID, resource string, result eventsv1.Result) {
 	e.t.Helper()
@@ -405,32 +381,22 @@ func TestLeaveEventPurges(t *testing.T) {
 
 func TestTeamDeleteEventPurges(t *testing.T) {
 	e := newCleanupEnv(t)
-	ctx := context.Background()
 	owner := e.user("owner")
-	core, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := e.s.CreateTeam(ctx, e.org.ID, "other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.seed(store.EnvScopeTeam, core.ID, owner)
-	e.seed(store.EnvScopeTeam, other.ID, owner)
-	e.exec("INSERT INTO disks (org_id, team_id, name, size_gb, deleted_at) VALUES ($1, $2, 'gone', 1, now())", e.org.ID, core.ID)
+	core, other := e.iam.AddTeam(e.org.ID, "core"), e.iam.AddTeam(e.org.ID, "other")
+	e.seed(store.EnvScopeTeam, core, owner)
+	e.seed(store.EnvScopeTeam, other, owner)
+	e.exec("INSERT INTO disks (org_id, team_id, name, size_gb, deleted_at) VALUES ($1, $2, 'gone', 1, now())", e.org.ID, core)
 	e.exec(`INSERT INTO vm_history (id, org_id, team_id, name, cpus, memory_mb, disk_gb, created_at, reason)
-		VALUES ($1, $2, $3, 'old', 1, 512, 10, now(), 'user')`, uuid.New(), e.org.ID, core.ID)
-	manifest := e.imageManifest(store.EnvScopeTeam, core.ID)
-	if err := e.s.DeleteTeam(ctx, e.org.ID, core.ID); err != nil {
-		t.Fatal(err)
-	}
+		VALUES ($1, $2, $3, 'old', 1, 512, 10, now(), 'user')`, uuid.New(), e.org.ID, core)
+	manifest := e.imageManifest(store.EnvScopeTeam, core)
+	e.iam.RemoveTeam(e.org.ID, core)
 
-	e.publish(store.ActionTeamDelete, &e.org.ID, authz.TeamObject(core.ID), eventsv1.Result_RESULT_ALLOWED)
-	e.waitFor("core's rows to go", func() bool { return total(e.rows(store.EnvScopeTeam, core.ID)) == 0 })
-	if n := e.count("SELECT count(*) FROM disks WHERE team_id = $1", core.ID) + e.count("SELECT count(*) FROM vm_history WHERE team_id = $1", core.ID); n != 0 {
+	e.publish(store.ActionTeamDelete, &e.org.ID, authz.TeamObject(core), eventsv1.Result_RESULT_ALLOWED)
+	e.waitFor("core's rows to go", func() bool { return total(e.rows(store.EnvScopeTeam, core)) == 0 })
+	if n := e.count("SELECT count(*) FROM disks WHERE team_id = $1", core) + e.count("SELECT count(*) FROM vm_history WHERE team_id = $1", core); n != 0 {
 		t.Fatalf("%d disk or history rows still name the team", n)
 	}
-	if got := e.rows(store.EnvScopeTeam, other.ID); total(got) != 6 {
+	if got := e.rows(store.EnvScopeTeam, other); total(got) != 6 {
 		t.Fatalf("other team's rows: %v", got)
 	}
 	e.waitFor("the org to be notified", func() bool { return slices.Contains(e.notifications(), e.org.ID) })
@@ -490,14 +456,11 @@ func TestSessionRevokeDropsRegistryCredentials(t *testing.T) {
 	bob := e.user("bob")
 	sessions := map[string]uuid.UUID{}
 	for _, action := range []string{store.ActionSessionRevoke, store.ActionAuthLogout, "keep"} {
-		_, sess, err := e.s.CreateSession(ctx, bob, store.SessionCLI, time.Hour, "test", "127.0.0.1")
-		if err != nil {
+		_, sess := e.iam.JWT(bob, "cli")
+		if _, _, err := e.s.CreateRegistryCredential(ctx, bob, sess, time.Now().Add(time.Hour), time.Hour); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := e.s.CreateRegistryCredential(ctx, sess.UserID, sess.ID, sess.ExpiresAt, time.Hour); err != nil {
-			t.Fatal(err)
-		}
-		sessions[action] = sess.ID
+		sessions[action] = sess
 	}
 	creds := func(action string) int {
 		return e.count("SELECT count(*) FROM registry_credentials WHERE session_id = $1", sessions[action])
@@ -514,6 +477,7 @@ func TestSSHKeyEventNotifiesOrgs(t *testing.T) {
 	e := newCleanupEnv(t)
 	bob := e.member("bob")
 	carol := e.user("carol")
+	e.pol.Sync(t)
 	want := e.policy().OrgsOf(bob)
 	if !slices.Contains(want, e.org.ID) {
 		t.Fatalf("bob's orgs %v miss acme", want)

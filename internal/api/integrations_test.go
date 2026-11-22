@@ -15,6 +15,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/integrations"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -262,10 +263,8 @@ func TestIntegrationsPermissions(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, admin, store.RoleAdmin)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatalf("team member: %d %s", rec.Code, rec.Body.String())
-	}
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
 
 	if rec := e.send("POST", integrationsPath(org), bobTok, githubBody("org", "")); rec.Code != 403 {
 		t.Fatalf("member org: %d", rec.Code)
@@ -279,8 +278,8 @@ func TestIntegrationsPermissions(t *testing.T) {
 	}
 	carolID := e.connect(carolTok, org, githubBody("user", ""))
 
-	role := e.createRole(ownerTok, org, `{"name":"no private","rules":[{"effect":"deny","object":"org/user-integrations/*","action":"secrets.integrations.set"}]}`)
-	e.bind(ownerTok, org, authz.UserSubject(bob.ID), role)
+	role := e.createRole(org, `{"name":"no private","rules":[{"effect":"deny","object":"org/user-integrations/*","action":"secrets.integrations.set"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), role)
 	if rec := e.send("POST", integrationsPath(org), bobTok, githubBody("user", "")); rec.Code != 403 {
 		t.Fatalf("deny private: %d", rec.Code)
 	}
@@ -926,7 +925,7 @@ func (e *env) gcloudList(tok string, org uuid.UUID) gcloudListJSON {
 	return got
 }
 
-func (e *env) resolvedFor(u store.User, org uuid.UUID) []store.ResolvedIntegration {
+func (e *env) resolvedFor(u iamtest.User, org uuid.UUID) []store.ResolvedIntegration {
 	e.t.Helper()
 	res, err := e.store.ResolveVMIntegrations(context.Background(), e.z.Enforcer(), org, authz.UserSubject(u.ID))
 	if err != nil {

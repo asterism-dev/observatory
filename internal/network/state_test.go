@@ -14,6 +14,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/wgkey"
@@ -22,6 +23,8 @@ import (
 type fixture struct {
 	t                      testing.TB
 	s                      *store.Store
+	iam                    *iamtest.Server
+	pol                    *iamtest.Policy
 	z                      *authz.Service
 	h                      *network.Hub
 	orgA, orgB             uuid.UUID
@@ -32,19 +35,17 @@ type fixture struct {
 func newFixture(t testing.TB) *fixture {
 	t.Helper()
 	ctx := context.Background()
-	f := &fixture{t: t, s: newStore(t)}
+	f := &fixture{t: t, s: newStore(t), iam: iamtest.New(t)}
 	f.owner, f.a1, f.a2, f.adm, f.b1 = f.user("owner"), f.user("a1"), f.user("a2"), f.user("adm"), f.user("b1")
 	f.orgA, f.orgB = f.org(f.owner), f.org(f.b1)
 	f.member(f.orgA, f.a1, store.RoleMember)
 	f.member(f.orgA, f.a2, store.RoleMember)
 	f.member(f.orgA, f.adm, store.RoleAdmin)
 	f.nodeA, f.nodeB = f.node(f.orgA, f.owner, "n"), f.node(f.orgB, f.b1, "n")
-	z, err := authz.NewService(ctx, f.s.HubPolicy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.z = z
-	if f.h, err = network.Load(ctx, f.s, z, cfg); err != nil {
+	f.pol = f.iam.Policy(t, f.s.OwnerRefs)
+	f.z = f.pol.Service
+	var err error
+	if f.h, err = network.Load(ctx, f.s, f.z, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -52,32 +53,17 @@ func newFixture(t testing.TB) *fixture {
 
 func (f *fixture) user(name string) uuid.UUID {
 	f.t.Helper()
-	u, err := f.s.Login(context.Background(), store.Identity{Subject: name, Email: name + "@x.io", Name: name})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return u.User.ID
+	return f.iam.AddUser(name).ID
 }
 
 func (f *fixture) org(owner uuid.UUID) uuid.UUID {
 	f.t.Helper()
-	o, err := f.s.CreateOrg(context.Background(), uuid.NewString(), owner)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return o.ID
+	return f.iam.CreateOrg(owner, uuid.NewString())
 }
 
 func (f *fixture) member(org, user uuid.UUID, role store.Role) {
 	f.t.Helper()
-	ctx := context.Background()
-	tok, _, err := f.s.CreateInvite(ctx, org, role, f.owner, time.Hour)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	if _, _, err := f.s.AcceptInvite(ctx, tok, user); err != nil {
-		f.t.Fatal(err)
-	}
+	f.iam.AddMember(org, user, string(role))
 }
 
 func (f *fixture) node(org, by uuid.UUID, name string) uuid.UUID {
@@ -118,17 +104,11 @@ func (f *fixture) key() string {
 
 func (f *fixture) team(members ...uuid.UUID) uuid.UUID {
 	f.t.Helper()
-	ctx := context.Background()
-	team, err := f.s.CreateTeam(ctx, f.orgA, "core")
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	team := f.iam.AddTeam(f.orgA, "core")
 	for _, u := range members {
-		if err := f.s.SetTeamMember(ctx, f.orgA, team.ID, u, false); err != nil {
-			f.t.Fatal(err)
-		}
+		f.iam.SetTeamMember(f.orgA, team, u, false)
 	}
-	return team.ID
+	return team
 }
 
 func (f *fixture) network(name string) store.Network {
@@ -149,15 +129,9 @@ func (f *fixture) attach(vm store.VM, n store.Network) {
 
 func (f *fixture) bindRole(rule authz.Rule, subjects ...string) {
 	f.t.Helper()
-	ctx := context.Background()
-	r, err := f.s.CreateRole(ctx, f.orgA, authz.CustomRole{Name: uuid.NewString(), Rules: []authz.Rule{rule}})
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	r := authz.CustomRole{ID: uuid.New(), Name: uuid.NewString(), Rules: []authz.Rule{rule}}
 	for _, sub := range subjects {
-		if _, err := f.s.Bind(ctx, f.orgA, sub, r.ID); err != nil {
-			f.t.Fatal(err)
-		}
+		f.iam.Bind(f.orgA, sub, r)
 	}
 }
 
@@ -173,9 +147,7 @@ func (f *fixture) vm(org, node uuid.UUID, name string, user, team *uuid.UUID) st
 func (f *fixture) state() proto.GatewayState {
 	f.t.Helper()
 	ctx := context.Background()
-	if err := f.z.Reload(ctx); err != nil {
-		f.t.Fatal(err)
-	}
+	f.pol.Sync(f.t)
 	st, err := f.h.State(ctx)
 	if err != nil {
 		f.t.Fatal(err)
@@ -251,9 +223,7 @@ func TestTeamVMAllowList(t *testing.T) {
 	if !allowed(t, st, v, d1) || allowed(t, st, v, d2) {
 		t.Fatalf("team VM allow list %v", mgmtPort(t, st, v).AllowFrom)
 	}
-	if err := f.s.RemoveTeamMember(context.Background(), f.orgA, team, f.a1); err != nil {
-		t.Fatal(err)
-	}
+	f.iam.RemoveTeamMember(f.orgA, team, f.a1)
 	if st := f.state(); allowed(t, st, v, d1) {
 		t.Error("removed member still admitted")
 	}
@@ -420,11 +390,8 @@ func TestStateDeterministic(t *testing.T) {
 // The build must agree with CanConnect for every device × VM pair.
 func TestAllowListMatchesCanConnect(t *testing.T) {
 	f := newFixture(t)
-	ctx := context.Background()
 	team := f.team(f.a2)
-	if err := f.s.SetTeamMember(ctx, f.orgA, team, f.adm, true); err != nil {
-		t.Fatal(err)
-	}
+	f.iam.SetTeamMember(f.orgA, team, f.adm, true)
 	var devices []store.Device
 	for _, u := range []uuid.UUID{f.owner, f.a1, f.a2, f.adm} {
 		devices = append(devices, f.device(f.orgA, u, "laptop"))
@@ -542,9 +509,7 @@ func BenchmarkState(b *testing.B) {
 		}
 	}
 	ctx := context.Background()
-	if err := f.z.Reload(ctx); err != nil {
-		b.Fatal(err)
-	}
+	f.pol.Sync(b)
 	b.ResetTimer()
 	for range b.N {
 		if _, err := f.h.State(ctx); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/telemetry"
@@ -24,7 +25,7 @@ type vmTelemetryEnv struct {
 	org                          uuid.UUID
 	vm                           string
 	ownerTok, adminTok, otherTok string
-	other                        store.User
+	other                        iamtest.User
 	lastLogForm                  url.Values
 }
 
@@ -191,8 +192,8 @@ func TestVMJSONUsageFromStore(t *testing.T) {
 	}
 
 	// A custom role can grant compute.instances.get without compute.instances.getMetrics.
-	reader := te.createRole(te.adminTok, te.org, `{"name":"vm reader","rules":[{"effect":"allow","object":"org/vms/*","action":"compute.instances.get"}]}`)
-	te.bind(te.adminTok, te.org, authz.UserSubject(te.other.ID), reader)
+	reader := te.createRole(te.org, `{"name":"vm reader","rules":[{"effect":"allow","object":"org/vms/*","action":"compute.instances.get"}]}`)
+	te.bind(te.org, authz.UserSubject(te.other.ID), reader)
 	rec := te.do("GET", vmsPath(te.org), te.otherTok)
 	list.VMs = nil
 	decode(t, rec, &list)

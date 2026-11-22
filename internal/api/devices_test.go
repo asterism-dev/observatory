@@ -3,14 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
-	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/wgkey"
 )
@@ -161,63 +158,12 @@ func TestRemoveMemberDeletesDevicesAPI(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.createDevice(bobTok, org, "phone")
-	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 200 {
-		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
-	}
+	e.removeMember(org, bob)
 	if _, err := e.store.PurgeMember(t.Context(), org, bob.ID, func(context.Context) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	if got := e.listDevices(ownerTok, org); len(got) != 0 {
 		t.Fatalf("devices remain: %+v", got)
-	}
-}
-
-type loginAuth struct{}
-
-func (loginAuth) AuthCodeURL(string, string, bool) string { return "" }
-
-func (loginAuth) Exchange(context.Context, string, string) (store.Identity, error) {
-	return store.Identity{}, nil
-}
-
-func (loginAuth) VerifyCLIToken(context.Context, string, string) (store.Identity, error) {
-	return store.Identity{Subject: "fresh", Email: "fresh@x.io", Name: "fresh"}, nil
-}
-
-func TestFreshLoginCanCreateDevice(t *testing.T) {
-	e := newEnv(t)
-	a := &auth.Handler{Store: e.store, Auth: loginAuth{}, Reload: e.z.Reload}
-	mux := http.NewServeMux()
-	a.Routes(mux)
-	req := httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(`{"idToken":"x","accessToken":"y"}`))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	var tok struct{ Token string }
-	decode(t, rec, &tok)
-	var me struct{ User struct{ ID uuid.UUID } }
-	decode(t, e.do("GET", "/api/iam/v1/me", tok.Token), &me)
-	e.createDevice(tok.Token, e.personalOrg(store.User{ID: me.User.ID}), "laptop")
-}
-
-func TestLoginReloadIgnoresRequestCancel(t *testing.T) {
-	e := newEnv(t)
-	called := false
-	reload := func(ctx context.Context) error {
-		called = true
-		if ctx.Done() != nil {
-			t.Error("reload runs on a cancellable request context")
-		}
-		return e.z.Reload(ctx)
-	}
-	a := &auth.Handler{Store: e.store, Auth: loginAuth{}, Reload: reload}
-	mux := http.NewServeMux()
-	a.Routes(mux)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req := httptest.NewRequest("POST", "/api/auth/cli-token", strings.NewReader(`{"idToken":"x","accessToken":"y"}`)).WithContext(ctx)
-	mux.ServeHTTP(httptest.NewRecorder(), req)
-	if !called {
-		t.Fatal("reload not called")
 	}
 }
 

@@ -33,10 +33,10 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/fleet"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -50,12 +50,14 @@ type env struct {
 	t     *testing.T
 	pool  *pgxpool.Pool
 	s     *store.Store
+	iam   *iamtest.Server
+	pol   *iamtest.Policy
 	z     *authz.Service
 	h     *network.Hub
 	f     *fleet.Fleet
 	srv   *httptest.Server
 	owner uuid.UUID
-	org   store.Org
+	org   struct{ ID uuid.UUID }
 }
 
 func newEnv(t *testing.T) *env {
@@ -63,23 +65,16 @@ func newEnv(t *testing.T) *env {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool).WithMasterKey(seal.Key{1})
-	u, err := s.Login(ctx, store.Identity{Subject: "owner", Email: "owner@x.io", Name: "owner"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	org, err := s.CreateOrg(ctx, "A", u.User.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	z, err := authz.NewService(ctx, s.HubPolicy)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fake := iamtest.New(t)
+	owner := fake.AddUser("owner")
+	org := fake.CreateOrg(owner.ID, "A")
+	pol := fake.Policy(t, s.OwnerRefs)
+	z := pol.Service
 	h, err := network.Load(ctx, s, z, network.Config{GatewayHost: "gw.test", GatewayToken: gatewayToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := fleet.New(ctx, s, z, h, iaminternal.Server{Store: s})
+	f, err := fleet.New(ctx, s, z, h, fake.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +82,9 @@ func newEnv(t *testing.T) *env {
 	h.OnChange(f.NotifyOrg)
 	srv := httptest.NewServer(http.HandlerFunc(f.ServeConnect))
 	t.Cleanup(srv.Close)
-	return &env{t: t, pool: pool, s: s, z: z, h: h, f: f, srv: srv, owner: u.User.ID, org: org}
+	e := &env{t: t, pool: pool, s: s, iam: fake, pol: pol, z: z, h: h, f: f, srv: srv, owner: owner.ID}
+	e.org.ID = org
+	return e
 }
 
 func (e *env) node(org uuid.UUID, name string) (store.Node, string) {
@@ -130,11 +127,9 @@ func (e *env) sshKey(user uuid.UUID) string {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	k, err := e.s.AddSSHKey(context.Background(), store.SSHKey{UserID: user, Name: "k", PublicKey: string(ssh.MarshalAuthorizedKey(sp))})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return k.PublicKey
+	key := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sp)))
+	e.iam.AddSSHKey(user, key)
+	return key
 }
 
 func (e *env) envVar(name, value string) store.EnvVar {
@@ -329,14 +324,10 @@ func TestConnectRefusedSpoofedPeer(t *testing.T) {
 }
 
 func TestConnectRefusedForeignCredential(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
-	other, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := e.iam.CreateOrg(e.owner, "B")
 	_, credA := e.node(e.org.ID, "a")
-	b, _ := e.node(other.ID, "b")
+	b, _ := e.node(other, "b")
 	if _, resp, err := e.dialWith(underlayHeaders(credA, b.UnderlayIP.String())); err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("err=%v resp=%v", err, resp)
 	}
@@ -363,7 +354,7 @@ func TestConnectRefusedWithoutUnderlayAddress(t *testing.T) {
 func TestConnectWithoutNetwork(t *testing.T) {
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n1")
-	f, err := fleet.New(context.Background(), e.s, e.z, nil, iaminternal.Server{Store: e.s})
+	f, err := fleet.New(context.Background(), e.s, e.z, nil, e.iam.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,16 +381,13 @@ func TestConnectOverUnderlay(t *testing.T) {
 func TestDesiredOnlyOwnNodeAndForeignStatusIgnored(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	other, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := e.iam.CreateOrg(e.owner, "B")
 	a, cred := e.node(e.org.ID, "a")
 	a2, _ := e.node(e.org.ID, "a2")
-	b, _ := e.node(other.ID, "b")
+	b, _ := e.node(other, "b")
 	mine := e.vm(e.org.ID, a.ID, "mine", &e.owner, nil)
 	sibling := e.vm(e.org.ID, a2.ID, "sibling", &e.owner, nil)
-	foreign := e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
+	foreign := e.vm(other, b.ID, "foreign", &e.owner, nil)
 
 	if _, err := e.s.SetAutoSuspend(ctx, e.org.ID, mine.ID, 15); err != nil {
 		t.Fatal(err)
@@ -438,46 +426,25 @@ func TestDesiredOnlyOwnNodeAndForeignStatusIgnored(t *testing.T) {
 }
 
 func TestTeamMemberRemovalDropsKey(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
+	team := e.iam.AddTeam(e.org.ID, "core")
+	bob := e.iam.AddUser("bob")
+	e.iam.AddMember(e.org.ID, bob.ID, "member")
+	for _, u := range []uuid.UUID{e.owner, bob.ID} {
+		e.iam.SetTeamMember(e.org.ID, team, u, false)
 	}
-	bob, err := e.s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, _, err := e.s.CreateInvite(ctx, e.org.ID, store.RoleMember, e.owner, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := e.s.AcceptInvite(ctx, tok, bob.User.ID); err != nil {
-		t.Fatal(err)
-	}
-	for _, u := range []uuid.UUID{e.owner, bob.User.ID} {
-		if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, u, false); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	ownerKey, bobKey := e.sshKey(e.owner), e.sshKey(bob.User.ID)
-	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	e.pol.Sync(t)
+	ownerKey, bobKey := e.sshKey(e.owner), e.sshKey(bob.ID)
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team)
 
 	node := e.connect(cred)
 	first := node.desired()
 	if keys := first.Desired[0].Boot.SSHPublicKeys; len(keys) != 2 || !slices.Contains(keys, ownerKey) || !slices.Contains(keys, bobKey) {
 		t.Fatalf("keys = %v", keys)
 	}
-	if err := e.s.RemoveTeamMember(ctx, e.org.ID, team.ID, bob.User.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
+	e.iam.RemoveTeamMember(e.org.ID, team, bob.ID)
+	e.pol.Sync(t)
 	e.f.NotifyOrg(e.org.ID)
 	second := node.desired()
 	if keys := second.Desired[0].Boot.SSHPublicKeys; !slices.Equal(keys, []string{ownerKey}) {
@@ -642,23 +609,16 @@ func TestTeamVMNeverGetsPrivateVariable(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.iam.SetTeamMember(e.org.ID, team, e.owner, true)
 	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeUser, OwnerID: &e.owner, Name: "PRIVATE", CreatedBy: e.owner, UpdatedBy: e.owner}, "mine-only"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeTeam, OwnerID: &team.ID, Name: "TEAM", CreatedBy: e.owner, UpdatedBy: e.owner}, "shared"); err != nil {
+	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: e.org.ID, Kind: store.EnvSecret, Scope: store.EnvScopeTeam, OwnerID: &team, Name: "TEAM", CreatedBy: e.owner, UpdatedBy: e.owner}, "shared"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	teamVM := e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	e.pol.Sync(t)
+	teamVM := e.vm(e.org.ID, n.ID, "team-vm", nil, &team)
 	userVM := e.vm(e.org.ID, n.ID, "user-vm", &e.owner, nil)
 
 	for _, d := range e.connect(cred).desired().Desired {
@@ -793,16 +753,12 @@ func (e *env) barrier(node *fakeNode, v store.VM) {
 }
 
 func TestDesiredCarriesAttachments(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
-	other, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := e.iam.CreateOrg(e.owner, "B")
 	n, cred := e.node(e.org.ID, "n")
-	b, bcred := e.node(other.ID, "b")
+	b, bcred := e.node(other, "b")
 	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
-	e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
+	e.vm(other, b.ID, "foreign", &e.owner, nil)
 	d := e.readyDisk(v, "data")
 
 	m := e.connect(cred).desired()
@@ -923,7 +879,7 @@ func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
 	if _, err := e.pool.Exec(ctx, "UPDATE disk_exports SET releasing = true, release_seq = $2 WHERE disk_id = $1", d.ID, future); err != nil {
 		t.Fatal(err)
 	}
-	f, err := fleet.New(ctx, e.s, e.z, e.h, iaminternal.Server{Store: e.s})
+	f, err := fleet.New(ctx, e.s, e.z, e.h, e.iam.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,16 +893,12 @@ func TestSeqStartsAboveRecordedReleaseSeqs(t *testing.T) {
 }
 
 func TestDiskErrorsFromStatus(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
-	other, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := e.iam.CreateOrg(e.owner, "B")
 	n, cred := e.node(e.org.ID, "n")
-	b, _ := e.node(other.ID, "b")
+	b, _ := e.node(other, "b")
 	v := e.vm(e.org.ID, n.ID, "vm", &e.owner, nil)
-	foreign := e.vm(other.ID, b.ID, "foreign", &e.owner, nil)
+	foreign := e.vm(other, b.ID, "foreign", &e.owner, nil)
 	id := uuid.NewString()
 
 	node := e.connect(cred)
@@ -1180,9 +1132,7 @@ func (e *env) privateVar(org, user uuid.UUID, name, value string, hosts ...strin
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := e.z.Reload(ctx); err != nil {
-		e.t.Fatal(err)
-	}
+	e.pol.Sync(e.t)
 	return v
 }
 
@@ -1232,18 +1182,12 @@ func TestDesiredNoEgressWithoutBound(t *testing.T) {
 }
 
 func TestDesiredTeamVMNoPrivateBound(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.iam.SetTeamMember(e.org.ID, team, e.owner, true)
 	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
-	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team)
 
 	d := e.connect(cred).desired().Desired[0]
 	if _, ok := d.Boot.Env["GH_TOKEN"]; ok || d.Egress != nil {
@@ -1252,20 +1196,14 @@ func TestDesiredTeamVMNoPrivateBound(t *testing.T) {
 }
 
 func TestDesiredOtherOrgNoValues(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
 	nA, credA := e.node(e.org.ID, "a")
 	e.vm(e.org.ID, nA.ID, "vm-a", &e.owner, nil)
 	e.privateVar(e.org.ID, e.owner, "GH_TOKEN", ghValue, "api.github.com")
-	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	nB, credB := e.node(orgB.ID, "b")
-	e.vm(orgB.ID, nB.ID, "vm-b", &e.owner, nil)
+	orgB := e.iam.CreateOrg(e.owner, "B")
+	e.pol.Sync(t)
+	nB, credB := e.node(orgB, "b")
+	e.vm(orgB, nB.ID, "vm-b", &e.owner, nil)
 
 	placeholder := e.connect(credA).desired().Desired[0].Boot.Env["GH_TOKEN"]
 	if placeholder == "" {
@@ -1428,9 +1366,7 @@ func (e *env) integration(kind integrations.Kind, source integrations.Source, sc
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	if err := e.z.Reload(ctx); err != nil {
-		e.t.Fatal(err)
-	}
+	e.pol.Sync(e.t)
 	return v
 }
 
@@ -1481,18 +1417,12 @@ func TestDesiredIntegrationVMMode(t *testing.T) {
 }
 
 func TestDesiredTeamVMNoPrivateIntegration(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.iam.SetTeamMember(e.org.ID, team, e.owner, true)
 	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
-	e.vm(e.org.ID, n.ID, "team-vm", nil, &team.ID)
+	e.vm(e.org.ID, n.ID, "team-vm", nil, &team)
 
 	d := e.connect(cred).desired().Desired[0]
 	if len(d.Integrations) != 0 || d.Egress != nil {
@@ -1506,15 +1436,10 @@ func TestDesiredIntegrationsOtherOrg(t *testing.T) {
 	nA, _ := e.node(e.org.ID, "a")
 	e.vm(e.org.ID, nA.ID, "vm-a", &e.owner, nil)
 	v := e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeProxy, store.IntegrationSecret{Token: intToken})
-	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.z.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	nB, credB := e.node(orgB.ID, "b")
-	e.vm(orgB.ID, nB.ID, "vm-b", &e.owner, nil)
+	orgB := e.iam.CreateOrg(e.owner, "B")
+	e.pol.Sync(t)
+	nB, credB := e.node(orgB, "b")
+	e.vm(orgB, nB.ID, "vm-b", &e.owner, nil)
 	m := e.connect(credB).desired()
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -1796,15 +1721,10 @@ func TestDesiredIntegrationsUnresolvedKeepsOtherVMs(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	n, cred := e.node(e.org.ID, "n")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetTeamMember(ctx, e.org.ID, team.ID, e.owner, true); err != nil {
-		t.Fatal(err)
-	}
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.iam.SetTeamMember(e.org.ID, team, e.owner, true)
 	broken := e.vm(e.org.ID, n.ID, "broken", &e.owner, nil)
-	ok := e.vm(e.org.ID, n.ID, "ok", nil, &team.ID)
+	ok := e.vm(e.org.ID, n.ID, "ok", nil, &team)
 	e.integration(integrations.GitHub, integrations.SourcePAT, store.EnvScopeOrg, nil, integrations.ModeVM, store.IntegrationSecret{Token: intToken})
 	bad := e.integration(integrations.Linear, integrations.SourcePAT, store.EnvScopeUser, &e.owner, integrations.ModeVM, store.IntegrationSecret{Token: intToken})
 	if _, err := e.pool.Exec(ctx, "UPDATE integrations SET ciphertext = 'garbage' WHERE id = $1", bad.ID); err != nil {
@@ -2208,11 +2128,8 @@ func TestUsageReportForeignAccountIgnored(t *testing.T) {
 	nA, _ := e.node(e.org.ID, "a")
 	e.vm(e.org.ID, nA.ID, "vm", &e.owner, nil)
 	nB, credB := e.node(e.org.ID, "b")
-	team, err := e.s.CreateTeam(ctx, e.org.ID, "core")
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.vm(e.org.ID, nB.ID, "team-vm", nil, &team.ID)
+	team := e.iam.AddTeam(e.org.ID, "core")
+	e.vm(e.org.ID, nB.ID, "team-vm", nil, &team)
 	cl, first, _ := e.claudeAccounts()
 	e.connect(credB).desired()
 
@@ -2618,15 +2535,11 @@ func peerIDs(p proto.Peers) []string {
 }
 
 func TestPeersSameOrgOnly(t *testing.T) {
-	ctx := context.Background()
 	e := newEnv(t)
-	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	orgB := e.iam.CreateOrg(e.owner, "B")
 	_, cred1 := e.node(e.org.ID, "n1")
 	n2, cred2 := e.node(e.org.ID, "n2")
-	_, cred3 := e.node(orgB.ID, "n3")
+	_, cred3 := e.node(orgB, "n3")
 	a := e.connect(cred1)
 	p := a.nextPeers()
 	if len(p.Peers) != 1 || p.Peers[0].NodeID != n2.ID.String() || p.Peers[0].Address != n2.UnderlayIP.String() || p.Peers[0].PublicKey == "" {

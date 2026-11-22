@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -22,12 +24,13 @@ func (h *api) requirePlatformAdmin(w http.ResponseWriter, r *http.Request, actio
 	return false
 }
 
-func (h *api) adminReadError(w http.ResponseWriter, what string, err error) {
-	if errors.Is(err, store.ErrNotFound) {
+// orgExists 404s an org without members in the policy: iam keeps an owner in every org.
+func (h *api) orgExists(w http.ResponseWriter, org uuid.UUID) bool {
+	if len(h.z.Enforcer().UsersOf(org)) == 0 {
 		writeError(w, http.StatusNotFound, "not found")
-		return
+		return false
 	}
-	serverError(w, what, err)
+	return true
 }
 
 func (h *api) adminGetOrgLimits(w http.ResponseWriter, r *http.Request) {
@@ -38,8 +41,7 @@ func (h *api) adminGetOrgLimits(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.store.Org(r.Context(), id); err != nil {
-		h.adminReadError(w, "org", err)
+	if !h.orgExists(w, id) {
 		return
 	}
 	ls, err := h.store.Limits(r.Context(), id)
@@ -63,8 +65,7 @@ func (h *api) adminSetOrgLimits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The hub org lock no longer fails for an unknown org.
-	if _, err := h.store.Org(r.Context(), id); err != nil {
-		h.adminReadError(w, "org", err)
+	if !h.orgExists(w, id) {
 		return
 	}
 	h.commitLimits(w, r, id, store.ScopeOrg, l)

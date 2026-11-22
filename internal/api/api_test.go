@@ -18,9 +18,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/disks"
 	"github.com/asterism-dev/observatory/internal/fleet"
-	"github.com/asterism-dev/observatory/internal/iam"
-	"github.com/asterism-dev/observatory/internal/iaminternal"
 	"github.com/asterism-dev/observatory/internal/network"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -32,16 +31,19 @@ type env struct {
 	t     *testing.T
 	pool  *pgxpool.Pool
 	store *store.Store
+	iam   *iamtest.Server
+	pol   *iamtest.Policy
 	z     *authz.Service
 	net   *network.Hub
 	disks *disks.Hub
 	api   *api
 	h     http.Handler
 
-	iss      *auth.Issuer
+	jwts     *identity.Verifier
 	verifier *fakeVerifier
 	oauth    *fakeOAuth
 	google   *fakeGoogle
+	roles    map[uuid.UUID]authz.CustomRole
 }
 
 const gatewayToken = "0123456789abcdef0123456789abcdef"
@@ -50,84 +52,33 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	pool := dbtest.New(t)
 	s := store.New(pool).WithMasterKey(seal.Key{1})
-	z, err := authz.NewService(context.Background(), s.HubPolicy)
+	fake := iamtest.New(t)
+	pol := fake.Policy(t, s.OwnerRefs)
+	z := pol.Service
+	jwts, err := identity.NewVerifier(fake.URL(), iamtest.Issuer, fake.ServiceToken(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	iss, err := auth.NewIssuer(context.Background(), s, "https://hub.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	jwks := httptest.NewServer(iss.JWKSHandler())
-	t.Cleanup(jwks.Close)
-	idv, err := identity.NewVerifier(jwks.URL, "https://hub.test", "unused-service-token", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Verifier: idv, IAM: iaminternal.Server{Store: s}}
+	a := &auth.Handler{Store: s, PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}, Verifier: jwts, IAM: fake.Client()}
 	nh, err := network.Load(context.Background(), s, z, network.Config{GatewayHost: "hub.test", GatewayToken: gatewayToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := fleet.New(context.Background(), s, z, nh, iaminternal.Server{Store: s})
+	f, err := fleet.New(context.Background(), s, z, nh, fake.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(f.Close)
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
-	h, handler := newAPI(s, iaminternal.Server{Store: s}, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
-	e := &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, iss: iss, verifier: fv, oauth: fo, google: fg}
-	iamHandler, err := iam.Handler(iam.Deps{Store: s, Policy: z, Verifier: idv, Resources: ResourceServer{Store: s, Policy: currentPolicy{z}}, Pool: pool, PublicURL: a.PublicURL,
-		Revision: func() uint64 { return 0 }})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h, handler := newAPI(s, fake.Client(), a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
 	// No mux: it would clean the paths the Grafana proxies must see raw.
-	e.h = e.asEdge(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, iam.Prefix+"/") {
-			iamHandler.ServeHTTP(w, r)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	}))
-	return e
-}
-
-// currentPolicy serves the test's z at every revision, since tests reload it synchronously.
-type currentPolicy struct{ *authz.Service }
-
-func (currentPolicy) WaitRevision(context.Context, uint64) error { return nil }
-
-// asEdge swaps a session bearer on /api/ for a JWT as the edge does; an unknown or revoked session loses the credential.
-func (e *env) asEdge(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || !strings.HasPrefix(tok, "obs_") || !strings.HasPrefix(r.URL.Path, "/api/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		r.Header.Del("Authorization")
-		if sess, err := e.store.SessionByToken(r.Context(), tok); err == nil {
-			u, err := e.store.User(r.Context(), sess.UserID)
-			if err != nil {
-				e.t.Errorf("edge: load user: %v", err)
-				return
-			}
-			jwt, _, err := e.iss.Mint(u, sess)
-			if err != nil {
-				e.t.Errorf("edge: mint: %v", err)
-				return
-			}
-			r.Header.Set("Authorization", "Bearer "+jwt)
-		}
-		next.ServeHTTP(w, r)
-	})
+	return &env{t: t, pool: pool, store: s, iam: fake, pol: pol, z: z, net: nh, disks: dh, api: h, h: handler, jwts: jwts, verifier: fv, oauth: fo, google: fg, roles: map[uuid.UUID]authz.CustomRole{}}
 }
 
 func (e *env) newFleet() *fleet.Fleet {
 	e.t.Helper()
-	f, err := fleet.New(context.Background(), e.store, e.z, e.net, iaminternal.Server{Store: e.store})
+	f, err := fleet.New(context.Background(), e.store, e.z, e.net, e.iam.Client())
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -135,26 +86,18 @@ func (e *env) newFleet() *fleet.Fleet {
 	return f
 }
 
-// user logs an identity in and returns the user and a fresh session token.
-func (e *env) user(sub string) (store.User, string) {
+// user adds a user with a personal org to iam and returns it with a browser session's JWT.
+func (e *env) user(sub string) (iamtest.User, string) {
 	e.t.Helper()
-	ctx := context.Background()
-	res, err := e.store.Login(ctx, store.Identity{Subject: sub, Email: sub + "@x.io", Name: sub})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	// The login handler reloads the policy after creating a user and personal org.
+	u := e.iam.AddUser(sub)
 	e.reload()
-	return res.User, e.session(res.User)
+	return u, e.session(u)
 }
 
-func (e *env) session(u store.User) string {
+func (e *env) session(u iamtest.User) string {
 	e.t.Helper()
-	tok, _, err := e.store.CreateSession(context.Background(), u.ID, store.SessionBrowser, time.Hour, "ua", "1.2.3.4")
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return tok
+	jwt, _ := e.iam.JWT(u.ID, "browser")
+	return jwt
 }
 
 func (e *env) do(method, path, token string) *httptest.ResponseRecorder {
@@ -215,5 +158,19 @@ func TestInfoEndpoint(t *testing.T) {
 	}
 	if rec := e.do("GET", "/api/info", "nope"); rec.Code != 401 {
 		t.Fatalf("bad token: %d", rec.Code)
+	}
+}
+
+// The hub asks iam for the session on every request, so a revoke refuses before the JWT expires.
+func TestRevokedSessionRefusedAtOnce(t *testing.T) {
+	e := newEnv(t)
+	alice, _ := e.user("alice")
+	jwt, session := e.iam.JWT(alice.ID, "browser")
+	if rec := e.do("GET", "/api/info", jwt); rec.Code != 200 {
+		t.Fatalf("live session: %d", rec.Code)
+	}
+	e.iam.RevokeSession(session)
+	if rec := e.do("GET", "/api/info", jwt); rec.Code != 401 {
+		t.Fatalf("revoked session: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -164,11 +164,9 @@ func TestVMNetworksPermissions(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
 	e.addMember(org, dave, store.RoleAdmin)
-	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 	node := e.enrolledNode(ownerTok, org, "n1")
 	n := e.createNetwork(ownerTok, org, `{"name":"web"}`)
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(team), node))
@@ -185,8 +183,8 @@ func TestVMNetworksPermissions(t *testing.T) {
 		}
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"no-use","rules":[{"effect":"deny","object":"org/networks/*","action":"network.networks.use"}]}`)
-	e.bind(ownerTok, org, "user:"+bob.ID.String(), role)
+	role := e.createRole(org, `{"name":"no-use","rules":[{"effect":"deny","object":"org/networks/*","action":"network.networks.use"}]}`)
+	e.bind(org, "user:"+bob.ID.String(), role)
 	mine := e.createVM(bobTok, org, vmBody("b1", userOwner(), node))
 	if code := e.setVMNetworks(bobTok, org, mine.ID, true, n.ID); code != 403 {
 		t.Fatalf("no network.networks.use: %d", code)

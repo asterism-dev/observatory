@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/version"
@@ -31,14 +32,14 @@ func hubVersion(t *testing.T, v string) {
 func updatesPath(org uuid.UUID) string { return "/api/orgs/" + org.String() + "/node-updates" }
 
 // onlineNode enrolls a node and keeps it connected with the given version and hypervisor.
-func (e *env) onlineNode(by store.User, org uuid.UUID, name, ver string, hv *proto.Hypervisor) store.Node {
+func (e *env) onlineNode(by iamtest.User, org uuid.UUID, name, ver string, hv *proto.Hypervisor) store.Node {
 	e.t.Helper()
 	n, _ := e.onlineNodeConn(by, org, name, ver, hv)
 	return n
 }
 
 // onlineNodeConn is onlineNode that also returns the node's end of the control stream.
-func (e *env) onlineNodeConn(by store.User, org uuid.UUID, name, ver string, hv *proto.Hypervisor) (store.Node, net.Conn) {
+func (e *env) onlineNodeConn(by iamtest.User, org uuid.UUID, name, ver string, hv *proto.Hypervisor) (store.Node, net.Conn) {
 	e.t.Helper()
 	ctx := context.Background()
 	n, token, err := e.store.CreateNode(ctx, store.Node{OrgID: org, Name: name, CreatedBy: by.ID})

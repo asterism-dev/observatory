@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -92,11 +93,9 @@ func TestSetDeleteAfterPermission(t *testing.T) {
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 	v := e.createVM(carolTok, org, vmBody("t1", teamOwner(team), e.enrolledNode(ownerTok, org, "n1")))
 	path := vmsPath(org) + "/" + v.ID + "/delete-after"
 	if rec := e.send("PUT", path, bobTok, `{"deleteAfter":null}`); rec.Code != 403 {
@@ -114,14 +113,12 @@ func TestVMHistory(t *testing.T) {
 	carol, carolTok := e.user("carol")
 	dave, daveTok := e.user("dave")
 	org := e.createOrg(aliceTok, "Acme")
-	for _, u := range []store.User{bob, carol, dave} {
+	for _, u := range []iamtest.User{bob, carol, dave} {
 		e.addMember(org, u, store.RoleMember)
 	}
-	team := e.createTeam(aliceTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), aliceTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-	e.makeTeamAdmin(aliceTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 	node := e.enrolledNode(aliceTok, org, "n1")
 	mine := e.createVM(bobTok, org, vmBody("bobs", userOwner(), node))
 	teamVM := e.createVM(carolTok, org, vmBody("teams", teamOwner(team), node))
@@ -154,9 +151,7 @@ func TestVMHistory(t *testing.T) {
 		t.Fatalf("org admin sees: %+v", n)
 	}
 
-	if rec := e.do("DELETE", memberPath(org, carol), aliceTok); rec.Code != 200 {
-		t.Fatalf("remove carol: %d %s", rec.Code, rec.Body.String())
-	}
+	e.removeMember(org, carol)
 	for _, v := range e.history(aliceTok, org.String()).VMs {
 		if v.Name == "teams" && (v.CreatedBy.ID != carol.ID.String() || v.CreatedBy.Name != "") {
 			t.Fatalf("removed creator: %+v", v)

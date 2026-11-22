@@ -58,8 +58,8 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 		}
 	}
 
-	role := e.createRole(ownerTok, org, `{"name":"tokens","rules":[{"effect":"allow","object":"org/settings","action":"telemetry.tokens.create"}]}`)
-	e.bind(ownerTok, org, "user:"+carol.ID.String(), role)
+	role := e.createRole(org, `{"name":"tokens","rules":[{"effect":"allow","object":"org/settings","action":"telemetry.tokens.create"}]}`)
+	e.bind(org, "user:"+carol.ID.String(), role)
 	if rec := e.do("GET", tokensPath(org), carolTok); rec.Code != 200 {
 		t.Fatalf("custom role list: %d", rec.Code)
 	}
@@ -67,8 +67,8 @@ func TestTokenCreateNeedsOrgWideAccess(t *testing.T) {
 		t.Fatalf("custom role create: %d %s", rec.Code, rec.Body.String())
 	}
 
-	deny := e.createRole(ownerTok, org, `{"name":"no-vm","rules":[{"effect":"deny","object":"org/vms/`+uuid.NewString()+`","action":"compute.instances.getMetrics"}]}`)
-	e.bind(ownerTok, org, "user:"+dave.ID.String(), deny)
+	deny := e.createRole(org, `{"name":"no-vm","rules":[{"effect":"deny","object":"org/vms/`+uuid.NewString()+`","action":"compute.instances.getMetrics"}]}`)
+	e.bind(org, "user:"+dave.ID.String(), deny)
 	if rec := e.send("POST", tokensPath(org), daveTok, `{"name":"g"}`); rec.Code != 403 {
 		t.Fatalf("admin with deny: %d %s", rec.Code, rec.Body.String())
 	}
@@ -178,14 +178,10 @@ func TestTokenDiesWithCreatorAccess(t *testing.T) {
 		}
 	}
 
-	if rec := e.send("PATCH", memberPath(org, bob), ownerTok, `{"role":"member"}`); rec.Code != 200 {
-		t.Fatalf("demote: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := e.do("DELETE", memberPath(org, dave), ownerTok); rec.Code != 200 {
-		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
-	}
-	role := e.createRole(ownerTok, org, `{"name":"no-node","rules":[{"effect":"deny","object":"org/nodes/`+uuid.NewString()+`","action":"compute.nodes.getMetrics"}]}`)
-	e.bind(ownerTok, org, "user:"+carol.ID.String(), role)
+	e.addMember(org, bob, store.RoleMember)
+	e.removeMember(org, dave)
+	role := e.createRole(org, `{"name":"no-node","rules":[{"effect":"deny","object":"org/nodes/`+uuid.NewString()+`","action":"compute.nodes.getMetrics"}]}`)
+	e.bind(org, "user:"+carol.ID.String(), role)
 	if _, status := e.grafana("Bearer " + demoted.Token); status != 200 {
 		t.Fatalf("within cache: %d", status)
 	}
@@ -229,45 +225,3 @@ func TestGrafanaAuthIgnoresCookies(t *testing.T) {
 	}
 }
 
-func TestTokenRevokedWhenCreatorRemoved(t *testing.T) {
-	e := newEnv(t)
-	_, ownerTok := e.user("alice")
-	bob, bobTok := e.user("bob")
-	carol, carolTok := e.user("carol")
-	org := e.createOrg(ownerTok, "Acme")
-	e.addMember(org, bob, store.RoleAdmin)
-	e.addMember(org, carol, store.RoleAdmin)
-	removed := e.createTelemetryToken(bobTok, org, "bob")
-	left := e.createTelemetryToken(carolTok, org, "carol")
-	kept := e.createTelemetryToken(ownerTok, org, "alice")
-
-	// Neither token is used before its creator goes, so only the membership change can revoke it.
-	if rec := e.do("DELETE", memberPath(org, bob), ownerTok); rec.Code != 200 {
-		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := e.do("POST", "/api/iam/v1/orgs/"+org.String()+":leave", carolTok); rec.Code != 200 {
-		t.Fatalf("leave: %d %s", rec.Code, rec.Body.String())
-	}
-	var list []telemetryTokenTest
-	decode(t, e.do("GET", tokensPath(org), ownerTok), &list)
-	if len(list) != 1 || list[0].ID != kept.ID {
-		t.Fatalf("list: %+v", list)
-	}
-	es := e.audit(store.ActionGrafanaTokenRevoke)
-	if len(es) != 2 {
-		t.Fatalf("audit: %+v", es)
-	}
-	for _, a := range es {
-		if a.ActorKind != store.ActorSystem || (a.Details["name"] != "bob" && a.Details["name"] != "carol") {
-			t.Fatalf("audit: %+v", a)
-		}
-	}
-
-	e.addMember(org, bob, store.RoleAdmin)
-	e.addMember(org, carol, store.RoleAdmin)
-	for _, tok := range []string{removed.Token, left.Token} {
-		if _, status := e.grafana("Bearer " + tok); status != 401 {
-			t.Fatalf("revived after re-add: %d", status)
-		}
-	}
-}

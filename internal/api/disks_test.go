@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -71,7 +72,7 @@ func TestCreateDisk(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.addMember(org, bob, store.RoleMember)
-	team := e.createTeam(ownerTok, org, "core")
+	team := e.createTeam(org, "core")
 
 	d := e.createDisk(bobTok, org, diskBody("data", userOwner(), 10))
 	if d.State != "creating" || d.SizeGB != 10 || d.Owner.Kind != "user" || d.Owner.Name != "bob" || !d.CanUse || !d.CanDelete {
@@ -210,15 +211,13 @@ func TestDiskListFiltered(t *testing.T) {
 	carol, carolTok := e.user("carol")
 	admin, adminTok := e.user("dave")
 	org := e.createOrg(ownerTok, "Acme")
-	for _, u := range []store.User{bob, carol} {
+	for _, u := range []iamtest.User{bob, carol} {
 		e.addMember(org, u, store.RoleMember)
 	}
 	e.addMember(org, admin, store.RoleAdmin)
-	team := e.createTeam(ownerTok, org, "core")
-	if rec := e.send("PUT", teamMemberPath(org, team, bob), ownerTok, `{"admin":false}`); rec.Code != 200 {
-		t.Fatal(rec.Code)
-	}
-	e.makeTeamAdmin(ownerTok, org, team, carol)
+	team := e.createTeam(org, "core")
+	e.setTeamMember(org, team, bob, false)
+	e.setTeamMember(org, team, carol, true)
 	e.createDisk(bobTok, org, diskBody("mine", userOwner(), 1))
 	e.createDisk(carolTok, org, diskBody("hers", userOwner(), 1))
 	e.createDisk(carolTok, org, diskBody("shared", teamOwner(team), 1))
@@ -306,7 +305,7 @@ func TestDiskAuthorizationDenied(t *testing.T) {
 	e.addMember(org, bob, store.RoleMember)
 	e.addMember(org, carol, store.RoleMember)
 	e.addMember(org, admin, store.RoleAdmin)
-	team := e.createTeam(ownerTok, org, "core")
+	team := e.createTeam(org, "core")
 	d := e.createDisk(bobTok, org, diskBody("data", userOwner(), 1))
 	base := disksPath(org) + "/" + d.ID
 

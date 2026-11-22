@@ -19,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
+	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -118,10 +119,10 @@ func TestChangedOrgs(t *testing.T) {
 	}
 }
 
-// streamEnv is a store with bob owning a VM in acme, and a publisher streaming iam's policy of it.
+// streamEnv is a store with bob owning a VM in acme, and iam streaming the policy of it.
 type streamEnv struct {
 	s   *store.Store
-	pub *platformauthz.Publisher
+	iam *iamtest.Server
 	org uuid.UUID
 	bob uuid.UUID
 	vm  authz.VMRef
@@ -136,59 +137,28 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	ctx := context.Background()
 	pool := dbtest.New(t)
 	s := store.New(pool).WithMasterKey(seal.Key{1})
-	login := func(sub string) uuid.UUID {
-		res, err := s.Login(ctx, store.Identity{Subject: sub, Email: sub + "@x.io", Name: sub})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return res.User.ID
-	}
-	alice, bob := login("alice"), login("bob")
-	org, err := s.CreateOrg(ctx, "acme", alice)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inv, _, err := s.CreateInvite(ctx, org.ID, store.RoleMember, alice, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.AcceptInvite(ctx, inv, bob); err != nil {
-		t.Fatal(err)
-	}
-	node, enroll, err := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n1", CreatedBy: alice})
+	iam := iamtest.New(t)
+	alice, bob := iam.AddUser("alice").ID, iam.AddUser("bob").ID
+	org := iam.CreateOrg(alice, "acme")
+	iam.AddMember(org, bob, "member")
+	node, enroll, err := s.CreateNode(ctx, store.Node{OrgID: org, Name: "n1", CreatedBy: alice})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.EnrollNode(ctx, enroll); err != nil {
 		t.Fatal(err)
 	}
-	vm, err := s.CreateVM(ctx, store.VM{OrgID: org.ID, NodeID: node.ID, UserID: &bob, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob})
+	vm, err := s.CreateVM(ctx, store.VM{OrgID: org, NodeID: node.ID, UserID: &bob, Name: "bobvm", CPUs: 1, MemoryMB: 128, DiskGB: 1, CreatedBy: bob})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &streamEnv{s: s, pub: platformauthz.NewPublisher(), org: org.ID, bob: bob, vm: authz.VMRef{OrgID: org.ID, ID: vm.ID, UserID: &bob}, pool: pool}
+	e := &streamEnv{s: s, iam: iam, org: org, bob: bob, vm: authz.VMRef{OrgID: org, ID: vm.ID, UserID: &bob}, pool: pool}
 	e.clock.Store(time.Now().UnixNano())
-	e.publish(t, func(*authz.Policy) {})
-	mux := http.NewServeMux()
-	mux.Handle(e.pub.Handler("/internal/iam"))
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	if e.w, err = platformauthz.NewWatcher(srv.URL, svcToken, nil); err != nil {
+	if e.w, err = platformauthz.NewWatcher(iam.URL(), iam.ServiceToken(), nil); err != nil {
 		t.Fatal(err)
 	}
 	e.w.WithClock(func() time.Time { return time.Unix(0, e.clock.Load()) })
 	return e
-}
-
-// publish streams iam's committed policy, as iam would after a commit, with change applied on top.
-func (e *streamEnv) publish(t *testing.T, change func(*authz.Policy)) {
-	t.Helper()
-	p, err := e.s.PolicySnapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	change(&p)
-	e.pub.Publish(p)
 }
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
@@ -211,8 +181,8 @@ func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 	if !hp.Enforcer().CanConnect(e.bob, e.vm) {
 		t.Fatal("the VM owner cannot connect after the first snapshot")
 	}
-	other, team := uuid.New(), uuid.New()
-	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: other, ID: team}) })
+	other := uuid.New()
+	team := e.iam.AddTeam(other, "core")
 	waitUntil(t, "the unrelated update", func() bool { return hp.Enforcer().HasTeam(other, team) })
 	if !hp.Enforcer().CanConnect(e.bob, e.vm) {
 		t.Fatal("the VM owner lost access on an unrelated policy message")
@@ -221,9 +191,7 @@ func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 		t.Fatal("hub policy not current with a live stream")
 	}
 
-	e.publish(t, func(p *authz.Policy) {
-		p.Memberships = slices.DeleteFunc(p.Memberships, func(m authz.MemberRole) bool { return m.UserID == e.bob })
-	})
+	e.iam.RemoveMember(e.org, e.bob)
 	waitUntil(t, "bob's removal", func() bool { _, ok := hp.Enforcer().Role(e.org, e.bob); return !ok })
 }
 
@@ -235,12 +203,11 @@ func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 	}
 	short, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	if err := hp.WaitRevision(short, e.pub.Revision()+1); err == nil {
+	if err := hp.WaitRevision(short, e.iam.Revision()+1); err == nil {
 		t.Fatal("WaitRevision returned before iam published that revision")
 	}
-	team := uuid.New()
-	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: e.org, ID: team}) })
-	if err := hp.WaitRevision(t.Context(), e.pub.Revision()); err != nil {
+	team := e.iam.AddTeam(e.org, "core")
+	if err := hp.WaitRevision(t.Context(), e.iam.Revision()); err != nil {
 		t.Fatal(err)
 	}
 	// WaitRevision promises the enforcer itself includes the revision, not just the watcher.
@@ -265,7 +232,7 @@ func TestHubPolicyFreshness(t *testing.T) {
 	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms RENAME TO vms_away"); err != nil {
 		t.Fatal(err)
 	}
-	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: e.org, ID: uuid.New()}) })
+	e.iam.AddTeam(e.org, "core")
 	waitUntil(t, "the failed reload to withhold the policy", func() bool { return !fresh() && !bobIn() })
 	if _, err := e.pool.Exec(t.Context(), "ALTER TABLE vms_away RENAME TO vms"); err != nil {
 		t.Fatal(err)
@@ -277,6 +244,6 @@ func TestHubPolicyFreshness(t *testing.T) {
 	if fresh() || bobIn() {
 		t.Fatal("still current on a silent stream")
 	}
-	e.publish(t, func(p *authz.Policy) { p.Teams = append(p.Teams, authz.TeamRef{OrgID: e.org, ID: uuid.New()}) })
+	e.iam.AddTeam(e.org, "core")
 	waitUntil(t, "the next message to make the stream live", fresh)
 }

@@ -63,11 +63,7 @@ func (e *env) withBuildLogs(logs *telemetry.LogWriter) *buildEnv {
 func (e *buildEnv) node(org uuid.UUID) uuid.UUID {
 	e.t.Helper()
 	ctx := context.Background()
-	members, err := e.store.Members(ctx, org)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	n, tok, err := e.store.CreateNode(ctx, store.Node{OrgID: org, Name: "n" + uuid.NewString()[:8], CreatedBy: members[0].User.ID})
+	n, tok, err := e.store.CreateNode(ctx, store.Node{OrgID: org, Name: "n" + uuid.NewString()[:8], CreatedBy: e.z.Enforcer().UsersOf(org)[0]})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -155,8 +151,8 @@ func TestBuildRequiresRefUse(t *testing.T) {
 	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
 	img := e.recipeImage(aliceTok, org, "tools", `[{"kind":"secret","scope":"org","name":"ORG_TOKEN"}]`)
 	bare := e.createImage(aliceTok, org, `{"name":"bare","scope":"org"}`)
-	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
+	deny := e.createRole(org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"secrets.variables.use"}]}`)
+	e.bind(org, authz.UserSubject(bob.ID), deny)
 
 	if rec := e.do("POST", buildsPath(org, bare), aliceTok); rec.Code != 422 {
 		t.Fatalf("no recipe: %d %s", rec.Code, rec.Body.String())
@@ -399,7 +395,7 @@ func TestBuildFailsWhenOwnerLeftPolicy(t *testing.T) {
 	e.addMember(org, bob, store.RoleAdmin)
 	e.node(org)
 	id := e.startBuild(bobTok, org, e.recipeImage(bobTok, org, "tools", ""))
-	e.exec(`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`, org, bob.ID)
+	e.iam.RemoveMember(org, bob.ID)
 	e.reload()
 	e.tick()
 	if b := e.build(id); b.State != store.BuildFailed || b.VMID != nil || !strings.Contains(b.Error, "user:"+bob.ID.String()) {
@@ -479,7 +475,7 @@ func TestAgentEndpointsNeedBuildSecret(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	alice, aliceTok := e.user("alice")
 	org := e.createOrg(aliceTok, "Acme")
-	team := e.createTeam(aliceTok, org, "core")
+	team := e.createTeam(org, "core")
 	img := e.recipeImage(aliceTok, org, "tools", "")
 	base := e.createImage(aliceTok, org, `{"name":"base","scope":"org"}`)
 	teamImg := e.createImage(aliceTok, org, `{"name":"t","scope":"team","teamId":"`+team.String()+`"}`)
@@ -534,8 +530,8 @@ func TestAgentEndpointsNeedBuildSecret(t *testing.T) {
 			t.Fatalf("%s: %d %v", c.name, code, got)
 		}
 	}
-	noUse := e.createRole(aliceTok, org, `{"name":"no images","rules":[{"effect":"deny","object":"org/images","action":"artifacts.images.use"}]}`)
-	e.bind(aliceTok, org, authz.UserSubject(alice.ID), noUse)
+	noUse := e.createRole(org, `{"name":"no images","rules":[{"effect":"deny","object":"org/images","action":"artifacts.images.use"}]}`)
+	e.bind(org, authz.UserSubject(alice.ID), noUse)
 	if _, got := grant(t, e.agent, "observatory", secret, repoScope(base, "pull")); len(got) != 0 {
 		t.Fatalf("base pull without the starter's artifacts.images.use: %v", got)
 	}

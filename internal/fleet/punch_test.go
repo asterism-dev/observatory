@@ -95,15 +95,11 @@ func TestPunchSentToBothSides(t *testing.T) {
 }
 
 func TestPunchOnlyWithinPeerSet(t *testing.T) {
-	ctx := context.Background()
 	_, offset := fakeClock(t)
 	e := newEnv(t)
-	orgB, err := e.s.CreateOrg(ctx, "B", e.owner)
-	if err != nil {
-		t.Fatal(err)
-	}
+	orgB := e.iam.CreateOrg(e.owner, "B")
 	na, nb, a, b := relayPair(e)
-	nx, credX := e.node(orgB.ID, "x")
+	nx, credX := e.node(orgB, "x")
 	x := e.connect(credX)
 	e.observe(map[uuid.UUID]string{na.ID: epA, nb.ID: epB, nx.ID: "192.0.2.9:40003"})
 	a.reportPath(nx, "relay")
