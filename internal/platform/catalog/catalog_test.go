@@ -274,6 +274,26 @@ func TestRegisterRetriesTransportErrors(t *testing.T) {
 	}
 }
 
+func TestRegisterRetriesInternal(t *testing.T) {
+	fastRetry(t)
+	h := &flakyIAM{code: connect.CodeInternal}
+	h.failures.Store(3)
+	if _, err := Register(t.Context(), serve(t, h), sample()); err != nil || h.calls.Load() != 4 {
+		t.Errorf("err %v after %d calls", err, h.calls.Load())
+	}
+}
+
+func TestRegisterRefusalsAtOnce(t *testing.T) {
+	fastRetry(t)
+	for _, code := range []connect.Code{connect.CodePermissionDenied, connect.CodeUnauthenticated} {
+		h := &flakyIAM{code: code}
+		h.failures.Store(5)
+		if _, err := Register(t.Context(), serve(t, h), sample()); connect.CodeOf(err) != code || h.calls.Load() != 1 {
+			t.Errorf("%v: err %v after %d calls", code, err, h.calls.Load())
+		}
+	}
+}
+
 func TestRegisterInvalidArgumentAtOnce(t *testing.T) {
 	fastRetry(t)
 	h := &flakyIAM{code: connect.CodeInvalidArgument}

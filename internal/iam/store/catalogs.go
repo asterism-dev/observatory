@@ -71,6 +71,7 @@ func missingFrom(a, b []string) []string {
 	return out
 }
 
+// ponytail: stored rows are not re-validated against current prefixes; matters when an extraction drops a prefix, re-registration fixes it.
 func readCatalogs(ctx context.Context, q querier) ([]authz.Catalog, error) {
 	rows, err := q.Query(ctx, `SELECT payload FROM catalogs WHERE digest <> '' ORDER BY service`)
 	if err != nil {

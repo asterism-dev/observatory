@@ -278,7 +278,7 @@ func Register(ctx context.Context, client iamv1connect.CatalogInternalServiceCli
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("register catalog: %w (last error: %w)", ctx.Err(), err)
 		}
-		if connect.CodeOf(err) != connect.CodeUnavailable {
+		if code := connect.CodeOf(err); code != connect.CodeUnavailable && code != connect.CodeInternal {
 			return "", fmt.Errorf("register catalog: %w", err)
 		}
 		select {
