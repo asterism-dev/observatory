@@ -285,3 +285,46 @@ func TestReloadKeepsLoadOrder(t *testing.T) {
 		t.Fatalf("an older load replaced a newer one: role %q", r)
 	}
 }
+
+func TestReloadCommittedRetriesUntilCaughtUp(t *testing.T) {
+	old := commitRetryWait
+	commitRetryWait = 10 * time.Millisecond
+	t.Cleanup(func() { commitRetryWait = old })
+	l := newRoleLoad("member")
+	var fail atomic.Bool
+	svc, err := NewService(context.Background(), func(ctx context.Context) (Policy, error) {
+		if fail.Load() {
+			return Policy{}, errors.New("db down")
+		}
+		return l.load(ctx)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.Behind() {
+		t.Fatal("behind before any failure")
+	}
+	fail.Store(true)
+	l.role.Store("owner")
+	if err := svc.ReloadCommitted(context.Background()); err == nil {
+		t.Fatal("want the reload error")
+	}
+	if !svc.Behind() {
+		t.Fatal("not behind after a failed reload of a commit")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if !svc.Behind() || l.roleIn(svc) != "member" {
+		t.Fatal("caught up while every load fails")
+	}
+	fail.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.Behind() {
+		if time.Now().After(deadline) {
+			t.Fatal("the background retry never caught up")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if r := l.roleIn(svc); r != "owner" {
+		t.Fatalf("caught up without the commit: role %q", r)
+	}
+}

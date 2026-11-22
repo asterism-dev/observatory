@@ -16,8 +16,9 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 )
 
-const (
-	policySendTimeout = 30 * time.Second
+const policySendTimeout = 30 * time.Second
+
+var (
 	// keepaliveEvery resends the latest snapshot on a quiet stream, so watchers can tell silence from loss.
 	keepaliveEvery = 30 * time.Second
 )
@@ -26,15 +27,22 @@ type streamControllerKey struct{}
 
 // Publisher streams the authorization snapshot; Publish never blocks, and a slow watcher skips to the latest snapshot.
 type Publisher struct {
-	mu   sync.Mutex
-	rev  uint64
-	last *iamv1.Policy
-	subs map[chan struct{}]struct{}
+	mu     sync.Mutex
+	rev    uint64
+	last   *iamv1.Policy
+	subs   map[chan struct{}]struct{}
+	behind func() bool
 }
 
 func NewPublisher() *Publisher {
 	// Seeding with the clock keeps revisions increasing across restarts, so watchers never see one go backwards.
 	return &Publisher{rev: uint64(time.Now().UnixMicro()), subs: map[chan struct{}]struct{}{}}
+}
+
+// WithBehind sends no keepalive while behind reports that the published policy may miss a commit: watchers then go stale and refuse instead of trusting it.
+func (p *Publisher) WithBehind(behind func() bool) *Publisher {
+	p.behind = behind
+	return p
 }
 
 // Publish is fed from authz.Service.OnReload.
@@ -73,20 +81,6 @@ func (p *Publisher) Revision() uint64 {
 	return 0
 }
 
-// WaitRevision returns once rev or a later revision is published, or with ctx's error.
-func (p *Publisher) WaitRevision(ctx context.Context, rev uint64) error {
-	ch := p.subscribe()
-	defer p.unsubscribe(ch)
-	for p.Revision() < rev {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ch:
-		}
-	}
-	return nil
-}
-
 func (p *Publisher) subscribe() chan struct{} {
 	ch := make(chan struct{}, 1)
 	ch <- struct{}{}
@@ -118,7 +112,7 @@ func (p *Publisher) WatchPolicy(ctx context.Context, _ *connect.Request[iamv1.Wa
 			return nil
 		case <-ch:
 		case <-keepalive.C:
-			resend = true
+			resend = p.behind == nil || !p.behind()
 		}
 		msg := p.latest()
 		if msg == nil || msg.Revision == sent && !resend {

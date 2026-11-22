@@ -117,7 +117,7 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	if err != nil {
 		return nil, err
 	}
-	policies := platformauthz.NewPublisher()
+	policies := platformauthz.NewPublisher().WithBehind(z.Behind)
 	z.OnReload(func(_, p authz.Policy) { policies.Publish(p) })
 	oidc, err := NewOIDC(ctx, cfg.OIDCIssuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
 	if err != nil {
@@ -137,9 +137,7 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	}
 	login := &loginHandler{Store: s, Auth: oidc, PublicURL: publicURL, Issuer: cfg.OIDCIssuer, CLIClientID: cfg.CLIClientID, EdgeToken: cfg.EdgeToken,
 		Reload: func(ctx context.Context, user, org uuid.UUID) error {
-			rctx, cancel := context.WithTimeout(ctx, reloadWait)
-			defer cancel()
-			if err := z.Reload(rctx); err != nil {
+			if err := z.ReloadCommitted(ctx); err != nil {
 				return err
 			}
 			// The SPA calls hub routes right after login; CanHold without rules answers once the hub has this revision.

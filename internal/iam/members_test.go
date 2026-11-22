@@ -2,10 +2,12 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/iam/store"
+	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 )
 
 func (e *env) deleteMember(jwt string, org uuid.UUID, u store.User) error {
@@ -458,5 +461,47 @@ func TestReloadsDoNotDeadlockASmallPool(t *testing.T) {
 		if _, member := e.z.Enforcer().Role(r.org, r.u.ID); member {
 			t.Errorf("%s still a member of %s", r.u.Name, r.org)
 		}
+	}
+}
+
+// A removal whose post-commit reload fails still succeeds; iam then reports the policy behind and publishes the removal once a retry loads it.
+func TestRemovalPublishedAfterFailedReload(t *testing.T) {
+	var fail atomic.Bool
+	pool := storetest.NewDB(t)
+	s := store.New(pool)
+	e := newEnvOn(t, pool, func(ctx context.Context) (authz.Policy, error) {
+		if fail.Load() {
+			return authz.Policy{}, errors.New("db blip")
+		}
+		return s.PolicySnapshot(ctx)
+	})
+	_, ownerTok := e.user("alice")
+	bob, _ := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, bob, store.RoleMember)
+	rev := e.rev.Load()
+	fail.Store(true)
+	if err := e.deleteMember(ownerTok, org, bob); err != nil {
+		t.Fatal(err)
+	}
+	if !e.z.Behind() {
+		t.Fatal("not behind after the removal's reload failed")
+	}
+	if e.rev.Load() != rev {
+		t.Fatal("published a revision while every load fails")
+	}
+	fail.Store(false)
+	deadline := time.Now().Add(10 * time.Second)
+	for e.z.Behind() {
+		if time.Now().After(deadline) {
+			t.Fatal("iam never retried the failed reload")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if e.rev.Load() <= rev {
+		t.Fatal("caught up without publishing")
+	}
+	if _, member := e.z.Enforcer().Role(org, bob.ID); member {
+		t.Fatal("the published policy still lists the removed member")
 	}
 }

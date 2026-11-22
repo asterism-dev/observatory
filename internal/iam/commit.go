@@ -118,10 +118,8 @@ func (s *server) commitHeld(ctx context.Context, fn func(tx *store.Store, heldRe
 	if err != nil {
 		return toConnect("commit", err)
 	}
-	// Committed: report success so clients don't retry and duplicate; a hang-up must not leave the enforcer stale.
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reloadWait)
-	defer cancel()
-	if err := s.Policy.Reload(rctx); err != nil {
+	// Committed: report success so clients don't retry and duplicate; a failed reload is retried and withholds keepalives meanwhile.
+	if err := s.Policy.ReloadCommitted(ctx); err != nil {
 		slog.Error("authz reload after commit", "err", err)
 	}
 	return nil

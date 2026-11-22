@@ -16,7 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 )
 
-// reloadWait bounds every policy reload in iam, like the hub's CanHold wait.
+// reloadWait bounds the policy reload on the escalation path, like the hub's CanHold wait; authz bounds the reloads after commits.
 var reloadWait = 5 * time.Second
 
 // canGrant is CanGrantRole on iam's policy; on an escalation it asks the hub, whose policy adds the grants of service-owned objects.

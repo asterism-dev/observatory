@@ -25,9 +25,10 @@ const (
 	maxBackoff = 30 * time.Second
 	// maxStale matches the JWT lifetime, so a lost stream opens no revocation window beyond it.
 	maxStale = 5 * time.Minute
-	// silentAfter is three missed keepalives: a half-open stream errs on nothing, so silence counts as loss.
-	silentAfter = 3 * keepaliveEvery
 )
+
+// silentAfter is three missed keepalives: a half-open stream errs on nothing, so silence counts as loss.
+var silentAfter = 3 * keepaliveEvery
 
 type snapshot struct {
 	revision uint64

@@ -1,12 +1,17 @@
 package authz
 
 import (
-	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
 )
 
@@ -46,28 +51,54 @@ func TestPolicyPublishSkipsUnchanged(t *testing.T) {
 	}
 }
 
-func TestPolicyWaitRevision(t *testing.T) {
-	ps := NewPublisher()
+func TestPublisherSendsNoKeepaliveWhileBehind(t *testing.T) {
+	old := keepaliveEvery
+	keepaliveEvery = 50 * time.Millisecond
+	t.Cleanup(func() { keepaliveEvery = old })
+	var behind atomic.Bool
+	ps := NewPublisher().WithBehind(behind.Load)
 	ps.Publish(coreauthz.Policy{})
-	rev := ps.Revision()
-	if err := ps.WaitRevision(t.Context(), rev); err != nil {
-		t.Fatalf("current revision: %v", err)
+	path, h := ps.Handler("")
+	mux := http.NewServeMux()
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	stream, err := iamv1connect.NewPolicyServiceClient(srv.Client(), srv.URL).WatchPolicy(t.Context(), connect.NewRequest(&iamv1.WatchPolicyRequest{}))
+	if err != nil {
+		t.Fatal(err)
 	}
-	short, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	if err := ps.WaitRevision(short, rev+1); err == nil {
-		t.Fatal("returned before the revision was published")
-	}
-	done := make(chan error, 1)
-	go func() { done <- ps.WaitRevision(t.Context(), rev+1) }()
-	time.Sleep(20 * time.Millisecond)
-	ps.Publish(coreauthz.Policy{Teams: []coreauthz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
+	defer stream.Close()
+	got := make(chan uint64, 16)
+	go func() {
+		for stream.Receive() {
+			got <- stream.Msg().Revision
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("WaitRevision missed the publish")
+		close(got)
+	}()
+	next := func(within time.Duration) (uint64, bool) {
+		select {
+		case rev, ok := <-got:
+			return rev, ok
+		case <-time.After(within):
+			return 0, false
+		}
+	}
+	rev := ps.Revision()
+	if r, ok := next(5 * time.Second); !ok || r != rev {
+		t.Fatalf("first snapshot: %d %v", r, ok)
+	}
+	if r, ok := next(5 * time.Second); !ok || r != rev {
+		t.Fatalf("keepalive: %d %v", r, ok)
+	}
+	behind.Store(true)
+	// One keepalive may already be on its way.
+	next(keepaliveEvery)
+	if r, ok := next(4 * keepaliveEvery); ok {
+		t.Fatalf("keepalive %d sent while behind: watchers would trust a policy missing a commit", r)
+	}
+	behind.Store(false)
+	ps.Publish(coreauthz.Policy{Teams: []coreauthz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
+	if r, ok := next(5 * time.Second); !ok || r != ps.Revision() || r <= rev {
+		t.Fatalf("caught-up revision: %d %v", r, ok)
 	}
 }
