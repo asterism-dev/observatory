@@ -1,6 +1,6 @@
 # Deploying the hub with Docker Compose
 
-`deploy/compose.yaml` runs the edge and the hub with the hub's Postgres, the WireGuard/OVN gateway, the storage server and the image
+`deploy/compose.yaml` runs the edge, iam, the hub and the audit service with the hub's Postgres, the WireGuard/OVN gateway, the storage server and the image
 registry, configured
 only through `deploy/.env`. A login service is not part of it: use any OIDC provider (see [idp.md](idp.md)) or the
 Zitadel stack in `deploy/idp/`.
@@ -50,41 +50,58 @@ sudo systemctl daemon-reload && sudo systemctl enable observatory-hub.service
 ```
 
 After `up`, check that every service runs: `docker compose -f deploy/compose.yaml ps` and, if the hub or the edge
-restarts, `docker compose -f deploy/compose.yaml logs hub edge` (a short token or a malformed key stops it there).
+restarts, `docker compose -f deploy/compose.yaml logs hub iam edge` (a short token or a malformed key stops it there).
 
 The first user to log in to the hub becomes platform admin: log in right after the first start, and turn off
 self-registration in the login service (or keep it unreachable) until then.
 
-## Edge and hub
+## Edge, iam and hub
 
-Both services run the `ghcr.io/asterism-dev/observatory` image (`observatory serve <service>`):
+All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serve <service>`):
 
 - `edge` (`serve edge`) is the only service with a published HTTP port (`OBSERVATORY_HTTP_PORT`, container port
-  8090). It serves the web app and forwards everything else to the hub at `OBSERVATORY_EDGE_HUB_URL`
-  (`http://hub:8091`), and answers `/internal/*` with 404.
+  8090). It serves the web app, forwards login (`/auth/`, `/api/auth/`) to iam at `OBSERVATORY_EDGE_IAM_URL`
+  (`http://iam:8093`), the extracted services' APIs (`/api/<service>/v1/`, including iam's `/api/iam/v1/`) to the
+  services in `OBSERVATORY_EDGE_SERVICES`, and everything else to the hub at `OBSERVATORY_EDGE_HUB_URL`
+  (`http://hub:8091`). It answers `/internal/*` with 404.
+- `iam` (`serve iam`) owns users, orgs, memberships, teams, roles, sessions, SSH keys, the OIDC and CLI login, the
+  identity token issuer and the policy stream. It listens on `OBSERVATORY_IAM_LISTEN` (default `:8093`) inside the
+  compose network only and keeps its data in schema `iam` of `OBSERVATORY_IAM_DATABASE_URL` (default
+  `OBSERVATORY_DATABASE_URL`). It needs `OBSERVATORY_PUBLIC_URL`, the three `OBSERVATORY_OIDC_*` variables,
+  `OBSERVATORY_SECRETS_KEY` (seals its signing key), `OBSERVATORY_EDGE_TOKEN`, `OBSERVATORY_HUB_URL`,
+  `OBSERVATORY_AUDIT_URL` (data events settings), the bus and its own `OBSERVATORY_SERVICE_TOKEN`; it refuses to start
+  without any of them.
 - `hub` (`serve hub`) listens on port 8091 (`OBSERVATORY_HUB_LISTEN`, default `:8091`) inside the compose network only. The edge and the
   internal callers reach it there: the registry posts its push notifications to `http://hub:8091/internal/registry/events`,
-  the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091.
-- `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by both: the edge sends it with
-  each request, and the hub takes the client IP from the edge's header only when the token matches, otherwise the
-  connection's address. Changing it needs both services restarted.
-- `OBSERVATORY_EDGE_SERVICE_TOKEN` (`openssl rand -hex 32`, at least 32 characters, different from the edge token) is the
-  edge's service token: the hub gets it as `OBSERVATORY_SERVICE_TOKENS=edge=<token>`, the edge as
-  `OBSERVATORY_SERVICE_TOKEN`, and the edge uses it to exchange the user's session for a short-lived signed identity token
-  on requests to extracted services (`/api/<service>/v1/`).
-- `OBSERVATORY_SERVICE_TOKENS` (hub) is a comma-separated list of `name=token` pairs, one per calling service. Each token
-  needs at least 32 characters and no two pairs may share a token or a name. For development `make service-token`
-  appends a pair for the edge (`OBSERVATORY_SERVICE_TOKEN` and `OBSERVATORY_SERVICE_TOKENS`) to `deploy/dev/hub.env`.
-- `/internal/iam/*` on the hub (token exchange, signing keys, policy stream) is never public: the edge answers 404, and
-  the hub requires a service token, answers 403 for a missing or wrong one and logs the attempt. Without
-  `OBSERVATORY_SERVICE_TOKENS` the hub refuses every call there.
-- To rotate a service token, set the new value for both sides (in compose: `OBSERVATORY_EDGE_SERVICE_TOKEN` in
-  `deploy/.env`) and restart the hub and the edge. Until both run the new value, requests to extracted services fail.
+  the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091. It reaches iam at
+  `OBSERVATORY_IAM_URL` (`http://iam:8093`) for signing keys, the policy stream and the internal API, and waits up to
+  60 s for iam's first policy at start.
+- `OBSERVATORY_EDGE_TOKEN` (`openssl rand -hex 32`, at least 32 characters) is shared by the edge, iam and the hub: the
+  edge sends it with each request, and iam and the hub take the client IP from the edge's header only when the token
+  matches, otherwise the connection's address. Changing it needs all three restarted.
+- Service tokens (`openssl rand -hex 32` each, at least 32 characters, all different) authenticate the services to each
+  other's `/internal/` endpoints. Each service gets its own as `OBSERVATORY_SERVICE_TOKEN`, and the callee lists the
+  callers it admits as `OBSERVATORY_SERVICE_TOKENS` (comma-separated `name=token` pairs; no two pairs may share a token
+  or a name). In compose:
 
-The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`) and the hub on
-`OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is not exposed without the edge; set `:8091` only
-when other containers must call the hub, and keep that port off public networks) in one process, with the edge and service tokens generated
-per start.
+  | `deploy/.env` | Used by | Admitted by |
+  | --- | --- | --- |
+  | `OBSERVATORY_EDGE_SERVICE_TOKEN` | edge (session to identity token exchange) | iam as `edge=` |
+  | `OBSERVATORY_HUB_SERVICE_TOKEN` | hub | iam as `hub=` |
+  | `OBSERVATORY_AUDIT_SERVICE_TOKEN` | audit | iam as `audit=` |
+  | `OBSERVATORY_IAM_SERVICE_TOKEN` | iam | hub and audit as `iam=` |
+
+- `/internal/iam/*` (token exchange, signing keys, policy stream, internal API) is never public: the edge answers 404,
+  and iam requires a service token, answers 403 for a missing or wrong one and logs the attempt. The same holds for the
+  hub's `/internal/hub/` and the audit service's `/internal/audit/`.
+- To rotate a service token, set the new value in `deploy/.env` and restart the service that uses it and the ones that
+  admit it. Until all of them run the new value, the calls between them fail.
+
+The image without arguments runs `serve all`: the edge on `OBSERVATORY_EDGE_LISTEN` (default `:8090`), iam and the
+audit service on loopback ports, and the hub on `OBSERVATORY_HUB_LISTEN` (default `127.0.0.1:8091`, so the hub API is
+not exposed without the edge; set `:8091` only when other containers must call the hub, and keep that port off public
+networks) in one process, with the edge and service tokens generated per start. They still talk to each other over
+HTTP only.
 
 ## Event bus
 
@@ -103,14 +120,15 @@ the edge (`OBSERVATORY_EDGE_SERVICES=audit=http://audit:8092` on the edge; a com
 It listens on `OBSERVATORY_AUDIT_LISTEN` (default `:8092`) inside the compose network only; do not publish it.
 
 - Database: `OBSERVATORY_AUDIT_DATABASE_URL`, default `OBSERVATORY_DATABASE_URL`; the service owns schema `audit`.
-- Hub: `OBSERVATORY_HUB_URL` (internal hub address for signing keys and the policy stream), `OBSERVATORY_PUBLIC_URL`
-  (token issuer) and `OBSERVATORY_SERVICE_TOKEN`. In compose that token is `OBSERVATORY_AUDIT_SERVICE_TOKEN`, which the
-  hub also gets as `audit=<token>` in `OBSERVATORY_SERVICE_TOKENS`.
+- iam: `OBSERVATORY_IAM_URL` (internal iam address for signing keys and the policy stream), `OBSERVATORY_PUBLIC_URL`
+  (token issuer) and `OBSERVATORY_SERVICE_TOKEN`. In compose that token is `OBSERVATORY_AUDIT_SERVICE_TOKEN`, which
+  iam also gets as `audit=<token>` in `OBSERVATORY_SERVICE_TOKENS`.
 - Bus: `OBSERVATORY_NATS_URL` and `OBSERVATORY_NATS_TOKEN`, which the hub needs too: it writes its audit events to its
   `outbox` table and relays them to the bus, retrying while the bus is down. The durable consumer `audit` acknowledges an event only once
   it is stored; a redelivered event is stored once (by event id).
-- `OBSERVATORY_SERVICE_TOKENS` (optional, `name=token` pairs) admits other services to `/internal/audit/`, where they
-  load which orgs have data events on; without it every call there is refused.
+- `OBSERVATORY_SERVICE_TOKENS` (`name=token` pairs; compose sets `iam=`) admits other services to `/internal/audit/`,
+  where they load which orgs have data events on; without it every call there is refused, and iam records no data
+  events.
 - `audit.events` is append-only: a trigger rejects `UPDATE`, `DELETE` and `TRUNCATE`. Only the daily retention job
   deletes, inside a transaction that runs `SET LOCAL observatory.retention = 'on'`; events older than the platform
   setting "Audit retention" (30–3650 days, default 365) are removed. The setting guards against mistakes in application code, not against a database user who sets it too.
@@ -158,7 +176,7 @@ cannot read it.
 - `OBSERVATORY_GATEWAY_HOST` is what nodes and devices dial on UDP 51820/51821; it defaults to the host of the public
   URL.
 - `OBSERVATORY_SECRETS_KEY` encrypts every stored secret. Back it up; a new key makes them unreadable.
-- `OBSERVATORY_OIDC_ISSUER` must be reachable from the hub container, so not `localhost`.
+- `OBSERVATORY_OIDC_ISSUER` must be reachable from the iam container, so not `localhost`.
 - `OBSERVATORY_REGISTRY_EVENTS_SECRET` authenticates the registry's push notifications to the hub. They arrive at
   `/internal/registry/events` on the hub's port 8091; the edge answers `/internal/*` with 404.
 - `OBSERVATORY_REGISTRY_URL` (the compose file sets `http://registry:5000`), `OBSERVATORY_REGISTRY_KEY_DIR` and
@@ -229,14 +247,16 @@ this release (`openssl rand -hex 32`, different from `OBSERVATORY_EDGE_TOKEN`); 
 Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKEN` in `deploy/.env` is required
 (`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
-Upgrading from 0.x to 1.0 is a fresh install: iam keeps its data in its own schema `iam`, and the hub migration that
-moves it there (migration 39) drops the 0.x users, orgs, memberships, sessions, invites, teams, roles and SSH keys from
+Upgrading from 0.x to 1.0 is a fresh install. `deploy/.env` needs `OBSERVATORY_HUB_SERVICE_TOKEN` and
+`OBSERVATORY_IAM_SERVICE_TOKEN` (`openssl rand -hex 32`, different from the other tokens). The `OBSERVATORY_OIDC_*`
+variables stay in `deploy/.env`; compose now passes them to iam, and the hub no longer reads them. iam keeps its data
+in its own schema `iam`, and the hub migration 39 drops the 0.x users, orgs, memberships, sessions, invites, teams, roles and SSH keys from
 `public` without copying them. Back up the database before you upgrade, or install 1.0 into a new one; everyone signs in
 again and orgs are created anew.
 
-Always run edge and hub of the same release; the hub accepts only the
-edge's identity tokens, so behind an older edge it answers 401 to every session request. Its migration that drops the
-foreign keys from hub tables into iam tables has no full rollback.
+Always run edge, hub, iam and audit of the same release: they share the internal APIs, the identity tokens and the
+policy stream, and a mix of releases refuses requests. The hub's migration that drops the foreign keys from hub tables
+into iam tables has no full rollback.
 
 The hub migrates its database on start. Data lives in the volumes `postgres-data`, `disks`, `ovn`, `ovs`,
 `registry-data`, `registry-keys`, `registry-certs`, `metrics-data`, `logs-data`, `nats-data` and, with TLS,
