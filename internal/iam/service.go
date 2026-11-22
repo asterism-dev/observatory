@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -149,6 +150,11 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	if len(cfg.ServiceTokens) == 0 {
 		slog.Warn("iam: no service tokens configured; every /internal/iam/ call is refused")
 	}
+	for name := range cfg.ServiceTokens {
+		if _, ok := internalCalls[name]; !ok {
+			slog.Warn("iam: service token for an unknown caller; its /internal/iam/ calls are refused", "caller", name)
+		}
+	}
 	mux := http.NewServeMux()
 	mux.Handle(Prefix+"/", api)
 	login.Routes(mux)
@@ -156,7 +162,17 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	return &Service{cfg: cfg, pool: pool, settings: settings, handler: mux}, nil
 }
 
-// internalHandler serves /internal/iam/*; the caller wraps it in servicetoken.Middleware.
+// internalCalls lists the /internal/iam/ paths each calling service may use (docs/deploy.md has the table); any other caller is refused everything.
+var internalCalls = map[string][]string{
+	"edge": {"/internal/iam/token"},
+	"hub": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure,
+		"/internal/iam" + iamv1connect.IAMInternalServiceGetUsersProcedure, "/internal/iam" + iamv1connect.IAMInternalServiceListSSHKeysProcedure,
+		"/internal/iam" + iamv1connect.IAMInternalServiceListTeamsProcedure, "/internal/iam" + iamv1connect.IAMInternalServiceGetMembershipProcedure,
+		"/internal/iam" + iamv1connect.IAMInternalServiceGetSessionProcedure},
+	"audit": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure},
+}
+
+// internalHandler serves /internal/iam/* to the callers internalCalls admits; the caller wraps it in servicetoken.Middleware.
 func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.IAMInternalServiceHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/internal/iam/token", iss.TokenHandler())
@@ -164,7 +180,15 @@ func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.
 	path, h := iamv1connect.NewIAMInternalServiceHandler(iam)
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	mux.Handle(ps.Handler("/internal/iam"))
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller, _ := servicetoken.Caller(r.Context())
+		if !slices.Contains(internalCalls[caller], r.URL.Path) {
+			slog.Warn("internal call outside the caller's allow list", "caller", caller, "path", r.URL.Path)
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // Handler serves /api/iam/v1/, /internal/iam/, /auth/ and /api/auth/.

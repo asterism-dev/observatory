@@ -96,6 +96,14 @@ All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serv
 - `/internal/iam/*` (token exchange, signing keys, policy stream, internal API) is never public: the edge answers 404,
   and iam requires a service token, answers 403 for a missing or wrong one and logs the attempt. The same holds for the
   hub's `/internal/hub/` and the audit service's `/internal/audit/`.
+- iam also limits each caller to what it needs and answers 403 for anything else, also for a service token under a
+  name not in this table:
+
+  | Caller | May call under `/internal/iam/` |
+  | --- | --- |
+  | `edge` | `token` (session to identity token exchange) |
+  | `hub` | `jwks`, the policy stream (`PolicyService/WatchPolicy`), and `IAMInternalService` `GetUsers`, `ListSSHKeys`, `ListTeams`, `GetMembership` and `GetSession` |
+  | `audit` | `jwks` and the policy stream |
 - To rotate a service token, set the new value in `deploy/.env` and restart the service that uses it and the ones that
   admit it. Until all of them run the new value, the calls between them fail.
 

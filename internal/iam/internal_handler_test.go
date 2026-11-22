@@ -25,8 +25,10 @@ import (
 )
 
 const (
-	svcToken  = "0123456789abcdef0123456789abcdef"
-	otherTok  = "fedcba9876543210fedcba9876543210"
+	svcToken   = "0123456789abcdef0123456789abcdef"
+	otherTok   = "fedcba9876543210fedcba9876543210"
+	hubTok     = "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh"
+	computeTok = "cccccccccccccccccccccccccccccccc"
 	issuerURL = "https://hub.test"
 )
 
@@ -56,7 +58,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	}
 	ps := platformauthz.NewPublisher()
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
-	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "compute": otherTok})(internalHandler(iss, ps, internalServer{Store: e.s}))
+	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(internalHandler(iss, ps, internalServer{Store: e.s}))
 	return e
 }
 
@@ -77,10 +79,10 @@ func (e *iamEnv) do(method, path, auth string, body any) *httptest.ResponseRecor
 func TestTokenEndpointOnlyForEdge(t *testing.T) {
 	e := newIAMEnv(t)
 	if rec := e.do("POST", "/internal/iam/token", "Bearer "+otherTok, map[string]string{"session_token": sessionToken}); rec.Code != http.StatusForbidden {
-		t.Fatalf("compute minting user tokens: %d", rec.Code)
+		t.Fatalf("audit minting user tokens: %d", rec.Code)
 	}
 	if rec := e.do("GET", "/internal/iam/jwks", "Bearer "+otherTok, nil); rec.Code != http.StatusOK {
-		t.Fatalf("compute reading jwks: %d", rec.Code)
+		t.Fatalf("audit reading jwks: %d", rec.Code)
 	}
 	srv := httptest.NewServer(e.h)
 	defer srv.Close()
@@ -94,7 +96,7 @@ func TestTokenEndpointOnlyForEdge(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 	if !stream.Receive() {
-		t.Fatalf("compute watching policy: %v", stream.Err())
+		t.Fatalf("audit watching policy: %v", stream.Err())
 	}
 }
 
@@ -155,9 +157,37 @@ func TestIAMInternalRequiresServiceToken(t *testing.T) {
 			}
 		}
 	}
-	errs := call("Bearer " + svcToken)
+	errs := call("Bearer " + hubTok)
 	if slices.ContainsFunc(errs[:4], func(err error) bool { return err != nil }) || connect.CodeOf(errs[4]) != connect.CodeNotFound {
 		t.Fatalf("with the service token: %v", errs)
+	}
+}
+
+func TestInternalAllowList(t *testing.T) {
+	e := newIAMEnv(t)
+	rpc := func(procedure string) string { return "/internal/iam" + procedure }
+	paths := []string{
+		"/internal/iam/token",
+		"/internal/iam/jwks",
+		rpc(iamv1connect.PolicyServiceWatchPolicyProcedure),
+		rpc(iamv1connect.IAMInternalServiceGetUsersProcedure),
+		rpc(iamv1connect.IAMInternalServiceListSSHKeysProcedure),
+		rpc(iamv1connect.IAMInternalServiceListTeamsProcedure),
+		rpc(iamv1connect.IAMInternalServiceGetMembershipProcedure),
+		rpc(iamv1connect.IAMInternalServiceGetSessionProcedure),
+	}
+	allowed := map[string][]string{"edge": paths[:1], "hub": paths[1:], "audit": paths[1:3]}
+	for caller, tok := range map[string]string{"edge": svcToken, "hub": hubTok, "audit": otherTok, "compute": computeTok} {
+		for _, p := range paths {
+			method := "POST"
+			if p == "/internal/iam/jwks" {
+				method = "GET"
+			}
+			rec := e.do(method, p, "Bearer "+tok, nil)
+			if want := slices.Contains(allowed[caller], p); want == (rec.Code == http.StatusForbidden) {
+				t.Errorf("%s on %s: %d, allowed %v", caller, p, rec.Code, want)
+			}
+		}
 	}
 }
 
@@ -175,7 +205,7 @@ func TestWatchPolicySendsSnapshotAndUpdates(t *testing.T) {
 	defer srv.Close()
 	client := iamv1connect.NewPolicyServiceClient(srv.Client(), srv.URL+"/internal/iam")
 	req := connect.NewRequest(&iamv1.WatchPolicyRequest{})
-	req.Header().Set("Authorization", "Bearer "+svcToken)
+	req.Header().Set("Authorization", "Bearer "+hubTok)
 	stream, err := client.WatchPolicy(ctx, req)
 	if err != nil {
 		t.Fatal(err)
