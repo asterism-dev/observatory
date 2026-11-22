@@ -122,8 +122,6 @@ services:
         condition: service_started
       iam:
         condition: service_started
-      quota:
-        condition: service_started
   # Limits per org, team and member; serves them on 8094 to the edge (/api/quota/v1/); not published.
   quota:
     <<: *observatory
