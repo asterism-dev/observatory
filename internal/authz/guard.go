@@ -83,7 +83,7 @@ func blocks(d Rule, obj, act string) bool {
 	return strings.HasPrefix(dp, op) || strings.HasPrefix(op, dp)
 }
 
-// EffectiveRules returns the allow rules of built-in keys and org custom role IDs, parents included.
+// EffectiveRules returns the allow rules of built-in keys and org custom role IDs, parents included; custom allows of unknown actions grant nothing, so they are left out and never block a child role.
 func (e *Enforcer) EffectiveRules(roleKeys []string, org uuid.UUID) ([]Rule, error) {
 	var out []Rule
 	seen := map[string]bool{}
@@ -103,7 +103,7 @@ func (e *Enforcer) EffectiveRules(roleKeys []string, org uuid.UUID) ([]Rule, err
 		}
 		cr := e.policy.Roles[i]
 		for _, r := range cr.Rules {
-			if r.Effect == Allow {
+			if r.Effect == Allow && e.known[r.Action] {
 				out = append(out, r)
 			}
 		}

@@ -212,7 +212,7 @@ func (e *Enforcer) BuiltinRules(key string) []Rule {
 // Actions returns every registered action and object, sorted by action, then object.
 func (e *Enforcer) Actions() []Permission { return slices.Clone(e.actions) }
 
-// UnknownActions returns the actions org's custom rules name that no registered catalog matches, sorted.
+// UnknownActions returns the actions org's custom rules name that grant or match nothing, sorted: allows that aren't a registered action (as New drops them), denies that match none.
 func (e *Enforcer) UnknownActions(org uuid.UUID) []string {
 	var out []string
 	for _, cr := range e.policy.Roles {
@@ -220,7 +220,7 @@ func (e *Enforcer) UnknownActions(org uuid.UUID) []string {
 			continue
 		}
 		for _, r := range cr.Rules {
-			if len(e.ExpandActions(r.Action)) == 0 {
+			if r.Effect == Allow && !e.known[r.Action] || r.Effect != Allow && len(e.ExpandActions(r.Action)) == 0 {
 				out = append(out, r.Action)
 			}
 		}

@@ -59,16 +59,22 @@ func TestUnknownAllowNeverGrants(t *testing.T) {
 		Roles: []CustomRole{{ID: role, OrgID: org, Name: "r", Rules: []Rule{
 			{Allow, ObjVMs + "/*", "compute.instances.reboot"},
 			{Allow, ObjVMs + "/*", "compute.instances.get"},
+			// Stored wildcard allows grant nothing, so they are unknown too, even when today's catalog matches them.
+			{Allow, ObjVMs + "/*", "compute.instances.*"},
+			{Allow, "org/*", "*"},
 		}}},
 		Bindings: []Binding{{OrgID: org, Subject: UserSubject(u), RoleID: role}},
 	})
 	if e.Allowed(UserSubject(u), org, vm, "compute.instances.reboot") {
 		t.Error("an allow for an unregistered action granted it")
 	}
+	if e.Allowed(UserSubject(u), org, vm, "compute.instances.delete") || e.Allowed(UserSubject(u), org, ObjMembers, "iam.members.delete") {
+		t.Error("a stored wildcard allow granted an action")
+	}
 	if !e.Allowed(UserSubject(u), org, vm, "compute.instances.get") {
 		t.Error("the known allow of the same role was dropped")
 	}
-	if got := e.UnknownActions(org); !slices.Equal(got, []string{"compute.instances.reboot"}) {
+	if got := e.UnknownActions(org); !slices.Equal(got, []string{"*", "compute.instances.*", "compute.instances.reboot"}) {
 		t.Errorf("UnknownActions = %v", got)
 	}
 	if got := e.UnknownActions(uuid.New()); len(got) != 0 {
@@ -162,5 +168,24 @@ func TestNoCatalogsGrantsOnlyOwnScope(t *testing.T) {
 	}
 	if len(e.Actions()) != 0 || len(e.ExpandActions("*")) != 0 {
 		t.Error("no catalogs, yet actions")
+	}
+}
+
+func TestParentUnknownAllowSkipped(t *testing.T) {
+	org, owner, parent := uuid.New(), uuid.New(), uuid.New()
+	e := mustNew(t, Policy{
+		Memberships: []MemberRole{{OrgID: org, UserID: owner, Role: "owner"}},
+		Roles: []CustomRole{{ID: parent, OrgID: org, Name: "p", Rules: []Rule{
+			{Allow, ObjVMs + "/*", "compute.instances.reboot"},
+			{Allow, ObjVMs + "/*", "compute.instances.get"},
+		}}},
+	})
+	got, err := e.EffectiveRules([]string{parent.String()}, org)
+	if err != nil || !slices.Equal(got, []Rule{{Allow, ObjVMs + "/*", "compute.instances.get"}}) {
+		t.Fatalf("EffectiveRules = %v, %v", got, err)
+	}
+	child := []Rule{{Allow, ObjVMs + "/*", "compute.instances.get"}}
+	if err := e.CanGrantRole(UserSubject(owner), org, true, child, []string{parent.String()}); err != nil {
+		t.Fatalf("a parent's unknown allow blocked its child: %v", err)
 	}
 }
