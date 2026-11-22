@@ -71,6 +71,7 @@ func TestIdentityEndToEnd(t *testing.T) {
 	alice, bob := iam.AddUser("alice"), iam.AddUser("bob")
 	org := iam.CreateOrg(alice.ID, "acme")
 	iam.AddMember(org, bob.ID, "member")
+	iam.AddCatalog(authz.Catalog{Service: "test", Actions: []authz.Action{{Name: "test.echoes.get", Object: "org/echoes/*"}}})
 	iam.Bind(org, authz.UserSubject(bob.ID), authz.CustomRole{Name: "echo reader", Rules: []authz.Rule{{Effect: authz.Allow, Object: "org/echoes/*", Action: "test.echoes.get"}}})
 	session, sess := iam.SessionToken(bob.ID, "cli")
 

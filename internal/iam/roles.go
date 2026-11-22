@@ -1,6 +1,7 @@
 package iam
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -38,14 +39,21 @@ func toRoleBinding(b store.BindingRow) *iamv1.RoleBinding {
 }
 
 func (s *server) ListCatalog(_ context.Context, req *connect.Request[iamv1.ListCatalogRequest]) (*connect.Response[iamv1.ListCatalogResponse], error) {
-	if _, err := parseID("org", req.Msg.Org); err != nil {
+	org, err := parseID("org", req.Msg.Org)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*iamv1.CatalogEntry, 0, len(authz.LegacyCatalog))
-	for _, p := range authz.LegacyCatalog {
-		out = append(out, &iamv1.CatalogEntry{Action: p.Action, Object: p.Object})
+	e := s.Policy.Enforcer()
+	var out []*iamv1.CatalogEntry
+	for _, c := range e.Catalogs() {
+		for _, a := range c.Actions {
+			out = append(out, &iamv1.CatalogEntry{Action: a.Name, Object: a.Object, Description: a.Description, Write: a.Write, Service: c.Service})
+		}
 	}
-	return connect.NewResponse(&iamv1.ListCatalogResponse{Entries: out}), nil
+	slices.SortFunc(out, func(a, b *iamv1.CatalogEntry) int {
+		return cmp.Or(strings.Compare(a.Action, b.Action), strings.Compare(a.Object, b.Object))
+	})
+	return connect.NewResponse(&iamv1.ListCatalogResponse{Entries: out, UnknownActions: e.UnknownActions(org)}), nil
 }
 
 func (s *server) ListRoles(ctx context.Context, req *connect.Request[iamv1.ListRolesRequest]) (*connect.Response[iamv1.ListRolesResponse], error) {
@@ -58,8 +66,9 @@ func (s *server) ListRoles(ctx context.Context, req *connect.Request[iamv1.ListR
 		return nil, internal("roles", err)
 	}
 	out := make([]*iamv1.Role, 0, 3+len(roles))
+	e := s.Policy.Enforcer()
 	for _, key := range []string{"owner", "admin", "member"} {
-		out = append(out, &iamv1.Role{Key: key, Name: strings.ToUpper(key[:1]) + key[1:], Builtin: true, Rules: toRoleRules(authz.BuiltinRules(key))})
+		out = append(out, &iamv1.Role{Key: key, Name: strings.ToUpper(key[:1]) + key[1:], Builtin: true, Rules: toRoleRules(e.BuiltinRules(key))})
 	}
 	for _, cr := range roles {
 		out = append(out, toRole(cr))
@@ -86,12 +95,12 @@ func roleBody(name, description string, rules []*iamv1.RoleRule, parents []strin
 }
 
 // expandRules stores allow wildcards as the concrete catalog actions they match today, so later catalog additions aren't granted silently; deny wildcards stay as written so they keep covering new actions.
-func expandRules(rules []authz.Rule) []authz.Rule {
+func expandRules(e *authz.Enforcer, rules []authz.Rule) []authz.Rule {
 	out := []authz.Rule{}
 	for _, r := range rules {
 		actions := []string{r.Action}
 		if r.Effect == authz.Allow {
-			actions = authz.ExpandActions(r.Action)
+			actions = e.ExpandActions(r.Action)
 		}
 		for _, a := range actions {
 			if x := (authz.Rule{Effect: r.Effect, Object: r.Object, Action: a}); !slices.Contains(out, x) {
@@ -121,7 +130,7 @@ func (s *server) CreateRole(ctx context.Context, req *connect.Request[iamv1.Crea
 		if denied = s.canGrant(ctx, e, actor, org, privileged(cur), role.Rules, role.Parents); denied != nil {
 			return denied
 		}
-		role.Rules = expandRules(role.Rules)
+		role.Rules = expandRules(e, role.Rules)
 		if role, err = tx.CreateRole(ctx, org, role); err != nil {
 			return err
 		}
@@ -167,7 +176,7 @@ func (s *server) UpdateRole(ctx context.Context, req *connect.Request[iamv1.Upda
 				return denied
 			}
 		}
-		role.Rules = expandRules(role.Rules)
+		role.Rules = expandRules(e, role.Rules)
 		if denied = guardOwnDenies(ctx, tx, org, cur, actor, func() error { return tx.UpdateRole(ctx, org, role) }); denied != nil {
 			return denied
 		}

@@ -82,7 +82,7 @@ func TestNoOldActionNames(t *testing.T) {
 
 func TestWebActionsExistInCatalog(t *testing.T) {
 	known := map[string]bool{"*": true}
-	for _, p := range LegacyCatalog {
+	for _, p := range legacyE().Actions() {
 		known[p.Action] = true
 	}
 	re := regexp.MustCompile(`(?:\bcan\(|\baction:\s*)'([^']+)'`)

@@ -19,7 +19,7 @@ var (
 // CanGrant fails unless every rule is valid, denies come from an org owner/admin and actor holds every allowed action unblocked.
 func (e *Enforcer) CanGrant(actor string, org uuid.UUID, isOrgAdmin bool, rules []Rule) error {
 	for _, r := range rules {
-		if (r.Effect != Allow && r.Effect != Deny) || ValidatePattern(r.Object) != nil || len(ExpandActions(r.Action)) == 0 {
+		if (r.Effect != Allow && r.Effect != Deny) || e.ValidatePattern(r.Object) != nil || len(e.ExpandActions(r.Action)) == 0 {
 			return fmt.Errorf("%w: %s %s@%s", ErrInvalidPattern, r.Effect, r.Action, r.Object)
 		}
 		if r.Effect == Deny && !isOrgAdmin {
@@ -60,7 +60,7 @@ func (e *Enforcer) CanHold(actor string, org uuid.UUID, rules []Rule) error {
 		if r.Effect != Allow {
 			continue
 		}
-		actions := ExpandActions(r.Action)
+		actions := e.ExpandActions(r.Action)
 		if len(actions) == 0 {
 			return fmt.Errorf("%w: %s %s@%s", ErrInvalidPattern, r.Effect, r.Action, r.Object)
 		}
@@ -93,8 +93,8 @@ func (e *Enforcer) EffectiveRules(roleKeys []string, org uuid.UUID) ([]Rule, err
 			return nil
 		}
 		seen[key] = true
-		if rules := BuiltinRules(key); rules != nil {
-			out = append(out, rules...)
+		if slices.Contains(builtinRoles, key) {
+			out = append(out, e.builtin[key]...)
 			return nil
 		}
 		i := slices.IndexFunc(e.policy.Roles, func(cr CustomRole) bool { return cr.OrgID == org && cr.ID.String() == key })

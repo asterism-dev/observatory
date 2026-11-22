@@ -42,8 +42,9 @@ type VMRef struct {
 	UserID, TeamID *uuid.UUID
 }
 
-// DiskRef is a live disk's owner: exactly one of UserID and TeamID is set.
-type DiskRef struct {
+// OwnedRef is a service-owned resource's owner: Kind is its object type segment (vms, disks), and exactly one of UserID and TeamID is set.
+type OwnedRef struct {
+	Kind           string
 	OrgID, ID      uuid.UUID
 	UserID, TeamID *uuid.UUID
 }
@@ -70,9 +71,8 @@ type Policy struct {
 	Bindings    []Binding
 	// Teams lists every team, including those without members, so team subjects get their env rules.
 	Teams []TeamRef
-	VMs   []VMRef
-	Disks []DiskRef
-	// Catalogs are the registered service catalogs; New ignores them for now.
+	Owned []OwnedRef
+	// Catalogs are the registered service catalogs: actions, built-in role defaults and owner-grant templates.
 	Catalogs []Catalog
 	// Revision is iam's stream revision this policy came from, 0 when it was not streamed.
 	Revision uint64
@@ -88,6 +88,9 @@ type Enforcer struct {
 	usersOf map[uuid.UUID][]uuid.UUID
 	// members maps every known team, empty ones included, to its user IDs.
 	members map[TeamRef][]uuid.UUID
+	actions []Permission
+	known   map[string]bool
+	builtin map[string][]Rule
 }
 
 type teamMember struct{ org, team, user uuid.UUID }
@@ -108,95 +111,80 @@ func New(p Policy) (*Enforcer, error) {
 	if err != nil {
 		return nil, err
 	}
+	e := &Enforcer{policy: p, vms: map[uuid.UUID]VMRef{}, teams: make(map[teamMember]bool, len(p.TeamMembers)),
+		roles: make(map[userOrg]string, len(p.Memberships)), orgsOf: map[uuid.UUID][]uuid.UUID{}, usersOf: map[uuid.UUID][]uuid.UUID{}, members: make(map[TeamRef][]uuid.UUID, len(p.Teams)),
+		known: map[string]bool{}, builtin: map[string][]Rule{}}
+	e.indexCatalogs()
 	var rules, groups [][]string
-	teamAdmins := map[uuid.UUID][]uuid.UUID{}
-	for _, key := range []string{"owner", "admin", "member"} {
-		for _, r := range BuiltinRules(key) {
+	allow := func(sub, org, obj string, acts ...string) {
+		for _, act := range acts {
+			rules = append(rules, []string{sub, org, obj, act, string(Allow)})
+		}
+	}
+	for _, key := range builtinRoles {
+		for _, r := range e.builtin[key] {
 			rules = append(rules, []string{RoleSubject(key), allDomains, r.Object, r.Action, string(r.Effect)})
 		}
 	}
+	templates := map[Relation][]OwnerTemplate{}
+	for _, c := range p.Catalogs {
+		for _, t := range c.Templates {
+			templates[t.Relation] = append(templates[t.Relation], t)
+		}
+	}
+	fill := func(rel Relation, sub, org, placeholder, value string) {
+		for _, t := range templates[rel] {
+			allow(sub, org, strings.ReplaceAll(t.Object, placeholder, value), t.Actions...)
+		}
+	}
+	teamAdmins := map[uuid.UUID][]uuid.UUID{}
 	for _, mr := range p.Memberships {
 		u, org := UserSubject(mr.UserID), mr.OrgID.String()
 		groups = append(groups, []string{u, RoleSubject(mr.Role), org})
 		// Users may do everything with their own resources; org deny rules still win.
-		rules = append(rules, []string{u, org, u + "/*", "*", string(Allow)})
-		rules = append(rules, []string{u, org, UserEnvObject(mr.UserID), "secrets.variables.*", string(Allow)})
-		rules = append(rules, []string{u, org, UserIntegrationsObject(mr.UserID), "secrets.integrations.*", string(Allow)})
-		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "artifacts.images.*", string(Allow)})
-		rules = append(rules, []string{u, org, UserImagesObject(mr.UserID), "build.builds.create", string(Allow)})
-		rules = append(rules, []string{u, org, UserDashboardsObject(mr.UserID), "telemetry.dashboards.*", string(Allow)})
-		for _, act := range []string{"network.devices.create", "network.devices.list", "network.devices.delete"} {
-			rules = append(rules, []string{u, org, UserDevicesObject(mr.UserID), act, string(Allow)})
-		}
+		allow(u, org, u+"/*", "*")
+		fill(RelMember, u, org, "{user}", mr.UserID.String())
 	}
 	for _, tm := range p.TeamMembers {
 		u, org := UserSubject(tm.UserID), tm.OrgID.String()
 		groups = append(groups, []string{u, TeamSubject(tm.TeamID), org})
 		if tm.Admin {
-			rules = append(rules, []string{u, org, TeamObject(tm.TeamID), "iam.teams.manageMembers", string(Allow)})
-			rules = append(rules, []string{u, org, TeamEnvObject(tm.TeamID), "secrets.variables.*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamIntegrationsObject(tm.TeamID), "secrets.integrations.*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "artifacts.images.*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamImagesObject(tm.TeamID), "build.builds.create", string(Allow)})
-			rules = append(rules, []string{u, org, TeamDashboardsObject(tm.TeamID), "telemetry.dashboards.*", string(Allow)})
-			rules = append(rules, []string{u, org, TeamVMsObject(tm.TeamID), "compute.instances.create", string(Allow)})
-			rules = append(rules, []string{u, org, TeamDisksObject(tm.TeamID), "compute.disks.create", string(Allow)})
+			fill(RelTeamAdmin, u, org, "{team}", tm.TeamID.String())
 			teamAdmins[tm.TeamID] = append(teamAdmins[tm.TeamID], tm.UserID)
 		}
 	}
 	for _, t := range p.Teams {
-		sub, org := TeamSubject(t.ID), t.OrgID.String()
-		rules = append(rules,
-			[]string{sub, org, TeamEnvObject(t.ID), "secrets.variables.list", string(Allow)},
-			[]string{sub, org, TeamEnvObject(t.ID), "secrets.variables.use", string(Allow)},
-			[]string{sub, org, ObjEnv, "secrets.variables.use", string(Allow)},
-			[]string{sub, org, TeamIntegrationsObject(t.ID), "secrets.integrations.list", string(Allow)},
-			[]string{sub, org, TeamIntegrationsObject(t.ID), "secrets.integrations.use", string(Allow)},
-			[]string{sub, org, ObjIntegrations, "secrets.integrations.use", string(Allow)},
-			[]string{sub, org, TeamImagesObject(t.ID), "artifacts.images.list", string(Allow)},
-			[]string{sub, org, TeamImagesObject(t.ID), "artifacts.images.use", string(Allow)},
-			[]string{sub, org, ObjImages, "artifacts.images.use", string(Allow)},
-			[]string{sub, org, TeamDashboardsObject(t.ID), "telemetry.dashboards.get", string(Allow)},
-			[]string{sub, org, TeamDashboardsObject(t.ID), "telemetry.dashboards.create", string(Allow)},
-		)
+		fill(RelTeam, TeamSubject(t.ID), t.OrgID.String(), "{team}", t.ID.String())
 	}
-	for _, vm := range p.VMs {
-		obj, org := VMObject(vm.ID), vm.OrgID.String()
-		grant := func(sub string, acts ...string) {
-			for _, act := range acts {
-				rules = append(rules, []string{sub, org, obj, act, string(Allow)})
+	for _, o := range p.Owned {
+		org := o.OrgID.String()
+		owned := func(rel Relation, sub string) {
+			for _, t := range templates[rel] {
+				if t.Object == "org/"+o.Kind+"/{id}" {
+					allow(sub, org, "org/"+o.Kind+"/"+o.ID.String(), t.Actions...)
+				}
 			}
 		}
 		switch {
-		case vm.UserID != nil:
-			grant(UserSubject(*vm.UserID), "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.connect", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics")
-		case vm.TeamID != nil:
-			grant(TeamSubject(*vm.TeamID), "compute.instances.get", "compute.instances.setPower", "compute.instances.connect", "compute.instances.snapshot", "compute.instances.getMetrics")
-			for _, admin := range teamAdmins[*vm.TeamID] {
-				grant(UserSubject(admin), "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics")
+		case o.UserID != nil:
+			owned(RelOwnerUser, UserSubject(*o.UserID))
+		case o.TeamID != nil:
+			owned(RelOwnerTeam, TeamSubject(*o.TeamID))
+			for _, admin := range teamAdmins[*o.TeamID] {
+				owned(RelOwnerTeamAdmin, UserSubject(admin))
 			}
 		}
-	}
-	for _, d := range p.Disks {
-		obj, org := DiskObject(d.ID), d.OrgID.String()
-		grant := func(sub string, acts ...string) {
-			for _, act := range acts {
-				rules = append(rules, []string{sub, org, obj, act, string(Allow)})
-			}
-		}
-		switch {
-		case d.UserID != nil:
-			grant(UserSubject(*d.UserID), "compute.disks.get", "compute.disks.update", "compute.disks.delete", "compute.disks.use")
-		case d.TeamID != nil:
-			grant(TeamSubject(*d.TeamID), "compute.disks.get", "compute.disks.use")
-			for _, admin := range teamAdmins[*d.TeamID] {
-				grant(UserSubject(admin), "compute.disks.get", "compute.disks.update", "compute.disks.delete", "compute.disks.use")
-			}
+		if o.Kind == ownedVMs {
+			e.vms[o.ID] = VMRef{OrgID: o.OrgID, ID: o.ID, UserID: o.UserID, TeamID: o.TeamID}
 		}
 	}
 	for _, cr := range p.Roles {
 		sub, org := RoleSubject(cr.ID.String()), cr.OrgID.String()
 		for _, r := range cr.Rules {
+			// An allow naming no registered action grants nothing, so a later catalog can't revive it; denies keep covering new actions.
+			if r.Effect == Allow && !e.known[r.Action] {
+				continue
+			}
 			rules = append(rules, []string{sub, org, r.Object, r.Action, string(r.Effect)})
 		}
 		for _, parent := range cr.Parents {
@@ -220,11 +208,7 @@ func New(p Policy) (*Enforcer, error) {
 			return nil, err
 		}
 	}
-	e := &Enforcer{policy: p, ce: ce, vms: make(map[uuid.UUID]VMRef, len(p.VMs)), teams: make(map[teamMember]bool, len(p.TeamMembers)),
-		roles: make(map[userOrg]string, len(p.Memberships)), orgsOf: map[uuid.UUID][]uuid.UUID{}, usersOf: map[uuid.UUID][]uuid.UUID{}, members: make(map[TeamRef][]uuid.UUID, len(p.Teams))}
-	for _, vm := range p.VMs {
-		e.vms[vm.ID] = vm
-	}
+	e.ce = ce
 	for _, mr := range p.Memberships {
 		e.roles[userOrg{mr.UserID, mr.OrgID}] = mr.Role
 		e.orgsOf[mr.UserID] = append(e.orgsOf[mr.UserID], mr.OrgID)
@@ -369,7 +353,7 @@ func validate(p Policy) error {
 		roleOrg[cr.ID] = cr.OrgID
 	}
 	for _, mr := range p.Memberships {
-		if BuiltinRules(mr.Role) == nil {
+		if !slices.Contains(builtinRoles, mr.Role) {
 			return fmt.Errorf("authz: membership of user %s in org %s has unknown role %q", mr.UserID, mr.OrgID, mr.Role)
 		}
 	}

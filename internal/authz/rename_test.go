@@ -146,13 +146,13 @@ var (
 )
 
 func TestCatalogNamesValid(t *testing.T) {
-	for _, p := range LegacyCatalog {
+	for _, p := range legacyE().Actions() {
 		if !permission.ValidName(p.Action) {
 			t.Errorf("catalog action %q@%s is not service.resource.verb", p.Action, p.Object)
 		}
 	}
 	var got, want []string
-	for _, p := range LegacyCatalog {
+	for _, p := range legacyE().Actions() {
 		if !slices.Contains(got, p.Action) {
 			got = append(got, p.Action)
 		}
@@ -194,7 +194,7 @@ func TestBuiltinRolesUnchangedByRename(t *testing.T) {
 	}
 	admin := slices.Concat(oldMember, oldAdminExtra)
 	for key, old := range map[string][]Rule{"member": oldMember, "admin": admin, "owner": slices.Concat(admin, oldOwnerExtra)} {
-		got, want := grants(BuiltinRules(key), ExpandActions), grants(old, expandOld)
+		got, want := grants(legacyE().BuiltinRules(key), legacyE().ExpandActions), grants(old, expandOld)
 		if key != "member" {
 			for _, a := range addedSince {
 				want = append(want, "allow "+ObjAudit+" "+a)
@@ -213,7 +213,7 @@ func TestWildcardPatterns(t *testing.T) {
 		"compute.instances.connect", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.snapshot",
 		"compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics",
 	}
-	if got := ExpandActions("compute.instances.*"); !reflect.DeepEqual(got, instances) {
+	if got := legacyE().ExpandActions("compute.instances.*"); !reflect.DeepEqual(got, sorted(instances)) {
 		t.Errorf("compute.instances.* = %v, want %v", got, instances)
 	}
 	var compute []string
@@ -222,19 +222,19 @@ func TestWildcardPatterns(t *testing.T) {
 			compute = append(compute, n)
 		}
 	}
-	got := ExpandActions("compute.*")
+	got := legacyE().ExpandActions("compute.*")
 	slices.Sort(got)
 	slices.Sort(compute)
 	if !reflect.DeepEqual(got, compute) {
 		t.Errorf("compute.* = %v, want %v", got, compute)
 	}
-	if got := ExpandActions("*"); len(got) != len(renamed)+len(addedSince) {
+	if got := legacyE().ExpandActions("*"); len(got) != len(renamed)+len(addedSince) {
 		t.Errorf("* expands to %d actions, want %d", len(got), len(renamed)+len(addedSince))
 	}
 	// A wildcard must cover whole segments, or compute* would also grant a future computex service.
 	for _, p := range []string{"compute*", "compute.inst*", "compute.instances.set*", "*.instances.get", "compute.*.get", "compute.instances.get*"} {
-		if got := ExpandActions(p); len(got) != 0 {
-			t.Errorf("ExpandActions(%q) = %v, want none", p, got)
+		if got := legacyE().ExpandActions(p); len(got) != 0 {
+			t.Errorf("legacyE().ExpandActions(%q) = %v, want none", p, got)
 		}
 	}
 }

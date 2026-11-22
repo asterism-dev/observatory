@@ -16,6 +16,7 @@ import (
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 )
@@ -116,7 +117,7 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 	ctx := context.Background()
 
 	catalog := must[iamv1.ListCatalogResponse](t)(e.client.ListCatalog(ctx, req(memberTok, &iamv1.ListCatalogRequest{Org: org.String()}))).Entries
-	if len(catalog) != len(authz.LegacyCatalog) || catalog[0].Action != "iam.orgs.update" || catalog[0].Object != "org/settings" {
+	if len(catalog) != 101 || catalog[0].Action != "artifacts.images.list" || catalog[0].Object != "org/images" || catalog[0].Service != "hub" || catalog[0].Write {
 		t.Fatalf("catalog: %+v", catalog)
 	}
 
@@ -148,7 +149,7 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 		t.Fatalf("create: %+v %v", created, err)
 	}
 	// Wildcard actions are stored expanded so future catalog actions aren't granted implicitly.
-	if len(created.Rules) != len(authz.ExpandActions("iam.teams.*")) || created.Rules[0].Action != "iam.teams.list" || created.Rules[0].Object != "org/teams/*" {
+	if len(created.Rules) != len(e.z.Enforcer().ExpandActions("iam.teams.*")) || created.Rules[0].Action != "iam.teams.create" || created.Rules[0].Object != "org/teams/*" {
 		t.Fatalf("rules not expanded: %+v", created.Rules)
 	}
 	_, err = e.tryCreateRole(ownerTok, org, &iamv1.CreateRoleRequest{Name: "team lead"})
@@ -761,7 +762,7 @@ func TestFallbackReloadBoundedOnBusyPool(t *testing.T) {
 	}
 	srv := &server{Deps: Deps{Store: s, Policy: z, Resources: &fakeResources{}, Revision: func() uint64 { return 0 }}}
 	org, user := uuid.New(), uuid.New()
-	e, err := authz.New(authz.Policy{Memberships: []authz.MemberRole{{OrgID: org, UserID: user, Role: "member"}}})
+	e, err := authz.New(authz.Policy{Memberships: []authz.MemberRole{{OrgID: org, UserID: user, Role: "member"}}, Catalogs: authztest.Legacy()})
 	if err != nil {
 		t.Fatal(err)
 	}

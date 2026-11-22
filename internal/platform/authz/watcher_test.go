@@ -230,11 +230,12 @@ func TestInterceptorUnavailableUntilCatalog(t *testing.T) {
 	cat := testCatalog("test", "test.echoes.get")
 	f.w.Require("test", catalog.Digest(cat))
 	ch := f.connect(t)
-	ch <- f.snapshot(1, f.member)
+	noCatalog := func(p *iamv1.Policy) *iamv1.Policy { p.Catalogs = nil; return p }
+	ch <- noCatalog(f.snapshot(1, f.member))
 	waitApplied(t, f.w, 1)
 	echo := uuid.NewString()
 	wantCode(t, f.getEcho(t, f.member, f.org.String(), echo), connect.CodeUnavailable)
-	ch <- withCatalogs(f.snapshot(2, f.member), cat)
+	ch <- withCatalogs(noCatalog(f.snapshot(2, f.member)), cat)
 	eventually(t, 0, func() error { return f.getEcho(t, f.member, f.org.String(), echo) })
 	if p, _, _ := f.w.Policy(); len(p.Catalogs) != 1 || catalog.Digest(p.Catalogs[0]) != catalog.Digest(cat) {
 		t.Fatalf("policy catalogs: %+v", p.Catalogs)

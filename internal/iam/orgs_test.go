@@ -318,7 +318,14 @@ func TestRESTDeleteMember(t *testing.T) {
 // Every annotation must name a known action on its catalog object, so the catalog can describe the whole API.
 func TestAnnotationsInCatalog(t *testing.T) {
 	known := map[authz.Permission]bool{}
-	for _, p := range append(slices.Clone(authz.LegacyCatalog), authz.Unruled...) {
+	c, err := Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range c.Actions {
+		known[authz.Permission{Action: a.Name, Object: a.Object}] = true
+	}
+	for _, p := range authz.Unruled {
 		known[p] = true
 	}
 	methods := iamv1.File_observatory_iam_v1_iam_proto.Services().ByName("IAMService").Methods()

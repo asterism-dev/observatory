@@ -272,13 +272,15 @@ func TestOwnerRefsLoadVMs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vms, _, err := e.s.OwnerRefs(ctx)
+	refs, err := e.s.OwnerRefs(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[uuid.UUID]authz.VMRef{}
-	for _, v := range vms {
-		got[v.ID] = v
+	got := map[uuid.UUID]authz.OwnedRef{}
+	for _, v := range refs {
+		if v.Kind == "vms" {
+			got[v.ID] = v
+		}
 	}
 	if r := got[u.ID]; r.OrgID != e.org.ID || r.UserID == nil || *r.UserID != e.user || r.TeamID != nil {
 		t.Errorf("user vm: %+v", r)

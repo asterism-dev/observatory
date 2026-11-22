@@ -1,7 +1,8 @@
-// Package authz holds the org permission model: catalog, built-in roles and the Casbin enforcer.
+// Package authz holds the org permission model: catalogs, built-in roles and the Casbin enforcer.
 package authz
 
 import (
+	"cmp"
 	"errors"
 	"slices"
 	"strings"
@@ -104,111 +105,7 @@ type Permission struct {
 	Object string
 }
 
-var LegacyCatalog = []Permission{
-	{"iam.orgs.update", ObjSettings},
-	{"telemetry.tokens.create", ObjSettings},
-	{"iam.members.list", ObjMembers},
-	{"iam.invites.create", ObjMembers},
-	{"iam.members.delete", ObjMembers},
-	{"iam.members.setRole", ObjMembers},
-	{"iam.teams.list", ObjTeams},
-	{"iam.teams.create", ObjTeams},
-	{"iam.teams.update", ObjTeams + "/*"},
-	{"iam.teams.delete", ObjTeams + "/*"},
-	{"iam.teams.manageMembers", ObjTeams + "/*"},
-	{"iam.teams.leave", ObjTeams + "/*"},
-	{"iam.roles.list", ObjRoles},
-	{"iam.roles.manage", ObjRoles},
-	{"iam.roleBindings.manage", ObjRoles},
-	{"quota.limits.get", ObjLimits},
-	{"quota.limits.update", ObjLimits},
-	{"audit.events.list", ObjAudit},
-	{"audit.settings.get", ObjAudit},
-	{"audit.settings.update", ObjAudit},
-	{"telemetry.logEntries.list", ObjLogs},
-	{"secrets.variables.list", ObjEnv},
-	{"secrets.variables.set", ObjEnv},
-	{"secrets.variables.delete", ObjEnv},
-	{"secrets.variables.use", ObjEnv},
-	{"secrets.variables.list", ObjTeamEnv + "/*"},
-	{"secrets.variables.set", ObjTeamEnv + "/*"},
-	{"secrets.variables.delete", ObjTeamEnv + "/*"},
-	{"secrets.variables.use", ObjTeamEnv + "/*"},
-	{"secrets.variables.list", ObjUserEnv + "/*"},
-	{"secrets.variables.set", ObjUserEnv + "/*"},
-	{"secrets.variables.delete", ObjUserEnv + "/*"},
-	{"secrets.variables.use", ObjUserEnv + "/*"},
-	{"secrets.integrations.list", ObjIntegrations},
-	{"secrets.integrations.set", ObjIntegrations},
-	{"secrets.integrations.delete", ObjIntegrations},
-	{"secrets.integrations.use", ObjIntegrations},
-	{"secrets.integrations.list", ObjTeamIntegrations + "/*"},
-	{"secrets.integrations.set", ObjTeamIntegrations + "/*"},
-	{"secrets.integrations.delete", ObjTeamIntegrations + "/*"},
-	{"secrets.integrations.use", ObjTeamIntegrations + "/*"},
-	{"secrets.integrations.list", ObjUserIntegrations + "/*"},
-	{"secrets.integrations.set", ObjUserIntegrations + "/*"},
-	{"secrets.integrations.delete", ObjUserIntegrations + "/*"},
-	{"secrets.integrations.use", ObjUserIntegrations + "/*"},
-	{"artifacts.images.list", ObjImages},
-	{"artifacts.images.use", ObjImages},
-	{"artifacts.images.update", ObjImages},
-	{"build.builds.create", ObjImages},
-	{"artifacts.images.setDefault", ObjImages},
-	{"artifacts.images.list", ObjTeamImages + "/*"},
-	{"artifacts.images.use", ObjTeamImages + "/*"},
-	{"artifacts.images.update", ObjTeamImages + "/*"},
-	{"build.builds.create", ObjTeamImages + "/*"},
-	{"artifacts.images.setDefault", ObjTeamImages + "/*"},
-	{"artifacts.images.list", ObjUserImages + "/*"},
-	{"artifacts.images.use", ObjUserImages + "/*"},
-	{"artifacts.images.update", ObjUserImages + "/*"},
-	{"build.builds.create", ObjUserImages + "/*"},
-	{"artifacts.images.setDefault", ObjUserImages + "/*"},
-	{"telemetry.dashboards.get", ObjDashboards},
-	{"telemetry.dashboards.update", ObjDashboards},
-	{"telemetry.dashboards.create", ObjDashboards},
-	{"telemetry.dashboards.get", ObjTeamDashboards + "/*"},
-	{"telemetry.dashboards.update", ObjTeamDashboards + "/*"},
-	{"telemetry.dashboards.create", ObjTeamDashboards + "/*"},
-	{"telemetry.dashboards.get", ObjUserDashboards + "/*"},
-	{"telemetry.dashboards.update", ObjUserDashboards + "/*"},
-	{"telemetry.dashboards.create", ObjUserDashboards + "/*"},
-	{"compute.nodes.get", ObjNodes},
-	{"compute.nodes.create", ObjNodes},
-	{"compute.nodes.get", ObjNodes + "/*"},
-	{"compute.nodes.update", ObjNodes + "/*"},
-	{"compute.nodes.delete", ObjNodes + "/*"},
-	{"compute.nodes.use", ObjNodes + "/*"},
-	{"compute.nodes.getMetrics", ObjNodes + "/*"},
-	{"compute.instances.create", ObjVMs},
-	{"compute.instances.create", ObjTeamVMs + "/*"},
-	{"compute.instances.get", ObjVMs + "/*"},
-	{"compute.instances.setPower", ObjVMs + "/*"},
-	{"compute.instances.delete", ObjVMs + "/*"},
-	{"compute.instances.connect", ObjVMs + "/*"},
-	{"compute.instances.setNetworks", ObjVMs + "/*"},
-	{"compute.instances.setDisks", ObjVMs + "/*"},
-	{"compute.instances.snapshot", ObjVMs + "/*"},
-	{"compute.instances.restore", ObjVMs + "/*"},
-	{"compute.instances.fork", ObjVMs + "/*"},
-	{"compute.instances.getMetrics", ObjVMs + "/*"},
-	{"network.devices.create", ObjUserDevices + "/*"},
-	{"network.devices.list", ObjUserDevices + "/*"},
-	{"network.devices.delete", ObjUserDevices + "/*"},
-	{"network.networks.get", ObjNetworks},
-	{"network.networks.create", ObjNetworks},
-	{"network.networks.use", ObjNetworks + "/*"},
-	{"network.networks.delete", ObjNetworks + "/*"},
-	{"compute.disks.create", ObjDisks},
-	{"compute.disks.create", ObjTeamDisks + "/*"},
-	{"compute.disks.get", ObjDisks + "/*"},
-	{"compute.disks.update", ObjDisks + "/*"},
-	{"compute.disks.delete", ObjDisks + "/*"},
-	{"compute.disks.use", ObjDisks + "/*"},
-}
-
-// Unruled are actions no org rule decides (membership alone, the caller's own user:<id> objects, platform admin), so they stay out of LegacyCatalog and the role editor.
+// Unruled are actions no org rule decides (membership alone, the caller's own user:<id> objects, platform admin), so they stay out of org catalogs and the role editor.
 var Unruled = []Permission{
 	{"iam.orgs.get", "org"},
 	{"iam.users.get", "user:*"},
@@ -225,90 +122,11 @@ var Unruled = []Permission{
 	{"iam.platformAdmins.update", "platform/users"},
 }
 
-// BuiltinRules returns the allow rules of a built-in role, or nil for an unknown key.
-func BuiltinRules(key string) []Rule {
-	member := []Rule{
-		{Allow, ObjMembers, "iam.members.list"},
-		{Allow, ObjTeams + "*", "iam.teams.list"},
-		{Allow, ObjTeams + "*", "iam.teams.leave"},
-		{Allow, ObjRoles, "iam.roles.list"},
-		{Allow, ObjLimits, "quota.limits.get"},
-		{Allow, ObjEnv, "secrets.variables.list"},
-		{Allow, ObjEnv, "secrets.variables.use"},
-		{Allow, ObjIntegrations, "secrets.integrations.list"},
-		{Allow, ObjIntegrations, "secrets.integrations.use"},
-		{Allow, ObjImages, "artifacts.images.list"},
-		{Allow, ObjImages, "artifacts.images.use"},
-		{Allow, ObjDashboards, "telemetry.dashboards.get"},
-		{Allow, ObjNodes, "compute.nodes.get"},
-		{Allow, ObjNodes + "/*", "compute.nodes.get"},
-		{Allow, ObjNodes + "/*", "compute.nodes.use"},
-		{Allow, ObjVMs, "compute.instances.create"},
-		{Allow, ObjNetworks, "network.networks.get"},
-		{Allow, ObjNetworks, "network.networks.create"},
-		{Allow, ObjNetworks + "/*", "network.networks.use"},
-		{Allow, ObjDisks, "compute.disks.create"},
-	}
-	admin := append(member,
-		Rule{Allow, ObjSettings, "iam.orgs.update"},
-		Rule{Allow, ObjSettings, "telemetry.tokens.create"},
-		Rule{Allow, ObjMembers, "iam.invites.create"},
-		Rule{Allow, ObjMembers, "iam.members.delete"},
-		Rule{Allow, ObjTeams + "*", "iam.teams.*"},
-		Rule{Allow, ObjRoles, "iam.roles.manage"},
-		Rule{Allow, ObjRoles, "iam.roleBindings.manage"},
-		Rule{Allow, ObjLimits, "quota.limits.update"},
-		Rule{Allow, ObjAudit, "audit.events.list"},
-		Rule{Allow, ObjAudit, "audit.settings.get"},
-		Rule{Allow, ObjAudit, "audit.settings.update"},
-		Rule{Allow, ObjLogs, "telemetry.logEntries.list"},
-		Rule{Allow, ObjEnv, "secrets.variables.*"},
-		Rule{Allow, ObjTeamEnv + "/*", "secrets.variables.*"},
-		Rule{Allow, ObjIntegrations, "secrets.integrations.*"},
-		Rule{Allow, ObjTeamIntegrations + "/*", "secrets.integrations.*"},
-		Rule{Allow, ObjImages, "artifacts.images.*"},
-		Rule{Allow, ObjImages, "build.builds.create"},
-		Rule{Allow, ObjTeamImages + "/*", "artifacts.images.*"},
-		Rule{Allow, ObjTeamImages + "/*", "build.builds.create"},
-		Rule{Allow, ObjDashboards, "telemetry.dashboards.*"},
-		Rule{Allow, ObjTeamDashboards + "/*", "telemetry.dashboards.*"},
-		Rule{Allow, ObjNodes, "compute.nodes.*"},
-		Rule{Allow, ObjNodes + "/*", "compute.nodes.*"},
-		// Explicit VM actions, never compute.instances.*: admins must not gain connect or future VM actions.
-		Rule{Allow, ObjTeamVMs + "/*", "compute.instances.create"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.get"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.setPower"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.delete"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.setNetworks"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.snapshot"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.restore"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.getMetrics"},
-		Rule{Allow, ObjUserDevices + "/*", "network.devices.list"},
-		Rule{Allow, ObjUserDevices + "/*", "network.devices.delete"},
-		Rule{Allow, ObjNetworks + "/*", "network.networks.delete"},
-		// Never compute.disks.use or compute.disks.*: admins detach and delete a member's disk but cannot read it.
-		Rule{Allow, ObjTeamDisks + "/*", "compute.disks.create"},
-		Rule{Allow, ObjDisks + "/*", "compute.disks.get"},
-		Rule{Allow, ObjDisks + "/*", "compute.disks.update"},
-		Rule{Allow, ObjDisks + "/*", "compute.disks.delete"},
-		Rule{Allow, ObjVMs + "/*", "compute.instances.setDisks"},
-	)
-	switch key {
-	case "member":
-		return member
-	case "admin":
-		return admin
-	case "owner":
-		return append(admin, Rule{Allow, ObjMembers, "iam.members.setRole"})
-	}
-	return nil
-}
-
 var errPattern = errors.New("invalid object pattern")
 
 // ValidatePattern accepts catalog objects and org/user-scoped patterns with `*` only as a whole last segment.
-func ValidatePattern(obj string) error {
-	if slices.ContainsFunc(LegacyCatalog, func(p Permission) bool { return p.Object == obj }) {
+func (e *Enforcer) ValidatePattern(obj string) error {
+	if slices.ContainsFunc(e.actions, func(p Permission) bool { return p.Object == obj }) {
 		return nil
 	}
 	scope, rest, ok := strings.Cut(obj, "/")
@@ -339,16 +157,77 @@ func validSegment(s string) bool {
 	return s != "" && !strings.ContainsAny(s, "*/")
 }
 
-// ExpandActions returns the distinct catalog actions matched by a keyMatch action pattern; `*` may only end a pattern as a whole segment.
-func ExpandActions(pattern string) []string {
+// ExpandActions returns the distinct catalog actions, sorted, matched by a keyMatch action pattern; `*` may only end a pattern as a whole segment.
+func (e *Enforcer) ExpandActions(pattern string) []string {
 	if i := strings.Index(pattern, "*"); i >= 0 && (i != len(pattern)-1 || i > 0 && pattern[i-1] != '.') {
 		return nil
 	}
 	var out []string
-	for _, p := range LegacyCatalog {
+	for _, p := range e.actions {
 		if util.KeyMatch(p.Action, pattern) && !slices.Contains(out, p.Action) {
 			out = append(out, p.Action)
 		}
 	}
 	return out
 }
+
+// builtinRoles are ordered lowest first: each role also gets the defaults of the roles before it.
+var builtinRoles = []string{"member", "admin", "owner"}
+
+// ownedVMs is the OwnedRef kind CanConnect reads.
+const ownedVMs = "vms"
+
+func (e *Enforcer) indexCatalogs() {
+	var cumulative []Rule
+	for _, key := range builtinRoles {
+		for _, c := range e.policy.Catalogs {
+			for _, d := range c.RoleDefaults {
+				if d.Role == key {
+					cumulative = append(cumulative, Rule{Allow, d.Object, d.Action})
+				}
+			}
+		}
+		e.builtin[key] = slices.Clone(cumulative)
+	}
+	for _, c := range e.policy.Catalogs {
+		for _, a := range c.Actions {
+			e.actions = append(e.actions, Permission{Action: a.Name, Object: a.Object})
+			e.known[a.Name] = true
+		}
+	}
+	slices.SortFunc(e.actions, func(a, b Permission) int {
+		return cmp.Or(strings.Compare(a.Action, b.Action), strings.Compare(a.Object, b.Object))
+	})
+	e.actions = slices.Compact(e.actions)
+}
+
+// BuiltinRules returns the allow rules of a built-in role, inherited ones included, or nil for an unknown key.
+func (e *Enforcer) BuiltinRules(key string) []Rule {
+	if !slices.Contains(builtinRoles, key) {
+		return nil
+	}
+	return slices.Clone(e.builtin[key])
+}
+
+// Actions returns every registered action and object, sorted by action, then object.
+func (e *Enforcer) Actions() []Permission { return slices.Clone(e.actions) }
+
+// UnknownActions returns the actions org's custom rules name that no registered catalog matches, sorted.
+func (e *Enforcer) UnknownActions(org uuid.UUID) []string {
+	var out []string
+	for _, cr := range e.policy.Roles {
+		if cr.OrgID != org {
+			continue
+		}
+		for _, r := range cr.Rules {
+			if len(e.ExpandActions(r.Action)) == 0 {
+				out = append(out, r.Action)
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// Catalogs returns the registered catalogs the enforcer was built from; callers must not modify them.
+func (e *Enforcer) Catalogs() []Catalog { return e.policy.Catalogs }

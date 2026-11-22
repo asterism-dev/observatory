@@ -142,7 +142,9 @@ func TestChangedOrgs(t *testing.T) {
 		want   []uuid.UUID
 	}{
 		{"unchanged", func(*authz.Policy) {}, nil},
-		{"owner refs only", func(p *authz.Policy) { p.VMs = []authz.VMRef{{OrgID: a, ID: uuid.New(), UserID: &user}} }, nil},
+		{"owner refs only", func(p *authz.Policy) {
+			p.Owned = []authz.OwnedRef{{Kind: "vms", OrgID: a, ID: uuid.New(), UserID: &user}}
+		}, nil},
 		{"order only", func(p *authz.Policy) { slices.Reverse(p.Memberships) }, nil},
 		{"role change", func(p *authz.Policy) { p.Memberships[0].Role = "admin" }, []uuid.UUID{a}},
 		{"member removed", func(p *authz.Policy) { p.Memberships = p.Memberships[1:] }, []uuid.UUID{a}},

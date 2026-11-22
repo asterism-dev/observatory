@@ -19,27 +19,16 @@ const (
 )
 
 // OwnerRefs reads the owners of VMs and live disks, which grant their owners access.
-func (s *Store) OwnerRefs(ctx context.Context) ([]authz.VMRef, []authz.DiskRef, error) {
-	rows, err := s.q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM vms`)
+func (s *Store) OwnerRefs(ctx context.Context) ([]authz.OwnedRef, error) {
+	rows, err := s.q.Query(ctx, `SELECT 'vms', org_id, id, user_id, team_id FROM vms
+		UNION ALL SELECT 'disks', org_id, id, user_id, team_id FROM disks WHERE deleted_at IS NULL`)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	vms, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (v authz.VMRef, err error) {
-		err = r.Scan(&v.OrgID, &v.ID, &v.UserID, &v.TeamID)
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (o authz.OwnedRef, err error) {
+		err = r.Scan(&o.Kind, &o.OrgID, &o.ID, &o.UserID, &o.TeamID)
 		return
 	})
-	if err != nil {
-		return nil, nil, err
-	}
-	rows, err = s.q.Query(ctx, `SELECT org_id, id, user_id, team_id FROM disks WHERE deleted_at IS NULL`)
-	if err != nil {
-		return nil, nil, err
-	}
-	disks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (d authz.DiskRef, err error) {
-		err = r.Scan(&d.OrgID, &d.ID, &d.UserID, &d.TeamID)
-		return
-	})
-	return vms, disks, err
 }
 
 // LockHubOrg serializes the hub's resource writes in an org (quotas, addresses, attachments); the row is created on first use.

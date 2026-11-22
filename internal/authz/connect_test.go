@@ -10,8 +10,8 @@ import (
 
 // referenceConnect is the casbin-backed definition: the owner relation of a known VM, then Allowed.
 func referenceConnect(e *Enforcer, p Policy, user uuid.UUID, vm VMRef) bool {
-	if !slices.ContainsFunc(p.VMs, func(k VMRef) bool {
-		return k.ID == vm.ID && k.OrgID == vm.OrgID && sameOwner(k.UserID, vm.UserID) && sameOwner(k.TeamID, vm.TeamID)
+	if !slices.ContainsFunc(p.Owned, func(k OwnedRef) bool {
+		return k.Kind == "vms" && k.ID == vm.ID && k.OrgID == vm.OrgID && sameOwner(k.UserID, vm.UserID) && sameOwner(k.TeamID, vm.TeamID)
 	}) {
 		return false
 	}
@@ -36,7 +36,8 @@ func randomConnectPolicy(r *rand.Rand) (Policy, []uuid.UUID, []VMRef) {
 	pick := func(n int) int { return r.IntN(n) }
 	orgs := []uuid.UUID{uuid.New(), uuid.New()}
 	users := make([]uuid.UUID, 8)
-	var p Policy
+	var vms []VMRef
+	p := Policy{Catalogs: LegacyCatalogs()}
 	for i := range users {
 		users[i] = uuid.New()
 		for oi, org := range orgs {
@@ -63,21 +64,21 @@ func randomConnectPolicy(r *rand.Rand) (Policy, []uuid.UUID, []VMRef) {
 	for range 10 {
 		if pick(2) == 0 {
 			t := teams[pick(len(teams))]
-			p.VMs = append(p.VMs, VMRef{OrgID: t.org, ID: uuid.New(), TeamID: &t.id})
+			vms = append(vms, VMRef{OrgID: t.org, ID: uuid.New(), TeamID: &t.id})
 			continue
 		}
 		org := orgs[pick(2)]
 		u := users[pick(len(users))]
 		if member(org, u) {
-			p.VMs = append(p.VMs, VMRef{OrgID: org, ID: uuid.New(), UserID: &u})
+			vms = append(vms, VMRef{OrgID: org, ID: uuid.New(), UserID: &u})
 		}
 	}
 	for _, org := range orgs {
 		var roles []CustomRole
 		for range 1 + pick(3) {
 			objects := []string{"org/*", ObjVMs, ObjVMs + "/*", "org/teams/*", UserSubject(users[pick(len(users))]) + "/*"}
-			if len(p.VMs) > 0 {
-				objects = append(objects, VMObject(p.VMs[pick(len(p.VMs))].ID))
+			if len(vms) > 0 {
+				objects = append(objects, VMObject(vms[pick(len(vms))].ID))
 			}
 			cr := CustomRole{ID: uuid.New(), OrgID: org, Name: "r"}
 			for range 1 + pick(3) {
@@ -103,8 +104,9 @@ func randomConnectPolicy(r *rand.Rand) (Policy, []uuid.UUID, []VMRef) {
 			}
 		}
 	}
-	refs := slices.Clone(p.VMs)
-	for _, vm := range p.VMs {
+	p.Owned = vmsOwned(vms...)
+	refs := slices.Clone(vms)
+	for _, vm := range vms {
 		cross := vm
 		cross.OrgID = orgs[0]
 		if vm.OrgID == orgs[0] {

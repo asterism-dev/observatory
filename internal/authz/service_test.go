@@ -13,7 +13,7 @@ import (
 )
 
 func memberPolicy(org, user uuid.UUID, role string) Policy {
-	return Policy{Memberships: []MemberRole{{OrgID: org, UserID: user, Role: role}}}
+	return Policy{Memberships: []MemberRole{{OrgID: org, UserID: user, Role: role}}, Catalogs: LegacyCatalogs()}
 }
 
 func TestServiceReloadPicksUpChanges(t *testing.T) {

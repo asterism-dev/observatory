@@ -10,8 +10,8 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/authz"
 )
 
-// OwnerRefs loads the VM and disk owners a service adds to iam's policy.
-type OwnerRefs func(context.Context) ([]coreauthz.VMRef, []coreauthz.DiskRef, error)
+// OwnerRefs loads the resource owners a service adds to iam's policy.
+type OwnerRefs func(context.Context) ([]coreauthz.OwnedRef, error)
 
 // Policy is an enforcer built like the hub's: the policy watched from the fake plus the owner refs.
 type Policy struct {
@@ -23,6 +23,8 @@ type Policy struct {
 // Policy watches s until t ends; it reloads only on Sync, so tests decide when a change lands.
 func (s *Server) Policy(t testing.TB, owners OwnerRefs) *Policy {
 	t.Helper()
+	// The hub registers its catalog before it builds this enforcer.
+	s.change(func() { s.putCatalog(legacy("hub")) })
 	ctx, cancel := context.WithCancel(context.Background())
 	w, err := authz.NewWatcher(s.URL(), s.token, nil)
 	if err != nil {
@@ -42,7 +44,7 @@ func (s *Server) Policy(t testing.TB, owners OwnerRefs) *Policy {
 			return p, errors.New("iamtest: no policy yet")
 		}
 		var err error
-		p.VMs, p.Disks, err = owners(ctx)
+		p.Owned, err = owners(ctx)
 		return p, err
 	})
 	if err != nil {

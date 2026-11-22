@@ -10,15 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func mustNew(t *testing.T, p Policy) *Enforcer {
-	t.Helper()
-	e, err := New(p)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return e
-}
-
 // concrete turns a catalog object pattern into an object a request would carry.
 func concrete(obj string) string {
 	return strings.Replace(obj, "*", uuid.NewString(), 1)
@@ -49,7 +40,7 @@ func TestBuiltinRoles(t *testing.T) {
 	}
 	names := map[uuid.UUID]string{owner: "owner", admin: "admin", member: "member"}
 	for u, allowed := range want {
-		for _, p := range LegacyCatalog {
+		for _, p := range legacyE().Actions() {
 			if got := e.Allowed(UserSubject(u), org, concrete(p.Object), p.Action); got != allowed(p) {
 				t.Errorf("%s %s@%s: got %v", names[u], p.Action, p.Object, got)
 			}
@@ -135,13 +126,13 @@ func TestCrossOrgIsolation(t *testing.T) {
 		Memberships: []MemberRole{{OrgID: a, UserID: u, Role: "admin"}},
 		TeamMembers: []TeamMember{{OrgID: a, TeamID: team, UserID: u, Admin: true}},
 		Roles: []CustomRole{{ID: role, OrgID: a, Name: "x",
-			Rules: []Rule{{Effect: Allow, Object: "org/*", Action: "*"}}}},
+			Rules: allowAll("org/*")}},
 		Bindings: []Binding{{OrgID: a, Subject: UserSubject(u), RoleID: role}, {OrgID: a, Subject: TeamSubject(team), RoleID: role}},
 	})
 	if !e.Allowed(UserSubject(u), a, ObjMembers, "iam.members.setRole") {
 		t.Error("custom role should grant everything in A")
 	}
-	for _, p := range LegacyCatalog {
+	for _, p := range legacyE().Actions() {
 		if e.Allowed(UserSubject(u), b, concrete(p.Object), p.Action) {
 			t.Errorf("%s@%s allowed in B", p.Action, p.Object)
 		}
@@ -210,30 +201,30 @@ func TestValidatePattern(t *testing.T) {
 		"user:" + id + "/vm/*/x":             false,
 	}
 	for in, ok := range cases {
-		if err := ValidatePattern(in); (err == nil) != ok {
-			t.Errorf("ValidatePattern(%q) = %v, want ok=%v", in, err, ok)
+		if err := legacyE().ValidatePattern(in); (err == nil) != ok {
+			t.Errorf("legacyE().ValidatePattern(%q) = %v, want ok=%v", in, err, ok)
 		}
 	}
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(LegacyCatalog)-35 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(LegacyCatalog)-35)
+	if got := legacyE().ExpandActions("*"); len(got) != len(legacyE().Actions())-35 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(legacyE().Actions())-35)
 	}
 	want := []string{"iam.teams.list", "iam.teams.create", "iam.teams.update", "iam.teams.delete", "iam.teams.manageMembers", "iam.teams.leave"}
-	if got := ExpandActions("iam.teams.*"); !reflect.DeepEqual(got, want) {
+	if got := legacyE().ExpandActions("iam.teams.*"); !reflect.DeepEqual(got, sorted(want)) {
 		t.Errorf("iam.teams.*: got %v", got)
 	}
-	if got := ExpandActions("audit.events.list"); !reflect.DeepEqual(got, []string{"audit.events.list"}) {
+	if got := legacyE().ExpandActions("audit.events.list"); !reflect.DeepEqual(got, []string{"audit.events.list"}) {
 		t.Errorf("exact: got %v", got)
 	}
-	if got := ExpandActions("compute.instances.*"); !reflect.DeepEqual(got, []string{"compute.instances.create", "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.connect", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics"}) {
+	if got := legacyE().ExpandActions("compute.instances.*"); !reflect.DeepEqual(got, sorted([]string{"compute.instances.create", "compute.instances.get", "compute.instances.setPower", "compute.instances.delete", "compute.instances.connect", "compute.instances.setNetworks", "compute.instances.setDisks", "compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork", "compute.instances.getMetrics"})) {
 		t.Errorf("compute.instances.*: got %v", got)
 	}
-	if got := ExpandActions("telemetry.dashboards.*"); !reflect.DeepEqual(got, []string{"telemetry.dashboards.get", "telemetry.dashboards.update", "telemetry.dashboards.create"}) {
+	if got := legacyE().ExpandActions("telemetry.dashboards.*"); !reflect.DeepEqual(got, sorted([]string{"telemetry.dashboards.get", "telemetry.dashboards.update", "telemetry.dashboards.create"})) {
 		t.Errorf("telemetry.dashboards.*: got %v", got)
 	}
-	if got := ExpandActions("compute.instances.ssh"); len(got) != 0 {
+	if got := legacyE().ExpandActions("compute.instances.ssh"); len(got) != 0 {
 		t.Errorf("unknown: got %v", got)
 	}
 }
@@ -433,7 +424,7 @@ func TestEnvPermissions(t *testing.T) {
 			t.Errorf("%s: got %v", tt.name, got)
 		}
 	}
-	if got := ExpandActions("secrets.variables.*"); !reflect.DeepEqual(got, []string{"secrets.variables.list", "secrets.variables.set", "secrets.variables.delete", "secrets.variables.use"}) {
+	if got := legacyE().ExpandActions("secrets.variables.*"); !reflect.DeepEqual(got, sorted([]string{"secrets.variables.list", "secrets.variables.set", "secrets.variables.delete", "secrets.variables.use"})) {
 		t.Errorf("secrets.variables.*: got %v", got)
 	}
 }
@@ -518,7 +509,7 @@ func TestIntegrationPermissions(t *testing.T) {
 			t.Errorf("%s: got %v", tt.name, got)
 		}
 	}
-	if got := ExpandActions("secrets.integrations.*"); !reflect.DeepEqual(got, []string{"secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.delete", "secrets.integrations.use"}) {
+	if got := legacyE().ExpandActions("secrets.integrations.*"); !reflect.DeepEqual(got, sorted([]string{"secrets.integrations.list", "secrets.integrations.set", "secrets.integrations.delete", "secrets.integrations.use"})) {
 		t.Errorf("secrets.integrations.*: got %v", got)
 	}
 }
@@ -545,14 +536,14 @@ func TestVMPermissions(t *testing.T) {
 			{OrgID: org, TeamID: otherTeam, UserID: otherAdmin, Admin: true},
 		},
 		Teams: []TeamRef{{OrgID: org, ID: team}, {OrgID: org, ID: otherTeam}},
-		VMs: []VMRef{
-			{OrgID: org, ID: ownVM, UserID: &member},
-			{OrgID: org, ID: adminVM, UserID: &admin},
-			{OrgID: org, ID: teamVM, TeamID: &team},
-			{OrgID: org, ID: otherTeamVM, TeamID: &otherTeam},
-			{OrgID: org, ID: deniedVM, UserID: &denied},
-			{OrgID: otherOrg, ID: foreignVM, UserID: &member},
-		},
+		Owned: vmsOwned(
+			VMRef{OrgID: org, ID: ownVM, UserID: &member},
+			VMRef{OrgID: org, ID: adminVM, UserID: &admin},
+			VMRef{OrgID: org, ID: teamVM, TeamID: &team},
+			VMRef{OrgID: org, ID: otherTeamVM, TeamID: &otherTeam},
+			VMRef{OrgID: org, ID: deniedVM, UserID: &denied},
+			VMRef{OrgID: otherOrg, ID: foreignVM, UserID: &member},
+		),
 		Roles: []CustomRole{{ID: denyRole, OrgID: org, Name: "no-vm-delete", Rules: []Rule{
 			{Effect: Deny, Object: ObjVMs + "/*", Action: "compute.instances.delete"},
 		}}},
@@ -677,7 +668,7 @@ func (f vmFixture) policy() Policy {
 		},
 		TeamMembers: []TeamMember{{OrgID: f.org, TeamID: f.team, UserID: f.tm}},
 		Teams:       []TeamRef{{OrgID: f.org, ID: f.team}},
-		VMs:         []VMRef{f.userRef(), f.teamRef()},
+		Owned:       vmsOwned(f.userRef(), f.teamRef()),
 	}
 }
 
@@ -855,12 +846,11 @@ func newDiskFixture(t *testing.T) diskFixture {
 			{OrgID: f.org, TeamID: f.team, UserID: f.teamAdmin, Admin: true},
 		},
 		Teams: []TeamRef{{OrgID: f.org, ID: f.team}},
-		VMs:   []VMRef{{OrgID: f.org, ID: f.vm, UserID: &f.colleague}},
-		Disks: []DiskRef{
-			{OrgID: f.org, ID: f.memberDisk, UserID: &f.member},
-			{OrgID: f.org, ID: f.teamDisk, TeamID: &f.team},
-			{OrgID: f.org, ID: f.denyDisk, UserID: &f.colleague},
-		},
+		Owned: append(vmsOwned(VMRef{OrgID: f.org, ID: f.vm, UserID: &f.colleague}),
+			OwnedRef{Kind: "disks", OrgID: f.org, ID: f.memberDisk, UserID: &f.member},
+			OwnedRef{Kind: "disks", OrgID: f.org, ID: f.teamDisk, TeamID: &f.team},
+			OwnedRef{Kind: "disks", OrgID: f.org, ID: f.denyDisk, UserID: &f.colleague},
+		),
 		Roles: []CustomRole{{ID: denyRole, OrgID: f.org, Name: "no-disk-delete", Rules: []Rule{
 			{Effect: Deny, Object: ObjDisks + "/*", Action: "compute.disks.delete"},
 		}}},
@@ -940,7 +930,7 @@ func TestDenyDiskDeleteCoversUserDisks(t *testing.T) {
 func TestNoDiskWildcardInBuiltins(t *testing.T) {
 	f := newDiskFixture(t)
 	for _, key := range []string{"owner", "admin", "member"} {
-		for _, r := range BuiltinRules(key) {
+		for _, r := range legacyE().BuiltinRules(key) {
 			if strings.HasPrefix(r.Object, "org/disks") && (r.Action == "*" || r.Action == "compute.disks.*") {
 				t.Errorf("%s: wildcard %s@%s", key, r.Action, r.Object)
 			}
@@ -984,14 +974,14 @@ func TestEnforcerVMLifecycleGrants(t *testing.T) {
 		}
 	}
 	for _, key := range []string{"member", "admin", "owner"} {
-		for _, r := range BuiltinRules(key) {
+		for _, r := range legacyE().BuiltinRules(key) {
 			if r.Action == "compute.instances.*" || r.Action == "compute.instances.fork" {
 				t.Errorf("%s has %s", key, r.Action)
 			}
 		}
 	}
 	for _, act := range []string{"compute.instances.snapshot", "compute.instances.restore", "compute.instances.fork"} {
-		if !slices.Contains(ExpandActions("compute.instances.*"), act) {
+		if !slices.Contains(legacyE().ExpandActions("compute.instances.*"), act) {
 			t.Errorf("catalog lacks %s", act)
 		}
 	}
@@ -1152,7 +1142,7 @@ func TestLogsReadPermission(t *testing.T) {
 			t.Errorf("%v: got %v", u, got)
 		}
 	}
-	if err := ValidatePattern(ObjLogs); err != nil {
+	if err := legacyE().ValidatePattern(ObjLogs); err != nil {
 		t.Fatalf("telemetry.logEntries.list not grantable: %v", err)
 	}
 }

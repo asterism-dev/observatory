@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
@@ -103,8 +104,9 @@ func policySnapshot(s *store.Store, ctx context.Context) (authz.Policy, error) {
 	p := f.p
 	p.Memberships, p.Teams, p.TeamMembers = slices.Clone(p.Memberships), slices.Clone(p.Teams), slices.Clone(p.TeamMembers)
 	f.mu.Unlock()
+	p.Catalogs = authztest.Legacy()
 	var err error
-	p.VMs, p.Disks, err = s.OwnerRefs(ctx)
+	p.Owned, err = s.OwnerRefs(ctx)
 	return p, err
 }
 

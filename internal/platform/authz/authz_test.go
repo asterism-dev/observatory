@@ -177,13 +177,16 @@ func (f *fixture) denyAll(p *iamv1.Policy, user uuid.UUID) *iamv1.Policy {
 	return p
 }
 
+// echoCatalog registers the action the echo reader role grants, which an unregistered action never would.
+var echoCatalog = &iamv1.Catalog{Service: "test", Actions: []*iamv1.CatalogAction{{Name: "test.echoes.get", Object: "org/echoes/*"}}}
+
 // snapshot makes every given user an org member; only f.member also gets a role granting test.echoes.get.
 func (f *fixture) snapshot(rev uint64, members ...uuid.UUID) *iamv1.Policy {
 	role := uuid.NewString()
 	p := &iamv1.Policy{Revision: rev, Roles: []*iamv1.CustomRole{{
 		Id: role, OrgId: f.org.String(), Name: "echo reader",
 		Rules: []*iamv1.Rule{{Effect: "allow", Object: "org/echoes/*", Action: "test.echoes.get"}},
-	}}}
+	}}, Catalogs: []*iamv1.Catalog{echoCatalog}}
 	for _, m := range members {
 		p.Memberships = append(p.Memberships, &iamv1.MemberRole{OrgId: f.org.String(), UserId: m.String(), Role: "member"})
 		if m == f.member {

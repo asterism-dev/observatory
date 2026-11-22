@@ -12,6 +12,7 @@ import (
 
 	hubv1 "github.com/asterism-dev/observatory/gen/go/observatory/hub/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 )
 
 // revisionPolicy serves e once its revision reaches the requested one.
@@ -40,7 +41,8 @@ func TestCanHoldWaitsForRevision(t *testing.T) {
 	org, user, owned := uuid.New(), uuid.New(), uuid.New()
 	e, err := authz.New(authz.Policy{
 		Memberships: []authz.MemberRole{{OrgID: org, UserID: user, Role: "member"}},
-		VMs:         []authz.VMRef{{OrgID: org, ID: owned, UserID: &user}},
+		Owned:       []authz.OwnedRef{{Kind: "vms", OrgID: org, ID: owned, UserID: &user}},
+		Catalogs:    authztest.Legacy(),
 	})
 	if err != nil {
 		t.Fatal(err)

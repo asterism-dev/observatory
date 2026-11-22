@@ -64,7 +64,7 @@ func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store, 
 			return p, errors.New("no policy from iam")
 		}
 		var err error
-		p.VMs, p.Disks, err = s.OwnerRefs(ctx)
+		p.Owned, err = s.OwnerRefs(ctx)
 		return p, err
 	})
 	if err != nil {

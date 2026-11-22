@@ -25,7 +25,7 @@ func TestCanGrant(t *testing.T) {
 		Bindings: []Binding{{OrgID: org, Subject: UserSubject(deniedAdmin), RoleID: denyRole}},
 	})
 	var all []Rule
-	for _, p := range LegacyCatalog {
+	for _, p := range legacyE().Actions() {
 		// Nobody holds every member's private env scope, compute.instances.connect, compute.instances.fork, compute.disks.use or network.devices.create on every object.
 		if p.Object != ObjUserEnv+"/*" && p.Object != ObjUserIntegrations+"/*" && p.Object != ObjUserImages+"/*" && p.Object != ObjUserDashboards+"/*" && p.Action != "compute.instances.connect" && p.Action != "compute.instances.fork" && p.Action != "compute.disks.use" && p.Action != "network.devices.create" {
 			all = append(all, Rule{Allow, p.Object, p.Action})
@@ -83,11 +83,11 @@ func TestEffectiveRulesIncludesParents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := append([]Rule{childRule, baseRule}, BuiltinRules("member")...)
+	want := append([]Rule{childRule, baseRule}, legacyE().BuiltinRules("member")...)
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v (no deny)", got, want)
 	}
-	if got, err := e.EffectiveRules([]string{"owner"}, org); err != nil || !slices.Equal(got, BuiltinRules("owner")) {
+	if got, err := e.EffectiveRules([]string{"owner"}, org); err != nil || !slices.Equal(got, legacyE().BuiltinRules("owner")) {
 		t.Errorf("owner: got %v, %v", got, err)
 	}
 	for _, key := range []string{"bogus", foreign.String(), strings.ToUpper(base.String()), uuid.NewString()} {

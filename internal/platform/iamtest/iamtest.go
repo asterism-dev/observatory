@@ -22,6 +22,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
@@ -89,6 +90,8 @@ func New(t testing.TB) *Server {
 		keys:     map[uuid.UUID][]string{},
 		sessions: map[uuid.UUID]*session{},
 	}
+	// iam registers its own catalog at start; audit's is there as if audit had started.
+	s.pol.Catalogs = []coreauthz.Catalog{legacy("iam"), legacy("audit")}
 	s.pub.Publish(s.pol)
 	mux := http.NewServeMux()
 	mux.Handle("/internal/iam/jwks", s.signer.JWKSHandler())
@@ -133,6 +136,14 @@ func (s *Server) HoldCatalogs() (release func()) {
 			s.held = nil
 		})
 	}
+}
+
+// AddCatalog streams c as if its service had registered it, without iam's prefix checks.
+func (s *Server) AddCatalog(c coreauthz.Catalog) { s.change(func() { s.putCatalog(c) }) }
+
+func legacy(service string) coreauthz.Catalog {
+	all := authztest.Legacy()
+	return all[slices.IndexFunc(all, func(c coreauthz.Catalog) bool { return c.Service == service })]
 }
 
 // putCatalog needs s.mu held.

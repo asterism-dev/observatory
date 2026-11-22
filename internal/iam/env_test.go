@@ -18,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/hub/v1/hubv1connect"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	"github.com/asterism-dev/observatory/internal/seal"
@@ -95,6 +96,12 @@ func newEnvOn(t *testing.T, pool *pgxpool.Pool, load func(context.Context) (auth
 	t.Helper()
 	ctx := context.Background()
 	s := store.New(pool)
+	// Registered as at start: iam's own catalog and those of audit and the hub.
+	for _, c := range authztest.Legacy() {
+		if _, _, err := s.PutCatalog(ctx, c.Service, c); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if load == nil {
 		load = s.PolicySnapshot
 	}

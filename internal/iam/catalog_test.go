@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/authz/authztest"
 	"github.com/asterism-dev/observatory/internal/iam/store"
 	"github.com/asterism-dev/observatory/internal/iam/store/storetest"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
@@ -28,6 +30,8 @@ import (
 type catalogEnv struct {
 	pool *pgxpool.Pool
 	srv  *httptest.Server
+	s    *store.Store
+	z    *authz.Service
 }
 
 func newCatalogEnv(t *testing.T, pool *pgxpool.Pool) *catalogEnv {
@@ -49,7 +53,7 @@ func newCatalogEnv(t *testing.T, pool *pgxpool.Pool) *catalogEnv {
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
 	h := servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(
 		internalHandler(iss, ps, internalServer{Store: s}, catalogServer{Store: s, Policy: z}))
-	e := &catalogEnv{pool: pool, srv: httptest.NewServer(h)}
+	e := &catalogEnv{pool: pool, srv: httptest.NewServer(h), s: s, z: z}
 	t.Cleanup(e.srv.Close)
 	return e
 }
@@ -319,5 +323,144 @@ func TestRegisterCatalogBodyLimit(t *testing.T) {
 	}
 	if d := storedDigest(t, e.pool, "audit"); d != "" {
 		t.Fatalf("oversized catalog stored: %s", d)
+	}
+}
+
+func legacyCatalog(service string) authz.Catalog {
+	all := authztest.Legacy()
+	return all[slices.IndexFunc(all, func(c authz.Catalog) bool { return c.Service == service })]
+}
+
+func TestRemovedActionKeptAsUnknown(t *testing.T) {
+	ctx := context.Background()
+	e := newCatalogEnv(t, storetest.NewDB(t))
+	hub := legacyCatalog("hub")
+	if _, err := e.register(hubTok, hub); err != nil {
+		t.Fatal(err)
+	}
+	login, err := e.s.Login(ctx, store.Identity{Subject: "bob", Email: "bob@x.io", Name: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := login.User.ID
+	org, err := e.s.CreateOrg(ctx, "acme", bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := e.s.CreateRole(ctx, org.ID, authz.CustomRole{Name: "forker", Rules: []authz.Rule{{Effect: authz.Allow, Object: authz.ObjVMs + "/*", Action: "compute.instances.fork"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Bind(ctx, org.ID, authz.UserSubject(bob), role.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.z.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := platformauthz.NewWatcher(e.srv.URL, hubTok, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	go w.Run(wctx)
+	vm := authz.VMObject(uuid.New())
+	hubAllows := func() bool {
+		p, _, _ := w.Policy()
+		h, err := authz.New(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h.Allowed(authz.UserSubject(bob), org.ID, vm, "compute.instances.fork")
+	}
+	eventually := func(want bool) {
+		t.Helper()
+		for deadline := time.Now().Add(10 * time.Second); hubAllows() != want; time.Sleep(20 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("hub allows fork: %v, want %v", !want, want)
+			}
+		}
+	}
+	eventually(true)
+
+	hub.Actions = slices.DeleteFunc(slices.Clone(hub.Actions), func(a authz.Action) bool { return a.Name == "compute.instances.fork" })
+	hub.Templates = nil
+	if _, err := e.register(hubTok, hub); err != nil {
+		t.Fatal(err)
+	}
+	eventually(false)
+	roles, err := e.s.Roles(ctx, org.ID)
+	if err != nil || len(roles) != 1 || !slices.Equal(roles[0].Rules, role.Rules) {
+		t.Fatalf("stored rules changed: %+v %v", roles, err)
+	}
+	res, err := (&server{Deps: Deps{Policy: e.z}}).ListCatalog(ctx, connect.NewRequest(&iamv1.ListCatalogRequest{Org: org.ID.String()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Msg.GetUnknownActions(); !slices.Equal(got, []string{"compute.instances.fork"}) {
+		t.Fatalf("unknown actions = %v", got)
+	}
+	if slices.ContainsFunc(res.Msg.GetEntries(), func(c *iamv1.CatalogEntry) bool { return c.Action == "compute.instances.fork" }) {
+		t.Fatal("the removed action is still listed")
+	}
+}
+
+func TestCreateRoleUnknownActionRejected(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	_, err := e.tryCreateRole(ownerTok, org, &iamv1.CreateRoleRequest{Name: "x", Rules: []*iamv1.RoleRule{rule("allow", "org/vms/*", "compute.instances.reboot")}})
+	wantCode(t, err, connect.CodeInvalidArgument)
+	if !strings.Contains(err.Error(), "invalid rule") {
+		t.Fatalf("err = %v, want invalid rule", err)
+	}
+	if e.roleCount(org) != 0 {
+		t.Fatal("role with an unknown action stored")
+	}
+}
+
+func TestListCatalogPermission(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	member, memberTok := e.user("bob")
+	_, strangerTok := e.user("carol")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, member, store.RoleMember)
+	ctx := context.Background()
+	res, err := e.client.ListCatalog(ctx, req(memberTok, &iamv1.ListCatalogRequest{Org: org.String()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(res.Msg.Entries, func(c *iamv1.CatalogEntry) bool { return c.Action == "audit.settings.update" })
+	if i < 0 || res.Msg.Entries[i].Service != "audit" || !res.Msg.Entries[i].Write || res.Msg.Entries[i].Object != "org/audit" {
+		t.Fatalf("audit.settings.update entry: %+v", res.Msg.Entries)
+	}
+	if len(res.Msg.UnknownActions) != 0 {
+		t.Fatalf("unknown actions: %v", res.Msg.UnknownActions)
+	}
+	_, err = e.client.ListCatalog(ctx, req(strangerTok, &iamv1.ListCatalogRequest{Org: org.String()}))
+	wantCode(t, err, connect.CodeNotFound)
+}
+
+func TestOrgPermissionsFromCatalogs(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	member, memberTok := e.user("bob")
+	org := e.createOrg(ownerTok, "Acme")
+	e.addMember(org, member, store.RoleMember)
+	hub := legacyCatalog("hub")
+	hub.Actions = append(hub.Actions, authz.Action{Name: "compute.instances.reboot", Object: "org/vms/*", Write: true})
+	hub.RoleDefaults = append(hub.RoleDefaults, authz.RoleDefault{Role: "member", Object: "org/vms/*", Action: "compute.instances.reboot"})
+	if _, _, err := e.store.PutCatalog(context.Background(), "hub", hub); err != nil {
+		t.Fatal(err)
+	}
+	e.reload()
+	got, err := e.getOrg(memberTok, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Permissions, "compute.instances.reboot") || slices.Contains(got.Permissions, "compute.instances.delete") {
+		t.Fatalf("member permissions = %v", got.Permissions)
 	}
 }
