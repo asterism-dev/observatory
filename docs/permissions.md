@@ -303,6 +303,14 @@ Fields: vCPU, RAM (MB), disk (GB), VM count, snapshots (`snapshotCount`); `null`
 and per member by org admins (`quota.limits.update`). They stack: a team or member limit cannot exceed the org limit, and an org limit cannot be lowered below an existing
 team or member limit (both return `400` "limit exceeds org limit"). Creating a VM that would exceed a limit returns `409` "limit exceeded".
 
+The quota service serves the limits at `/api/quota/v1/`: `GET /orgs/{org}/limits`, `PUT /orgs/{org}/limits` with
+`{"scope": "team:<id>|user:<id>", "limits": {...}}` (the scope sits in the body), and for platform admins
+`GET`/`PUT /admin/orgs/{org_id}/limits`. The semantics are those above. The hub reserves through quota before it creates
+or grows a VM, disk or snapshot; while quota can't answer, those requests fail with `503` "quota service unavailable",
+never unchecked. A delete frees its quota at once; if quota is down at that moment, the deleted event frees it once quota
+is back. Ceilings: if quota or the bus is down for more than 7 days, events expire from the stream and allocations drift;
+if quota's event consumer lags more than 5 minutes (the hold lifetime), usage is under-counted for the gap.
+
 ## Platform admins
 
 A platform admin administers the installation: lists all orgs and their members, sets org limits, manages

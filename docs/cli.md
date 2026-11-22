@@ -170,7 +170,7 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `role list` / `role show <role>` / `role catalog` | roles, their rules, and the permissions a rule can name; `role catalog` lists actions custom rules still name but no service offers as `<action>  (unknown)` |
 | `role create --file F` / `role update <role> --file F` / `role delete <role>` | rules as JSON, same shape as the API |
 | `binding list` / `binding add <subject> <role>` / `binding delete <id>` | subject `user:<member>` or `team:<team>` (name, email or ID) |
-| `limit show` | resource limits of the org, teams and members (`images` is the image storage) |
+| `limit show` | resource limits of the org, teams and members from the quota service (`images` is the image storage) |
 | `limit set <team:T\|user:M> [--vcpu N] [--ram MB] [--disk GB] [--vms N] [--snapshots N]` | `none` clears a value; org limits are set by a platform admin in the web UI |
 | `session list` / `session revoke <id>` | revoke confirms |
 
