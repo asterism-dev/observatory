@@ -329,7 +329,8 @@ Users, sessions, SSH keys, orgs, members, invites, teams, roles, bindings and th
 `observatory.iam.v1.IAMService`, served at `/api/iam/v1/` over Connect and REST. Both take the same path
 through authorization and audit. REST paths follow the methods, for example `GET /api/iam/v1/me`,
 `DELETE /api/iam/v1/orgs/{org}/members/{user}` or `POST /api/iam/v1/invites:accept`; the Connect path is
-`/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. The service runs inside the hub for now.
+`/api/iam/v1/observatory.iam.v1.IAMService/<Method>`. A Connect call must send `Connect-Protocol-Version: 1`;
+without it the request is taken as REST and the Connect path answers 404. The service runs inside the hub for now.
 
 - **`{self}`.** The calls on your own account (`GetMe`, sessions, SSH keys, `CreateOrg`, `AcceptInvite`, `LeaveOrg`)
   have the object `user:{self}`, and `{self}` is always the caller. A session or SSH key ID of another user is not
