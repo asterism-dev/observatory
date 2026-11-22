@@ -82,9 +82,13 @@ func Parse(e *eventsv1.Event) (Lifecycle, error) {
 	return l, nil
 }
 
-// ParseCommitted reads a committed event's reservation ids.
+// ParseCommitted reads a committed event's reservation ids; the list must be present, though it may be empty.
 func ParseCommitted(e *eventsv1.Event) ([]uuid.UUID, error) {
-	vs := e.GetDetails().GetFields()["reservations"].GetListValue().GetValues()
+	l, ok := e.GetDetails().GetFields()["reservations"].GetKind().(*structpb.Value_ListValue)
+	if !ok {
+		return nil, errors.New("committed event without reservations")
+	}
+	vs := l.ListValue.GetValues()
 	ids := make([]uuid.UUID, 0, len(vs))
 	for _, v := range vs {
 		id, err := uuidx.Canonical(v.GetStringValue())

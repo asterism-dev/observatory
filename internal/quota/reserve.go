@@ -155,6 +155,7 @@ func (s *store) Release(ctx context.Context, org uuid.UUID, resources []string) 
 }
 
 // setAllocation sets a resource's absolute usage from a lifecycle event: a tombstone is final, otherwise only a newer event id applies.
+// ponytail: event ids are hub-clock UUIDv7s, so a second hub replica or a clock step back can drop a resize; order by stream sequence if that matters.
 // A child of a tombstoned parent is stored as a tombstone, so a late child event can't count for a deleted vm.
 func (s *store) setAllocation(ctx context.Context, org uuid.UUID, resource, owner, parent string, a Amounts, eventID uuid.UUID) error {
 	var p *string

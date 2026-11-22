@@ -50,6 +50,14 @@ func TestParseRejectsBadDetails(t *testing.T) {
 	if _, err := Parse(good); err != nil {
 		t.Fatal(err)
 	}
+	if ids, err := ParseCommitted(Committed(uuid.New(), nil)); err != nil || len(ids) != 0 {
+		t.Fatalf("empty list: %v, %v", ids, err)
+	}
+	none := Committed(uuid.New(), nil)
+	delete(none.Details.Fields, "reservations")
+	if _, err := ParseCommitted(none); err == nil {
+		t.Fatal("ParseCommitted accepted an event without reservations")
+	}
 	bad := Committed(uuid.New(), nil)
 	bad.Details.Fields["reservations"] = structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{structpb.NewStringValue("nope")}})
 	if _, err := ParseCommitted(bad); err == nil {

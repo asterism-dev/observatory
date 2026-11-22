@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	consumerName = "quota"
-	ackWait      = 30 * time.Second
-	maxRetry     = 30 * time.Second
+	ackWait       = 30 * time.Second
+	maxRetry      = 30 * time.Second
+	memberTimeout = 5 * time.Second
 
 	memberDelete = "iam.members.delete"
 	memberLeave  = "iam.members.leave"
@@ -34,20 +34,44 @@ const (
 
 var errUnparsable = errors.New("unparsable event")
 
-// consume applies lifecycle events, commits and iam removals one at a time, in stream order, until ctx ends.
-func consume(ctx context.Context, js jetstream.JetStream, s *store, iam iamv1connect.IAMInternalServiceClient) error {
+// consumers split usage from iam removals, so an iam outage never holds up usage accounting; order matters only within each.
+var consumers = map[string][]string{
+	"quota": subjects(lifecycle.InstanceCreated, lifecycle.InstanceDeleted, lifecycle.DiskCreated, lifecycle.DiskResized, lifecycle.DiskDeleted,
+		lifecycle.SnapshotCreated, lifecycle.SnapshotDeleted, lifecycle.ReservationsCommitted),
+	"quota-iam": subjects(memberDelete, memberLeave, teamDelete),
+}
+
+func subjects(types ...string) []string {
+	out := make([]string, len(types))
+	for i, t := range types {
+		out[i] = "events.*." + t
+	}
+	return out
+}
+
+// consumeAll runs every consumer until ctx ends or one of them dies.
+func consumeAll(ctx context.Context, js jetstream.JetStream, s *store, iam iamv1connect.IAMInternalServiceClient) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, len(consumers))
+	for name, subs := range consumers {
+		go func() {
+			errs <- consume(ctx, js, name, subs, s, iam)
+			cancel()
+		}()
+	}
+	var err error
+	for range consumers {
+		err = errors.Join(err, <-errs)
+	}
+	return err
+}
+
+// consume applies the events of subs one at a time, in stream order, until ctx ends.
+func consume(ctx context.Context, js jetstream.JetStream, name string, subs []string, s *store, iam iamv1connect.IAMInternalServiceClient) error {
 	c, err := js.CreateOrUpdateConsumer(ctx, bus.Stream, jetstream.ConsumerConfig{
-		Durable: consumerName,
-		FilterSubjects: []string{
-			"events.*." + lifecycle.InstanceCreated,
-			"events.*." + lifecycle.InstanceDeleted,
-			"events.*.compute.disks.>",
-			"events.*.compute.snapshots.>",
-			"events.*." + lifecycle.ReservationsCommitted,
-			"events.*." + memberDelete,
-			"events.*." + memberLeave,
-			"events.*." + teamDelete,
-		},
+		Durable:        name,
+		FilterSubjects: subs,
 		AckPolicy:     jetstream.AckExplicitPolicy,
 		AckWait:       ackWait,
 		MaxDeliver:    -1,
@@ -58,7 +82,7 @@ func consume(ctx context.Context, js jetstream.JetStream, s *store, iam iamv1con
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("quota consumer: %w", err)
+		return fmt.Errorf("%s consumer: %w", name, err)
 	}
 	cc, err := c.Consume(func(msg jetstream.Msg) { handle(ctx, s, iam, msg) })
 	if err != nil {
@@ -73,7 +97,7 @@ func consume(ctx context.Context, js jetstream.JetStream, s *store, iam iamv1con
 		<-cc.Closed()
 		return nil
 	case <-cc.Closed():
-		return errors.New("quota consumer closed unexpectedly")
+		return fmt.Errorf("%s consumer closed unexpectedly", name)
 	}
 }
 
@@ -134,7 +158,7 @@ func apply(ctx context.Context, s *store, iam iamv1connect.IAMInternalServiceCli
 		if err != nil {
 			return fmt.Errorf("%w: %w", errUnparsable, err)
 		}
-		return s.Cancel(ctx, ids)
+		return s.commit(ctx, org, ids)
 	case memberDelete, memberLeave:
 		user, err := idAfter(e.GetResource(), coreauthz.ObjMembers+"/")
 		if err != nil {
@@ -192,8 +216,10 @@ func (s *store) dropMemberLimits(ctx context.Context, org, user uuid.UUID, membe
 		if err := lockOrg(ctx, tx, org); err != nil {
 			return err
 		}
-		// ponytail: the transaction holds a connection and the org lock during the iam call; fine at today's removal rate.
-		back, err := member(ctx)
+		// ponytail: the transaction holds a connection and the org lock during the iam call, bounded to 5 s; fine at today's removal rate.
+		mctx, cancel := context.WithTimeout(ctx, memberTimeout)
+		back, err := member(mctx)
+		cancel()
 		if err != nil || back {
 			return err
 		}
@@ -202,6 +228,14 @@ func (s *store) dropMemberLimits(ctx context.Context, org, user uuid.UUID, membe
 		}
 		return nil
 	})
+}
+
+// commit drops org's holds that a committed event's allocations replace.
+func (s *store) commit(ctx context.Context, org uuid.UUID, ids []uuid.UUID) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM reservations WHERE org = $1 AND id = ANY($2)", org, ids); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // dropLimits deletes scope's limit row; team ids are never reused, so no re-check is needed.

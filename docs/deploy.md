@@ -175,8 +175,9 @@ inside the compose network only; do not publish it.
   (`Reserve`, `Cancel`, `Release`, `GetLimits`); every other caller is refused there.
 - A hold lasts 5 minutes. If quota's event consumer lags further behind than that, committed usage is under-counted for the gap.
 - The durable consumer `quota` applies the hub's lifecycle events one at a time, in order, and retries a failed event
-  (1 s doubling to 30 s) until it applies. It also drops the limits of removed members (once iam confirms they are not
-  back) and deleted teams. Expired holds are deleted every minute; deleted resources are forgotten after 8 days.
+  (1 s doubling to 30 s) until it applies. A second one, `quota-iam`, drops the limits of removed members (once iam
+  confirms they are not back) and deleted teams, so an iam outage never holds up usage. Expired holds are deleted every
+  minute; deleted resources are forgotten after 8 days.
 
 ## Serving modes
 

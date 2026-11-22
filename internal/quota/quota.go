@@ -110,7 +110,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	wg.Go(func() { runSweep(ctx, st) })
 	consumeErr := make(chan error, 1)
 	wg.Go(func() {
-		consumeErr <- consume(ctx, js, st, iamv1connect.NewIAMInternalServiceClient(iamHTTP, iamBase, bearer))
+		consumeErr <- consumeAll(ctx, js, st, iamv1connect.NewIAMInternalServiceClient(iamHTTP, iamBase, bearer))
 		cancel()
 	})
 	path, h := quotav1connect.NewQuotaServiceHandler(&server{store: st, policy: w},
