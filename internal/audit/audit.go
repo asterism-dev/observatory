@@ -67,10 +67,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 		connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
 	digest, err := catalog.Register(ctx, catalogs, cat)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
+		return unlessStopped(ctx, err)
 	}
 	// Requests answer Unavailable until the policy stream carries this catalog.
 	w.Require(cat.Service, digest)
@@ -80,16 +77,16 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	}
 	pool, err := pgsvc.Open(ctx, cfg.DatabaseURL, "audit", m)
 	if err != nil {
-		return err
+		return unlessStopped(ctx, err)
 	}
 	defer pool.Close()
 	js, closeBus, err := bus.Await(ctx, cfg.NATSURL, cfg.NATSToken)
 	if err != nil {
-		return err
+		return unlessStopped(ctx, err)
 	}
 	defer closeBus()
 	if err := bus.EnsureStream(ctx, js); err != nil {
-		return err
+		return unlessStopped(ctx, err)
 	}
 
 	s := &store{pool: pool}
@@ -121,4 +118,12 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	cancel()
 	wg.Wait()
 	return errors.Join(err, <-consumeErr)
+}
+
+// unlessStopped drops a start-up error caused by ctx ending, so a shutdown during start is no failure.
+func unlessStopped(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
 }

@@ -293,6 +293,46 @@ func TestConsumeStoppedDuringStartIsNoError(t *testing.T) {
 	}
 }
 
+// TestRunStoppedDuringStartIsNoError stops audit while it waits for an unreachable bus, as serve all does at shutdown.
+func TestRunStoppedDuringStartIsNoError(t *testing.T) {
+	fake := &fakeIAM{pub: authz.NewPublisher(), hold: true}
+	mux := http.NewServeMux()
+	path, h := iamv1connect.NewCatalogInternalServiceHandler(fake)
+	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
+	iam := httptest.NewServer(mux)
+	t.Cleanup(iam.Close)
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	natsURL := "nats://" + dead.Addr().String()
+	dead.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	cfg := Config{DatabaseURL: dbtest.Empty(t), IAMURL: iam.URL, Issuer: testIssuer, ServiceToken: testToken, NATSURL: natsURL, NATSToken: testToken}
+	go func() { done <- Run(ctx, cfg, ln) }()
+	waitFor(t, "the catalog registration", func() bool {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		return len(fake.registered) == 1
+	})
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("stopped during start: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Run kept going after its context ended")
+	}
+}
+
 func TestEventsAreAppendOnly(t *testing.T) {
 	ctx := context.Background()
 	u, err := url.Parse(dbtest.Empty(t))
