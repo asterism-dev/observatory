@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -100,5 +101,56 @@ func TestPublisherSendsNoKeepaliveWhileBehind(t *testing.T) {
 	ps.Publish(coreauthz.Policy{Teams: []coreauthz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
 	if r, ok := next(5 * time.Second); !ok || r != ps.Revision() || r <= rev {
 		t.Fatalf("caught-up revision: %d %v", r, ok)
+	}
+}
+
+// A watcher that reconnects after silence must not take a behind publisher's first snapshot as liveness.
+func TestReconnectingWatcherGoesStaleWhilePublisherBehind(t *testing.T) {
+	oldKeep, oldSilent := keepaliveEvery, silentAfter
+	keepaliveEvery, silentAfter = 30*time.Millisecond, 150*time.Millisecond
+	t.Cleanup(func() { keepaliveEvery, silentAfter = oldKeep, oldSilent })
+	var behind atomic.Bool
+	ps := NewPublisher().WithBehind(behind.Load)
+	ps.Publish(coreauthz.Policy{})
+	path, h := ps.Handler("/internal/iam")
+	var conns atomic.Int32
+	mux := http.NewServeMux()
+	mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conns.Add(1)
+		h.ServeHTTP(w, r)
+	}))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	clock := &fakeClock{}
+	clock.ns.Store(time.Now().UnixNano())
+	w, err := NewWatcher(srv.URL, testToken, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WithClock(clock.now)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { w.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	waitApplied(t, w, ps.Revision())
+
+	behind.Store(true)
+	clock.add(silentAfter + maxStale + time.Second)
+	// Two reconnects: each new stream would have refreshed liveness with its first snapshot.
+	for start := conns.Load(); conns.Load() < start+2; {
+		if _, ok := w.Current(); ok {
+			t.Fatal("current while the publisher is behind")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := w.Current(); ok {
+		t.Fatal("current after reconnecting to a behind publisher")
+	}
+
+	behind.Store(false)
+	ps.Publish(coreauthz.Policy{Teams: []coreauthz.TeamRef{{OrgID: uuid.New(), ID: uuid.New()}}})
+	waitApplied(t, w, ps.Revision())
+	if _, ok := w.Current(); !ok {
+		t.Fatal("not current after the publisher caught up")
 	}
 }

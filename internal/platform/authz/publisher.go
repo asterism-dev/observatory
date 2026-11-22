@@ -39,7 +39,7 @@ func NewPublisher() *Publisher {
 	return &Publisher{rev: uint64(time.Now().UnixMicro()), subs: map[chan struct{}]struct{}{}}
 }
 
-// WithBehind sends no keepalive while behind reports that the published policy may miss a commit: watchers then go stale and refuse instead of trusting it.
+// WithBehind sends nothing, keepalives and first snapshots included, while behind reports that the published policy may miss a commit: watchers then go stale and refuse instead of trusting it.
 func (p *Publisher) WithBehind(behind func() bool) *Publisher {
 	p.behind = behind
 	return p
@@ -112,10 +112,10 @@ func (p *Publisher) WatchPolicy(ctx context.Context, _ *connect.Request[iamv1.Wa
 			return nil
 		case <-ch:
 		case <-keepalive.C:
-			resend = p.behind == nil || !p.behind()
+			resend = true
 		}
 		msg := p.latest()
-		if msg == nil || msg.Revision == sent && !resend {
+		if msg == nil || p.behind != nil && p.behind() || msg.Revision == sent && !resend {
 			continue
 		}
 		if rc, ok := ctx.Value(streamControllerKey{}).(*http.ResponseController); ok {
