@@ -14,7 +14,7 @@ func TestLoadConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty env accepted")
 	}
-	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_IAM_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN", "OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
+	for _, k := range []string{"OBSERVATORY_DATABASE_URL", "OBSERVATORY_PUBLIC_URL", "OBSERVATORY_IAM_URL", "OBSERVATORY_QUOTA_URL", "OBSERVATORY_SERVICE_TOKEN", "OBSERVATORY_SECRETS_KEY", "OBSERVATORY_GATEWAY_TOKEN", "OBSERVATORY_STORAGE_TOKEN", "OBSERVATORY_EDGE_TOKEN", "OBSERVATORY_NATS_URL", "OBSERVATORY_NATS_TOKEN"} {
 		if !strings.Contains(err.Error(), k) {
 			t.Errorf("error does not name %s: %v", k, err)
 		}
@@ -25,7 +25,7 @@ func TestLoadConfig(t *testing.T) {
 
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -98,6 +98,11 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("relative iam url: %v", err)
 	}
 	env["OBSERVATORY_IAM_URL"] = "http://iam:8093"
+	env["OBSERVATORY_QUOTA_URL"] = "quota:8094"
+	if _, err = loadConfig(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "OBSERVATORY_QUOTA_URL") {
+		t.Fatalf("relative quota url: %v", err)
+	}
+	env["OBSERVATORY_QUOTA_URL"] = "http://quota:8094"
 	delete(env, "OBSERVATORY_BUILDER_CPUS")
 	delete(env, "OBSERVATORY_BUILDER_MEMORY_MB")
 	delete(env, "OBSERVATORY_BUILDER_DISK_GB")
@@ -141,7 +146,7 @@ func TestLoadConfig(t *testing.T) {
 func TestConfigGatewayToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "https://hub.example:8443",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -168,7 +173,7 @@ func TestConfigGatewayToken(t *testing.T) {
 func TestConfigStorageToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -191,7 +196,7 @@ func TestConfigStorageToken(t *testing.T) {
 func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -221,7 +226,7 @@ func TestDevIntegrationFlagsNeedDev(t *testing.T) {
 func TestConfigTelemetryBothOrNeither(t *testing.T) {
 	base := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -262,7 +267,7 @@ func TestConfigTelemetryBothOrNeither(t *testing.T) {
 func TestConfigLogsRetention(t *testing.T) {
 	base := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_EDGE_TOKEN":  strings.Repeat("e", 32),
 		"OBSERVATORY_NATS_URL":    "nats://n", "OBSERVATORY_NATS_TOKEN": strings.Repeat("n", 32),
@@ -288,7 +293,7 @@ func TestConfigLogsRetention(t *testing.T) {
 func TestHubConfigRequiresEdgeToken(t *testing.T) {
 	env := map[string]string{
 		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
-		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
+		"OBSERVATORY_IAM_URL": "http://iam:8093", "OBSERVATORY_QUOTA_URL": "http://quota:8094", "OBSERVATORY_SERVICE_TOKEN": strings.Repeat("h", 32),
 		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
 		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),

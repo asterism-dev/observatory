@@ -77,7 +77,9 @@ All services run the `ghcr.io/asterism-dev/observatory` image (`observatory serv
   internal callers reach it there: the registry posts its push notifications to `http://hub:8091/internal/registry/events`,
   the gateway and the storage server use `HUB_URL=http://hub:8091`. Do not publish 8091. It reaches iam at
   `OBSERVATORY_IAM_URL` (`http://iam:8093`) for signing keys, the policy stream and the internal API, and waits up to
-  60 s for iam's first policy at start. Compose starts it after iam with `service_started`, not a healthcheck: the
+  60 s for iam's first policy at start. It reaches quota at `OBSERVATORY_QUOTA_URL` (`http://quota:8094`, required)
+  with its own service token: every VM, disk or snapshot create and every disk grow reserves quota there, inside its
+  transaction. While quota is unreachable such requests fail with 503 `quota service unavailable`; deletes still work. Compose starts it after iam with `service_started`, not a healthcheck: the
   image has no HTTP client to probe with and an open port does not mean ready. If iam takes longer than 60 s, the hub
   exits once and `restart: unless-stopped` starts it again.
 
@@ -173,6 +175,10 @@ inside the compose network only; do not publish it.
 - Limit changes write their audit event in the same transaction as the change.
 - `OBSERVATORY_SERVICE_TOKENS` must contain `hub=` (the hub's service token): the hub reserves quota on `/internal/quota/`
   (`Reserve`, `Cancel`, `Release`, `GetLimits`); every other caller is refused there.
+- The hub reports usage with lifecycle events on the bus (`compute.instances.created` …), then
+  `quota.reservations.committed`, written in the same transaction; a failed transaction cancels its holds, and a delete
+  releases the resource at once, so deleting and creating again at the limit works right away.
+- The image storage limit is read from quota; the hub still computes image storage usage itself.
 - A hold lasts 5 minutes. If quota's event consumer lags further behind than that, committed usage is under-counted for the gap.
 - The durable consumer `quota` applies the hub's lifecycle events one at a time, in order, and retries a failed event
   (1 s doubling to 30 s) until it applies. A second one, `quota-iam`, drops the limits of removed members (once iam
@@ -295,7 +301,8 @@ Upgrading to the release with the audit service: `OBSERVATORY_AUDIT_SERVICE_TOKE
 (`openssl rand -hex 32`, different from the other tokens), as is `OBSERVATORY_NATS_TOKEN`.
 
 Upgrading to the release with the quota service: `OBSERVATORY_QUOTA_SERVICE_TOKEN` in `deploy/.env` is required
-(`openssl rand -hex 32`, different from the other tokens).
+(`openssl rand -hex 32`, different from the other tokens). The hub needs `OBSERVATORY_QUOTA_URL` (compose sets it), and
+its migration 41 drops the hub's `limits` table without copying it: set the limits again in quota.
 
 Upgrading from 0.x to 1.0 is a fresh install. `deploy/.env` needs `OBSERVATORY_HUB_SERVICE_TOKEN` and
 `OBSERVATORY_IAM_SERVICE_TOKEN` (`openssl rand -hex 32`, different from the other tokens). The `OBSERVATORY_OIDC_*`

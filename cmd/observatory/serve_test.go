@@ -38,6 +38,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestServeRejectsUnknownService(t *testing.T) {
@@ -526,7 +527,7 @@ func TestServeAllIAMService(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	hs := store.New(pool).WithMasterKey(master)
+	hs := storetest.New(t, pool).WithMasterKey(master)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -635,7 +636,7 @@ func TestServeAllIAMService(t *testing.T) {
 		t.Fatalf("REST query with a session: %d %s", code, body)
 	}
 	// Login waits for the hub to have the new personal org, so the first hub call already succeeds.
-	if code, body := call("GET", "/api/orgs/"+me.Msg.GetOrgs()[0].GetId()+"/limits", "", alice); code != http.StatusOK {
+	if code, body := call("GET", "/api/orgs/"+me.Msg.GetOrgs()[0].GetId()+"/vms", "", alice); code != http.StatusOK {
 		t.Fatalf("personal org on the hub right after login: %d %s", code, body)
 	}
 
@@ -645,14 +646,14 @@ func TestServeAllIAMService(t *testing.T) {
 	}
 	org := created.Msg.GetOrg().GetId()
 	within(2*time.Second, "new org on the hub", func() (bool, string) {
-		code, body := call("GET", "/api/orgs/"+org+"/limits", "", alice)
+		code, body := call("GET", "/api/orgs/"+org+"/vms", "", alice)
 		return code == http.StatusOK, body
 	})
 
 	// Unclean paths under iam's prefixes reach no handler with the raw cookie: iam's mux redirects to the clean path or answers 404, and the edge refuses /internal.
 	for _, c := range []struct{ method, path, clean string }{
-		{"GET", "/auth/../api/orgs/" + org + "/limits", "/api/orgs/" + org + "/limits"},
-		{"GET", "/auth/%2e%2e/api/orgs/" + org + "/limits", ""},
+		{"GET", "/auth/../api/orgs/" + org + "/vms", "/api/orgs/" + org + "/vms"},
+		{"GET", "/auth/%2e%2e/api/orgs/" + org + "/vms", ""},
 		{"POST", "/api/auth/../iam/v1/observatory.iam.v1.IAMService/GetMe", "/api/iam/v1/observatory.iam.v1.IAMService/GetMe"},
 		{"GET", "/auth/../internal/iam/jwks", ""},
 	} {
@@ -956,8 +957,8 @@ func TestHubPolicyFromStream(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-	limits := "/api/orgs/" + org.ID.String() + "/limits"
-	if code := call("GET", limits, bobToken); code != http.StatusOK {
+	vms := "/api/orgs/" + org.ID.String() + "/vms"
+	if code := call("GET", vms, bobToken); code != http.StatusOK {
 		t.Fatalf("bob as a member: %d", code)
 	}
 	if code := call("DELETE", "/api/iam/v1/orgs/"+org.ID.String()+"/members/"+bob.User.ID.String(), aliceToken); code != http.StatusOK {
@@ -965,7 +966,7 @@ func TestHubPolicyFromStream(t *testing.T) {
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		code := call("GET", limits, bobToken)
+		code := call("GET", vms, bobToken)
 		if code == http.StatusNotFound {
 			break
 		}
@@ -974,7 +975,7 @@ func TestHubPolicyFromStream(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if code := call("GET", limits, aliceToken); code != http.StatusOK {
+	if code := call("GET", vms, aliceToken); code != http.StatusOK {
 		t.Fatalf("alice after bob's removal: %d", code)
 	}
 }

@@ -11,12 +11,13 @@ import (
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestNodeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a, b := login(t, s, "a"), login(t, s, "b")
 	orgA, _ := createOrg(s, ctx, "A", a.User.ID)
 	orgB, _ := createOrg(s, ctx, "B", b.User.ID)
@@ -91,7 +92,7 @@ func TestNodeLifecycle(t *testing.T) {
 func TestEnrollTokenExpires(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a := login(t, s, "a")
 	org, _ := createOrg(s, ctx, "A", a.User.ID)
 	n, token, _ := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n", CreatedBy: a.User.ID})
@@ -110,7 +111,7 @@ func TestEnrollTokenExpires(t *testing.T) {
 func TestDeleteNodeWithVM(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a := login(t, s, "a")
 	org, _ := createOrg(s, ctx, "A", a.User.ID)
 	n, _, _ := s.CreateNode(ctx, store.Node{OrgID: org.ID, Name: "n", CreatedBy: a.User.ID})
@@ -133,7 +134,7 @@ func TestDeleteNodeWithVM(t *testing.T) {
 
 func TestSetNodeImage(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	a, b := login(t, s, "a"), login(t, s, "b")
 	orgA, _ := createOrg(s, ctx, "A", a.User.ID)
 	orgB, _ := createOrg(s, ctx, "B", b.User.ID)

@@ -86,7 +86,7 @@ func newIdleCleanupEnv(t *testing.T) *cleanupEnv {
 		t.Fatal(err)
 	}
 	pool := dbtest.New(t)
-	e := &cleanupEnv{t: t, pool: pool, s: store.New(pool).WithMasterKey(seal.Key{1}), js: js, iam: iamtest.New(t)}
+	e := &cleanupEnv{t: t, pool: pool, s: storetest.New(t, pool).WithMasterKey(seal.Key{1}), js: js, iam: iamtest.New(t)}
 	e.pol = e.iam.Policy(t, e.s.OwnerRefs)
 	e.org.ID = e.iam.CreateOrg(e.user("owner"), "acme")
 	return e
@@ -144,10 +144,6 @@ func (e *cleanupEnv) seed(scope store.EnvScope, owner uuid.UUID, by uuid.UUID) {
 	e.t.Helper()
 	ctx := context.Background()
 	org := e.org.ID
-	subject := authz.UserSubject(owner)
-	if scope == store.EnvScopeTeam {
-		subject = authz.TeamSubject(owner)
-	}
 	if _, err := e.s.CreateEnvVar(ctx, store.EnvVar{OrgID: org, Kind: store.EnvPlain, Scope: scope, OwnerID: &owner, Name: "V", CreatedBy: by, UpdatedBy: by}, "v"); err != nil {
 		e.t.Fatal(err)
 	}
@@ -168,10 +164,6 @@ func (e *cleanupEnv) seed(scope store.EnvScope, owner uuid.UUID, by uuid.UUID) {
 	if _, err := e.s.CreateDashboard(ctx, store.Dashboard{OrgID: org, Scope: scope, OwnerID: &owner, Name: "d", CreatedBy: by}); err != nil {
 		e.t.Fatal(err)
 	}
-	one := 1
-	if err := e.s.SetLimits(ctx, org, subject, store.Limits{VMCount: &one}, func(string) bool { return true }); err != nil {
-		e.t.Fatal(err)
-	}
 	if scope == store.EnvScopeUser {
 		if _, err := e.s.CreateDevice(ctx, store.Device{OrgID: org, UserID: owner, Name: "laptop", PublicKey: "key-" + owner.String()}); err != nil {
 			e.t.Fatal(err)
@@ -182,15 +174,14 @@ func (e *cleanupEnv) seed(scope store.EnvScope, owner uuid.UUID, by uuid.UUID) {
 // rows counts the scoped rows owner still has, by table.
 func (e *cleanupEnv) rows(scope store.EnvScope, owner uuid.UUID) map[string]int {
 	e.t.Helper()
-	col, subject := "user_id", authz.UserSubject(owner)
+	col := "user_id"
 	if scope == store.EnvScopeTeam {
-		col, subject = "team_id", authz.TeamSubject(owner)
+		col = "team_id"
 	}
 	out := map[string]int{}
 	for _, table := range []string{"env_vars", "integrations", "images", "image_defaults", "dashboards"} {
 		out[table] = e.count(fmt.Sprintf("SELECT count(*) FROM %s WHERE org_id = $1 AND scope = $2 AND %s = $3", table, col), e.org.ID, scope, owner)
 	}
-	out["limits"] = e.count("SELECT count(*) FROM limits WHERE org_id = $1 AND scope = $2", e.org.ID, subject)
 	if scope == store.EnvScopeUser {
 		out["devices"] = e.count("SELECT count(*) FROM devices WHERE org_id = $1 AND user_id = $2", e.org.ID, owner)
 	}
@@ -403,7 +394,7 @@ func TestTeamDeleteEventPurges(t *testing.T) {
 	if n := e.count("SELECT count(*) FROM disks WHERE team_id = $1", core) + e.count("SELECT count(*) FROM vm_history WHERE team_id = $1", core); n != 0 {
 		t.Fatalf("%d disk or history rows still name the team", n)
 	}
-	if got := e.rows(store.EnvScopeTeam, other); total(got) != 6 {
+	if got := e.rows(store.EnvScopeTeam, other); total(got) != len(got) {
 		t.Fatalf("other team's rows: %v", got)
 	}
 	e.waitFor("the org to be notified", func() bool { return slices.Contains(e.notifications(), e.org.ID) })

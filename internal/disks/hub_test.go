@@ -13,6 +13,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestState(t *testing.T) {
@@ -56,7 +57,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
+	s := storetest.New(t, dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
 	org, user := uuid.New(), uuid.New()
 	node, tok, err := s.CreateNode(ctx, store.Node{OrgID: org, Name: "n1", CreatedBy: user})
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/bus"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 // forward relays every connection on ln to target, standing in for a bus that comes up late.
@@ -93,7 +94,7 @@ func TestHubServesWithoutBusAndRelaysOnceItAppears(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	})
 
-	if err := store.New(pool).Audit(t.Context(), store.AuditEntry{ActorKind: store.ActorSystem, Action: store.ActionRegistryGC, Result: store.ResultAllowed}); err != nil {
+	if err := storetest.New(t, pool).Audit(t.Context(), store.AuditEntry{ActorKind: store.ActorSystem, Action: store.ActionRegistryGC, Result: store.ResultAllowed}); err != nil {
 		t.Fatal(err)
 	}
 	unsent := func() int {

@@ -182,6 +182,35 @@ func TestReleaseDropsChildren(t *testing.T) {
 	}
 }
 
+func TestReleaseDropsNamedHolds(t *testing.T) {
+	s, ctx, org := newStore(t), context.Background(), uuid.New()
+	owner := "user:" + uuid.NewString()
+	vm, disk := "vm/"+uuid.NewString(), "disk/"+uuid.NewString()
+	setLimits(t, s, org, scopeOrg, Limits{VMCount: i32(1), SnapshotCount: i32(1), DiskGB: i32(10)})
+	if _, _, err := s.Reserve(ctx, org, owner, Amounts{VMCount: i32(1)}, vm); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Reserve(ctx, org, owner, Amounts{SnapshotCount: i32(1)}, "snapshot/"+uuid.NewString(), vm); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Reserve(ctx, org, owner, Amounts{DiskGB: i32(10)}, disk); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Release(ctx, uuid.New(), []string{vm}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.Reserve(ctx, org, owner, Amounts{VMCount: i32(1)})
+	wantLimitErr(t, err, scopeOrg, "VM count", 1, 2)
+	if err := s.Release(ctx, org, []string{vm}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Reserve(ctx, org, owner, Amounts{VMCount: i32(1), SnapshotCount: i32(1)}); err != nil {
+		t.Fatalf("vm and snapshot holds kept after release: %v", err)
+	}
+	_, _, err = s.Reserve(ctx, org, owner, Amounts{DiskGB: i32(1)})
+	wantLimitErr(t, err, scopeOrg, "disk", 10, 11)
+}
+
 func TestReleaseLeavesOtherOrgs(t *testing.T) {
 	s, ctx, org := newStore(t), context.Background(), uuid.New()
 	owner := "user:" + uuid.NewString()
@@ -373,6 +402,16 @@ func reserve(owner string, a *quotav1.Amounts, org string) func(context.Context,
 	}
 }
 
+func reserveFor(owner string, a *quotav1.Amounts, org string, resources ...string) func(context.Context, quotav1connect.QuotaInternalServiceClient, []string) (string, error) {
+	return func(ctx context.Context, c quotav1connect.QuotaInternalServiceClient, _ []string) (string, error) {
+		res, err := c.Reserve(ctx, connect.NewRequest(&quotav1.ReserveRequest{OrgId: org, Owner: owner, Amounts: a, Resources: resources}))
+		if err != nil {
+			return "", err
+		}
+		return res.Msg.GetReservationId(), nil
+	}
+}
+
 func TestFakeMatchesService(t *testing.T) {
 	f := newFixture(t)
 	org, user, team := f.orgA, "user:"+f.member.String(), "team:"+f.teamA.String()
@@ -380,6 +419,7 @@ func TestFakeMatchesService(t *testing.T) {
 		scopeOrg: {Vcpu: i32(3), SnapshotCount: i32(5)},
 		user:     {Vcpu: i32(2), SnapshotCount: i32(1)},
 	}
+	releasedVM, releasedSnap := uuid.NewString(), uuid.NewString()
 	fake := quotatest.NewFake()
 	for scope, l := range limits {
 		fake.SetLimits(org, scope, l)
@@ -417,6 +457,15 @@ func TestFakeMatchesService(t *testing.T) {
 			_, err := c.Cancel(ctx, connect.NewRequest(&quotav1.CancelRequest{ReservationIds: []string{strings.ToUpper(held[len(held)-1])}}))
 			return "", err
 		}, code: connect.CodeInvalidArgument},
+		{name: "hold for a vm", call: reserveFor(team, &quotav1.Amounts{SnapshotCount: i32(4)}, org.String(), "snapshot/"+releasedSnap, "vm/"+releasedVM)},
+		{name: "full", call: reserve(team, &quotav1.Amounts{SnapshotCount: i32(1)}, org.String()), code: connect.CodeResourceExhausted,
+			exceeds: &quotav1.LimitExceeded{Scope: scopeOrg, Name: "snapshot count", Limit: 5, Got: 6}},
+		{name: "release the vm", call: func(ctx context.Context, c quotav1connect.QuotaInternalServiceClient, _ []string) (string, error) {
+			_, err := c.Release(ctx, connect.NewRequest(&quotav1.ReleaseRequest{OrgId: org.String(), Resources: []string{"vm/" + releasedVM}}))
+			return "", err
+		}},
+		{name: "fits after release", call: reserve(team, &quotav1.Amounts{SnapshotCount: i32(4)}, org.String())},
+		{name: "bad reserve resource", call: reserveFor(team, nil, org.String(), "node/"+uuid.NewString()), code: connect.CodeInvalidArgument},
 		{name: "bad resource", call: func(ctx context.Context, c quotav1connect.QuotaInternalServiceClient, _ []string) (string, error) {
 			_, err := c.Release(ctx, connect.NewRequest(&quotav1.ReleaseRequest{OrgId: org.String(), Resources: []string{"node/" + uuid.NewString()}}))
 			return "", err
@@ -462,7 +511,7 @@ func TestFakeMatchesService(t *testing.T) {
 			t.Fatalf("%s GetLimits = %v, want %v", name, res.Msg.GetLimits(), want)
 		}
 	}
-	if got := fake.Holds(); got != 4 {
-		t.Fatalf("fake holds = %d, want 4", got)
+	if got := fake.Holds(); got != 5 {
+		t.Fatalf("fake holds = %d, want 5", got)
 	}
 }

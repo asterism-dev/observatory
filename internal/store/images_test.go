@@ -12,6 +12,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func newImageEnv(t *testing.T) (*store.Store, testOrg, uuid.UUID, testTeam) {
@@ -32,7 +33,7 @@ func newImage(t *testing.T, s *store.Store, org testOrg, user uuid.UUID, name st
 func TestImageNameUniquePerScopeOwner(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	a := login(t, s, "a").User.ID
 	b := login(t, s, "b").User.ID
 	org := mustCreateOrg(t, s, "I", a)
@@ -300,7 +301,7 @@ func TestImageDefaultFallsBackWhenImageDeleted(t *testing.T) {
 func TestOrgImageUsageCountsSharedLayersOnce(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "usage").User.ID
 	org := mustCreateOrg(t, s, "U", u)
 	other := mustCreateOrg(t, s, "U2", u)
@@ -324,29 +325,6 @@ func TestOrgImageUsageCountsSharedLayersOnce(t *testing.T) {
 	if got, _ := s.OrgImageUsage(ctx, uuid.New()); got != 0 {
 		t.Fatalf("empty org: %d", got)
 	}
-}
-
-func TestLimitsImageStorage(t *testing.T) {
-	ctx := context.Background()
-	s, org, user, team := newImageEnv(t)
-	teamScope := "team:" + team.ID.String()
-	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(10)}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(11)}, policyKnown(t, s, org.ID)); !errors.Is(err, store.ErrLimitExceedsOrg) {
-		t.Fatalf("team above org: %v", err)
-	}
-	if err := s.SetLimits(ctx, org.ID, teamScope, store.Limits{ImageStorageGB: ip(4)}, policyKnown(t, s, org.ID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetLimits(ctx, org.ID, "org", store.Limits{ImageStorageGB: ip(3)}, nil); !errors.Is(err, store.ErrLimitExceedsOrg) {
-		t.Fatalf("org below team: %v", err)
-	}
-	ls, err := s.Limits(ctx, org.ID)
-	if err != nil || *ls["org"].ImageStorageGB != 10 || *ls[teamScope].ImageStorageGB != 4 || ls["org"].VCPU != nil {
-		t.Fatalf("limits: %+v %v", ls, err)
-	}
-	_ = user
 }
 
 func TestBuildLogFinishOnce(t *testing.T) {

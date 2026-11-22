@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/asterism-dev/observatory/internal/platform/usage"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -83,17 +84,20 @@ func (s *Store) CreateDisk(ctx context.Context, d Disk) (Disk, error) {
 				return err
 			}
 		}
-		if err := tx.checkLimits(ctx, d.OrgID, d.UserID, d.TeamID, Limits{DiskGB: &d.SizeGB}); err != nil {
+		id := uuid.New()
+		if err := tx.reserve(ctx, d.OrgID, d.UserID, d.TeamID, Limits{DiskGB: &d.SizeGB}, diskResource(id)); err != nil {
 			return err
 		}
-		var id uuid.UUID
-		err := tx.q.QueryRow(ctx, `
-			INSERT INTO disks (org_id, user_id, team_id, name, size_gb, copy_from, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-			d.OrgID, d.UserID, d.TeamID, d.Name, d.SizeGB, d.CopyFrom, d.CreatedBy).Scan(&id)
+		_, err := tx.q.Exec(ctx, `
+			INSERT INTO disks (id, org_id, user_id, team_id, name, size_gb, copy_from, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			id, d.OrgID, d.UserID, d.TeamID, d.Name, d.SizeGB, d.CopyFrom, d.CreatedBy)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		} else if err != nil {
+			return err
+		}
+		if err := tx.diskSized(ctx, usage.DiskCreated, d.OrgID, id, d.UserID, d.TeamID, d.SizeGB); err != nil {
 			return err
 		}
 		out, err = tx.Disk(ctx, d.OrgID, id)
@@ -128,10 +132,13 @@ func (s *Store) GrowDisk(ctx context.Context, org, id uuid.UUID, sizeGB int, res
 			}
 		}
 		delta := sizeGB - d.SizeGB
-		if err := tx.checkLimits(ctx, org, d.UserID, d.TeamID, Limits{DiskGB: &delta}); err != nil {
+		if err := tx.reserve(ctx, org, d.UserID, d.TeamID, Limits{DiskGB: &delta}, diskResource(id)); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "UPDATE disks SET size_gb = $2, grow_restart = grow_restart OR $3 WHERE id = $1", id, sizeGB, restartAllowed); err != nil {
+			return err
+		}
+		if err := tx.diskSized(ctx, usage.DiskResized, org, id, d.UserID, d.TeamID, sizeGB); err != nil {
 			return err
 		}
 		out, err = tx.Disk(ctx, org, id)
@@ -166,9 +173,21 @@ func (s *Store) DeleteDisk(ctx context.Context, org, id uuid.UUID) error {
 		if _, err = tx.q.Exec(ctx, "UPDATE disks SET deleted_at = now(), restore_from = NULL, restore_token = NULL WHERE id = $1", id); err != nil {
 			return err
 		}
+		if err := tx.deleted(ctx, org, usage.DiskDeleted, diskObject(id), diskResource(id)); err != nil {
+			return err
+		}
 		_, err = tx.finishRestores(ctx, []uuid.UUID{org})
 		return err
 	})
+}
+
+// diskSized writes a disk's created or resized event with its absolute size.
+func (s *Store) diskSized(ctx context.Context, typ string, org, id uuid.UUID, user, team *uuid.UUID, sizeGB int) error {
+	owner, err := ownerSubject(user, team)
+	if err != nil {
+		return err
+	}
+	return s.lifecycle(ctx, org, typ, diskObject(id), usage.Lifecycle{Resource: diskResource(id), Owner: owner, Amounts: usage.Amounts{DiskGB: sizeGB}})
 }
 
 // StorageState is the storage server's desired state; it carries unsealed export keys, so callers must never log it.

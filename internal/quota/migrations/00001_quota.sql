@@ -46,6 +46,8 @@ CREATE TABLE reservations (
     disk_gb int NOT NULL DEFAULT 0 CHECK (disk_gb >= 0),
     vm_count int NOT NULL DEFAULT 0 CHECK (vm_count >= 0),
     snapshot_count int NOT NULL DEFAULT 0 CHECK (snapshot_count >= 0),
+    -- The resources the hold turns into; releasing any of them drops it, so a delete frees quota before its committed event lands.
+    resources text[] NOT NULL DEFAULT '{}',
     expires_at timestamptz NOT NULL
 );
 CREATE INDEX reservations_org ON reservations (org, expires_at);

@@ -32,12 +32,8 @@ func mustCreateDisk(t *testing.T, e vmEnv, d store.Disk) store.Disk {
 func TestDiskLimits(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{DiskGB: ip(50)}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{DiskGB: ip(30)}, policyKnown(t, e.s, e.org.ID)); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("org", store.Limits{DiskGB: ip(50)})
+	e.setLimits("user:"+e.user.String(), store.Limits{DiskGB: ip(30)})
 	if _, err := e.s.CreateVM(ctx, e.vm("root", nil, 1, 1, 20)); err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +65,7 @@ func TestDiskLimits(t *testing.T) {
 func TestVMCreateCountsDisks(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{DiskGB: ip(30)}, policyKnown(t, e.s, e.org.ID)); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("user:"+e.user.String(), store.Limits{DiskGB: ip(30)})
 	mustCreateDisk(t, e, e.disk("data", nil, 25))
 	if _, err := e.s.CreateVM(ctx, e.vm("v", nil, 1, 1, 6)); !errors.Is(err, store.ErrLimitExceeded) {
 		t.Fatalf("vm over: %v", err)
@@ -199,9 +193,7 @@ func TestDiskLimitsIgnoreOtherDimensions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "user:"+e.user.String(), store.Limits{VMCount: ip(1), DiskGB: ip(5)}, policyKnown(t, e.s, e.org.ID)); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("user:"+e.user.String(), store.Limits{VMCount: ip(1), DiskGB: ip(5)})
 	d := mustCreateDisk(t, e, e.disk("data", nil, 2))
 	if _, err := e.s.GrowDisk(ctx, e.org.ID, d.ID, 3, true); err != nil {
 		t.Fatalf("grow under vm count overrun: %v", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	"github.com/asterism-dev/observatory/gen/go/observatory/quota/v1/quotav1connect"
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -61,7 +62,9 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 		return err
 	}
 	defer pool.Close()
-	s := store.New(pool).WithMasterKey(cfg.SecretsKey)
+	internalClient := &http.Client{Timeout: 30 * time.Second}
+	quota := quotav1connect.NewQuotaInternalServiceClient(internalClient, strings.TrimRight(cfg.QuotaURL, "/")+"/internal/quota", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
+	s := store.New(pool, store.NewQuota(quota)).WithMasterKey(cfg.SecretsKey)
 	if err := s.CheckMasterKey(ctx); err != nil {
 		return err
 	}
@@ -70,7 +73,6 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	if err != nil {
 		return err
 	}
-	internalClient := &http.Client{Timeout: 30 * time.Second}
 	iam := iamv1connect.NewIAMInternalServiceClient(internalClient, iamURL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
 
 	mux := http.NewServeMux()

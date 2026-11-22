@@ -11,6 +11,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func mustCreateDevice(t *testing.T, s *store.Store, org, user uuid.UUID, name, key string) store.Device {
@@ -25,7 +26,7 @@ func mustCreateDevice(t *testing.T, s *store.Store, org, user uuid.UUID, name, k
 func TestCreateDevice(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a, b := login(t, s, "a"), login(t, s, "b")
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", b.User.ID)
@@ -69,7 +70,7 @@ func TestCreateDevice(t *testing.T) {
 func TestPurgeMemberDeletesDevices(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a, m := login(t, s, "a"), login(t, s, "m")
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", a.User.ID)
@@ -101,7 +102,7 @@ func TestPurgeMemberDeletesDevices(t *testing.T) {
 
 func TestSetDeviceHandshakes(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	a := login(t, s, "a")
 	org := mustCreateOrg(t, s, "A", a.User.ID)
 	d1 := mustCreateDevice(t, s, org.ID, a.User.ID, "one", "k1")

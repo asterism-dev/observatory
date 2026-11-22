@@ -1,40 +1,6 @@
 package store
 
-import (
-	"context"
-	"errors"
-	"fmt"
-	"strings"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-
-	"github.com/asterism-dev/observatory/internal/authz"
-)
-
-var ErrLimitExceedsOrg = errors.New("limit exceeds org limit")
-
-const ScopeOrg = "org"
-
-// Limits holds nil for unlimited.
-type Limits struct{ VCPU, RAMMB, DiskGB, VMCount, SnapshotCount, ImageStorageGB *int }
-
-func (l Limits) fields() [6]*int {
-	return [6]*int{l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount, l.ImageStorageGB}
-}
-
-// exceeds reports whether any non-null value of l is above the matching non-null value of org.
-func (l Limits) exceeds(org Limits) bool {
-	o := org.fields()
-	for i, v := range l.fields() {
-		if v != nil && o[i] != nil && *v > *o[i] {
-			return true
-		}
-	}
-	return false
-}
-
-var limitNames = [6][2]string{{"vCPU", ""}, {"RAM", " MB"}, {"disk", " GB"}, {"VM count", ""}, {"snapshot count", ""}, {"image storage", " GB"}}
+import "fmt"
 
 // LimitError names the limit an operation would cross; it matches ErrLimitExceeded.
 type LimitError struct {
@@ -45,94 +11,10 @@ type LimitError struct {
 
 func (e *LimitError) Error() string {
 	owner := "the org's"
-	if e.Scope != ScopeOrg {
+	if e.Scope != "org" {
 		owner = "the owner's"
 	}
 	return fmt.Sprintf("%s %s limit of %d%s would be exceeded (%d%s)", owner, e.Name, e.Limit, e.Unit, e.Got, e.Unit)
 }
 
 func (e *LimitError) Is(target error) bool { return target == ErrLimitExceeded }
-
-// exceeded returns the first dimension in which l is above max, else nil.
-func (l Limits) exceeded(scope string, max Limits) error {
-	m := max.fields()
-	for i, v := range l.fields() {
-		if v != nil && m[i] != nil && *v > *m[i] {
-			return &LimitError{Scope: scope, Name: limitNames[i][0], Unit: limitNames[i][1], Limit: *m[i], Got: *v}
-		}
-	}
-	return nil
-}
-
-// Limits returns the stored rows by scope; scopes without a row are absent (all unlimited).
-func (s *Store) Limits(ctx context.Context, orgID uuid.UUID) (map[string]Limits, error) {
-	rows, err := s.q.Query(ctx, "SELECT scope, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, image_storage_gb FROM limits WHERE org_id = $1", orgID)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]Limits{}
-	for rows.Next() {
-		var scope string
-		var l Limits
-		if err := rows.Scan(&scope, &l.VCPU, &l.RAMMB, &l.DiskGB, &l.VMCount, &l.SnapshotCount, &l.ImageStorageGB); err != nil {
-			return nil, err
-		}
-		out[scope] = l
-	}
-	return out, rows.Err()
-}
-
-// SetLimits takes the hub org lock so team/user ≤ org holds under concurrent limit changes; known reports whether a team or user scope names a team or member of the org.
-func (s *Store) SetLimits(ctx context.Context, orgID uuid.UUID, scope string, l Limits, known func(scope string) bool) error {
-	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.LockHubOrg(ctx, orgID); err != nil {
-			return err
-		}
-		if scope == ScopeOrg {
-			var below bool
-			err := tx.q.QueryRow(ctx, `
-				SELECT EXISTS (SELECT 1 FROM limits WHERE org_id = $1 AND scope <> 'org'
-					AND (vcpu > $2::int OR ram_mb > $3::int OR disk_gb > $4::int OR vm_count > $5::int OR snapshot_count > $6::int OR image_storage_gb > $7::int))`,
-				orgID, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount, l.ImageStorageGB).Scan(&below)
-			if err != nil {
-				return err
-			}
-			if below {
-				return ErrLimitExceedsOrg
-			}
-		} else {
-			if err := checkScopeInOrg(scope, known); err != nil {
-				return err
-			}
-			var org Limits
-			err := tx.q.QueryRow(ctx, "SELECT vcpu, ram_mb, disk_gb, vm_count, snapshot_count, image_storage_gb FROM limits WHERE org_id = $1 AND scope = 'org'", orgID).
-				Scan(&org.VCPU, &org.RAMMB, &org.DiskGB, &org.VMCount, &org.SnapshotCount, &org.ImageStorageGB)
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-			if l.exceeds(org) {
-				return ErrLimitExceedsOrg
-			}
-		}
-		_, err := tx.q.Exec(ctx, `
-			INSERT INTO limits (org_id, scope, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, image_storage_gb) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (org_id, scope) DO UPDATE SET vcpu = EXCLUDED.vcpu, ram_mb = EXCLUDED.ram_mb,
-				disk_gb = EXCLUDED.disk_gb, vm_count = EXCLUDED.vm_count, snapshot_count = EXCLUDED.snapshot_count,
-				image_storage_gb = EXCLUDED.image_storage_gb`,
-			orgID, scope, l.VCPU, l.RAMMB, l.DiskGB, l.VMCount, l.SnapshotCount, l.ImageStorageGB)
-		return err
-	})
-}
-
-// checkScopeInOrg wants a canonical team:<uuid> or user:<uuid> that known accepts; a nil known accepts nothing.
-func checkScopeInOrg(scope string, known func(scope string) bool) error {
-	kind, raw, _ := strings.Cut(scope, ":")
-	id, err := uuid.Parse(raw)
-	if err != nil || id.String() != raw || known == nil {
-		return ErrNotFound
-	}
-	if (kind == "team" && scope == authz.TeamSubject(id) || kind == "user" && scope == authz.UserSubject(id)) && known(scope) {
-		return nil
-	}
-	return ErrNotFound
-}

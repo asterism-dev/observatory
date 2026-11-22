@@ -14,13 +14,13 @@ import (
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
-	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestCheckOwnershipRequiresServiceToken(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	iam := iamtest.New(t)
 	alice := iam.AddUser("alice")
 	org := iam.CreateOrg(alice.ID, "acme")

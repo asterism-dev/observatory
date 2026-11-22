@@ -19,6 +19,7 @@ import (
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/internal/platform/clientip"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/registry"
@@ -180,10 +181,8 @@ func TestTokenOverStorageLimitDropsPush(t *testing.T) {
 	a := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
 	h := e.registryHandler("http://registry.invalid", fakeBuilds{"build-a": {ID: uuid.New(), ImageID: a}})
 	cred := e.registryCredential(e.cliSession(alice))
-	one := 1
-	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
-		t.Fatal(err)
-	}
+	one := int32(1)
+	e.quota.SetLimits(org, "org", &quotav1.Limits{ImageStorageGb: &one})
 	d := e.addVersion(a, 1)
 	e.exec(`INSERT INTO image_version_layers (image_id, version_digest, digest, size) VALUES ($1, $2, 'sha256:l', $3)`, a, d, (1<<30)-1)
 	if _, got := grant(t, h, "observatory", cred, repoScope(a, "pull,push")); !slices.Equal(got["i/"+a.String()], []string{"pull", "push"}) {

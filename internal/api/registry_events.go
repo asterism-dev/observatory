@@ -147,13 +147,9 @@ func (h *registryEvents) push(ctx context.Context, ev registryEvent) error {
 
 // overLimit returns the error message when the new layers would push the org past its image storage limit.
 func (h *registryEvents) overLimit(ctx context.Context, org uuid.UUID, layers []store.ImageLayer) (string, error) {
-	ls, err := h.store.Limits(ctx, org)
-	if err != nil {
+	limit, err := h.store.ImageStorageLimit(ctx, org)
+	if err != nil || limit == nil {
 		return "", err
-	}
-	limit := ls[store.ScopeOrg].ImageStorageGB
-	if limit == nil {
-		return "", nil
 	}
 	used, err := h.store.OrgImageUsage(ctx, org, layers...)
 	if err != nil || used <= int64(*limit)<<30 {

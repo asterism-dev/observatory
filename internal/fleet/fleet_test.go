@@ -41,6 +41,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
@@ -64,7 +65,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(seal.Key{1})
+	s := storetest.New(t, pool).WithMasterKey(seal.Key{1})
 	fake := iamtest.New(t)
 	owner := fake.AddUser("owner")
 	org := fake.CreateOrg(owner.ID, "A")

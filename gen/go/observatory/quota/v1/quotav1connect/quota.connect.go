@@ -218,7 +218,7 @@ type QuotaInternalServiceClient interface {
 	Reserve(context.Context, *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error)
 	// Cancel drops holds; unknown ids are ignored.
 	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
-	// Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+	// Release tombstones resources and their children and drops the holds naming them, so their usage is freed before the deleted event lands.
 	Release(context.Context, *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error)
 	GetLimits(context.Context, *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error)
 }
@@ -296,7 +296,7 @@ type QuotaInternalServiceHandler interface {
 	Reserve(context.Context, *connect.Request[v1.ReserveRequest]) (*connect.Response[v1.ReserveResponse], error)
 	// Cancel drops holds; unknown ids are ignored.
 	Cancel(context.Context, *connect.Request[v1.CancelRequest]) (*connect.Response[v1.CancelResponse], error)
-	// Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+	// Release tombstones resources and their children and drops the holds naming them, so their usage is freed before the deleted event lands.
 	Release(context.Context, *connect.Request[v1.ReleaseRequest]) (*connect.Response[v1.ReleaseResponse], error)
 	GetLimits(context.Context, *connect.Request[v1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[v1.QuotaInternalServiceGetLimitsResponse], error)
 }

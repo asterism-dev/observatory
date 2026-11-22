@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-
-	"github.com/asterism-dev/observatory/internal/authz"
 )
 
 var scopedTables = []string{"image_defaults", "images", "env_vars", "integrations", "dashboards"}
@@ -34,7 +32,7 @@ func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, removedAt 
 		if err != nil || back {
 			return err
 		}
-		if err := tx.purgeScoped(ctx, org, EnvScopeUser, "user_id", user, authz.UserSubject(user)); err != nil {
+		if err := tx.purgeScoped(ctx, org, EnvScopeUser, "user_id", user); err != nil {
 			return err
 		}
 		if _, err := tx.q.Exec(ctx, "DELETE FROM devices WHERE org_id = $1 AND user_id = $2", org, user); err != nil {
@@ -49,7 +47,7 @@ func (s *Store) PurgeMember(ctx context.Context, org, user uuid.UUID, removedAt 
 // PurgeTeam deletes the hub rows of a deleted team and unlinks its deleted disks and VM history; running it again is harmless.
 func (s *Store) PurgeTeam(ctx context.Context, org, team uuid.UUID) error {
 	return s.InTx(ctx, func(tx *Store) error {
-		if err := tx.purgeScoped(ctx, org, EnvScopeTeam, "team_id", team, authz.TeamSubject(team)); err != nil {
+		if err := tx.purgeScoped(ctx, org, EnvScopeTeam, "team_id", team); err != nil {
 			return err
 		}
 		// A live disk can't lose its owner (CHECK); the ownership check keeps those from existing here.
@@ -61,14 +59,13 @@ func (s *Store) PurgeTeam(ctx context.Context, org, team uuid.UUID) error {
 	})
 }
 
-func (s *Store) purgeScoped(ctx context.Context, org uuid.UUID, scope EnvScope, col string, id uuid.UUID, subject string) error {
+func (s *Store) purgeScoped(ctx context.Context, org uuid.UUID, scope EnvScope, col string, id uuid.UUID) error {
 	for _, table := range scopedTables {
 		if _, err := s.q.Exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE org_id = $1 AND scope = $2 AND %s = $3", table, col), org, scope, id); err != nil {
 			return fmt.Errorf("purge %s: %w", table, err)
 		}
 	}
-	_, err := s.q.Exec(ctx, "DELETE FROM limits WHERE org_id = $1 AND scope = $2", org, subject)
-	return err
+	return nil
 }
 
 // DeleteSessionCredentials drops the registry credentials of an ended session; their use is refused already, since iam reports the session ended.

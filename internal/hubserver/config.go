@@ -17,7 +17,7 @@ import (
 
 type config struct {
 	DatabaseURL, PublicURL, NodeBinary, Guestboot, GatewayToken, GatewayHost, StorageToken, EdgeToken string
-	IAMURL, ServiceToken                                                                              string
+	IAMURL, QuotaURL, ServiceToken                                                                    string
 	SecretsKey                                                                                        seal.Key
 	Dev, DevSkipVerify                                                                                bool
 	DevClaudeTokenURL, DevClaudeUsageURL, DocsURL                                                     string
@@ -62,6 +62,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	required(&cfg.DatabaseURL, "OBSERVATORY_DATABASE_URL")
 	required(&cfg.PublicURL, "OBSERVATORY_PUBLIC_URL")
 	required(&cfg.IAMURL, "OBSERVATORY_IAM_URL")
+	required(&cfg.QuotaURL, "OBSERVATORY_QUOTA_URL")
 	required(&cfg.ServiceToken, "OBSERVATORY_SERVICE_TOKEN")
 	required(&cfg.GatewayToken, "OBSERVATORY_GATEWAY_TOKEN")
 	required(&cfg.StorageToken, "OBSERVATORY_STORAGE_TOKEN")
@@ -96,6 +97,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if u, err := url.Parse(cfg.IAMURL); err != nil || u.Host == "" || u.Scheme != "http" && u.Scheme != "https" {
 		return config{}, errors.New("OBSERVATORY_IAM_URL must be an absolute http(s) URL")
+	}
+	if u, err := url.Parse(cfg.QuotaURL); err != nil || u.Host == "" || u.Scheme != "http" && u.Scheme != "https" {
+		return config{}, errors.New("OBSERVATORY_QUOTA_URL must be an absolute http(s) URL")
 	}
 	if cfg.GatewayHost = getenv("OBSERVATORY_GATEWAY_HOST"); cfg.GatewayHost == "" {
 		u, err := url.Parse(cfg.PublicURL)

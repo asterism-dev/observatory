@@ -10,7 +10,7 @@ import (
 )
 
 func TestGuestMTUDefault(t *testing.T) {
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	if got, err := s.GuestMTU(context.Background()); err != nil || got != 1300 {
 		t.Fatalf("got %d, %v", got, err)
 	}
@@ -19,7 +19,7 @@ func TestGuestMTUDefault(t *testing.T) {
 func TestSetGuestMTURange(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	u := login(t, s, "a").User
 	for _, bad := range []int{999, 1363} {
 		if err := s.SetGuestMTU(ctx, bad, u.ID); err == nil {

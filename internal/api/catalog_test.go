@@ -12,7 +12,6 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/hubserver"
 	"github.com/asterism-dev/observatory/internal/platform/permission"
-	"github.com/asterism-dev/observatory/internal/quota"
 )
 
 // hubCheckDirs are the hub packages that check permissions, relative to this package.
@@ -24,13 +23,8 @@ func TestHubAuthorizeActionsInCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The hub's limits handlers check quota's actions until the hub reaches quota over its API.
-	q, err := quota.Catalog()
-	if err != nil {
-		t.Fatal(err)
-	}
 	names, pairs := map[string]bool{}, map[authz.Permission]bool{}
-	for _, a := range append(cat.Actions, q.Actions...) {
+	for _, a := range cat.Actions {
 		names[a.Name] = true
 		pairs[authz.Permission{Action: a.Name, Object: a.Object}] = true
 	}

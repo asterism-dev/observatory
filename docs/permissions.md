@@ -389,8 +389,8 @@ without it the request is taken as REST and the Connect path answers 404. iam ru
   `PUT /api/iam/v1/orgs/{org}/roles/{role}`.
 - Writes record their audit events in their own transaction, with the same types and resources as before, so the hub's
   cleanup sees each removal exactly once.
-- The hub keeps `GET /api/info` (docs URL, version, latest version) and the platform admin's org limits
-  (`GET`/`PUT /api/admin/orgs/{org}/limits`).
+- The hub keeps `GET /api/info` (docs URL, version, latest version). The platform admin's org limits moved to the
+  quota service (`GET`/`PUT /api/quota/v1/admin/orgs/{org_id}/limits`).
 
 ## Hub as iam client
 

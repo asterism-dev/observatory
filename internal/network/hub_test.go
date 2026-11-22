@@ -14,6 +14,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 	"github.com/asterism-dev/observatory/internal/wgkey"
 )
 
@@ -23,7 +24,7 @@ var cfg = network.Config{GatewayHost: "gw.test", GatewayToken: token}
 
 func newStore(t testing.TB) *store.Store {
 	t.Helper()
-	return store.New(dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
+	return storetest.New(t, dbtest.New(t)).WithMasterKey(seal.Key(bytes.Repeat([]byte{1}, 32)))
 }
 
 func load(t *testing.T, s *store.Store) *network.Hub {

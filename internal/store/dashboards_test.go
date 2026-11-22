@@ -11,12 +11,13 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestDashboards(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a, b := login(t, s, "a").User.ID, login(t, s, "b").User.ID
 	org := mustCreateOrg(t, s, "D", a)
 	other := mustCreateOrg(t, s, "E", b)
@@ -96,7 +97,7 @@ func TestDashboards(t *testing.T) {
 
 func TestDashboardLimit(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	a := login(t, s, "a").User.ID
 	org := mustCreateOrg(t, s, "D", a)
 	for i := range 50 {

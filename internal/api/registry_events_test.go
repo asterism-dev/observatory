@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -214,10 +215,8 @@ func TestPushEventOverLimit(t *testing.T) {
 	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
 	repo := "i/" + img.String()
 	ctx := context.Background()
-	one := 1
-	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
-		t.Fatal(err)
-	}
+	one := int32(1)
+	e.quota.SetLimits(org, "org", &quotav1.Limits{ImageStorageGb: &one})
 	old := e.addVersion(img, 1, "latest")
 	e.exec(`INSERT INTO image_version_layers (image_id, version_digest, digest, size) VALUES ($1, $2, 'sha256:base', $3)`, img, old, 1<<29)
 	fm := &fakeManifests{manifests: map[string]registry.Manifest{
@@ -304,10 +303,8 @@ func TestPushEventIndexCountsEveryChild(t *testing.T) {
 	img := e.createImage(aliceTok, org, `{"name":"a","scope":"org"}`)
 	repo := "i/" + img.String()
 	ctx := context.Background()
-	one := 1
-	if err := e.store.SetLimits(ctx, org, store.ScopeOrg, store.Limits{ImageStorageGB: &one}, nil); err != nil {
-		t.Fatal(err)
-	}
+	one := int32(1)
+	e.quota.SetLimits(org, "org", &quotav1.Limits{ImageStorageGb: &one})
 	amd, arm := registry.Layer{Digest: "sha256:amd", Size: 10}, registry.Layer{Digest: "sha256:arm", Size: 1 << 29}
 	fm := &fakeManifests{manifests: map[string]registry.Manifest{
 		digestN(1): {Platform: "linux/amd64", PlatformDigest: digestN(9), Layers: []registry.Layer{amd}, Blobs: []registry.Layer{arm, amd}},

@@ -18,7 +18,7 @@ import (
 
 func TestPurgeSkipsWhenIAMSaysMember(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
+	s := storetest.New(t, dbtest.New(t)).WithMasterKey(testKey(1))
 	a, m := login(t, s, "a"), login(t, s, "m")
 	org := mustCreateOrg(t, s, "A", a.User.ID)
 	mid := m.User.ID
@@ -103,7 +103,7 @@ func TestUserScopeCreateWaitsForPurge(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
-			s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
+			s := storetest.New(t, dbtest.New(t)).WithMasterKey(testKey(1))
 			a, m := login(t, s, "a"), login(t, s, "m")
 			org := mustCreateOrg(t, s, "A", a.User.ID)
 			mid := m.User.ID
@@ -158,7 +158,7 @@ func boolCount(ok bool) int {
 func TestPurgeMemberRevokesTokensByRevision(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	org, bob, carol := uuid.New(), uuid.New(), uuid.New()
 	const removedAt = 10
 	old, _, err := s.CreateTelemetryToken(ctx, org, bob, "old", removedAt-1)
@@ -194,27 +194,5 @@ func TestPurgeMemberRevokesTokensByRevision(t *testing.T) {
 	}
 	if len(revoked) != 2 || !revoked["telemetry-token/"+old.ID.String()] || !revoked["telemetry-token/"+last.ID.String()] {
 		t.Fatalf("revoked %v", revoked)
-	}
-}
-
-func TestPurgeMemberDropsUserLimits(t *testing.T) {
-	ctx := context.Background()
-	pool := dbtest.New(t)
-	s := store.New(pool)
-	orgs, bob, carol := []uuid.UUID{uuid.New(), uuid.New()}, uuid.New(), uuid.New()
-	for _, org := range orgs {
-		for _, u := range []uuid.UUID{bob, carol} {
-			execSQL(t, pool, `INSERT INTO limits (org_id, scope, vcpu) VALUES ($1, $2, 1)`, org, "user:"+u.String())
-		}
-	}
-	if _, err := s.PurgeMember(ctx, orgs[0], bob, 0, func(context.Context) (bool, error) { return false, nil }); err != nil {
-		t.Fatal(err)
-	}
-	var left int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM limits").Scan(&left); err != nil || left != 3 {
-		t.Fatalf("limits left %d %v, want 3", left, err)
-	}
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM limits WHERE org_id = $1 AND scope = $2", orgs[0], "user:"+bob.String()).Scan(&left); err != nil || left != 0 {
-		t.Fatalf("bob's limit in the org: %d %v", left, err)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 // testHubEnv is the minimal environment Run starts with against iam at iamURL; the bus may be unreachable.
@@ -30,6 +31,7 @@ func testHubEnv(t *testing.T, dbURL, iamURL, serviceToken, natsURL, natsToken st
 		"OBSERVATORY_DATABASE_URL":    dbURL,
 		"OBSERVATORY_PUBLIC_URL":      "http://obs.example",
 		"OBSERVATORY_IAM_URL":         iamURL,
+		"OBSERVATORY_QUOTA_URL":       "http://127.0.0.1:1",
 		"OBSERVATORY_SERVICE_TOKEN":   serviceToken,
 		"OBSERVATORY_GATEWAY_TOKEN":   strings.Repeat("g", 32),
 		"OBSERVATORY_STORAGE_TOKEN":   strings.Repeat("s", 32),
@@ -182,7 +184,7 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	t.Helper()
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(seal.Key{1})
+	s := storetest.New(t, pool).WithMasterKey(seal.Key{1})
 	iam := iamtest.New(t)
 	alice, bob := iam.AddUser("alice").ID, iam.AddUser("bob").ID
 	org := iam.CreateOrg(alice, "acme")

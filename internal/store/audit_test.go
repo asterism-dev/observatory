@@ -17,7 +17,7 @@ import (
 func TestAuditWritesOutboxEvent(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	org := uuid.New()
 	err := s.Audit(ctx, store.AuditEntry{ActorKind: store.ActorUser, ActorID: "a", OrgID: &org, Action: store.ActionMemberSetRole,
 		Resource: "org/members/x", Result: store.ResultDenied, IP: "203.0.113.7", UserAgent: "ua", Details: map[string]any{"role": "admin", "id": org, "n": 2}})
@@ -63,7 +63,7 @@ func TestAuditWritesOutboxEvent(t *testing.T) {
 func TestAuditInRolledBackTxDisappears(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	boom := errors.New("boom")
 	err := s.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.Audit(ctx, store.AuditEntry{ActorKind: store.ActorUser, ActorID: "a", Action: store.ActionAuthLogin, Result: store.ResultAllowed}); err != nil {
@@ -82,7 +82,7 @@ func TestAuditInRolledBackTxDisappears(t *testing.T) {
 func TestAuditSanitizesFreeText(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	long := strings.Repeat("x", 2000)
 	err := s.Audit(ctx, store.AuditEntry{
 		ActorKind: store.ActorSystem, Action: store.ActionAuthLogin, Result: store.ResultFailed,
@@ -104,7 +104,7 @@ func TestAuditSanitizesFreeText(t *testing.T) {
 func TestAuditRejectsUnknownActorKindOrResult(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	for _, e := range []store.AuditEntry{
 		{ActorKind: "", Action: store.ActionAuthLogin, Result: store.ResultAllowed},
 		{ActorKind: "vm", Action: store.ActionAuthLogin, Result: store.ResultAllowed},

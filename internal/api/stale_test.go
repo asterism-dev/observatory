@@ -30,7 +30,7 @@ func TestUserRoutesUnavailableWhenStale(t *testing.T) {
 	fresh := e.stale()
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/api/registry/credentials"},
-		{"GET", "/api/orgs/" + e.personalOrg(alice).String() + "/limits"},
+		{"GET", "/api/orgs/" + e.personalOrg(alice).String() + "/vms"},
 	} {
 		if rec := e.do(c.method, c.path, cli); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "policy unavailable") {
 			t.Fatalf("%s %s while stale: %d %s", c.method, c.path, rec.Code, rec.Body.String())

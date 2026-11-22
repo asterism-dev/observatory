@@ -10,12 +10,13 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestRegistryCredentialExpiresWithSession(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	user, session := uuid.New(), uuid.New()
 	live, _, err := s.CreateRegistryCredential(ctx, user, session, time.Now().Add(time.Hour), 12*time.Hour)
 	if err != nil {
@@ -43,7 +44,7 @@ func TestRegistryCredentialExpiresWithSession(t *testing.T) {
 func TestDeleteSessionCredentials(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	user, session := uuid.New(), uuid.New()
 	cred, _, err := s.CreateRegistryCredential(ctx, user, session, time.Now().Add(time.Hour), 12*time.Hour)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/asterism-dev/observatory/internal/platform/usage"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -143,7 +144,8 @@ func (s *Store) CreateSnapshot(ctx context.Context, org, vm uuid.UUID, name stri
 		if n >= MaxSnapshotsPerVM {
 			return ErrLimitExceeded
 		}
-		if err := tx.checkLimits(ctx, org, v.UserID, v.TeamID, Limits{SnapshotCount: ptr(1)}); err != nil {
+		id := uuid.New()
+		if err := tx.reserve(ctx, org, v.UserID, v.TeamID, Limits{SnapshotCount: ptr(1)}, snapshotResource(id), vmResource(vm)); err != nil {
 			return err
 		}
 		nets, err := tx.rankedNetworks(ctx, vm)
@@ -154,14 +156,21 @@ func (s *Store) CreateSnapshot(ctx context.Context, org, vm uuid.UUID, name stri
 		if err != nil {
 			return err
 		}
-		var id uuid.UUID
-		err = tx.q.QueryRow(ctx, `
-			INSERT INTO vm_snapshots (org_id, vm_id, name, memory, cpus, memory_mb, disk_gb, networks, attachments, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-			org, vm, name, memory && v.Power != proto.PowerStopped, v.CPUs, v.MemoryMB, v.DiskGB, nets, atts, createdBy).Scan(&id)
+		_, err = tx.q.Exec(ctx, `
+			INSERT INTO vm_snapshots (id, org_id, vm_id, name, memory, cpus, memory_mb, disk_gb, networks, attachments, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			id, org, vm, name, memory && v.Power != proto.PowerStopped, v.CPUs, v.MemoryMB, v.DiskGB, nets, atts, createdBy)
 		if isUniqueViolation(err) {
 			return ErrConflict
 		} else if err != nil {
+			return err
+		}
+		owner, err := ownerSubject(v.UserID, v.TeamID)
+		if err != nil {
+			return err
+		}
+		if err := tx.lifecycle(ctx, org, usage.SnapshotCreated, vmObject(vm), usage.Lifecycle{Resource: snapshotResource(id), Parent: vmResource(vm), Owner: owner,
+			Amounts: usage.Amounts{SnapshotCount: 1}}); err != nil {
 			return err
 		}
 		out, err = tx.Snapshot(ctx, org, vm, id)
@@ -194,8 +203,10 @@ func (s *Store) DeleteSnapshot(ctx context.Context, org, vm, id uuid.UUID) error
 		if _, err := tx.q.Exec(ctx, "UPDATE snapshot_disks SET deleted_at = now() WHERE snapshot_id = $1 AND deleted_at IS NULL", id); err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(ctx, "DELETE FROM vm_snapshots WHERE id = $1", id)
-		return err
+		if _, err = tx.q.Exec(ctx, "DELETE FROM vm_snapshots WHERE id = $1", id); err != nil {
+			return err
+		}
+		return tx.deleted(ctx, org, usage.SnapshotDeleted, vmObject(vm), snapshotResource(id))
 	})
 }
 
@@ -448,23 +459,31 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 		for _, d := range sn.Disks {
 			diskGB += d.SizeGB
 		}
-		if err := tx.checkLimits(ctx, org, src.UserID, src.TeamID, Limits{VCPU: &sn.CPUs, RAMMB: &sn.MemoryMB, DiskGB: &diskGB, VMCount: ptr(1)}); err != nil {
+		id, diskIDs := uuid.New(), make([]uuid.UUID, len(sn.Disks))
+		resources := []string{vmResource(id)}
+		for i := range diskIDs {
+			diskIDs[i] = uuid.New()
+			resources = append(resources, diskResource(diskIDs[i]))
+		}
+		if err := tx.reserve(ctx, org, src.UserID, src.TeamID, Limits{VCPU: &sn.CPUs, RAMMB: &sn.MemoryMB, DiskGB: &diskGB, VMCount: ptr(1)}, resources...); err != nil {
 			return err
 		}
 		mgmtIP, err := tx.nextMgmtIP(ctx, org)
 		if err != nil {
 			return err
 		}
-		var id uuid.UUID
-		err = tx.q.QueryRow(ctx, `
-			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip,
+		fork, err := scanVM(tx.q.QueryRow(ctx, `
+			INSERT INTO vms (id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip,
 				fork_snapshot_id, fork_source_vm, fork_memory, image_ref, image_digest, image_id, image_source)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, nullif($14, ''), nullif($15, ''), $16, nullif($17, '')) RETURNING id`,
+			VALUES ($18, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, nullif($14, ''), nullif($15, ''), $16, nullif($17, '')) RETURNING `+vmColumns,
 			org, src.NodeID, src.UserID, src.TeamID, name, sn.CPUs, sn.MemoryMB, sn.DiskGB, createdBy, mgmtIP, sn.ID, src.ID, memory,
-			src.ImageRef, src.ImageDigest, src.ImageID, src.ImageSource).Scan(&id)
+			src.ImageRef, src.ImageDigest, src.ImageID, src.ImageSource, id))
 		if isUniqueViolation(err) {
 			return ErrConflict
 		} else if err != nil {
+			return err
+		}
+		if err := tx.vmCreated(ctx, fork); err != nil {
 			return err
 		}
 		if len(nets) > 0 {
@@ -473,19 +492,22 @@ func (s *Store) ForkVM(ctx context.Context, org uuid.UUID, snap Snapshot, name s
 			}
 		}
 		var attach []VMDisk
-		for _, d := range sn.Disks {
+		for i, d := range sn.Disks {
 			suffix := make([]byte, 2)
 			if _, err := rand.Read(suffix); err != nil {
 				return err
 			}
-			var disk uuid.UUID
-			err := tx.q.QueryRow(ctx, `
-				INSERT INTO disks (org_id, user_id, team_id, name, size_gb, copy_from_snapshot, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-				org, src.UserID, src.TeamID, forkDiskName(d.DiskName, hex.EncodeToString(suffix)), d.SizeGB, d.ID, createdBy).Scan(&disk)
+			disk := diskIDs[i]
+			_, err := tx.q.Exec(ctx, `
+				INSERT INTO disks (id, org_id, user_id, team_id, name, size_gb, copy_from_snapshot, created_by)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				disk, org, src.UserID, src.TeamID, forkDiskName(d.DiskName, hex.EncodeToString(suffix)), d.SizeGB, d.ID, createdBy)
 			if isUniqueViolation(err) {
 				return ErrConflict
 			} else if err != nil {
+				return err
+			}
+			if err := tx.diskSized(ctx, usage.DiskCreated, org, disk, src.UserID, src.TeamID, d.SizeGB); err != nil {
 				return err
 			}
 			attach = append(attach, VMDisk{DiskID: disk, MountPath: d.MountPath})

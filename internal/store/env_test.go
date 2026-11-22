@@ -16,6 +16,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/egress"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func testKey(b byte) seal.Key { return seal.Key(bytes.Repeat([]byte{b}, 32)) }
@@ -23,7 +24,7 @@ func testKey(b byte) seal.Key { return seal.Key(bytes.Repeat([]byte{b}, 32)) }
 func newEnvStore(t *testing.T) (*store.Store, loginResult, testOrg, testTeam) {
 	t.Helper()
 	ctx := context.Background()
-	s := store.New(dbtest.New(t)).WithMasterKey(testKey(1))
+	s := storetest.New(t, dbtest.New(t)).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org, err := createOrg(s, ctx, "E", u.User.ID)
 	if err != nil {
@@ -111,7 +112,7 @@ func TestEnvVarDuplicate(t *testing.T) {
 func TestEnvVarRowSwap(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "swap")
 	org := mustCreateOrg(t, s, "S", u.User.ID)
 	a := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvSecret, store.EnvScopeOrg, nil, "A"), "a")
@@ -158,7 +159,7 @@ func TestCheckMasterKey(t *testing.T) {
 func TestEnvVarKindBound(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "kind")
 	org := mustCreateOrg(t, s, "K", u.User.ID)
 	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvSecret, store.EnvScopeOrg, nil, "A"), "hidden")
@@ -270,7 +271,7 @@ func TestEnvVarNoKey(t *testing.T) {
 	ctx := context.Background()
 	s, u, org, _ := newEnvStore(t)
 	v := mustCreateEnv(t, s, envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "A"), "a")
-	bare := store.New(dbtest.New(t))
+	bare := storetest.New(t, dbtest.New(t))
 	if _, err := bare.CreateEnvVar(ctx, v, "x"); !errors.Is(err, store.ErrNoMasterKey) {
 		t.Fatalf("create: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestEnvVarNoKey(t *testing.T) {
 func TestPurgeMemberDeletesPrivateEnv(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	owner := login(t, s, "owner")
 	org := mustCreateOrg(t, s, "R", owner.User.ID)
 	m := login(t, s, "member")
@@ -323,7 +324,7 @@ func TestPurgeTeamDeletesTeamEnv(t *testing.T) {
 func TestOrgKeyNotPlain(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "key")
 	org := mustCreateOrg(t, s, "K", u.User.ID)
 	for _, n := range []string{"A", "B"} {
@@ -351,7 +352,7 @@ func TestOrgKeyNotPlain(t *testing.T) {
 func TestResolveEnv(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	team, err := createTeam(s, ctx, org.ID, "core")
@@ -490,7 +491,7 @@ func TestEnvHostsRoundTrip(t *testing.T) {
 func TestEnvHostsOnlySecret(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	bad := envVar(org, u.User.ID, store.EnvPlain, store.EnvScopeOrg, nil, "P")
@@ -530,7 +531,7 @@ func TestEnvHostsValueTooShort(t *testing.T) {
 func TestPlaceholderStable(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	uid := u.User.ID
@@ -587,7 +588,7 @@ func TestPlaceholderStable(t *testing.T) {
 func TestResolveVMEnvBound(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "env")
 	org := mustCreateOrg(t, s, "E", u.User.ID)
 	uid := u.User.ID

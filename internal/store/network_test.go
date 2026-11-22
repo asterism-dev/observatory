@@ -11,6 +11,7 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/netaddr"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestOrgSliceStableAndDistinct(t *testing.T) {
@@ -182,7 +183,7 @@ func TestEnrollChassisKeepsAddress(t *testing.T) {
 func TestHubSecretSealed(t *testing.T) {
 	ctx := context.Background()
 	pool := newVMEnv(t).pool
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	plain := []byte("super-secret-hub-key-material")
 	calls := 0
 	gen := func() ([]byte, error) { calls++; return plain, nil }
@@ -204,10 +205,10 @@ func TestHubSecretSealed(t *testing.T) {
 	if bytes.Contains(sealed, plain) {
 		t.Fatal("hub secret stored in plaintext")
 	}
-	if _, err := store.New(pool).WithMasterKey(testKey(2)).HubSecret(ctx, "ovn-ca", gen); err == nil {
+	if _, err := storetest.New(t, pool).WithMasterKey(testKey(2)).HubSecret(ctx, "ovn-ca", gen); err == nil {
 		t.Fatal("other master key opened the secret")
 	}
-	if _, err := store.New(pool).HubSecret(ctx, "ovn-ca", gen); err == nil {
+	if _, err := storetest.New(t, pool).HubSecret(ctx, "ovn-ca", gen); err == nil {
 		t.Fatal("no master key returned a secret")
 	}
 }

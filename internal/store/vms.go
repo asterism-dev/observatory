@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/usage"
 	"github.com/asterism-dev/observatory/internal/proto"
 )
 
@@ -75,72 +75,16 @@ func collectVMs(rows pgx.Rows, err error) ([]VM, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (VM, error) { return scanVM(r) })
 }
 
-// usage sums the VMs matching the filter, whatever their power state, plus live standalone disks.
-func (s *Store) usage(ctx context.Context, orgID uuid.UUID, ownerCol string, owner *uuid.UUID) (u Limits, err error) {
-	var count, cpus, mem, disk, snaps int
-	filter := ""
-	args := []any{orgID}
-	if owner != nil {
-		filter = " AND " + ownerCol + " = $2"
-		args = append(args, *owner)
-	}
-	q := "SELECT count(*), coalesce(sum(cpus), 0), coalesce(sum(memory_mb), 0), coalesce(sum(disk_gb), 0) + " +
-		"(SELECT coalesce(sum(size_gb), 0) FROM disks WHERE org_id = $1 AND deleted_at IS NULL" + filter + "), " +
-		"(SELECT count(*) FROM vm_snapshots sn JOIN vms ON vms.id = sn.vm_id WHERE vms.org_id = $1" + filter + ") " +
-		"FROM vms WHERE org_id = $1" + filter
-	if err = s.q.QueryRow(ctx, q, args...).Scan(&count, &cpus, &mem, &disk, &snaps); err != nil {
-		return
-	}
-	return Limits{VCPU: &cpus, RAMMB: &mem, DiskGB: &disk, VMCount: &count, SnapshotCount: &snaps}, nil
-}
+func ptr(n int) *int { return &n }
 
-// plus leaves a dimension nil (unchecked) when the addend has none, so an operation is only held to the limits it uses.
-func (u Limits) plus(a Limits) Limits {
-	add := func(used, n *int) *int {
-		if n == nil {
-			return nil
-		}
-		return ptr(*used + *n)
-	}
-	return Limits{VCPU: add(u.VCPU, a.VCPU), RAMMB: add(u.RAMMB, a.RAMMB), DiskGB: add(u.DiskGB, a.DiskGB), VMCount: add(u.VMCount, a.VMCount),
-		SnapshotCount: add(u.SnapshotCount, a.SnapshotCount)}
-}
-
-// checkLimits checks add against the org and owner limits; ponytail: callers check the owner against the policy without a lock, so a create can race a member removal or team delete (a cross-service lock would close it).
-func (s *Store) checkLimits(ctx context.Context, orgID uuid.UUID, userID, teamID *uuid.UUID, add Limits) error {
-	ownerScope, ownerCol, owner := "", "team_id", teamID
-	switch {
-	case userID != nil && teamID == nil:
-		ownerScope, ownerCol, owner = authz.UserSubject(*userID), "user_id", userID
-	case teamID != nil && userID == nil:
-		ownerScope = authz.TeamSubject(*teamID)
-	default:
-		return ErrNotFound
-	}
-	limits, err := s.Limits(ctx, orgID)
+func (s *Store) vmCreated(ctx context.Context, v VM) error {
+	owner, err := ownerSubject(v.UserID, v.TeamID)
 	if err != nil {
 		return err
 	}
-	for _, c := range []struct {
-		scope string
-		owner *uuid.UUID
-	}{{ScopeOrg, nil}, {ownerScope, owner}} {
-		l, ok := limits[c.scope]
-		if !ok {
-			continue
-		}
-		used, err := s.usage(ctx, orgID, ownerCol, c.owner)
-		if err != nil {
-			return err
-		}
-		if err := used.plus(add).exceeded(c.scope, l); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.lifecycle(ctx, v.OrgID, usage.InstanceCreated, vmObject(v.ID), usage.Lifecycle{Resource: vmResource(v.ID), Owner: owner,
+		Amounts: usage.Amounts{VCPU: v.CPUs, RAMMB: v.MemoryMB, DiskGB: v.DiskGB, VMCount: 1}})
 }
-
-func ptr(n int) *int { return &n }
 
 func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 	var out VM
@@ -157,7 +101,8 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 		if !enrolled {
 			return ErrNotEnrolled
 		}
-		if err := tx.checkLimits(ctx, v.OrgID, v.UserID, v.TeamID, Limits{VCPU: &v.CPUs, RAMMB: &v.MemoryMB, DiskGB: &v.DiskGB, VMCount: ptr(1)}); err != nil {
+		id := uuid.New()
+		if err := tx.reserve(ctx, v.OrgID, v.UserID, v.TeamID, Limits{VCPU: &v.CPUs, RAMMB: &v.MemoryMB, DiskGB: &v.DiskGB, VMCount: ptr(1)}, vmResource(id)); err != nil {
 			return err
 		}
 		mgmtIP, err := tx.nextMgmtIP(ctx, v.OrgID)
@@ -165,13 +110,15 @@ func (s *Store) CreateVM(ctx context.Context, v VM) (VM, error) {
 			return err
 		}
 		out, err = scanVM(tx.q.QueryRow(ctx, `
-			INSERT INTO vms (org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip, image_ref, image_digest, image_id, image_source, kind, delete_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), nullif($12, ''), $13, nullif($14, ''), coalesce(nullif($15, ''), 'vm'), $16) RETURNING `+vmColumns,
-			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP, v.ImageRef, v.ImageDigest, v.ImageID, v.ImageSource, v.Kind, v.DeleteAt))
+			INSERT INTO vms (id, org_id, node_id, user_id, team_id, name, cpus, memory_mb, disk_gb, created_by, mgmt_ip, image_ref, image_digest, image_id, image_source, kind, delete_at)
+			VALUES ($17, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11, ''), nullif($12, ''), $13, nullif($14, ''), coalesce(nullif($15, ''), 'vm'), $16) RETURNING `+vmColumns,
+			v.OrgID, v.NodeID, v.UserID, v.TeamID, v.Name, v.CPUs, v.MemoryMB, v.DiskGB, v.CreatedBy, mgmtIP, v.ImageRef, v.ImageDigest, v.ImageID, v.ImageSource, v.Kind, v.DeleteAt, id))
 		if isUniqueViolation(err) {
 			return ErrConflict
+		} else if err != nil {
+			return err
 		}
-		return err
+		return tx.vmCreated(ctx, out)
 	})
 	return out, err
 }
@@ -256,8 +203,10 @@ func (s *Store) DeleteVM(ctx context.Context, org, id uuid.UUID, by *uuid.UUID, 
 			FROM vms WHERE id = $1 AND kind = 'vm'`, id, by, reason); err != nil {
 			return err
 		}
-		_, err = tx.q.Exec(ctx, "DELETE FROM vms WHERE id = $1", id)
-		return err
+		if _, err = tx.q.Exec(ctx, "DELETE FROM vms WHERE id = $1", id); err != nil {
+			return err
+		}
+		return tx.deleted(ctx, org, usage.InstanceDeleted, vmObject(id), vmResource(id))
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,19 +28,22 @@ const ttl = 5 * time.Minute
 var dimensions = [5][2]string{{"vCPU", ""}, {"RAM", " MB"}, {"disk", " GB"}, {"VM count", ""}, {"snapshot count", ""}}
 
 type hold struct {
-	org     uuid.UUID
-	owner   string
-	amounts [5]int64
-	expires time.Time
+	org       uuid.UUID
+	owner     string
+	amounts   [5]int64
+	resources []string
+	expires   time.Time
 }
 
-// Fake checks reserves like the quota service, counting only its own unexpired holds as usage: it sees no allocations, so Release is a no-op.
+// Fake checks reserves like the quota service; it consumes no events, so its unexpired holds stand in for allocations, and Release drops the holds naming a released resource.
 type Fake struct {
 	quotav1connect.UnimplementedQuotaInternalServiceHandler
 
-	mu     sync.Mutex
-	limits map[uuid.UUID]map[string]*quotav1.Limits
-	holds  map[string]hold
+	mu         sync.Mutex
+	limits     map[uuid.UUID]map[string]*quotav1.Limits
+	holds      map[string]hold
+	reserves   []*quotav1.ReserveRequest
+	reserveErr error
 }
 
 var _ quotav1connect.QuotaInternalServiceHandler = (*Fake)(nil)
@@ -60,6 +64,20 @@ func (f *Fake) SetLimits(org uuid.UUID, scope string, l *quotav1.Limits) {
 		return
 	}
 	f.limits[org][scope] = proto.CloneOf(l)
+}
+
+// FailReserves makes every Reserve fail with err until called with nil.
+func (f *Fake) FailReserves(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reserveErr = err
+}
+
+// Reserves returns the Reserve requests received, oldest first.
+func (f *Fake) Reserves() []*quotav1.ReserveRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reserves)
 }
 
 // Holds counts the unexpired holds.
@@ -87,6 +105,13 @@ func limitFields(l *quotav1.Limits) [5]*int32 {
 }
 
 func (f *Fake) Reserve(_ context.Context, r *connect.Request[quotav1.ReserveRequest]) (*connect.Response[quotav1.ReserveResponse], error) {
+	f.mu.Lock()
+	f.reserves = append(f.reserves, proto.CloneOf(r.Msg))
+	err := f.reserveErr
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	org, err := uuidx.Canonical(r.Msg.GetOrgId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("org_id: %w", err))
@@ -96,6 +121,11 @@ func (f *Fake) Reserve(_ context.Context, r *connect.Request[quotav1.ReserveRequ
 	id, err := uuidx.Canonical(raw)
 	if err != nil || !(kind == "user" && owner == coreauthz.UserSubject(id) || kind == "team" && owner == coreauthz.TeamSubject(id)) {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("owner must be user:<uuid> or team:<uuid>"))
+	}
+	for _, res := range r.Msg.GetResources() {
+		if !validResource(res) {
+			return nil, errBadResource()
+		}
 	}
 	add := amounts(r.Msg.GetAmounts())
 	var held [5]int64
@@ -134,7 +164,7 @@ func (f *Fake) Reserve(_ context.Context, r *connect.Request[quotav1.ReserveRequ
 		}
 	}
 	hid := uuid.NewString()
-	f.holds[hid] = hold{org: org, owner: owner, amounts: held, expires: now.Add(ttl)}
+	f.holds[hid] = hold{org: org, owner: owner, amounts: held, resources: r.Msg.GetResources(), expires: now.Add(ttl)}
 	return connect.NewResponse(&quotav1.ReserveResponse{ReservationId: hid, ExpiresAt: timestamppb.New(now.Add(ttl))}), nil
 }
 
@@ -153,16 +183,33 @@ func (f *Fake) Cancel(_ context.Context, r *connect.Request[quotav1.CancelReques
 }
 
 func (f *Fake) Release(_ context.Context, r *connect.Request[quotav1.ReleaseRequest]) (*connect.Response[quotav1.ReleaseResponse], error) {
-	if _, err := uuidx.Canonical(r.Msg.GetOrgId()); err != nil {
+	org, err := uuidx.Canonical(r.Msg.GetOrgId())
+	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("org_id: %w", err))
 	}
 	for _, res := range r.Msg.GetResources() {
-		kind, raw, _ := strings.Cut(res, "/")
-		if _, err := uuidx.Canonical(raw); err != nil || kind != "vm" && kind != "disk" && kind != "snapshot" {
-			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("resources must be vm/<uuid>, disk/<uuid> or snapshot/<uuid>"))
+		if !validResource(res) {
+			return nil, errBadResource()
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, h := range f.holds {
+		if h.org == org && slices.ContainsFunc(h.resources, func(res string) bool { return slices.Contains(r.Msg.GetResources(), res) }) {
+			delete(f.holds, id)
 		}
 	}
 	return connect.NewResponse(&quotav1.ReleaseResponse{}), nil
+}
+
+func validResource(res string) bool {
+	kind, raw, _ := strings.Cut(res, "/")
+	_, err := uuidx.Canonical(raw)
+	return err == nil && (kind == "vm" || kind == "disk" || kind == "snapshot")
+}
+
+func errBadResource() error {
+	return connect.NewError(connect.CodeInvalidArgument, errors.New("resources must be vm/<uuid>, disk/<uuid> or snapshot/<uuid>"))
 }
 
 func (f *Fake) GetLimits(_ context.Context, r *connect.Request[quotav1.QuotaInternalServiceGetLimitsRequest]) (*connect.Response[quotav1.QuotaInternalServiceGetLimitsResponse], error) {

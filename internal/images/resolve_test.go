@@ -13,6 +13,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/images"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 const digest = "sha256:0000000000000000000000000000000000000000000000000000000000000001"
@@ -53,7 +54,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, g grants) fixture {
 	t.Helper()
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	iam := iamtest.New(t)
 	f := fixture{s: s, user: iam.AddUser("u").ID, peer: iam.AddUser("p").ID}
 	f.org = iam.CreateOrg(f.user, "O")

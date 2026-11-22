@@ -9,12 +9,13 @@ import (
 
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 func TestTelemetryTokens(t *testing.T) {
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	s := storetest.New(t, pool)
 	a, b := login(t, s, "a"), login(t, s, "b")
 	orgA := mustCreateOrg(t, s, "A", a.User.ID)
 	orgB := mustCreateOrg(t, s, "B", b.User.ID)
@@ -94,7 +95,7 @@ func TestTelemetryTokens(t *testing.T) {
 
 func TestTelemetryTokenLimit(t *testing.T) {
 	ctx := context.Background()
-	s := store.New(dbtest.New(t))
+	s := storetest.New(t, dbtest.New(t))
 	a := login(t, s, "a")
 	org := mustCreateOrg(t, s, "A", a.User.ID)
 	var first store.TelemetryToken

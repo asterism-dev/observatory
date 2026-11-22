@@ -111,7 +111,7 @@ service QuotaInternalService {
   rpc Reserve(ReserveRequest) returns (ReserveResponse);
   // Cancel drops holds; unknown ids are ignored.
   rpc Cancel(CancelRequest) returns (CancelResponse);
-  // Release tombstones resources and their children, so their usage is freed before the deleted event lands.
+  // Release tombstones resources and their children and drops the holds naming them, so their usage is freed before the deleted event lands.
   rpc Release(ReleaseRequest) returns (ReleaseResponse);
   rpc GetLimits(QuotaInternalServiceGetLimitsRequest) returns (QuotaInternalServiceGetLimitsResponse);
 }
@@ -130,6 +130,8 @@ message ReserveRequest {
   // owner is user:<uuid> or team:<uuid>.
   string owner = 2;
   Amounts amounts = 3;
+  // resources are the vm/<uuid>, disk/<uuid> or snapshot/<uuid> the hold turns into, a snapshot's vm too; releasing any of them drops the hold.
+  repeated string resources = 4;
 }
 
 message ReserveResponse {

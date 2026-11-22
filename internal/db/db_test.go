@@ -18,3 +18,10 @@ func TestHubHasOutboxInsteadOfAuditLog(t *testing.T) {
 		t.Fatalf("outbox %v, audit_log %v", outbox, auditLog)
 	}
 }
+
+func TestNoLimitsTable(t *testing.T) {
+	var limits bool
+	if err := dbtest.New(t).QueryRow(context.Background(), "SELECT to_regclass('public.limits') IS NOT NULL").Scan(&limits); err != nil || limits {
+		t.Fatalf("limits table %v %v, want none: quota owns limits", limits, err)
+	}
+}

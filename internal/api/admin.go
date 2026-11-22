@@ -38,44 +38,6 @@ func (h *api) orgExists(w http.ResponseWriter, org uuid.UUID) bool {
 	return true
 }
 
-func (h *api) adminGetOrgLimits(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePlatformAdmin(w, r, store.ActionAdminRead, "admin/orgs") {
-		return
-	}
-	id, ok := pathID(w, r, "org")
-	if !ok {
-		return
-	}
-	if !h.orgExists(w, id) {
-		return
-	}
-	ls, err := h.store.Limits(r.Context(), id)
-	if err != nil {
-		serverError(w, "admin org limits", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toOrgLimitsJSON(ls))
-}
-
-func (h *api) adminSetOrgLimits(w http.ResponseWriter, r *http.Request) {
-	if !h.requirePlatformAdmin(w, r, store.ActionLimitSet, "admin/orgs") {
-		return
-	}
-	id, ok := pathID(w, r, "org")
-	if !ok {
-		return
-	}
-	l, ok := readLimits(w, r)
-	if !ok {
-		return
-	}
-	// The hub org lock no longer fails for an unknown org.
-	if !h.orgExists(w, id) {
-		return
-	}
-	h.commitLimits(w, r, id, store.ScopeOrg, l)
-}
-
 // adminRegistryGC 404s on hubs without hub-run garbage collection, so the GUI can hide it.
 func (h *api) adminRegistryGC(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlatformAdmin(w, r, store.ActionAdminRead, "admin/registry-gc") {

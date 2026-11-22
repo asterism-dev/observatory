@@ -612,8 +612,10 @@ type ReserveRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	OrgId string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
 	// owner is user:<uuid> or team:<uuid>.
-	Owner         string   `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
-	Amounts       *Amounts `protobuf:"bytes,3,opt,name=amounts,proto3" json:"amounts,omitempty"`
+	Owner   string   `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Amounts *Amounts `protobuf:"bytes,3,opt,name=amounts,proto3" json:"amounts,omitempty"`
+	// resources are the vm/<uuid>, disk/<uuid> or snapshot/<uuid> the hold turns into, a snapshot's vm too; releasing any of them drops the hold.
+	Resources     []string `protobuf:"bytes,4,rep,name=resources,proto3" json:"resources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -665,6 +667,13 @@ func (x *ReserveRequest) GetOwner() string {
 func (x *ReserveRequest) GetAmounts() *Amounts {
 	if x != nil {
 		return x.Amounts
+	}
+	return nil
+}
+
+func (x *ReserveRequest) GetResources() []string {
+	if x != nil {
+		return x.Resources
 	}
 	return nil
 }
@@ -1113,11 +1122,12 @@ const file_observatory_quota_v1_quota_proto_rawDesc = "" +
 	"\n" +
 	"\b_disk_gbB\v\n" +
 	"\t_vm_countB\x11\n" +
-	"\x0f_snapshot_count\"v\n" +
+	"\x0f_snapshot_count\"\x94\x01\n" +
 	"\x0eReserveRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x127\n" +
-	"\aamounts\x18\x03 \x01(\v2\x1d.observatory.quota.v1.AmountsR\aamounts\"s\n" +
+	"\aamounts\x18\x03 \x01(\v2\x1d.observatory.quota.v1.AmountsR\aamounts\x12\x1c\n" +
+	"\tresources\x18\x04 \x03(\tR\tresources\"s\n" +
 	"\x0fReserveResponse\x12%\n" +
 	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x129\n" +
 	"\n" +

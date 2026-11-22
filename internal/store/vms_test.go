@@ -10,15 +10,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/platform/quotatest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 type vmEnv struct {
-	s    *store.Store
-	pool *pgxpool.Pool
+	s     *store.Store
+	quota *quotatest.Fake
+	pool  *pgxpool.Pool
 	org  testOrg
 	user uuid.UUID
 	team testTeam
@@ -29,7 +33,8 @@ func newVMEnv(t *testing.T) vmEnv {
 	t.Helper()
 	ctx := context.Background()
 	pool := dbtest.New(t)
-	s := store.New(pool)
+	quota := quotatest.NewFake()
+	s := store.New(pool, storetest.Quota(t, quota))
 	a := login(t, s, "a")
 	org, _ := createOrg(s, ctx, "A", a.User.ID)
 	team, _ := createTeam(s, ctx, org.ID, "core")
@@ -40,7 +45,21 @@ func newVMEnv(t *testing.T) vmEnv {
 	if _, _, err := s.EnrollNode(ctx, tok); err != nil {
 		t.Fatal(err)
 	}
-	return vmEnv{s, pool, org, a.User.ID, team, node}
+	return vmEnv{s, quota, pool, org, a.User.ID, team, node}
+}
+
+func ip(n int) *int { return &n }
+
+// setLimits sets scope's limits in the fake quota service.
+func (e vmEnv) setLimits(scope string, l store.Limits) {
+	p := func(v *int) *int32 {
+		if v == nil {
+			return nil
+		}
+		n := int32(*v)
+		return &n
+	}
+	e.quota.SetLimits(e.org.ID, scope, &quotav1.Limits{Vcpu: p(l.VCPU), RamMb: p(l.RAMMB), DiskGb: p(l.DiskGB), VmCount: p(l.VMCount), SnapshotCount: p(l.SnapshotCount)})
 }
 
 func (e vmEnv) vm(name string, owner *uuid.UUID, cpus, mem, disk int) store.VM {
@@ -80,9 +99,7 @@ func TestVMLimitsBoundary(t *testing.T) {
 				case "count":
 					l.VMCount = ip(1)
 				}
-				if err := e.s.SetLimits(ctx, e.org.ID, scope, l, policyKnown(t, e.s, e.org.ID)); err != nil {
-					t.Fatal(err)
-				}
+				e.setLimits(scope, l)
 				if _, err := e.s.CreateVM(ctx, e.vm("a", owner, sizes[0], sizes[1], sizes[2])); err != nil {
 					t.Fatalf("exactly at limit: %v", err)
 				}
@@ -97,12 +114,8 @@ func TestVMLimitsBoundary(t *testing.T) {
 func TestVMOwnerScopes(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "team:"+e.team.ID.String(), store.Limits{VMCount: ip(1)}, policyKnown(t, e.s, e.org.ID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{VMCount: ip(3)}, nil); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("team:"+e.team.ID.String(), store.Limits{VMCount: ip(1)})
+	e.setLimits("org", store.Limits{VMCount: ip(3)})
 	for _, name := range []string{"u1", "u2"} {
 		if _, err := e.s.CreateVM(ctx, e.vm(name, nil, 1, 1, 1)); err != nil {
 			t.Fatalf("user vm %s must not count against the team: %v", name, err)
@@ -114,40 +127,9 @@ func TestVMOwnerScopes(t *testing.T) {
 	if _, err := e.s.CreateVM(ctx, e.vm("t2", &e.team.ID, 1, 1, 1)); !errors.Is(err, store.ErrLimitExceeded) {
 		t.Fatalf("team over: %v", err)
 	}
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{VMCount: ip(3)}, nil); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("org", store.Limits{VMCount: ip(3)})
 	if _, err := e.s.CreateVM(ctx, e.vm("u3", nil, 1, 1, 1)); !errors.Is(err, store.ErrLimitExceeded) {
 		t.Fatalf("org over: %v", err)
-	}
-}
-
-func TestVMConcurrentCreateAtBoundary(t *testing.T) {
-	ctx := context.Background()
-	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{VMCount: ip(1)}, nil); err != nil {
-		t.Fatal(err)
-	}
-	errs := make([]error, 2)
-	var wg sync.WaitGroup
-	for i, name := range []string{"x", "y"} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, errs[i] = e.s.CreateVM(ctx, e.vm(name, nil, 1, 1, 1))
-		}()
-	}
-	wg.Wait()
-	ok := 0
-	for _, err := range errs {
-		if err == nil {
-			ok++
-		} else if !errors.Is(err, store.ErrLimitExceeded) {
-			t.Fatalf("unexpected: %v", err)
-		}
-	}
-	if ok != 1 {
-		t.Fatalf("want exactly one success, got %d (%v)", ok, errs)
 	}
 }
 
@@ -311,9 +293,7 @@ func TestSetVMStatusImage(t *testing.T) {
 func TestLockHubOrgSerializesVMCreate(t *testing.T) {
 	ctx := context.Background()
 	e := newVMEnv(t)
-	if err := e.s.SetLimits(ctx, e.org.ID, "org", store.Limits{VMCount: ip(1)}, nil); err != nil {
-		t.Fatal(err)
-	}
+	e.setLimits("org", store.Limits{VMCount: ip(1)})
 	locked, release := make(chan struct{}), make(chan struct{})
 	held := make(chan error, 1)
 	go func() {

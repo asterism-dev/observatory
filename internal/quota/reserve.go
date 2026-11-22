@@ -53,8 +53,8 @@ func exceeded(scope string, used [5]int64, add Amounts, max Limits) *limitError 
 	return nil
 }
 
-// Reserve holds add for owner until it expires, if it fits the org limits and then owner's; the org lock serializes it with other reserves and limit changes.
-func (s *store) Reserve(ctx context.Context, org uuid.UUID, owner string, add Amounts) (uuid.UUID, time.Time, error) {
+// Reserve holds add for owner, naming resources, until it expires, if it fits the org limits and then owner's; the org lock serializes it with other reserves and limit changes.
+func (s *store) Reserve(ctx context.Context, org uuid.UUID, owner string, add Amounts, resources ...string) (uuid.UUID, time.Time, error) {
 	id, now := uuid.New(), s.now()
 	expires := now.Add(reservationTTL)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -92,8 +92,11 @@ func (s *store) Reserve(ctx context.Context, org uuid.UUID, owner string, add Am
 				return e
 			}
 		}
-		_, err = tx.Exec(ctx, "INSERT INTO reservations (id, org, owner, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-			id, org, owner, val(add.VCPU), val(add.RAMMB), val(add.DiskGB), val(add.VMCount), val(add.SnapshotCount), expires)
+		if resources == nil {
+			resources = []string{}
+		}
+		_, err = tx.Exec(ctx, "INSERT INTO reservations (id, org, owner, vcpu, ram_mb, disk_gb, vm_count, snapshot_count, resources, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+			id, org, owner, val(add.VCPU), val(add.RAMMB), val(add.DiskGB), val(add.VMCount), val(add.SnapshotCount), resources, expires)
 		if err != nil {
 			return fmt.Errorf("reserve: %w", err)
 		}
@@ -134,7 +137,7 @@ func (s *store) Cancel(ctx context.Context, ids []uuid.UUID) error {
 	return nil
 }
 
-// Release tombstones org's resources and their children, unseen ones too, so no later event can revive them.
+// Release tombstones org's resources and their children, unseen ones too, so no later event can revive them, and drops org's holds naming them.
 func (s *store) Release(ctx context.Context, org uuid.UUID, resources []string) error {
 	if len(resources) == 0 {
 		return nil
@@ -148,6 +151,10 @@ func (s *store) Release(ctx context.Context, org uuid.UUID, resources []string) 
 			return fmt.Errorf("release: %w", err)
 		}
 		if _, err := tx.Exec(ctx, "UPDATE allocations SET deleted = true, updated_at = $3 WHERE org = $1 AND parent = ANY($2)", org, resources, now); err != nil {
+			return fmt.Errorf("release: %w", err)
+		}
+		// ponytail: a fork's one hold covers its disk copies too, so releasing its vm before the events land under-counts those disks until their created events do.
+		if _, err := tx.Exec(ctx, "DELETE FROM reservations WHERE org = $1 AND resources && $2", org, resources); err != nil {
 			return fmt.Errorf("release: %w", err)
 		}
 		return nil

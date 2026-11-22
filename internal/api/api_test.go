@@ -21,6 +21,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
+	"github.com/asterism-dev/observatory/internal/platform/quotatest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
 	"github.com/asterism-dev/observatory/internal/store/storetest"
@@ -31,6 +32,7 @@ type env struct {
 	t     *testing.T
 	pool  *pgxpool.Pool
 	store *store.Store
+	quota *quotatest.Fake
 	iam   *iamtest.Server
 	pol   *iamtest.Policy
 	z     *authz.Service
@@ -51,7 +53,8 @@ const gatewayToken = "0123456789abcdef0123456789abcdef"
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(seal.Key{1})
+	quota := quotatest.NewFake()
+	s := store.New(pool, storetest.Quota(t, quota)).WithMasterKey(seal.Key{1})
 	fake := iamtest.New(t)
 	pol := fake.Policy(t, s.OwnerRefs)
 	z := pol.Service
@@ -73,7 +76,7 @@ func newEnv(t *testing.T) *env {
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
 	h, handler := newAPI(s, fake.Client(), a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
 	// No mux: it would clean the paths the Grafana proxies must see raw.
-	return &env{t: t, pool: pool, store: s, iam: fake, pol: pol, z: z, net: nh, disks: dh, api: h, h: handler, jwts: jwts, verifier: fv, oauth: fo, google: fg, roles: map[uuid.UUID]authz.CustomRole{}}
+	return &env{t: t, pool: pool, store: s, quota: quota, iam: fake, pol: pol, z: z, net: nh, disks: dh, api: h, h: handler, jwts: jwts, verifier: fv, oauth: fo, google: fg, roles: map[uuid.UUID]authz.CustomRole{}}
 }
 
 func (e *env) newFleet() *fleet.Fleet {

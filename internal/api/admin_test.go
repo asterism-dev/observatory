@@ -13,11 +13,7 @@ func TestAdminEndpointsRequirePlatformAdmin(t *testing.T) {
 	e := newEnv(t)
 	e.user("root")
 	alice, tok := e.user("alice")
-	org := e.createOrg(tok, "Acme")
-	o := "/api/admin/orgs/" + org.String()
 	for _, c := range []struct{ method, path, body, action string }{
-		{"GET", o + "/limits", "", store.ActionAdminRead},
-		{"PUT", o + "/limits", `{}`, store.ActionLimitSet},
 		{"GET", "/api/admin/network", "", store.ActionAdminRead},
 		{"PUT", "/api/admin/network", `{"guestMTU":1200}`, store.ActionPlatformGuestMTU},
 	} {
@@ -38,7 +34,7 @@ func TestPlatformAdminHasNoTenantAccess(t *testing.T) {
 	org := e.createOrg(tok, "Acme")
 	base := "/api/orgs/" + org.String()
 	for _, c := range []struct{ method, path, body string }{
-		{"GET", base + "/limits", ""}, {"PUT", base + "/limits/org", `{}`}, {"GET", base + "/vms", ""},
+		{"GET", base + "/vms", ""},
 	} {
 		if rec := e.send(c.method, c.path, rootTok, c.body); rec.Code != 404 {
 			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
@@ -87,32 +83,21 @@ func TestSetGuestMTUDoesNotTouchVMs(t *testing.T) {
 	}
 }
 
-func TestAdminOrgLimitsEndpoint(t *testing.T) {
+func TestLimitsRoutesGone(t *testing.T) {
 	e := newEnv(t)
 	_, rootTok := e.user("root")
 	alice, tok := e.user("alice")
 	org := e.createOrg(tok, "Acme")
-	team := e.createTeam(org, "core")
-	e.send("PUT", "/api/admin/orgs/"+org.String()+"/limits", rootTok, `{"vcpu":8}`)
-	e.send("PUT", "/api/orgs/"+org.String()+"/limits/team:"+team.String(), tok, `{"vcpu":2}`)
-	path := "/api/admin/orgs/" + org.String() + "/limits"
-
-	var got limitsResp
-	rec := e.do("GET", path, rootTok)
-	decode(t, rec, &got)
-	if rec.Code != 200 || *got.Org["vcpu"] != 8 || *got.Teams[team.String()]["vcpu"] != 2 {
-		t.Fatalf("limits: %d %s", rec.Code, rec.Body.String())
-	}
-	if rec := e.do("GET", "/api/admin/orgs/"+uuid.NewString()+"/limits", rootTok); rec.Code != 404 {
-		t.Fatalf("unknown org: %d", rec.Code)
-	}
-	if rec := e.do("GET", path, tok); rec.Code != 403 {
-		t.Fatalf("non-admin: %d", rec.Code)
-	}
-	if es := e.audit(store.ActionAdminRead); len(es) == 0 || es[0].Result != store.ResultDenied || es[0].ActorID != alice.ID.String() {
-		t.Fatalf("denied audit: %+v", es)
-	}
-	if rec := e.do("GET", path, ""); rec.Code != 401 {
-		t.Fatalf("no token: %d", rec.Code)
+	for _, c := range []struct{ method, path, body string }{
+		{"GET", "/api/admin/orgs/" + org.String() + "/limits", ""},
+		{"PUT", "/api/admin/orgs/" + org.String() + "/limits", `{"vcpu":8}`},
+		{"GET", "/api/orgs/" + org.String() + "/limits", ""},
+		{"PUT", "/api/orgs/" + org.String() + "/limits/user:" + alice.ID.String(), `{"vcpu":2}`},
+	} {
+		for _, tk := range []string{rootTok, tok} {
+			if rec := e.send(c.method, c.path, tk, c.body); rec.Code != 404 {
+				t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
+			}
+		}
 	}
 }

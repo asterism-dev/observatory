@@ -2,14 +2,18 @@ package api
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/proto"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -103,9 +107,8 @@ func TestVMCreateLimitsAndValidation(t *testing.T) {
 		t.Errorf("creatable nodes: %+v", nodes)
 	}
 
-	if rec := e.send("PUT", "/api/orgs/"+org.String()+"/limits/user:"+alice.ID.String(), tok, `{"vmCount":1}`); rec.Code != 204 {
-		t.Fatalf("set limit: %d %s", rec.Code, rec.Body.String())
-	}
+	one := int32(1)
+	e.quota.SetLimits(org, "user:"+alice.ID.String(), &quotav1.Limits{VmCount: &one})
 	v := e.createVM(tok, org, vmBody("one", userOwner(), node))
 	if v.Owner.Kind != "user" || v.Owner.ID != alice.ID.String() || v.Owner.Name != "alice" || v.Node.Name != "n1" || v.State != "pending" || !v.CanPower || !v.CanDelete {
 		t.Fatalf("%+v", v)
@@ -766,4 +769,40 @@ func TestCreateForTeamNotInPolicy404(t *testing.T) {
 	e.reload()
 	e.createVM(tok, org, vmBody("vm1", teamOwner(team), node))
 	e.createDisk(tok, org, diskBody("d1", teamOwner(team), 1))
+}
+
+func TestLimitMessageUnchanged(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	four := int32(4)
+	e.quota.SetLimits(org, "user:"+alice.ID.String(), &quotav1.Limits{Vcpu: &four})
+	body := `{"name":"big","owner":{"kind":"user"},"nodeId":"` + node + `","cpus":6,"memoryMB":512,"diskGB":10}`
+	if rec := e.send("POST", vmsPath(org), tok, body); rec.Code != http.StatusConflict || rec.Body.String() != `{"error":"limit exceeded"}`+"\n" {
+		t.Fatalf("over limit: %d %q", rec.Code, rec.Body.String())
+	}
+	_, err := e.store.CreateVM(t.Context(), store.VM{OrgID: org, NodeID: uuid.MustParse(node), UserID: &alice.ID, Name: "big", CPUs: 6, MemoryMB: 512, DiskGB: 10, CreatedBy: alice.ID})
+	if err == nil || err.Error() != "the owner's vCPU limit of 4 would be exceeded (6)" {
+		t.Fatalf("store error: %v", err)
+	}
+}
+
+func TestQuotaUnavailable503(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	node := e.enrolledNode(tok, org, "n1")
+	e.quota.FailReserves(connect.NewError(connect.CodeUnavailable, errors.New("down")))
+	if rec := e.send("POST", vmsPath(org), tok, vmBody("a", userOwner(), node)); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"quota service unavailable"`) {
+		t.Fatalf("quota down: %d %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := e.pool.QueryRow(t.Context(), "SELECT count(*) FROM vms WHERE org_id = $1", org).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("vms = %d %v, want none", n, err)
+	}
+	e.quota.FailReserves(nil)
+	if rec := e.send("POST", vmsPath(org), tok, vmBody("a", userOwner(), node)); rec.Code != http.StatusCreated {
+		t.Fatalf("quota back: %d %s", rec.Code, rec.Body.String())
+	}
 }

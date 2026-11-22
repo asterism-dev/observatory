@@ -27,14 +27,17 @@ type querier interface {
 type Store struct {
 	q      querier
 	master *seal.Key
+	quota  Quota
+	// pending is the outermost transaction's quota work, shared by its savepoints; nil outside a transaction.
+	pending *pendingQuota
 }
 
-func New(pool *pgxpool.Pool) *Store { return &Store{q: pool} }
+func New(pool *pgxpool.Pool, quota Quota) *Store { return &Store{q: pool, quota: quota} }
 
 // WithMasterKey returns a copy of s that wraps org keys with k.
-func (s *Store) WithMasterKey(k seal.Key) *Store { return &Store{q: s.q, master: &k} }
+func (s *Store) WithMasterKey(k seal.Key) *Store { return &Store{q: s.q, master: &k, quota: s.quota} }
 
-// InTx runs fn in a transaction; on a Store already in one it becomes a savepoint.
+// InTx runs fn in a transaction, or a savepoint on a Store already in one; the outermost commits its quota holds with it, cancels them on failure and releases deleted resources after.
 func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	tx, err := s.q.Begin(ctx)
 	if err != nil {
@@ -42,10 +45,34 @@ func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	}
 	// Rollback after a successful Commit is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := fn(&Store{q: tx, master: s.master}); err != nil {
+	inner := &Store{q: tx, master: s.master, quota: s.quota, pending: s.pending}
+	if s.pending != nil {
+		released := len(s.pending.released)
+		err := fn(inner)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		if err != nil {
+			// The savepoint's deletes roll back; its holds stay for the outermost transaction to commit or cancel.
+			s.pending.released = s.pending.released[:released]
+		}
 		return err
 	}
-	return tx.Commit(ctx)
+	p := &pendingQuota{}
+	inner.pending = p
+	err = fn(inner)
+	if err == nil {
+		err = p.writeCommitted(ctx, tx)
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		p.cancel(ctx, s.quota)
+		return err
+	}
+	p.release(ctx, s.quota)
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

@@ -69,7 +69,12 @@ func (s *internalServer) Reserve(ctx context.Context, r *connect.Request[quotav1
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("amounts must not be negative"))
 		}
 	}
-	id, expires, err := s.store.Reserve(ctx, org, owner, add)
+	for _, res := range r.Msg.GetResources() {
+		if !validResource(res) {
+			return nil, errBadResource()
+		}
+	}
+	id, expires, err := s.store.Reserve(ctx, org, owner, add, r.Msg.GetResources()...)
 	var le *limitError
 	switch {
 	case errors.As(err, &le):
@@ -102,7 +107,7 @@ func (s *internalServer) Release(ctx context.Context, r *connect.Request[quotav1
 	}
 	for _, res := range r.Msg.GetResources() {
 		if !validResource(res) {
-			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("resources must be vm/<uuid>, disk/<uuid> or snapshot/<uuid>"))
+			return nil, errBadResource()
 		}
 	}
 	if err := s.store.Release(ctx, org, r.Msg.GetResources()); err != nil {
@@ -127,6 +132,10 @@ func validOwner(owner string) bool {
 	kind, raw, _ := strings.Cut(owner, ":")
 	id, err := uuidx.Canonical(raw)
 	return err == nil && (kind == "user" && owner == coreauthz.UserSubject(id) || kind == "team" && owner == coreauthz.TeamSubject(id))
+}
+
+func errBadResource() error {
+	return connect.NewError(connect.CodeInvalidArgument, errors.New("resources must be vm/<uuid>, disk/<uuid> or snapshot/<uuid>"))
 }
 
 func validResource(res string) bool {

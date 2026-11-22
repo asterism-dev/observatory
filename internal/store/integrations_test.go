@@ -20,6 +20,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	"github.com/asterism-dev/observatory/internal/integrations"
 	"github.com/asterism-dev/observatory/internal/store"
+	"github.com/asterism-dev/observatory/internal/store/storetest"
 )
 
 const (
@@ -32,7 +33,7 @@ const (
 func newIntegrationStore(t *testing.T) (*store.Store, *pgxpool.Pool, uuid.UUID, testOrg, testTeam) {
 	t.Helper()
 	pool := dbtest.New(t)
-	s := store.New(pool).WithMasterKey(testKey(1))
+	s := storetest.New(t, pool).WithMasterKey(testKey(1))
 	u := login(t, s, "integ")
 	org := mustCreateOrg(t, s, "I", u.User.ID)
 	team, err := createTeam(s, context.Background(), org.ID, "core")

@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	quotav1 "github.com/asterism-dev/observatory/gen/go/observatory/quota/v1"
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/builds"
 	"github.com/asterism-dev/observatory/internal/registry"
@@ -375,10 +376,8 @@ func TestBuildFailsNamingTheLimit(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	_, aliceTok := e.user("alice")
 	org := e.createOrg(aliceTok, "Acme")
-	thirty := 30
-	if err := e.store.SetLimits(context.Background(), org, store.ScopeOrg, store.Limits{DiskGB: &thirty}, nil); err != nil {
-		t.Fatal(err)
-	}
+	thirty := int32(30)
+	e.quota.SetLimits(org, "org", &quotav1.Limits{DiskGb: &thirty})
 	e.node(org)
 	id := e.startBuild(aliceTok, org, e.recipeImage(aliceTok, org, "tools", ""))
 	e.tick()

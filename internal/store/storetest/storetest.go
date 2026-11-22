@@ -1,8 +1,10 @@
-// Package storetest reads the hub's audit events back from its outbox for tests.
+// Package storetest builds hub stores against a fake quota service and reads the hub's events back from its outbox for tests.
 package storetest
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -11,8 +13,27 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
+	"github.com/asterism-dev/observatory/gen/go/observatory/quota/v1/quotav1connect"
+	"github.com/asterism-dev/observatory/internal/platform/quotatest"
 	"github.com/asterism-dev/observatory/internal/store"
 )
+
+// Quota serves f in process and returns the hub's quota client for it.
+func Quota(t testing.TB, f *quotatest.Fake) store.Quota {
+	t.Helper()
+	path, h := quotav1connect.NewQuotaInternalServiceHandler(f)
+	mux := http.NewServeMux()
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return store.NewQuota(quotav1connect.NewQuotaInternalServiceClient(srv.Client(), srv.URL))
+}
+
+// New is a hub store on pool whose quota is a fresh fake without limits.
+func New(t testing.TB, pool *pgxpool.Pool) *store.Store {
+	t.Helper()
+	return store.New(pool, Quota(t, quotatest.NewFake()))
+}
 
 // AuditEvents returns every outbox event, newest first.
 func AuditEvents(t testing.TB, pool *pgxpool.Pool) []*eventsv1.Event {

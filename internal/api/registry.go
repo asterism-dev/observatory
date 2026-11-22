@@ -203,13 +203,9 @@ func (t *registryTokens) grant(ctx context.Context, p registryPrincipal, scope s
 }
 
 func overImageStorageLimit(ctx context.Context, s *store.Store, org uuid.UUID) (bool, error) {
-	ls, err := s.Limits(ctx, org)
-	if err != nil {
+	limit, err := s.ImageStorageLimit(ctx, org)
+	if err != nil || limit == nil {
 		return false, err
-	}
-	limit := ls[store.ScopeOrg].ImageStorageGB
-	if limit == nil {
-		return false, nil
 	}
 	used, err := s.OrgImageUsage(ctx, org)
 	return used >= int64(*limit)<<30, err

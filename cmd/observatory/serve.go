@@ -165,13 +165,15 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	quotaCfg := quotaConfig(getenv)
 	quotaCfg.ServiceToken, quotaCfg.NATSURL, quotaCfg.NATSToken = quotaToken, auditCfg.NATSURL, auditCfg.NATSToken
 	quotaCfg.ServiceTokens = map[string]string{"hub": hubToken}
-	var iamURL string
+	var iamURL, quotaURL string
 	hubEnv := func(k string) string {
 		switch k {
 		case "OBSERVATORY_EDGE_TOKEN":
 			return edgeToken
 		case "OBSERVATORY_IAM_URL":
 			return iamURL
+		case "OBSERVATORY_QUOTA_URL":
+			return quotaURL
 		case "OBSERVATORY_SERVICE_TOKEN":
 			return hubToken
 		case "OBSERVATORY_SERVICE_TOKENS":
@@ -189,7 +191,7 @@ func serveAll(ctx context.Context, getenv func(string) string, edgeLn net.Listen
 	quotaSvc := svcrun.Service{Name: "quota", Run: func(ctx context.Context, ln net.Listener) error { return quota.Run(ctx, quotaCfg, ln) }}
 	return svcrun.All(ctx, edgeLn, func(services map[string]string, hubURL string) svcrun.Service {
 		// All calls this before starting any service, so every service sees the others' URLs.
-		iamURL = services["iam"]
+		iamURL, quotaURL = services["iam"], services["quota"]
 		auditCfg.IAMURL, quotaCfg.IAMURL = iamURL, iamURL
 		iamCfg.HubURL, iamCfg.AuditURL, quotaCfg.AuditURL = hubURL, services["audit"], services["audit"]
 		return svcrun.Service{Name: "edge", Run: func(ctx context.Context, ln net.Listener) error {

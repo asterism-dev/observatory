@@ -130,11 +130,11 @@ func TestOrgFromPathUsesPolicy(t *testing.T) {
 	bob, bobTok := e.user("bob")
 	org := e.createOrg(ownerTok, "Acme")
 	e.iam.AddMember(org, bob.ID, "member")
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 404 {
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/vms", bobTok); rec.Code != 404 {
 		t.Fatalf("before reload: %d %s", rec.Code, rec.Body.String())
 	}
 	e.reload()
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", bobTok); rec.Code != 200 {
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/vms", bobTok); rec.Code != 200 {
 		t.Fatalf("after reload: %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -145,12 +145,12 @@ func TestOrgRouteUnavailableWhenStale(t *testing.T) {
 	org := e.createOrg(tok, "Acme")
 	var fresh atomic.Bool
 	e.z.WithFreshness(fresh.Load)
-	rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", tok)
+	rec := e.do("GET", "/api/orgs/"+org.String()+"/vms", tok)
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "policy unavailable") {
 		t.Fatalf("stale policy: %d %s", rec.Code, rec.Body.String())
 	}
 	fresh.Store(true)
-	if rec := e.do("GET", "/api/orgs/"+org.String()+"/limits", tok); rec.Code != http.StatusOK {
+	if rec := e.do("GET", "/api/orgs/"+org.String()+"/vms", tok); rec.Code != http.StatusOK {
 		t.Fatalf("fresh policy: %d %s", rec.Code, rec.Body.String())
 	}
 }
