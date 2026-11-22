@@ -50,9 +50,10 @@ func (s *server) ListCatalog(_ context.Context, req *connect.Request[iamv1.ListC
 			out = append(out, &iamv1.CatalogEntry{Action: a.Name, Object: a.Object, Description: a.Description, Write: a.Write, Service: c.Service})
 		}
 	}
-	slices.SortFunc(out, func(a, b *iamv1.CatalogEntry) int {
+	slices.SortStableFunc(out, func(a, b *iamv1.CatalogEntry) int {
 		return cmp.Or(strings.Compare(a.Action, b.Action), strings.Compare(a.Object, b.Object))
 	})
+	out = slices.CompactFunc(out, func(a, b *iamv1.CatalogEntry) bool { return a.Action == b.Action && a.Object == b.Object })
 	return connect.NewResponse(&iamv1.ListCatalogResponse{Entries: out, UnknownActions: e.UnknownActions(org)}), nil
 }
 

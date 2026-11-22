@@ -464,3 +464,28 @@ func TestOrgPermissionsFromCatalogs(t *testing.T) {
 		t.Fatalf("member permissions = %v", got.Permissions)
 	}
 }
+
+func TestListCatalogDedupesAcrossCatalogs(t *testing.T) {
+	e := newEnv(t)
+	_, ownerTok := e.user("alice")
+	org := e.createOrg(ownerTok, "Acme")
+	// During an extraction the hub and the new service both declare the action.
+	compute := authz.Catalog{Service: "compute", Actions: []authz.Action{{Name: "compute.instances.get", Object: "org/vms/*"}}}
+	if _, _, err := e.store.PutCatalog(context.Background(), "compute", compute); err != nil {
+		t.Fatal(err)
+	}
+	e.reload()
+	res, err := e.client.ListCatalog(context.Background(), req(ownerTok, &iamv1.ListCatalogRequest{Org: org.String()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, c := range res.Msg.Entries {
+		if c.Action == "compute.instances.get" && c.Object == "org/vms/*" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("compute.instances.get@org/vms/* listed %d times", n)
+	}
+}
