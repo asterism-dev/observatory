@@ -41,8 +41,8 @@ func (s *server) ListCatalog(_ context.Context, req *connect.Request[iamv1.ListC
 	if _, err := parseID("org", req.Msg.Org); err != nil {
 		return nil, err
 	}
-	out := make([]*iamv1.CatalogEntry, 0, len(authz.Catalog))
-	for _, p := range authz.Catalog {
+	out := make([]*iamv1.CatalogEntry, 0, len(authz.LegacyCatalog))
+	for _, p := range authz.LegacyCatalog {
 		out = append(out, &iamv1.CatalogEntry{Action: p.Action, Object: p.Object})
 	}
 	return connect.NewResponse(&iamv1.ListCatalogResponse{Entries: out}), nil

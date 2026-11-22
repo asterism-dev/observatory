@@ -25,7 +25,7 @@ func TestCanGrant(t *testing.T) {
 		Bindings: []Binding{{OrgID: org, Subject: UserSubject(deniedAdmin), RoleID: denyRole}},
 	})
 	var all []Rule
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		// Nobody holds every member's private env scope, compute.instances.connect, compute.instances.fork, compute.disks.use or network.devices.create on every object.
 		if p.Object != ObjUserEnv+"/*" && p.Object != ObjUserIntegrations+"/*" && p.Object != ObjUserImages+"/*" && p.Object != ObjUserDashboards+"/*" && p.Action != "compute.instances.connect" && p.Action != "compute.instances.fork" && p.Action != "compute.disks.use" && p.Action != "network.devices.create" {
 			all = append(all, Rule{Allow, p.Object, p.Action})

@@ -848,9 +848,13 @@ func (x *RoleBinding) GetCreatedAt() *timestamppb.Timestamp {
 }
 
 type CatalogEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
-	Object        string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Action      string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	Object      string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
+	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Write       bool                   `protobuf:"varint,4,opt,name=write,proto3" json:"write,omitempty"`
+	// service is the one whose catalog has the action.
+	Service       string `protobuf:"bytes,5,opt,name=service,proto3" json:"service,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -895,6 +899,27 @@ func (x *CatalogEntry) GetAction() string {
 func (x *CatalogEntry) GetObject() string {
 	if x != nil {
 		return x.Object
+	}
+	return ""
+}
+
+func (x *CatalogEntry) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *CatalogEntry) GetWrite() bool {
+	if x != nil {
+		return x.Write
+	}
+	return false
+}
+
+func (x *CatalogEntry) GetService() string {
+	if x != nil {
+		return x.Service
 	}
 	return ""
 }
@@ -3342,10 +3367,12 @@ func (x *ListCatalogRequest) GetOrg() string {
 }
 
 type ListCatalogResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Entries       []*CatalogEntry        `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Entries []*CatalogEntry        `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	// unknown_actions are named by custom rules but by no registered catalog.
+	UnknownActions []string `protobuf:"bytes,2,rep,name=unknown_actions,json=unknownActions,proto3" json:"unknown_actions,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListCatalogResponse) Reset() {
@@ -3381,6 +3408,13 @@ func (*ListCatalogResponse) Descriptor() ([]byte, []int) {
 func (x *ListCatalogResponse) GetEntries() []*CatalogEntry {
 	if x != nil {
 		return x.Entries
+	}
+	return nil
+}
+
+func (x *ListCatalogResponse) GetUnknownActions() []string {
+	if x != nil {
+		return x.UnknownActions
 	}
 	return nil
 }
@@ -4513,10 +4547,13 @@ const file_observatory_iam_v1_iam_proto_rawDesc = "" +
 	"\asubject\x18\x02 \x01(\tR\asubject\x12\x17\n" +
 	"\arole_id\x18\x03 \x01(\tR\x06roleId\x129\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\">\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\x90\x01\n" +
 	"\fCatalogEntry\x12\x16\n" +
 	"\x06action\x18\x01 \x01(\tR\x06action\x12\x16\n" +
-	"\x06object\x18\x02 \x01(\tR\x06object\"\xaa\x01\n" +
+	"\x06object\x18\x02 \x01(\tR\x06object\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x14\n" +
+	"\x05write\x18\x04 \x01(\bR\x05write\x12\x18\n" +
+	"\aservice\x18\x05 \x01(\tR\aservice\"\xaa\x01\n" +
 	"\n" +
 	"OrgSummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -4645,9 +4682,10 @@ const file_observatory_iam_v1_iam_proto_rawDesc = "" +
 	"\x04team\x18\x02 \x01(\tR\x04team\"\x13\n" +
 	"\x11LeaveTeamResponse\"&\n" +
 	"\x12ListCatalogRequest\x12\x10\n" +
-	"\x03org\x18\x01 \x01(\tR\x03org\"Q\n" +
+	"\x03org\x18\x01 \x01(\tR\x03org\"z\n" +
 	"\x13ListCatalogResponse\x12:\n" +
-	"\aentries\x18\x01 \x03(\v2 .observatory.iam.v1.CatalogEntryR\aentries\"$\n" +
+	"\aentries\x18\x01 \x03(\v2 .observatory.iam.v1.CatalogEntryR\aentries\x12'\n" +
+	"\x0funknown_actions\x18\x02 \x03(\tR\x0eunknownActions\"$\n" +
 	"\x10ListRolesRequest\x12\x10\n" +
 	"\x03org\x18\x01 \x01(\tR\x03org\"C\n" +
 	"\x11ListRolesResponse\x12.\n" +

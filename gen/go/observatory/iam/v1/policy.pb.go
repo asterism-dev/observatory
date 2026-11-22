@@ -67,7 +67,9 @@ type Policy struct {
 	Roles       []*CustomRole `protobuf:"bytes,4,rep,name=roles,proto3" json:"roles,omitempty"`
 	Bindings    []*Binding    `protobuf:"bytes,5,rep,name=bindings,proto3" json:"bindings,omitempty"`
 	// teams lists every team, including those without members.
-	Teams         []*TeamRef `protobuf:"bytes,6,rep,name=teams,proto3" json:"teams,omitempty"`
+	Teams []*TeamRef `protobuf:"bytes,6,rep,name=teams,proto3" json:"teams,omitempty"`
+	// catalogs are the registered service catalogs.
+	Catalogs      []*Catalog `protobuf:"bytes,7,rep,name=catalogs,proto3" json:"catalogs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -140,6 +142,13 @@ func (x *Policy) GetBindings() []*Binding {
 func (x *Policy) GetTeams() []*TeamRef {
 	if x != nil {
 		return x.Teams
+	}
+	return nil
+}
+
+func (x *Policy) GetCatalogs() []*Catalog {
+	if x != nil {
+		return x.Catalogs
 	}
 	return nil
 }
@@ -534,15 +543,16 @@ var File_observatory_iam_v1_policy_proto protoreflect.FileDescriptor
 
 const file_observatory_iam_v1_policy_proto_rawDesc = "" +
 	"\n" +
-	"\x1fobservatory/iam/v1/policy.proto\x12\x12observatory.iam.v1\"\x14\n" +
-	"\x12WatchPolicyRequest\"\xcb\x02\n" +
+	"\x1fobservatory/iam/v1/policy.proto\x12\x12observatory.iam.v1\x1a observatory/iam/v1/catalog.proto\"\x14\n" +
+	"\x12WatchPolicyRequest\"\x84\x03\n" +
 	"\x06Policy\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\x04R\brevision\x12@\n" +
 	"\vmemberships\x18\x02 \x03(\v2\x1e.observatory.iam.v1.MemberRoleR\vmemberships\x12A\n" +
 	"\fteam_members\x18\x03 \x03(\v2\x1e.observatory.iam.v1.TeamMemberR\vteamMembers\x124\n" +
 	"\x05roles\x18\x04 \x03(\v2\x1e.observatory.iam.v1.CustomRoleR\x05roles\x127\n" +
 	"\bbindings\x18\x05 \x03(\v2\x1b.observatory.iam.v1.BindingR\bbindings\x121\n" +
-	"\x05teams\x18\x06 \x03(\v2\x1b.observatory.iam.v1.TeamRefR\x05teams\"P\n" +
+	"\x05teams\x18\x06 \x03(\v2\x1b.observatory.iam.v1.TeamRefR\x05teams\x127\n" +
+	"\bcatalogs\x18\a \x03(\v2\x1b.observatory.iam.v1.CatalogR\bcatalogs\"P\n" +
 	"\n" +
 	"MemberRole\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x17\n" +
@@ -599,6 +609,7 @@ var file_observatory_iam_v1_policy_proto_goTypes = []any{
 	(*Rule)(nil),               // 5: observatory.iam.v1.Rule
 	(*CustomRole)(nil),         // 6: observatory.iam.v1.CustomRole
 	(*Binding)(nil),            // 7: observatory.iam.v1.Binding
+	(*Catalog)(nil),            // 8: observatory.iam.v1.Catalog
 }
 var file_observatory_iam_v1_policy_proto_depIdxs = []int32{
 	2, // 0: observatory.iam.v1.Policy.memberships:type_name -> observatory.iam.v1.MemberRole
@@ -606,14 +617,15 @@ var file_observatory_iam_v1_policy_proto_depIdxs = []int32{
 	6, // 2: observatory.iam.v1.Policy.roles:type_name -> observatory.iam.v1.CustomRole
 	7, // 3: observatory.iam.v1.Policy.bindings:type_name -> observatory.iam.v1.Binding
 	4, // 4: observatory.iam.v1.Policy.teams:type_name -> observatory.iam.v1.TeamRef
-	5, // 5: observatory.iam.v1.CustomRole.rules:type_name -> observatory.iam.v1.Rule
-	0, // 6: observatory.iam.v1.PolicyService.WatchPolicy:input_type -> observatory.iam.v1.WatchPolicyRequest
-	1, // 7: observatory.iam.v1.PolicyService.WatchPolicy:output_type -> observatory.iam.v1.Policy
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	8, // 5: observatory.iam.v1.Policy.catalogs:type_name -> observatory.iam.v1.Catalog
+	5, // 6: observatory.iam.v1.CustomRole.rules:type_name -> observatory.iam.v1.Rule
+	0, // 7: observatory.iam.v1.PolicyService.WatchPolicy:input_type -> observatory.iam.v1.WatchPolicyRequest
+	1, // 8: observatory.iam.v1.PolicyService.WatchPolicy:output_type -> observatory.iam.v1.Policy
+	8, // [8:9] is the sub-list for method output_type
+	7, // [7:8] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_observatory_iam_v1_policy_proto_init() }
@@ -621,6 +633,7 @@ func file_observatory_iam_v1_policy_proto_init() {
 	if File_observatory_iam_v1_policy_proto != nil {
 		return
 	}
+	file_observatory_iam_v1_catalog_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

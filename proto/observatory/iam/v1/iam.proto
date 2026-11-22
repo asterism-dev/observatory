@@ -449,6 +449,10 @@ message RoleBinding {
 message CatalogEntry {
   string action = 1;
   string object = 2;
+  string description = 3;
+  bool write = 4;
+  // service is the one whose catalog has the action.
+  string service = 5;
 }
 
 message OrgSummary {
@@ -669,6 +673,8 @@ message ListCatalogRequest {
 
 message ListCatalogResponse {
   repeated CatalogEntry entries = 1;
+  // unknown_actions are named by custom rules but by no registered catalog.
+  repeated string unknown_actions = 2;
 }
 
 message ListRolesRequest {

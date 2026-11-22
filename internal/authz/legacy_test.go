@@ -76,7 +76,7 @@ func TestLegacyDecisions(t *testing.T) {
 	)
 
 	var lines []string
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		lines = append(lines, "catalog "+p.Action+" "+p.Object)
 		objs := []string{p.Object}
 		if base, ok := strings.CutSuffix(p.Object, "/*"); ok {

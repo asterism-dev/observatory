@@ -49,7 +49,7 @@ func TestBuiltinRoles(t *testing.T) {
 	}
 	names := map[uuid.UUID]string{owner: "owner", admin: "admin", member: "member"}
 	for u, allowed := range want {
-		for _, p := range Catalog {
+		for _, p := range LegacyCatalog {
 			if got := e.Allowed(UserSubject(u), org, concrete(p.Object), p.Action); got != allowed(p) {
 				t.Errorf("%s %s@%s: got %v", names[u], p.Action, p.Object, got)
 			}
@@ -141,7 +141,7 @@ func TestCrossOrgIsolation(t *testing.T) {
 	if !e.Allowed(UserSubject(u), a, ObjMembers, "iam.members.setRole") {
 		t.Error("custom role should grant everything in A")
 	}
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		if e.Allowed(UserSubject(u), b, concrete(p.Object), p.Action) {
 			t.Errorf("%s@%s allowed in B", p.Action, p.Object)
 		}
@@ -217,8 +217,8 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestExpandActions(t *testing.T) {
-	if got := ExpandActions("*"); len(got) != len(Catalog)-35 {
-		t.Errorf("*: got %d actions, want %d", len(got), len(Catalog)-35)
+	if got := ExpandActions("*"); len(got) != len(LegacyCatalog)-35 {
+		t.Errorf("*: got %d actions, want %d", len(got), len(LegacyCatalog)-35)
 	}
 	want := []string{"iam.teams.list", "iam.teams.create", "iam.teams.update", "iam.teams.delete", "iam.teams.manageMembers", "iam.teams.leave"}
 	if got := ExpandActions("iam.teams.*"); !reflect.DeepEqual(got, want) {

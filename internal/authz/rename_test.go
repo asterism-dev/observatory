@@ -146,13 +146,13 @@ var (
 )
 
 func TestCatalogNamesValid(t *testing.T) {
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		if !permission.ValidName(p.Action) {
 			t.Errorf("catalog action %q@%s is not service.resource.verb", p.Action, p.Object)
 		}
 	}
 	var got, want []string
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		if !slices.Contains(got, p.Action) {
 			got = append(got, p.Action)
 		}

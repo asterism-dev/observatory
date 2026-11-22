@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package observatory.iam.v1;
 
+import "observatory/iam/v1/catalog.proto";
+
 // PolicyService streams the authorization snapshot to services; callers authenticate with a service token.
 service PolicyService {
   // WatchPolicy sends the full snapshot on connect and again after every change.
@@ -21,6 +23,8 @@ message Policy {
   repeated Binding bindings = 5;
   // teams lists every team, including those without members.
   repeated TeamRef teams = 6;
+  // catalogs are the registered service catalogs.
+  repeated Catalog catalogs = 7;
 }
 
 message MemberRole {

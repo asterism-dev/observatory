@@ -104,7 +104,7 @@ type Permission struct {
 	Object string
 }
 
-var Catalog = []Permission{
+var LegacyCatalog = []Permission{
 	{"iam.orgs.update", ObjSettings},
 	{"telemetry.tokens.create", ObjSettings},
 	{"iam.members.list", ObjMembers},
@@ -208,7 +208,7 @@ var Catalog = []Permission{
 	{"compute.disks.use", ObjDisks + "/*"},
 }
 
-// Unruled are actions no org rule decides (membership alone, the caller's own user:<id> objects, platform admin), so they stay out of Catalog and the role editor.
+// Unruled are actions no org rule decides (membership alone, the caller's own user:<id> objects, platform admin), so they stay out of LegacyCatalog and the role editor.
 var Unruled = []Permission{
 	{"iam.orgs.get", "org"},
 	{"iam.users.get", "user:*"},
@@ -308,7 +308,7 @@ var errPattern = errors.New("invalid object pattern")
 
 // ValidatePattern accepts catalog objects and org/user-scoped patterns with `*` only as a whole last segment.
 func ValidatePattern(obj string) error {
-	if slices.ContainsFunc(Catalog, func(p Permission) bool { return p.Object == obj }) {
+	if slices.ContainsFunc(LegacyCatalog, func(p Permission) bool { return p.Object == obj }) {
 		return nil
 	}
 	scope, rest, ok := strings.Cut(obj, "/")
@@ -345,7 +345,7 @@ func ExpandActions(pattern string) []string {
 		return nil
 	}
 	var out []string
-	for _, p := range Catalog {
+	for _, p := range LegacyCatalog {
 		if util.KeyMatch(p.Action, pattern) && !slices.Contains(out, p.Action) {
 			out = append(out, p.Action)
 		}

@@ -103,6 +103,8 @@ linters:
             - $gostd
             - github.com/asterism-dev/observatory/internal/audit
             - github.com/asterism-dev/observatory/internal/platform
+            # Only for the shared catalog types it registers with iam.
+            - github.com/asterism-dev/observatory/internal/authz
             - github.com/asterism-dev/observatory/gen
             - connectrpc.com/connect
             - google.golang.org/protobuf

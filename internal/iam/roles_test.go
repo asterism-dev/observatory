@@ -116,7 +116,7 @@ func TestRoleCRUDAndAudit(t *testing.T) {
 	ctx := context.Background()
 
 	catalog := must[iamv1.ListCatalogResponse](t)(e.client.ListCatalog(ctx, req(memberTok, &iamv1.ListCatalogRequest{Org: org.String()}))).Entries
-	if len(catalog) != len(authz.Catalog) || catalog[0].Action != "iam.orgs.update" || catalog[0].Object != "org/settings" {
+	if len(catalog) != len(authz.LegacyCatalog) || catalog[0].Action != "iam.orgs.update" || catalog[0].Object != "org/settings" {
 		t.Fatalf("catalog: %+v", catalog)
 	}
 

@@ -51,7 +51,7 @@ func (s *server) GetOrg(ctx context.Context, req *connect.Request[iamv1.GetOrgRe
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("not found"))
 	}
 	perms := []string{}
-	for _, c := range authz.Catalog {
+	for _, c := range authz.LegacyCatalog {
 		// Objects like org/teams/* are checked literally: allowed only if the caller's rules cover every team.
 		if e.Allowed(sub, id, c.Object, c.Action) {
 			perms = append(perms, c.Action)

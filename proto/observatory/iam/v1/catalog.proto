@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package observatory.iam.v1;
+
+// CatalogInternalService takes each service's action catalog; callers authenticate with a service token.
+service CatalogInternalService {
+  // RegisterCatalog replaces the caller's catalog and returns its digest.
+  rpc RegisterCatalog(RegisterCatalogRequest) returns (RegisterCatalogResponse);
+}
+
+message RegisterCatalogRequest {
+  Catalog catalog = 1;
+}
+
+message RegisterCatalogResponse {
+  string digest = 1;
+}
+
+// Catalog is one service's actions, built-in role defaults and owner-grant templates.
+message Catalog {
+  string service = 1;
+  repeated CatalogAction actions = 2;
+  repeated RoleDefault role_defaults = 3;
+  repeated OwnerTemplate templates = 4;
+}
+
+message CatalogAction {
+  string name = 1;
+  string object = 2;
+  string description = 3;
+  bool write = 4;
+}
+
+// RoleDefault grants action on object to role and every role above it.
+message RoleDefault {
+  // role is the lowest built-in role that gets it: member, admin or owner.
+  string role = 1;
+  string object = 2;
+  string action = 3;
+}
+
+enum Relation {
+  RELATION_UNSPECIFIED = 0;
+  RELATION_MEMBER = 1;
+  RELATION_TEAM = 2;
+  RELATION_TEAM_ADMIN = 3;
+  RELATION_OWNER_USER = 4;
+  RELATION_OWNER_TEAM = 5;
+  RELATION_OWNER_TEAM_ADMIN = 6;
+}
+
+// OwnerTemplate grants actions on object to every subject in relation; object may hold {user}, {team} or {id}.
+message OwnerTemplate {
+  Relation relation = 1;
+  string object = 2;
+  repeated string actions = 3;
+}
