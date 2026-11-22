@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { actionHints, actionSuggestions, unknownEffects, unknownMarks } from './roleActions.ts'
+import { actionHints, actionSuggestions, unknownEffects, unknownHintKey, unknownMarks } from './roleActions.ts'
 
 test('actionSuggestions offers service and resource wildcards without duplicates', () => {
   const got = actionSuggestions(['iam.roles.list', 'iam.roles.manage', 'iam.members.list', 'compute.nodes.get'])
@@ -28,4 +28,9 @@ test('actionHints keeps only actions with a description', () => {
     { action: 'compute.instances.get', description: '' },
   ])
   assert.deepEqual([...got], [['audit.settings.update', 'Change audit settings']])
+})
+
+test('unknownHintKey words deny rules separately', () => {
+  assert.equal(unknownHintKey('deny'), 'roles.unknownDenyAction')
+  assert.equal(unknownHintKey('allow'), 'roles.unknownAction')
 })

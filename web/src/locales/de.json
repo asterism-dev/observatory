@@ -193,7 +193,8 @@
     "back": "Zurück",
     "notFound": "Rolle nicht gefunden",
     "unknownEffect": "Unbekannte Regelwirkung: {effects}. Vor dem Speichern auf Erlauben oder Verbieten ändern.",
-    "unknownAction": "Unbekannte Aktion: kein Dienst bietet sie mehr an, diese Regel gewährt nichts."
+    "unknownAction": "Unbekannte Aktion: kein Dienst bietet sie mehr an, diese Regel gewährt nichts.",
+    "unknownDenyAction": "Unbekannte Aktion: kein Dienst bietet sie mehr an; diese Verbotsregel greift erst wieder, wenn ein Dienst sie anbietet."
   },
   "limits": {
     "org": "Organisation (von Plattform-Admins gesetzt)",

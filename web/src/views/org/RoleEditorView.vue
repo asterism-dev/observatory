@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { errorMessage as message, iamClient } from '@/composables/iamClient'
-import { actionHints, actionSuggestions, unknownEffects, unknownMarks } from '@/composables/roleActions'
+import { actionHints, actionSuggestions, unknownEffects, unknownHintKey, unknownMarks } from '@/composables/roleActions'
 import { useCrumbs } from '@/composables/useCrumbs'
 import { useOrg } from '@/composables/useOrg'
 import type { CatalogEntry as Perm, Role } from '@/gen/observatory/iam/v1/iam_pb'
@@ -181,7 +181,7 @@ watch(
             :placeholder="t('audit.action')"
             :disabled="readonly"
           />
-          <Tag v-if="unknownRules[i]" tone="warning" :title="t('roles.unknownAction')" role="img" :aria-label="t('roles.unknownAction')">
+          <Tag v-if="unknownRules[i]" tone="warning" :title="t(unknownHintKey(rule.effect))" role="img" :aria-label="t(unknownHintKey(rule.effect))">
             <TriangleAlert :size="12" aria-hidden="true" />
           </Tag>
           <Button v-if="!readonly" size="sm" variant="danger" @click="rules.splice(i, 1)">{{ t('roles.removeRule') }}</Button>

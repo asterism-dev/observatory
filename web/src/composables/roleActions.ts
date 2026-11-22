@@ -16,6 +16,10 @@ export function unknownMarks(rules: { action: string }[], unknown: string[]): bo
   return rules.map((r) => unknown.includes(r.action))
 }
 
+export function unknownHintKey(effect: string): 'roles.unknownAction' | 'roles.unknownDenyAction' {
+  return effect === 'deny' ? 'roles.unknownDenyAction' : 'roles.unknownAction'
+}
+
 export function actionHints(entries: { action: string; description: string }[]): Map<string, string> {
   return new Map(entries.filter((e) => e.description).map((e) => [e.action, e.description]))
 }
