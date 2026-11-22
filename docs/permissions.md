@@ -329,6 +329,10 @@ The service's interceptor checks it before the handler runs:
   down. Exempt: the hub keeps the last policy for the gateway's allow lists and for what it pushes to nodes (SSH keys
   and env of running VMs), since dropping those would cut every VM off. A removed member's devices therefore keep
   reaching their VMs until the stream is back.
+- If iam cannot reload its policy after a commit (a database error or a 5 second timeout), the commit still succeeds;
+  iam retries the reload in the background and sends no keepalive until it succeeds, so the services hit the same
+  90 seconds plus 5 minutes bound instead of trusting a policy that misses the change. The hub likewise answers org
+  routes with unavailable while a reload after one of its own commits fails.
 
 ## IAM API
 
