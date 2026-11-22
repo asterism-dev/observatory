@@ -16,8 +16,9 @@ provider works that offers:
 | web | public (no secret) | authorization code + PKCE | `<PUBLIC_URL>/auth/callback` |
 | CLI | public (no secret) | device authorization | none |
 
-`<PUBLIC_URL>` is the URL users open in the browser: `http://localhost:5173`
-with the Vite dev server, `http://localhost:8090` with only the built hub.
+`<PUBLIC_URL>` is the URL users open in the browser, served by the edge: `http://localhost:5173`
+with the Vite dev server, `http://localhost:8090` with `serve all` or compose. iam handles the callback and
+issues observatory's identity tokens under this URL.
 
 Put observatory's two clients in a dedicated IdP project or realm. Some IdPs
 (Zitadel among them) list every client of a project in the ID token's `aud`;
@@ -25,16 +26,17 @@ iam rejects CLI tokens whose `azp` names another client, or that carry
 several audiences without an `azp`, but a dedicated project keeps other apps'
 tokens out entirely.
 
-## Hub environment
+## Environment
 
-The three `OBSERVATORY_OIDC_*` variables are read by iam (`serve iam`, or `serve all`).
+iam owns the OIDC login and the token issuer: the three `OBSERVATORY_OIDC_*` variables are read by iam (`serve iam`,
+or `serve all`) only. The other rows are the further variables `serve all` needs.
 
 | Variable | Meaning |
 |----------|---------|
 | `OBSERVATORY_OIDC_ISSUER` | issuer URL, must be identical for iam and browser |
 | `OBSERVATORY_OIDC_WEB_CLIENT_ID` | web client ID |
 | `OBSERVATORY_OIDC_CLI_CLIENT_ID` | CLI client ID |
-| `OBSERVATORY_PUBLIC_URL` | public URL of the hub, see above |
+| `OBSERVATORY_PUBLIC_URL` | `<PUBLIC_URL>` above: iam's issuer and callback base; the hub and audit check tokens against it |
 | `OBSERVATORY_DATABASE_URL` | Postgres connection string |
 | `OBSERVATORY_SECRETS_KEY` | master key for encrypted values, base64 of 32 random bytes (`openssl rand -base64 32`) |
 | `OBSERVATORY_EDGE_LISTEN` | public listen address of the edge, default `:8090` |
@@ -45,8 +47,8 @@ The three `OBSERVATORY_OIDC_*` variables are read by iam (`serve iam`, or `serve
 
 `deploy/idp/` runs a separate Zitadel, at `http://localhost:8080` with the defaults
 in `.env.example`; `make idp-up idp-bootstrap` starts it, registers both clients
-and writes `deploy/dev/hub.env`. For the compose deployment, `sh deploy/idp/bootstrap.sh --print <hub URL>`
-registers the clients for that hub and prints the values for `deploy/.env` instead (see [deploy.md](deploy.md)). For your own Zitadel, create two OIDC applications in a
+and writes `deploy/dev/hub.env`. For the compose deployment, `sh deploy/idp/bootstrap.sh --print <public URL>`
+registers the clients for that deployment and prints iam's OIDC values for `deploy/.env` instead (see [deploy.md](deploy.md)). For your own Zitadel, create two OIDC applications in a
 project: a user-agent app (auth method none, code) and a native app (auth
 method none, device code). Enable `idTokenUserinfoAssertion` on both so `email`
 and `name` appear in the ID token.

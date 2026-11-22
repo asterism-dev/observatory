@@ -18,9 +18,9 @@ Zitadel stack in `deploy/idp/`.
 # 1. Optional: the bundled login service. Edit deploy/idp/.env first (see below).
 cp deploy/idp/.env.example deploy/idp/.env
 docker compose -f deploy/idp/compose.yaml --env-file deploy/idp/.env up -d --wait
-ZITADEL_URL=http://<idp host>:8080 sh deploy/idp/bootstrap.sh --print <hub public URL>
+ZITADEL_URL=http://<idp host>:8080 sh deploy/idp/bootstrap.sh --print <public URL>
 
-# 2. Configure the hub: paste the three printed OIDC lines, generate the secrets as the comments say.
+# 2. Configure the stack: paste the three printed OIDC lines (iam reads them), generate the secrets as the comments say.
 cp deploy/.env.example deploy/.env    # then edit it
 
 # 3. Start it, either plain HTTP on OBSERVATORY_HTTP_PORT …
@@ -40,7 +40,7 @@ The bundled Zitadel serves plain HTTP; its `.env.example` holds insecure default
 reachable from a network: `ZITADEL_DOMAIN` (the host name browsers use), `ZITADEL_MASTERKEY` (exactly 32 characters,
 `openssl rand -hex 16`), `LOGIN_SESSION_COOKIE_SECRET` (`openssl rand -base64 32`) and `POSTGRES_ADMIN_PASSWORD`
 together with the same password inside `ZITADEL_DATABASE_POSTGRES_DSN`. `ZITADEL_URL` for `bootstrap.sh` is
-`http://<ZITADEL_DOMAIN>:8080` and becomes the hub's issuer. `bootstrap.sh` needs `curl` and `jq`, reads the admin
+`http://<ZITADEL_DOMAIN>:8080` and becomes iam's OIDC issuer (`OBSERVATORY_OIDC_ISSUER`). `bootstrap.sh` needs `curl` and `jq`, reads the admin
 token Zitadel writes to `deploy/idp/.bootstrap/`, and creates a new project on every run.
 
 Step 4 is not optional. Gateway and storage join the network namespace of the `netns` service. When Docker itself
