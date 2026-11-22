@@ -34,13 +34,24 @@ func (h hubPolicy) WaitRevision(ctx context.Context, rev uint64) error {
 	return h.Reload(ctx)
 }
 
-// watchPolicy runs w until ctx ends and returns the hub's enforcer over it, reloaded on every stream message; it fails if no snapshot arrives within firstPolicyWait.
-func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store) (hubPolicy, error) {
+// watchPolicy registers the hub's catalog and returns the hub's enforcer over w, reloaded on every stream message; it fails unless a snapshot with that catalog arrives within firstPolicyWait.
+func watchPolicy(ctx context.Context, w *platformauthz.Watcher, s *store.Store, register func(context.Context) (string, error)) (hubPolicy, error) {
 	go w.Run(ctx)
 	wctx, cancel := context.WithTimeout(ctx, firstPolicyWait)
 	defer cancel()
-	if err := w.WaitRevision(wctx, 0); err != nil {
+	digest, err := register(wctx)
+	if err != nil {
 		return hubPolicy{}, fmt.Errorf("no policy from iam within %v: %w", firstPolicyWait, err)
+	}
+	w.Require("hub", digest)
+	for {
+		_, rev, _ := w.Policy()
+		if _, ok := w.Current(); ok {
+			break
+		}
+		if err := w.WaitRevision(wctx, rev+1); err != nil {
+			return hubPolicy{}, fmt.Errorf("no policy with the hub catalog from iam within %v: %w", firstPolicyWait, err)
+		}
 	}
 	z, err := authz.NewService(ctx, func(ctx context.Context) (authz.Policy, error) {
 		p, _, ok := w.Policy()

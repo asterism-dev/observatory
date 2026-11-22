@@ -83,6 +83,10 @@ func readPolicy(ctx context.Context, q querier) (authz.Policy, error) {
 		err = r.Scan(&b.OrgID, &b.Subject, &b.RoleID)
 		return
 	})
+	if err != nil {
+		return p, err
+	}
+	p.Catalogs, err = readCatalogs(ctx, q)
 	return p, err
 }
 

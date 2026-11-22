@@ -31,6 +31,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/network"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/run"
@@ -74,7 +75,7 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	iam := iamv1connect.NewIAMInternalServiceClient(internalClient, iamURL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
 
 	mux := http.NewServeMux()
-	// Requests wait until the hub has its first policy from iam's stream.
+	// Requests wait until iam's stream carries a policy with the hub's catalog.
 	ready := make(chan struct{})
 	var handler http.Handler
 	srvCtx, stopSrv := context.WithCancel(ctx)
@@ -96,7 +97,12 @@ func Run(ctx context.Context, getenv func(string) string, ln net.Listener) error
 	if err != nil {
 		return err
 	}
-	hp, err := watchPolicy(ctx, watcher, s)
+	cat, err := Catalog()
+	if err != nil {
+		return fmt.Errorf("hub catalog: %w", err)
+	}
+	catalogs := iamv1connect.NewCatalogInternalServiceClient(internalClient, iamURL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
+	hp, err := watchPolicy(ctx, watcher, s, func(ctx context.Context) (string, error) { return catalog.Register(ctx, catalogs, cat) })
 	if err != nil {
 		// Stopped before iam sent a policy is a shutdown, not a failure.
 		if ctx.Err() != nil {

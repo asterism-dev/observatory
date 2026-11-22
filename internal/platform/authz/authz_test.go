@@ -95,6 +95,7 @@ func (echoServer) Ping(context.Context, *connect.Request[testv1.PingRequest]) (*
 type fixture struct {
 	key    ed25519.PrivateKey
 	policy *fakePolicy
+	w      *Watcher
 	echo   testv1connect.EchoServiceClient
 	rest   *httptest.Server
 	org    uuid.UUID
@@ -137,6 +138,7 @@ func newFixture(t *testing.T) *fixture {
 	done := make(chan struct{})
 	go func() { w.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
+	f.w = w
 
 	svcPath, svcHandler := testv1connect.NewEchoServiceHandler(echoServer{}, connect.WithInterceptors(NewInterceptor(v, w)))
 	svcMux := http.NewServeMux()

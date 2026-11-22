@@ -17,8 +17,9 @@ import (
 type ActorKind string
 
 const (
-	ActorUser   ActorKind = "user"
-	ActorSystem ActorKind = "system"
+	ActorUser    ActorKind = "user"
+	ActorService ActorKind = "service"
+	ActorSystem  ActorKind = "system"
 )
 
 type Result string
@@ -58,6 +59,7 @@ const (
 	ActionAdminRead           = "iam.platform.read"
 	ActionSSHKeyAdd           = "iam.sshKeys.create"
 	ActionSSHKeyDelete        = "iam.sshKeys.delete"
+	ActionCatalogUpdate       = "iam.catalogs.update"
 )
 
 type AuditEntry struct {
@@ -73,7 +75,7 @@ type AuditEntry struct {
 }
 
 var (
-	actorKinds = map[ActorKind]eventsv1.ActorKind{ActorUser: eventsv1.ActorKind_ACTOR_KIND_USER, ActorSystem: eventsv1.ActorKind_ACTOR_KIND_SYSTEM}
+	actorKinds = map[ActorKind]eventsv1.ActorKind{ActorUser: eventsv1.ActorKind_ACTOR_KIND_USER, ActorService: eventsv1.ActorKind_ACTOR_KIND_SERVICE, ActorSystem: eventsv1.ActorKind_ACTOR_KIND_SYSTEM}
 	results    = map[Result]eventsv1.Result{ResultAllowed: eventsv1.Result_RESULT_ALLOWED, ResultDenied: eventsv1.Result_RESULT_DENIED, ResultFailed: eventsv1.Result_RESULT_FAILED}
 )
 

@@ -24,7 +24,7 @@ func TestIAMSchemaIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	iamTables := []string{"users", "orgs", "memberships", "sessions", "invites", "teams", "team_members", "roles", "role_rules", "role_parents", "role_bindings", "ssh_keys", "secrets", "outbox"}
+	iamTables := []string{"users", "orgs", "memberships", "sessions", "invites", "teams", "team_members", "roles", "role_rules", "role_parents", "role_bindings", "ssh_keys", "secrets", "catalogs", "outbox"}
 	tables := func(schema string) []string {
 		t.Helper()
 		rows, err := pool.Query(ctx, "SELECT table_name FROM information_schema.tables WHERE table_schema = $1", schema)

@@ -4,6 +4,7 @@ package authz
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 	"github.com/asterism-dev/observatory/internal/platform/uuidx"
 	"github.com/google/uuid"
@@ -34,6 +36,8 @@ type snapshot struct {
 	revision uint64
 	policy   coreauthz.Policy
 	enforcer *coreauthz.Enforcer
+	// digests maps each catalog's service to its digest.
+	digests map[string]string
 }
 
 // Watcher keeps the latest valid policy snapshot from PolicyService.WatchPolicy.
@@ -44,6 +48,8 @@ type Watcher struct {
 	// downSince is when the stream was lost, in Unix nanoseconds; 0 while it delivers.
 	downSince atomic.Int64
 	lastSeen  atomic.Int64
+	// required maps a service to the catalog digest Current waits for; replaced, never mutated.
+	required atomic.Pointer[map[string]string]
 
 	mu       sync.Mutex
 	changed  chan struct{} // closed and replaced on every applied snapshot
@@ -138,7 +144,11 @@ func (w *Watcher) apply(m *iamv1.Policy) bool {
 		// Still applied: the stream is the only source, and ignoring it could freeze a revoked grant.
 		slog.Warn("policy revision went backwards", "revision", m.GetRevision(), "previous", cur.revision)
 	}
-	w.cur.Store(&snapshot{revision: m.GetRevision(), policy: p, enforcer: e})
+	digests := make(map[string]string, len(p.Catalogs))
+	for _, c := range p.Catalogs {
+		digests[c.Service] = catalog.Digest(c)
+	}
+	w.cur.Store(&snapshot{revision: m.GetRevision(), policy: p, enforcer: e, digests: digests})
 	w.mu.Lock()
 	close(w.changed)
 	w.changed = make(chan struct{})
@@ -150,7 +160,22 @@ func (w *Watcher) apply(m *iamv1.Policy) bool {
 	return true
 }
 
-// Current returns false until the first snapshot arrived, and once the stream has been down, or silent past silentAfter, for longer than maxStale.
+// Require makes Current return false until the snapshot carries service's catalog with digest.
+func (w *Watcher) Require(service, digest string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	next := map[string]string{service: digest}
+	if cur := w.required.Load(); cur != nil {
+		for k, v := range *cur {
+			if k != service {
+				next[k] = v
+			}
+		}
+	}
+	w.required.Store(&next)
+}
+
+// Current returns false until the first snapshot with every required catalog digest arrived, and once the stream has been down, or silent past silentAfter, for longer than maxStale.
 func (w *Watcher) Current() (*coreauthz.Enforcer, bool) {
 	s := w.cur.Load()
 	if s == nil {
@@ -162,6 +187,13 @@ func (w *Watcher) Current() (*coreauthz.Enforcer, bool) {
 	}
 	if seen := w.lastSeen.Load(); seen != 0 && now.Sub(time.Unix(0, seen)) > silentAfter+maxStale {
 		return nil, false
+	}
+	if req := w.required.Load(); req != nil {
+		for svc, d := range *req {
+			if s.digests[svc] != d {
+				return nil, false
+			}
+		}
 	}
 	return s.enforcer, true
 }
@@ -219,6 +251,13 @@ func policyFrom(m *iamv1.Policy) (coreauthz.Policy, error) {
 	}
 	for _, b := range m.GetBindings() {
 		p.Bindings = append(p.Bindings, coreauthz.Binding{OrgID: ids.parse(b.GetOrgId()), Subject: b.GetSubject(), RoleID: ids.parse(b.GetRoleId())})
+	}
+	for _, pc := range m.GetCatalogs() {
+		c, err := catalog.FromProto(pc)
+		if err != nil {
+			return p, fmt.Errorf("catalog %s: %w", pc.GetService(), err)
+		}
+		p.Catalogs = append(p.Catalogs, c)
 	}
 	return p, ids.err
 }

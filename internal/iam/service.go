@@ -118,6 +118,9 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	if err != nil {
 		return nil, err
 	}
+	if err := registerOwnCatalog(ctx, s, z); err != nil {
+		return nil, err
+	}
 	policies := platformauthz.NewPublisher().WithBehind(z.Behind)
 	z.OnReload(func(_, p authz.Policy) { policies.Publish(p) })
 	oidc, err := NewOIDC(ctx, cfg.OIDCIssuer, cfg.WebClientID, cfg.CLIClientID, strings.TrimRight(cfg.PublicURL, "/")+"/auth/callback")
@@ -149,7 +152,7 @@ func build(ctx context.Context, cfg Config, pool *pgxpool.Pool, publicURL *url.U
 	mux := http.NewServeMux()
 	mux.Handle(Prefix+"/", api)
 	login.Routes(mux)
-	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalHandler(iss, policies, internalServer{Store: s})))
+	mux.Handle("/internal/iam/", servicetoken.Middleware(cfg.ServiceTokens)(internalHandler(iss, policies, internalServer{Store: s}, catalogServer{Store: s, Policy: z})))
 	return &Service{cfg: cfg, pool: pool, settings: settings, handler: mux}, nil
 }
 
@@ -173,17 +176,19 @@ var internalCalls = map[string][]string{
 	"hub": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure,
 		"/internal/iam" + iamv1connect.IAMInternalServiceGetUsersProcedure, "/internal/iam" + iamv1connect.IAMInternalServiceListSSHKeysProcedure,
 		"/internal/iam" + iamv1connect.IAMInternalServiceListTeamsProcedure, "/internal/iam" + iamv1connect.IAMInternalServiceGetMembershipProcedure,
-		"/internal/iam" + iamv1connect.IAMInternalServiceGetSessionProcedure},
-	"audit": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure},
+		"/internal/iam" + iamv1connect.IAMInternalServiceGetSessionProcedure, "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure},
+	"audit": {"/internal/iam/jwks", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure, "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure},
 }
 
 // internalHandler serves /internal/iam/* to the callers internalCalls admits; the caller wraps it in servicetoken.Middleware.
-func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.IAMInternalServiceHandler) http.Handler {
+func internalHandler(iss *Issuer, ps *platformauthz.Publisher, iam iamv1connect.IAMInternalServiceHandler, cat iamv1connect.CatalogInternalServiceHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/internal/iam/token", iss.TokenHandler())
 	mux.Handle("/internal/iam/jwks", iss.JWKSHandler())
 	path, h := iamv1connect.NewIAMInternalServiceHandler(iam)
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
+	path, h = iamv1connect.NewCatalogInternalServiceHandler(cat, connect.WithReadMaxBytes(maxBody))
+	mux.Handle("/internal/iam"+path, http.MaxBytesHandler(http.StripPrefix("/internal/iam", h), maxBody))
 	mux.Handle(ps.Handler("/internal/iam"))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller, _ := servicetoken.Caller(r.Context())

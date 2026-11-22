@@ -8,10 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 )
 
 type fakeClock struct{ ns atomic.Int64 }
@@ -193,5 +196,82 @@ func TestWatcherRejectedSnapshotIsNoLiveness(t *testing.T) {
 	}
 	if _, rev, _ := w.Policy(); rev != 3 || changes.Load() != 1 {
 		t.Fatalf("revision %d after %d changes, want 3 after 1", rev, changes.Load())
+	}
+}
+
+func testCatalog(service, action string) coreauthz.Catalog {
+	return coreauthz.Catalog{Service: service, Actions: []coreauthz.Action{{Name: action, Object: "org/echoes/*"}}}
+}
+
+func withCatalogs(p *iamv1.Policy, cs ...coreauthz.Catalog) *iamv1.Policy {
+	for _, c := range cs {
+		p.Catalogs = append(p.Catalogs, catalog.ToProto(c))
+	}
+	return p
+}
+
+func TestInterceptorUnavailableUntilCatalog(t *testing.T) {
+	f := newFixture(t)
+	cat := testCatalog("test", "test.echoes.get")
+	f.w.Require("test", catalog.Digest(cat))
+	ch := f.connect(t)
+	ch <- f.snapshot(1, f.member)
+	waitApplied(t, f.w, 1)
+	echo := uuid.NewString()
+	wantCode(t, f.getEcho(t, f.member, f.org.String(), echo), connect.CodeUnavailable)
+	ch <- withCatalogs(f.snapshot(2, f.member), cat)
+	eventually(t, 0, func() error { return f.getEcho(t, f.member, f.org.String(), echo) })
+	if p, _, _ := f.w.Policy(); len(p.Catalogs) != 1 || catalog.Digest(p.Catalogs[0]) != catalog.Digest(cat) {
+		t.Fatalf("policy catalogs: %+v", p.Catalogs)
+	}
+}
+
+func TestRequireIgnoresOtherServices(t *testing.T) {
+	w, clock, ch := startWatcher(t, &fakePolicy{conns: make(chan chan *iamv1.Policy)})
+	audit, hub := testCatalog("audit", "audit.events.list"), testCatalog("hub", "compute.instances.get")
+	hub2 := testCatalog("hub", "compute.instances.list")
+	w.Require("audit", catalog.Digest(audit))
+	current := func() bool { _, ok := w.Current(); return ok }
+
+	ch <- withCatalogs(&iamv1.Policy{Revision: 1}, hub)
+	waitApplied(t, w, 1)
+	if current() {
+		t.Fatal("current without the required audit digest")
+	}
+	ch <- withCatalogs(&iamv1.Policy{Revision: 2}, hub, audit)
+	waitApplied(t, w, 2)
+	if !current() {
+		t.Fatal("not current with the required digest")
+	}
+	ch <- withCatalogs(&iamv1.Policy{Revision: 3}, hub2, audit)
+	waitApplied(t, w, 3)
+	if !current() {
+		t.Fatal("another service's catalog change made the watcher not current")
+	}
+	// A required digest does not lift staleness.
+	clock.add(silentAfter + maxStale + time.Second)
+	if current() {
+		t.Fatal("current on a stale stream")
+	}
+	ch <- withCatalogs(&iamv1.Policy{Revision: 3}, hub2, audit)
+	waitUntilCurrent(t, w)
+
+	w.Require("audit", catalog.Digest(testCatalog("audit", "audit.events.get")))
+	if current() {
+		t.Fatal("current with a stale audit digest")
+	}
+}
+
+func waitUntilCurrent(t *testing.T, w *Watcher) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := w.Current(); ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watcher did not become current")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

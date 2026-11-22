@@ -14,6 +14,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 )
 
@@ -128,5 +129,38 @@ func TestIAMTestRefusesTokenForUnknownUser(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("minted a JWT for an unknown user")
+	}
+}
+
+func TestIAMTestStreamsCatalogs(t *testing.T) {
+	s := New(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	w, err := authz.NewWatcher(s.URL(), s.ServiceToken(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go w.Run(ctx)
+	release := s.HoldCatalogs()
+	digest, err := catalog.Register(ctx, s.CatalogClient(), coreauthz.Catalog{Service: "audit", Actions: []coreauthz.Action{{Name: "audit.events.list", Object: "org/audit"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Require("audit", digest)
+	if err := w.WaitRevision(ctx, s.Revision()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := w.Current(); ok {
+		t.Fatal("current while the fake holds the catalog")
+	}
+	release()
+	for {
+		if _, ok := w.Current(); ok {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("not current after the catalog was released")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -72,6 +72,8 @@ type Policy struct {
 	Teams []TeamRef
 	VMs   []VMRef
 	Disks []DiskRef
+	// Catalogs are the registered service catalogs; New ignores them for now.
+	Catalogs []Catalog
 	// Revision is iam's stream revision this policy came from, 0 when it was not streamed.
 	Revision uint64
 }

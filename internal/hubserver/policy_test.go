@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
 	platformauthz "github.com/asterism-dev/observatory/internal/platform/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/iamtest"
 	"github.com/asterism-dev/observatory/internal/seal"
 	"github.com/asterism-dev/observatory/internal/store"
@@ -71,6 +73,57 @@ func TestHubWaitsForFirstSnapshot(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("Run did not give up on the policy stream")
+	}
+}
+
+func TestHubWaitsForCatalog(t *testing.T) {
+	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead.Close()
+	pool := dbtest.New(t)
+	iam := iamtest.New(t)
+	release := iam.HoldCatalogs()
+	env := testHubEnv(t, pool.Config().ConnString(), iam.URL(), iam.ServiceToken(), "nats://"+dead.Addr().String(), strings.Repeat("n", 32))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, func(k string) string { return env[k] }, ln) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	got := make(chan int, 1)
+	go func() {
+		// An unauthenticated route, so the answer is the hub's own once it serves.
+		resp, err := http.Get("http://" + ln.Addr().String() + "/node/install.sh")
+		if err != nil {
+			got <- 0
+			return
+		}
+		resp.Body.Close()
+		got <- resp.StatusCode
+	}()
+	select {
+	case code := <-got:
+		t.Fatalf("hub answered %d before iam streamed its catalog", code)
+	case <-time.After(2 * time.Second):
+	}
+	release()
+	select {
+	case code := <-got:
+		if code != http.StatusOK {
+			t.Fatalf("hub answered %d once its catalog was streamed", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("hub still holds requests after its catalog was streamed")
 	}
 }
 
@@ -153,6 +206,15 @@ func newStreamEnv(t *testing.T) *streamEnv {
 	return e
 }
 
+// register registers the hub's catalog with the fake, as Run does.
+func (e *streamEnv) register(ctx context.Context) (string, error) {
+	c, err := Catalog()
+	if err != nil {
+		return "", err
+	}
+	return catalog.Register(ctx, e.iam.CatalogClient(), c)
+}
+
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -166,7 +228,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 
 func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +251,7 @@ func TestOwnerGrantSurvivesStreamUpdate(t *testing.T) {
 
 func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +272,7 @@ func TestHubCanHoldWaitsForStreamRevision(t *testing.T) {
 
 func TestHubPolicyFreshness(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +305,7 @@ func TestHubPolicyFreshness(t *testing.T) {
 // A reload that fails after one of the hub's own commits may miss that commit's owner refs: org routes refuse until a retry succeeds.
 func TestHubCommitReloadFailureWithholdsPolicy(t *testing.T) {
 	e := newStreamEnv(t)
-	hp, err := watchPolicy(t.Context(), e.w, e.s)
+	hp, err := watchPolicy(t.Context(), e.w, e.s, e.register)
 	if err != nil {
 		t.Fatal(err)
 	}

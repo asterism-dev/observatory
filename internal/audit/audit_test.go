@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,8 +30,11 @@ import (
 	eventsv1 "github.com/asterism-dev/observatory/gen/go/observatory/events/v1"
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
+	coreauthz "github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/db/dbtest"
+	"github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/pgsvc"
 )
 
@@ -326,23 +330,54 @@ func TestEventsAreAppendOnly(t *testing.T) {
 	}
 }
 
-type staticPolicy struct {
-	iamv1connect.UnimplementedPolicyServiceHandler
-	policy *iamv1.Policy
+// fakeIAM serves the policy stream and RegisterCatalog; a held catalog stays out of the stream until releaseCatalog.
+type fakeIAM struct {
+	pub *authz.Publisher
+
+	mu         sync.Mutex
+	pol        coreauthz.Policy
+	hold       bool
+	registered []*iamv1.Catalog
+	auths      []string
 }
 
-func (p staticPolicy) WatchPolicy(ctx context.Context, _ *connect.Request[iamv1.WatchPolicyRequest], stream *connect.ServerStream[iamv1.Policy]) error {
-	if err := stream.Send(p.policy); err != nil {
-		return err
+func (f *fakeIAM) RegisterCatalog(_ context.Context, req *connect.Request[iamv1.RegisterCatalogRequest]) (*connect.Response[iamv1.RegisterCatalogResponse], error) {
+	c, err := catalog.FromProto(req.Msg.GetCatalog())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	<-ctx.Done()
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registered = append(f.registered, req.Msg.GetCatalog())
+	f.auths = append(f.auths, req.Header().Get("Authorization"))
+	if !f.hold {
+		f.pol.Catalogs = []coreauthz.Catalog{c}
+		f.pub.Publish(f.pol)
+	}
+	return connect.NewResponse(&iamv1.RegisterCatalogResponse{Digest: catalog.Digest(c)}), nil
+}
+
+func (f *fakeIAM) releaseCatalog(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.registered) == 0 {
+		t.Fatal("no catalog registered")
+	}
+	c, err := catalog.FromProto(f.registered[len(f.registered)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.hold = false
+	f.pol.Catalogs = []coreauthz.Catalog{c}
+	f.pub.Publish(f.pol)
 }
 
 type fixture struct {
 	key                     ed25519.PrivateKey
 	client                  auditv1connect.AuditServiceClient
 	store                   *store
+	iam                     *fakeIAM
 	baseURL                 string
 	natsURL, natsToken      string
 	orgA, orgB              string
@@ -350,21 +385,26 @@ type fixture struct {
 	platformAdmin, outsider uuid.UUID
 }
 
-// newFixture runs the real service against a fake hub: admin is admin of orgA, member a plain member of orgA, adminB admin of orgB.
-func newFixture(t *testing.T) *fixture {
+// newFixture runs the real service against a fake iam: admin is admin of orgA, member a plain member of orgA, adminB admin of orgB.
+func newFixture(t *testing.T) *fixture { return startFixture(t, false) }
+
+// startFixture is newFixture; holdCatalog keeps the registered catalog out of the stream until releaseCatalog.
+func startFixture(t *testing.T, holdCatalog bool) *fixture {
 	f := &fixture{orgA: uuid.NewString(), orgB: uuid.NewString(), admin: uuid.New(), member: uuid.New(), adminB: uuid.New(), platformAdmin: uuid.New(), outsider: uuid.New()}
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f.key = priv
-	policy := &iamv1.Policy{Revision: 1, Memberships: []*iamv1.MemberRole{
-		{OrgId: f.orgA, UserId: f.admin.String(), Role: "admin"},
-		{OrgId: f.orgA, UserId: f.member.String(), Role: "member"},
-		{OrgId: f.orgB, UserId: f.adminB.String(), Role: "admin"},
-	}}
+	f.iam = &fakeIAM{pub: authz.NewPublisher(), hold: holdCatalog, pol: coreauthz.Policy{Memberships: []coreauthz.MemberRole{
+		{OrgID: uuid.MustParse(f.orgA), UserID: f.admin, Role: "admin"},
+		{OrgID: uuid.MustParse(f.orgA), UserID: f.member, Role: "member"},
+		{OrgID: uuid.MustParse(f.orgB), UserID: f.adminB, Role: "admin"},
+	}}}
+	f.iam.pub.Publish(f.iam.pol)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/iam/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{"kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": base64.RawURLEncoding.EncodeToString(pub)}}})
 	})
-	path, h := iamv1connect.NewPolicyServiceHandler(staticPolicy{policy: policy})
+	mux.Handle(f.iam.pub.Handler("/internal/iam"))
+	path, h := iamv1connect.NewCatalogInternalServiceHandler(f.iam)
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	hub := httptest.NewServer(mux)
 	t.Cleanup(hub.Close)
@@ -670,5 +710,48 @@ func TestInternalOversizedBodyRefused(t *testing.T) {
 	}
 	if body.read > 16<<20 {
 		t.Fatalf("server read about %d bytes before refusing", body.read)
+	}
+}
+
+func TestAuditRegistersAtStart(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.list(t, f.admin, &auditv1.ListEventsRequest{Org: f.orgA}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.iam.mu.Lock()
+	defer f.iam.mu.Unlock()
+	if len(f.iam.registered) != 1 || f.iam.auths[0] != "Bearer "+testToken {
+		t.Fatalf("%d registrations, auth %v", len(f.iam.registered), f.iam.auths)
+	}
+	got, err := catalog.FromProto(f.iam.registered[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Service != "audit" || catalog.Digest(got) != catalog.Digest(want) {
+		t.Fatalf("registered %+v, want audit.Catalog()", got)
+	}
+}
+
+func TestAuditUnavailableUntilCatalog(t *testing.T) {
+	f := startFixture(t, true)
+	r := connect.NewRequest(&auditv1.ListEventsRequest{Org: f.orgA})
+	r.Header().Set("Authorization", "Bearer "+f.token(t, f.admin, false))
+	waitFor(t, "the catalog registration", func() bool {
+		f.iam.mu.Lock()
+		defer f.iam.mu.Unlock()
+		return len(f.iam.registered) == 1
+	})
+	// The snapshot is streamed, but without audit's catalog.
+	time.Sleep(200 * time.Millisecond)
+	if _, err := f.client.ListEvents(context.Background(), r); connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("before the catalog: %v, want unavailable", err)
+	}
+	f.iam.releaseCatalog(t)
+	if _, err := f.list(t, f.admin, &auditv1.ListEventsRequest{Org: f.orgA}); err != nil {
+		t.Fatalf("after the catalog: %v", err)
 	}
 }

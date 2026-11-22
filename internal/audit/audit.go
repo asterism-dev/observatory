@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 
 	"github.com/asterism-dev/observatory/gen/go/observatory/audit/v1/auditv1connect"
+	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	"github.com/asterism-dev/observatory/internal/platform/auditlog"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
 	"github.com/asterism-dev/observatory/internal/platform/bus"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/outbox"
 	"github.com/asterism-dev/observatory/internal/platform/pgsvc"
@@ -56,6 +59,21 @@ func Run(ctx context.Context, cfg Config, ln net.Listener) error {
 	if err != nil {
 		return err
 	}
+	cat, err := Catalog()
+	if err != nil {
+		return fmt.Errorf("audit catalog: %w", err)
+	}
+	catalogs := iamv1connect.NewCatalogInternalServiceClient(&http.Client{Timeout: 30 * time.Second}, strings.TrimRight(cfg.IAMURL, "/")+"/internal/iam",
+		connect.WithInterceptors(servicetoken.Bearer(cfg.ServiceToken)))
+	digest, err := catalog.Register(ctx, catalogs, cat)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
+	// Requests answer Unavailable until the policy stream carries this catalog.
+	w.Require(cat.Service, digest)
 	m, err := migrations()
 	if err != nil {
 		return err

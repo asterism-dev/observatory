@@ -58,7 +58,7 @@ func newIAMEnv(t *testing.T) *iamEnv {
 	}
 	ps := platformauthz.NewPublisher()
 	z.OnReload(func(_, p authz.Policy) { ps.Publish(p) })
-	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(internalHandler(iss, ps, internalServer{Store: e.s}))
+	e.z, e.h = z, servicetoken.Middleware(map[string]string{"edge": svcToken, "audit": otherTok, "hub": hubTok, "compute": computeTok})(internalHandler(iss, ps, internalServer{Store: e.s}, catalogServer{Store: e.s, Policy: z}))
 	return e
 }
 
@@ -107,6 +107,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 		{"POST", "/internal/iam/token"},
 		{"GET", "/internal/iam/jwks"},
 		{"POST", "/internal/iam" + iamv1connect.PolicyServiceWatchPolicyProcedure},
+		{"POST", "/internal/iam" + iamv1connect.CatalogInternalServiceRegisterCatalogProcedure},
 	}
 	for _, p := range paths {
 		// The session token itself is no service credential.
@@ -122,7 +123,7 @@ func TestInternalRequiresServiceToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed := servicetoken.Middleware(nil)(internalHandler(iss, platformauthz.NewPublisher(), internalServer{Store: e.s}))
+	closed := servicetoken.Middleware(nil)(internalHandler(iss, platformauthz.NewPublisher(), internalServer{Store: e.s}, catalogServer{Store: e.s, Policy: e.z}))
 	for _, p := range paths {
 		r := httptest.NewRequest(p.method, p.path, nil)
 		r.Header.Set("Authorization", "Bearer ")
@@ -175,8 +176,9 @@ func TestInternalAllowList(t *testing.T) {
 		rpc(iamv1connect.IAMInternalServiceListTeamsProcedure),
 		rpc(iamv1connect.IAMInternalServiceGetMembershipProcedure),
 		rpc(iamv1connect.IAMInternalServiceGetSessionProcedure),
+		rpc(iamv1connect.CatalogInternalServiceRegisterCatalogProcedure),
 	}
-	allowed := map[string][]string{"edge": paths[:1], "hub": paths[1:], "audit": paths[1:3]}
+	allowed := map[string][]string{"edge": paths[:1], "hub": paths[1:], "audit": append(slices.Clone(paths[1:3]), paths[8])}
 	for caller, tok := range map[string]string{"edge": svcToken, "hub": hubTok, "audit": otherTok, "compute": computeTok} {
 		for _, p := range paths {
 			method := "POST"

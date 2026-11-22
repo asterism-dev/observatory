@@ -13,6 +13,7 @@ import (
 	iamv1 "github.com/asterism-dev/observatory/gen/go/observatory/iam/v1"
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 )
 
@@ -162,6 +163,9 @@ func policyMessage(p coreauthz.Policy) *iamv1.Policy {
 	}
 	for _, t := range p.Teams {
 		m.Teams = append(m.Teams, &iamv1.TeamRef{OrgId: t.OrgID.String(), Id: t.ID.String()})
+	}
+	for _, c := range p.Catalogs {
+		m.Catalogs = append(m.Catalogs, catalog.ToProto(c))
 	}
 	return m
 }

@@ -1,4 +1,4 @@
-// Package iamtest is an in-memory iam for other services' tests: JWKS, the token exchange, the policy stream and IAMInternalService.
+// Package iamtest is an in-memory iam for other services' tests: JWKS, the token exchange, the policy stream, IAMInternalService and CatalogInternalService.
 package iamtest
 
 import (
@@ -23,6 +23,7 @@ import (
 	"github.com/asterism-dev/observatory/gen/go/observatory/iam/v1/iamv1connect"
 	coreauthz "github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/platform/authz"
+	"github.com/asterism-dev/observatory/internal/platform/catalog"
 	"github.com/asterism-dev/observatory/internal/platform/identity"
 	"github.com/asterism-dev/observatory/internal/platform/servicetoken"
 )
@@ -60,6 +61,9 @@ type Server struct {
 	teams    map[uuid.UUID]string
 	keys     map[uuid.UUID][]string
 	sessions map[uuid.UUID]*session
+	// held are catalogs registered while HoldCatalogs is in effect, kept out of the stream until its release.
+	held    []coreauthz.Catalog
+	holding bool
 }
 
 // New starts the fake; it stops when t ends.
@@ -91,6 +95,8 @@ func New(t testing.TB) *Server {
 	mux.HandleFunc("/internal/iam/token", s.exchange)
 	path, h := iamv1connect.NewIAMInternalServiceHandler(internalAPI{s})
 	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
+	path, h = iamv1connect.NewCatalogInternalServiceHandler(catalogAPI{s})
+	mux.Handle("/internal/iam"+path, http.StripPrefix("/internal/iam", h))
 	mux.Handle(s.pub.Handler("/internal/iam"))
 	s.srv = httptest.NewServer(servicetoken.Middleware(map[string]string{"test": s.token})(mux))
 	t.Cleanup(s.srv.Close)
@@ -106,6 +112,51 @@ func (s *Server) ServiceToken() string { return s.token }
 // Client calls the fake's IAMInternalService with its service token.
 func (s *Server) Client() iamv1connect.IAMInternalServiceClient {
 	return iamv1connect.NewIAMInternalServiceClient(s.srv.Client(), s.srv.URL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(s.token)))
+}
+
+// CatalogClient calls the fake's CatalogInternalService with its service token.
+func (s *Server) CatalogClient() iamv1connect.CatalogInternalServiceClient {
+	return iamv1connect.NewCatalogInternalServiceClient(s.srv.Client(), s.srv.URL+"/internal/iam", connect.WithInterceptors(servicetoken.Bearer(s.token)))
+}
+
+// HoldCatalogs keeps catalogs registered from now on out of the stream until release, while RegisterCatalog still answers.
+func (s *Server) HoldCatalogs() (release func()) {
+	s.mu.Lock()
+	s.holding = true
+	s.mu.Unlock()
+	return func() {
+		s.change(func() {
+			s.holding = false
+			for _, c := range s.held {
+				s.putCatalog(c)
+			}
+			s.held = nil
+		})
+	}
+}
+
+// putCatalog needs s.mu held.
+func (s *Server) putCatalog(c coreauthz.Catalog) {
+	s.pol.Catalogs = slices.DeleteFunc(s.pol.Catalogs, func(o coreauthz.Catalog) bool { return o.Service == c.Service })
+	s.pol.Catalogs = append(s.pol.Catalogs, c)
+}
+
+// catalogAPI stores any caller's catalog under its own service name; the fake does not check prefixes.
+type catalogAPI struct{ s *Server }
+
+func (a catalogAPI) RegisterCatalog(_ context.Context, req *connect.Request[iamv1.RegisterCatalogRequest]) (*connect.Response[iamv1.RegisterCatalogResponse], error) {
+	c, err := catalog.FromProto(req.Msg.GetCatalog())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	a.s.change(func() {
+		if a.s.holding {
+			a.s.held = append(a.s.held, c)
+			return
+		}
+		a.s.putCatalog(c)
+	})
+	return connect.NewResponse(&iamv1.RegisterCatalogResponse{Digest: catalog.Digest(c)}), nil
 }
 
 // Revision is the latest published policy revision.
