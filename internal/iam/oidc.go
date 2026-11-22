@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/url"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -26,9 +29,12 @@ type OIDC struct {
 }
 
 func NewOIDC(ctx context.Context, issuer, webClientID, cliClientID, redirectURL string) (*OIDC, error) {
-	provider, err := oidc.NewProvider(ctx, issuer)
+	if u, err := url.Parse(issuer); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("oidc issuer %q is not an http(s) URL", issuer)
+	}
+	provider, err := discover(ctx, func() (*oidc.Provider, error) { return oidc.NewProvider(ctx, issuer) }, time.Second, 15*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("oidc discovery: %w", err)
+		return nil, err
 	}
 	return &OIDC{
 		provider: provider,
@@ -42,6 +48,29 @@ func NewOIDC(ctx context.Context, issuer, webClientID, cliClientID, redirectURL 
 		cliVerifier: provider.Verifier(&oidc.Config{ClientID: cliClientID}),
 		cliClientID: cliClientID,
 	}, nil
+}
+
+// discover retries fetch with doubling delays until it succeeds or ctx ends; the IdP may still be starting.
+func discover(ctx context.Context, fetch func() (*oidc.Provider, error), minDelay, maxDelay time.Duration) (*oidc.Provider, error) {
+	delay := minDelay
+	for attempt := 1; ; attempt++ {
+		p, err := fetch()
+		if err == nil {
+			return p, nil
+		}
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("oidc discovery: %w", err)
+		}
+		if attempt == 1 || attempt%10 == 0 {
+			slog.Warn("oidc discovery failed, retrying", "attempt", attempt, "retry_in", delay, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("oidc discovery: %w", err)
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, maxDelay)
+	}
 }
 
 func (o *OIDC) AuthCodeURL(state, verifier string, register bool) string {
