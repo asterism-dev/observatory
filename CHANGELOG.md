@@ -1,3 +1,9 @@
+## v0.23.0 (2026-11-23)
+
+### Feat
+
+- **images**: build image recipes from a GitHub repository (#59)
+
 ## v0.22.1 (2026-11-21)
 
 ### Fix
