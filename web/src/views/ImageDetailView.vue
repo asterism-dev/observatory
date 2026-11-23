@@ -14,7 +14,9 @@ import {
   buildDuration,
   autoSettingsBody,
   buildTones,
+  commitOf,
   formatBytes,
+  formatSource,
   imageScope,
   imageScopes,
   shortDigest,
@@ -56,6 +58,10 @@ const description = ref('')
 const scope = ref('')
 const autoSchedule = ref('off')
 const autoOnBaseChange = ref(false)
+const sourceMode = ref('files')
+const sourceRepo = ref('')
+const sourceRef = ref('')
+const sourcePath = ref('')
 const confirmWiden = ref('')
 const confirmDelete = ref(false)
 const tagFor = ref<ImageVersion | null>(null)
@@ -129,6 +135,15 @@ function resetSettings() {
   scope.value = scopeKey(imageScope(image.value))
   autoSchedule.value = image.value.autoSchedule || 'off'
   autoOnBaseChange.value = image.value.autoOnBaseChange
+  resetSource()
+}
+
+function resetSource() {
+  const src = image.value?.source
+  sourceMode.value = src ? 'github' : 'files'
+  sourceRepo.value = src?.repo ?? ''
+  sourceRef.value = src?.ref ?? ''
+  sourcePath.value = src?.path ?? ''
 }
 
 async function run(fn: () => Promise<unknown>) {
@@ -157,6 +172,24 @@ const cancelBuild = (b: Build) => run(() => api(`${base()}/builds/${b.id}/cancel
 const saveGeneral = () =>
   run(async () => {
     image.value = await api<Image>(base(), { method: 'PATCH', body: JSON.stringify({ name: name.value, description: description.value.trim() }) })
+  })
+
+const sourceEditable = computed(() => !!image.value?.canEdit && !!image.value.canBuild)
+const sourceOptions = computed(() => ['files', 'github'].map((v) => ({ value: v, label: t(`images.sourceModes.${v}`) })))
+const sourceChanged = computed(() => {
+  const src = image.value?.source
+  return sourceMode.value === 'github' ? !src || src.repo !== sourceRepo.value.trim() || src.ref !== sourceRef.value.trim() || src.path !== sourcePath.value.trim() : !!src
+})
+const commitUrl = (b: Build) => {
+  const c = commitOf(b.source)
+  return c && `https://github.com/${c.repo}/commit/${c.sha}`
+}
+
+const saveSource = () =>
+  run(async () => {
+    const init = sourceMode.value === 'github' ? { method: 'PUT', body: JSON.stringify({ github: { repo: sourceRepo.value.trim(), ref: sourceRef.value.trim(), path: sourcePath.value.trim() } }) } : { method: 'DELETE' }
+    image.value = await api<Image>(`${base()}/source`, init)
+    resetSource()
   })
 
 const saveAuto = () =>
@@ -243,7 +276,7 @@ watch(
           <Tag v-if="image.lastBuildState" :tone="buildTones[image.lastBuildState as keyof typeof buildTones]">{{ t(`images.states.${image.lastBuildState}`) }}</Tag>
           <Tag v-if="image.autoError" tone="warning" :title="image.autoError">{{ t('images.autoFailedTag') }}</Tag>
         </template>
-        <Button v-if="image.canBuild" variant="accent" :icon="Hammer" :disabled="busy || image.recipeRevision === null" @click="startBuild">{{ t('images.build') }}</Button>
+        <Button v-if="image.canBuild" variant="accent" :icon="Hammer" :disabled="busy || (image.recipeRevision === null && !image.source)" @click="startBuild">{{ t('images.build') }}</Button>
       </PageHeader>
       <div class="page-body">
         <p v-if="error" role="alert">{{ error }}</p>
@@ -251,6 +284,21 @@ watch(
         <p v-if="image.autoError" role="alert">{{ t('images.autoErrorBody', { error: image.autoError }) }}</p>
         <Tabs v-model="tab" :tabs="tabs" variant="underline" />
 
+        <Section v-if="tab === 'recipe'" :label="t('images.sourceTitle')" :description="t('images.sourceHint')">
+          <Card>
+            <form class="stack" @submit.prevent="saveSource">
+              <Select v-model="sourceMode" :options="sourceOptions" :disabled="!sourceEditable || busy" :aria-label="t('images.sourceTitle')" />
+              <template v-if="sourceMode === 'github'">
+                <label>{{ t('images.sourceRepo') }}<TextInput v-model="sourceRepo" placeholder="owner/repo" :disabled="!sourceEditable || busy" /></label>
+                <label>{{ t('images.sourceRef') }}<TextInput v-model="sourceRef" :placeholder="t('images.sourceRefHint')" :disabled="!sourceEditable || busy" /></label>
+                <label>{{ t('images.sourcePath') }}<TextInput v-model="sourcePath" :placeholder="t('images.sourcePathHint')" :disabled="!sourceEditable || busy" /></label>
+              </template>
+              <p v-if="sourceEditable">
+                <Button type="submit" variant="accent" :disabled="busy || !sourceChanged || (sourceMode === 'github' && !sourceRepo.trim())">{{ t('env.save') }}</Button>
+              </p>
+            </form>
+          </Card>
+        </Section>
         <RecipeEditor v-if="tab === 'recipe'" :org-id="org.id" :image="image" :base="base()" @saved="load" />
 
         <template v-if="tab === 'builds'">
@@ -268,7 +316,10 @@ watch(
           <Section :label="t('images.builds')">
             <DataTable :columns="buildColumns" :rows="builds" row-key="id" :row-clickable="() => true" hover="clickable" @row-click="(b: Build) => openBuild(b.id)">
               <template #cell-state="{ row }"><Tag :tone="buildTones[row.state as Build['state']]" :title="row.error || undefined">{{ t(`images.states.${row.state}`) }}</Tag></template>
-              <template #cell-revision="{ row }">r{{ row.revision }}</template>
+              <template #cell-revision="{ row }">
+                r{{ row.revision }}
+                <a v-if="commitUrl(row as Build)" :href="commitUrl(row as Build)!" target="_blank" rel="noopener" class="mono" @click.stop>{{ commitOf(row.source)!.sha.slice(0, 7) }}</a>
+              </template>
               <template #cell-startedBy="{ row }">
                 <span class="tags">{{ person(row.startedBy) }}<Tag v-if="row.automatic">{{ t('images.automatic') }}</Tag></span>
               </template>
@@ -416,6 +467,10 @@ watch(
 <style scoped>
 .load-error {
   margin: var(--page-y) var(--page-x);
+}
+form.stack {
+  display: grid;
+  gap: 10px;
 }
 label {
   display: grid;

@@ -27,6 +27,13 @@ export interface Image {
   autoLastAt: string | null
   autoRevision: number | null
   autoNeedsApproval: boolean
+  source: GithubSource | null
+}
+
+export interface GithubSource {
+  repo: string
+  ref: string
+  path: string
 }
 
 export interface RecipeRef {
@@ -60,6 +67,7 @@ export interface Build {
   finishedAt: string | null
   digest: string
   error: string
+  source: string
 }
 
 export interface ImageVersion {
@@ -122,6 +130,13 @@ export function appendCapped(log: LogView, chunk: string, cap = LOG_CAP): LogVie
   const tail = text.slice(-cap)
   const nl = tail.indexOf('\n')
   return { text: nl >= 0 && nl < tail.length - 1 ? tail.slice(nl + 1) : tail, truncated: true }
+}
+
+export const formatSource = (s: GithubSource | null) => (s ? `${s.repo}${s.ref ? `@${s.ref}` : ''}${s.path ? `:${s.path}` : ''}` : '')
+
+export function commitOf(source: string) {
+  const m = /^github:(.+)@([0-9a-f]{40}):/.exec(source)
+  return m ? { repo: m[1], sha: m[2] } : null
 }
 
 export const defaultSourceLabel = (source: string, t: Translate) => t(`images.source.${source}`)
