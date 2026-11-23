@@ -265,3 +265,67 @@ func TestImageTagAndVersionDelete(t *testing.T) {
 		t.Error("delete calls missing")
 	}
 }
+
+func withSource(img string) string {
+	return strings.Replace(img, `"pushError":""`, `"pushError":"","source":{"repo":"o/r","ref":"main","path":"img"}`, 1)
+}
+
+func TestImageSourceSet(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("PUT /api/orgs/o1/images/i-app/source", 200, withSource(imgApp))
+	mustRun(t, c, errb, 0, "image", "source", "app", "github", "o/r@main:img")
+	mustRun(t, c, errb, 0, "image", "source", "app", "github", "o/r")
+	calls := h.calls("PUT /api/orgs/o1/images/i-app/source")
+	if calls[0].Body != `{"github":{"repo":"o/r","ref":"main","path":"img"}}` || calls[1].Body != `{"github":{"repo":"o/r"}}` {
+		t.Errorf("bodies %+v", calls)
+	}
+	if !strings.Contains(out(), "Source of backend/app: github o/r@main:img") {
+		t.Errorf("stdout %s", out())
+	}
+}
+
+func TestImageSourceNone(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("DELETE /api/orgs/o1/images/i-app/source", 200, imgApp)
+	mustRun(t, c, errb, 0, "image", "source", "app", "--none")
+	if len(h.calls("DELETE /api/orgs/o1/images/i-app/source")) != 1 || !strings.Contains(out(), "Source of backend/app: none") {
+		t.Errorf("stdout %s", out())
+	}
+}
+
+func TestImageSourceShow(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("GET /api/orgs/o1/images/i-app", 200, withSource(imgApp))
+	mustRun(t, c, errb, 0, "image", "source", "app")
+	if !strings.Contains(out(), "Source of backend/app: github o/r@main:img") {
+		t.Errorf("stdout %s", out())
+	}
+}
+
+func TestImageSourceBadArg(t *testing.T) {
+	_, c, _, errb := imageHub(t)
+	for _, a := range [][]string{{"github", "o"}, {"github", "o/r@"}, {"github", "o/r:"}, {"github", "o/r:../x"}, {"github", "o/r@a..b"}, {"gitlab", "o/r"}, {"github"}, {"--none", "github", "o/r"}} {
+		mustRun(t, c, errb, 2, append([]string{"image", "source", "app"}, a...)...)
+	}
+	if !strings.Contains(errb(), "owner/repo[@ref][:path]") {
+		t.Errorf("stderr %s", errb())
+	}
+}
+
+func TestImageShowSource(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("GET /api/orgs/o1/images/i-app", 200, withSource(imgApp))
+	mustRun(t, c, errb, 0, "image", "show", "app")
+	if !strings.Contains(out(), "Source") || !strings.Contains(out(), "github o/r@main:img") {
+		t.Errorf("stdout %s", out())
+	}
+}
+
+func TestImageBuildsShowsCommit(t *testing.T) {
+	h, c, out, errb := imageHub(t)
+	h.on("GET /api/orgs/o1/images/i-app/builds", 200, `[{"id":"b1","imageId":"i-app","revision":2,"state":"succeeded","queuedAt":"2026-11-19T12:00:00Z","digest":"","error":"","source":"github:o/r@0123456789abcdef0123456789abcdef01234567:img"}]`)
+	mustRun(t, c, errb, 0, "image", "builds", "backend/app")
+	if !strings.Contains(out(), "r2 @0123456") || strings.Contains(out(), "0123456789") {
+		t.Errorf("stdout %s", out())
+	}
+}

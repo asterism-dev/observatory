@@ -44,6 +44,49 @@ type imageJSON struct {
 	AutoError         string     `json:"autoError"`
 	AutoLastAt        *time.Time `json:"autoLastAt"`
 	AutoNeedsApproval bool       `json:"autoNeedsApproval"`
+
+	Source *imageSource `json:"source"`
+}
+
+type imageSource struct {
+	Repo string `json:"repo"`
+	Ref  string `json:"ref,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+func (s *imageSource) String() string {
+	if s == nil {
+		return "none"
+	}
+	out := "github " + s.Repo
+	if s.Ref != "" {
+		out += "@" + s.Ref
+	}
+	if s.Path != "" {
+		out += ":" + s.Path
+	}
+	return out
+}
+
+var (
+	ghOwnerRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
+	ghNameRE  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+	ghRefRE   = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+)
+
+func parseGitHubSource(s string) (imageSource, error) {
+	rest, p, hasPath := strings.Cut(s, ":")
+	repo, ref, hasRef := strings.Cut(rest, "@")
+	owner, name, ok := strings.Cut(repo, "/")
+	switch {
+	case !ok || !ghOwnerRE.MatchString(owner) || !ghNameRE.MatchString(name) || name == "." || name == "..":
+		return imageSource{}, errors.New("a source reads owner/repo[@ref][:path]")
+	case hasRef && (!ghRefRE.MatchString(ref) || strings.Contains(ref, "..")):
+		return imageSource{}, errors.New("invalid ref")
+	case hasPath && (p == "" || p == "." || strings.HasPrefix(p, "../") || path.IsAbs(p) || path.Clean(p) != p):
+		return imageSource{}, errors.New("invalid path")
+	}
+	return imageSource{Repo: repo, Ref: ref, Path: p}, nil
 }
 
 type buildJSON struct {
@@ -55,6 +98,7 @@ type buildJSON struct {
 	QueuedAt  time.Time `json:"queuedAt"`
 	Digest    string    `json:"digest"`
 	Error     string    `json:"error"`
+	Source    string    `json:"source"`
 }
 
 type recipeRefBody struct {
@@ -76,6 +120,7 @@ func imageCommands() []command {
 		{"image recipe push", "<ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...", "upload a directory as the next recipe revision", cmdRecipePush},
 		{"image build", "<ref> [--follow]", "build the current recipe", cmdImageBuild},
 		{"image auto", "<ref> [--schedule off|daily|weekly] [--on-base-change=true|false] [--approve]", "rebuild an image automatically", cmdImageAuto},
+		{"image source", "<ref> [github <owner/repo[@ref][:path]> | --none]", "set or clear the GitHub source of an image recipe", cmdImageSource},
 		{"image builds", "<ref>", "list the builds of an image", cmdImageBuilds},
 		{"image log", "<build-id> [--follow]", "show a build log", cmdImageLog},
 		{"image cancel", "<build-id>", "cancel a queued or running build", cmdImageCancel},
@@ -247,6 +292,9 @@ func cmdImageShow(c *cli, args []string) error {
 	}
 	if img.AutoError != "" {
 		pairs = append(pairs, [2]string{"Auto error", "automatic rebuild failed: " + img.AutoError})
+	}
+	if img.Source != nil {
+		pairs = append(pairs, [2]string{"Source", img.Source.String()})
 	}
 	pairs = append(pairs, [2]string{"Created", ago(c.now(), img.CreatedAt)})
 	return c.emitKV(raw, pairs)
@@ -663,6 +711,50 @@ func cmdImageAuto(c *cli, args []string) error {
 	return c.done(raw, "Automatic rebuilds of %s: %s.", img.Ref, img.automation())
 }
 
+func cmdImageSource(c *cli, args []string) error {
+	fs := c.flags("image source")
+	none := fs.Bool("none", false, "remove the source")
+	pos, err := c.parse(fs, args, 1, 3)
+	if err != nil {
+		return err
+	}
+	var src imageSource
+	switch {
+	case *none && len(pos) > 1, len(pos) == 2, len(pos) == 3 && pos[1] != "github":
+		return usagef("usage: image source <ref> [github <owner/repo[@ref][:path]> | --none]")
+	case len(pos) == 3:
+		if src, err = parseGitHubSource(pos[2]); err != nil {
+			return usagef("%v", err)
+		}
+	}
+	img, _, _, err := c.findImage(pos[0])
+	if err != nil {
+		return err
+	}
+	path, err := c.imagePath(img.ID, "/source")
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	switch {
+	case *none:
+		err = c.call(http.MethodDelete, path, nil, &raw)
+	case len(pos) == 3:
+		err = c.call(http.MethodPut, path, map[string]imageSource{"github": src}, &raw)
+	default:
+		if path, err = c.imagePath(img.ID, ""); err == nil {
+			err = c.call(http.MethodGet, path, nil, &raw)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, &img); err != nil {
+		return err
+	}
+	return c.done(raw, "Source of %s: %s.", img.Ref, img.Source)
+}
+
 func cmdImageBuilds(c *cli, args []string) error {
 	pos, err := c.parse(c.flags("image builds"), args, 1, 1)
 	if err != nil {
@@ -690,7 +782,11 @@ func cmdImageBuilds(c *cli, args []string) error {
 		if b.Automatic {
 			state += " (auto)"
 		}
-		rows[i] = []string{b.ID, fmt.Sprintf("r%d", b.Revision), state, ago(c.now(), b.QueuedAt), shortDigest(b.Digest), b.Error}
+		rev := fmt.Sprintf("r%d", b.Revision)
+		if _, rest, ok := strings.Cut(b.Source, "@"); ok {
+			rev += " @" + rest[:min(7, len(rest))]
+		}
+		rows[i] = []string{b.ID, rev, state, ago(c.now(), b.QueuedAt), shortDigest(b.Digest), b.Error}
 	}
 	return c.emit(raw, []string{"build", "recipe", "state", "queued", "digest", "error"}, rows)
 }
