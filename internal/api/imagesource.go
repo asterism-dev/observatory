@@ -17,7 +17,7 @@ import (
 	"github.com/asterism-dev/observatory/internal/store"
 )
 
-const sourceFetchTimeout = 40 * time.Second
+var sourceFetchTimeout = 40 * time.Second
 
 // fetchSource makes the newest commit of img's source its current revision; failures the user can act on are httpErrors.
 func fetchSource(ctx context.Context, st *store.Store, gh gitHubSource, allowed func(obj, act string) bool, img store.Image, runner uuid.UUID) (store.RecipeRevision, []string, error) {
@@ -36,9 +36,9 @@ func fetchSource(ctx context.Context, st *store.Store, gh gitHubSource, allowed 
 	if err != nil {
 		return cur, nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, sourceFetchTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, sourceFetchTimeout)
 	defer cancel()
-	sha, err := gh.resolve(ctx, token, src.Repo, src.Ref)
+	sha, err := gh.resolve(fetchCtx, token, src.Repo, src.Ref)
 	if err != nil {
 		return cur, nil, sourceFailure(src, token, err)
 	}
@@ -51,7 +51,7 @@ func fetchSource(ctx context.Context, st *store.Store, gh gitHubSource, allowed 
 	if img.RecipeRevision != nil && cur.Source == source {
 		return cur, append(log, fmt.Sprintf("unchanged since revision %d", cur.Number)), nil
 	}
-	files, skipped, err := gh.files(ctx, token, src.Repo, sha, src.Path)
+	files, skipped, err := gh.files(fetchCtx, token, src.Repo, sha, src.Path)
 	if err != nil {
 		return cur, nil, sourceFailure(src, token, err)
 	}

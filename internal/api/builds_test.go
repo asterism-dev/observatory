@@ -728,6 +728,46 @@ func TestBuildFetchesFirstRevision(t *testing.T) {
 	}
 }
 
+type slowEOF struct{ delay time.Duration }
+
+func (s slowEOF) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && !strings.Contains(r.URL.Path, "/commits/") {
+		resp.Body = &slowEOFBody{ReadCloser: resp.Body, delay: s.delay}
+	}
+	return resp, err
+}
+
+type slowEOFBody struct {
+	io.ReadCloser
+	delay time.Duration
+}
+
+func (b *slowEOFBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		time.Sleep(b.delay)
+	}
+	return n, err
+}
+
+func TestBuildSavesRevisionAfterFetchDeadline(t *testing.T) {
+	old := sourceFetchTimeout
+	sourceFetchTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { sourceFetchTimeout = old })
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.withGitHub()
+	e.api.github.Client = &http.Client{Transport: slowEOF{delay: 300 * time.Millisecond}}
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	e.startBuild(tok, org, img)
+	if i := e.imageByID(img); i.RecipeRevision == nil || *i.RecipeRevision != 1 {
+		t.Fatalf("revision not saved: %+v", i)
+	}
+}
+
 func TestBuildReusesUnchangedCommit(t *testing.T) {
 	e := newEnv(t).withBuilds()
 	_, tok := e.user("alice")
