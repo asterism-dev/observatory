@@ -107,6 +107,8 @@ An image without a recipe may get a source; the first build creates revision 1.
   commit: no webhooks and no polling for new commits.
 - **Editing:** with a source, the file editor is read-only and `recipe push` and file edits are refused; change the
   repository instead. References are not in the repository and stay editable.
+  They can only be edited once the image has a revision (an edit without one fails with "needs a Dockerfile"), so a
+  Dockerfile that needs a secret in its first build cannot get it: let the first build run without it, then add the references.
 - **Rights:** setting or removing the source, and editing references of a sourced image, need the right to edit and to
   build the image. Like changing the automatic rebuild settings, that makes you the person automatic builds run as. A
   fetched revision is authored by the person the build runs as (who started a manual build, or the one automatic builds run as), so
