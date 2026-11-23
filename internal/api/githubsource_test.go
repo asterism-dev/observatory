@@ -143,6 +143,22 @@ func TestGitHubFiles(t *testing.T) {
 	}
 }
 
+func TestGitHubFilesLogsOnlySkippedEntriesUnderPath(t *testing.T) {
+	g := tarballServer(t, makeTarball(t,
+		ghEntry{name: "o-r-abc/img/Dockerfile", body: "FROM x", mode: 0o644},
+		ghEntry{name: "o-r-abc/other/link", typ: tar.TypeSymlink, link: "x"},
+		ghEntry{name: "o-r-abc/other/../bad", body: "x", mode: 0o644},
+		ghEntry{name: "o-r-abc/img/link", typ: tar.TypeSymlink, link: "Dockerfile"},
+	))
+	_, logs, err := g.files(context.Background(), "", "o/r", "abc", "img")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0], "img/link") {
+		t.Fatalf("logs %v", logs)
+	}
+}
+
 func TestGitHubFilesRejectsEscapes(t *testing.T) {
 	g := tarballServer(t, makeTarball(t,
 		ghEntry{name: "o-r-abc/../x", body: "x", mode: 0o644},

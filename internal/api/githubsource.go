@@ -120,19 +120,23 @@ func (g gitHubSource) files(ctx context.Context, token, repo, sha, path string) 
 		if len(files) > maxRecipeFiles {
 			return nil, nil, fmt.Errorf("a recipe holds at most %d files", maxRecipeFiles)
 		}
+		rel, ok := relativeTo(hdr.Name, path)
 		switch hdr.Typeflag {
 		case tar.TypeDir, tar.TypeXGlobalHeader, tar.TypeXHeader:
 			continue
 		case tar.TypeReg:
 		default:
-			logs = append(logs, fmt.Sprintf("skipped %q: not a regular file", hdr.Name))
+			if ok {
+				logs = append(logs, fmt.Sprintf("skipped %q: not a regular file", hdr.Name))
+			}
 			continue
 		}
 		if !validRecipePath(hdr.Name) {
-			logs = append(logs, fmt.Sprintf("skipped %q: invalid path", hdr.Name))
+			if ok {
+				logs = append(logs, fmt.Sprintf("skipped %q: invalid path", hdr.Name))
+			}
 			continue
 		}
-		rel, ok := relativeTo(hdr.Name, path)
 		if !ok {
 			continue
 		}
