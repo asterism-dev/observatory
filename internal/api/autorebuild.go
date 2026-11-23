@@ -38,6 +38,7 @@ type AutoRebuilds struct {
 	builds   *builds.Scheduler
 	hubHosts []string
 	resolve  func(ctx context.Context, ref name.Reference) (string, error)
+	github   gitHubSource
 	resolved map[string]resolution // per pass, so a base shared by many images is looked up once
 
 	Now func() time.Time
@@ -205,19 +206,25 @@ func (a *AutoRebuilds) start(ctx context.Context, img store.Image) error {
 	if img.AutoBy == nil {
 		return a.store.SetImageAutoResult(ctx, img.ID, "automatic rebuilds have no user to run as, save the settings again", a.Now())
 	}
-	rev, err := a.store.RecipeRevision(ctx, img.ID, *img.RecipeRevision)
-	if err != nil {
+	sub := authz.UserSubject(*img.AutoBy)
+	rev, fetchLog, err := fetchSource(ctx, a.store, a.github, func(obj, act string) bool { return a.z.Allowed(sub, img.OrgID, obj, act) }, img, *img.AutoBy)
+	var he httpError
+	if errors.As(err, &he) {
+		return a.store.SetImageAutoResult(ctx, img.ID, trimError(he), a.Now())
+	} else if err != nil {
 		return err
 	}
+	img.RecipeRevision = &rev.Number
 	msg, err := a.problem(ctx, img, rev, *img.AutoBy)
 	if err != nil {
 		return err
 	}
 	b := store.ImageBuild{ImageID: img.ID, Revision: rev.Number, StartedBy: *img.AutoBy, Automatic: true}
+	var created store.ImageBuild
 	if msg != "" {
-		_, err = a.store.CreateFailedImageBuild(ctx, b, msg, a.Now())
+		created, err = a.store.CreateFailedImageBuild(ctx, b, msg, a.Now())
 	} else {
-		_, err = a.store.CreateImageBuild(ctx, b)
+		created, err = a.store.CreateImageBuild(ctx, b)
 	}
 	if errors.Is(err, store.ErrBuildRunning) {
 		return nil
@@ -225,6 +232,7 @@ func (a *AutoRebuilds) start(ctx context.Context, img store.Image) error {
 		return err
 	}
 	if msg == "" {
+		appendFetchLog(ctx, a.store, created.ID, fetchLog)
 		a.builds.Kick()
 	}
 	return nil

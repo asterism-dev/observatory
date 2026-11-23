@@ -128,6 +128,7 @@ type ImageBuild struct {
 	QueuedAt              time.Time
 	StartedAt, FinishedAt *time.Time
 	Digest, Error         string
+	Source                string // of the built revision
 }
 
 type ImageDefault struct {
@@ -562,10 +563,11 @@ func (s *Store) ResolveImageTag(ctx context.Context, image uuid.UUID, tag string
 	return digest, err
 }
 
-const buildCols = "id, image_id, revision, state, node_id, vm_id, started_by, automatic, queued_at, started_at, finished_at, digest, error"
+const buildCols = "id, image_id, revision, state, node_id, vm_id, started_by, automatic, queued_at, started_at, finished_at, digest, error, " +
+	"coalesce((SELECT source FROM recipe_revisions r WHERE r.image_id = image_builds.image_id AND r.number = image_builds.revision), '')"
 
 func scanBuild(r pgx.Row) (b ImageBuild, err error) {
-	err = r.Scan(&b.ID, &b.ImageID, &b.Revision, &b.State, &b.NodeID, &b.VMID, &b.StartedBy, &b.Automatic, &b.QueuedAt, &b.StartedAt, &b.FinishedAt, &b.Digest, &b.Error)
+	err = r.Scan(&b.ID, &b.ImageID, &b.Revision, &b.State, &b.NodeID, &b.VMID, &b.StartedBy, &b.Automatic, &b.QueuedAt, &b.StartedAt, &b.FinishedAt, &b.Digest, &b.Error, &b.Source)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}

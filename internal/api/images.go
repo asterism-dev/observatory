@@ -430,7 +430,7 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 		if !h.authorize(w, r, old.OrgID, imageObject(old.Scope, old.OwnerID), "image:build") {
 			return
 		}
-		if old.RecipeRevision == nil && (v.AutoSchedule != "" || v.AutoOnBaseChange) {
+		if old.RecipeRevision == nil && old.Source == (store.ImageSource{}) && (v.AutoSchedule != "" || v.AutoOnBaseChange) {
 			writeError(w, http.StatusUnprocessableEntity, "the image has no recipe")
 			return
 		}

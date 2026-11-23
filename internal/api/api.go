@@ -42,6 +42,7 @@ type api struct {
 	manifests   ManifestDeleter
 	tags        *TagSync
 	builds      *builds.Scheduler
+	github      gitHubSource
 	registryGC  *registry.GC
 	telemetry   *telemetry.Client
 	now         func() time.Time

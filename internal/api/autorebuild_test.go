@@ -514,3 +514,55 @@ func TestAutoApprovalIsPersonal(t *testing.T) {
 		t.Fatalf("after carol's approval: %+v", bs)
 	}
 }
+
+func TestAutoRebuildFetchesSourcedImageWithoutRevision(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	gh := e.withGitHub()
+	e.auto.github = e.api.github
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+	e.setAuto(tok, org, img, `{"autoSchedule":"daily"}`)
+
+	e.autoTick()
+	rev, err := e.store.RecipeRevision(context.Background(), img, 1)
+	if err != nil || rev.CreatedBy != alice.ID || rev.Source != "github:o/r@"+testSHA+":img" {
+		t.Fatalf("revision: %+v %v", rev, err)
+	}
+	if bs := e.builds(img); len(bs) != 1 || !bs[0].Automatic || bs[0].State != store.BuildQueued || bs[0].Revision != 1 {
+		t.Fatalf("builds: %+v", bs)
+	}
+
+	missing := e.sourcedImage(tok, org, `{"name":"missing","scope":"org"}`)
+	e.setAuto(tok, org, missing, `{"autoSchedule":"daily"}`)
+	gh.status = 404
+	e.autoTick()
+	if i := e.image(missing); !strings.Contains(i.AutoError, "not found or no access") || i.RecipeRevision != nil {
+		t.Fatalf("image: %+v", i)
+	}
+	if bs := e.builds(missing); len(bs) != 0 {
+		t.Fatalf("builds: %+v", bs)
+	}
+}
+
+func TestAutoRebuildFetchedRevisionNeedsNoApproval(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	gh := e.withGitHub()
+	e.auto.github = e.api.github
+	img := e.sourcedImage(aliceTok, org, `{"name":"base","scope":"org"}`)
+	e.cancel(e.startBuild(aliceTok, org, img))
+	e.setAuto(bobTok, org, img, `{"autoSchedule":"daily"}`)
+
+	gh.sha = strings.Repeat("c", 40)
+	e.autoTick()
+	if rev, err := e.store.RecipeRevision(context.Background(), img, 2); err != nil || rev.CreatedBy != bob.ID {
+		t.Fatalf("revision 2: %+v %v", rev, err)
+	}
+	if bs := e.builds(img); len(bs) != 2 || bs[0].State != store.BuildQueued || bs[0].Revision != 2 {
+		t.Fatalf("builds: %+v", bs)
+	}
+}
