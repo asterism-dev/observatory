@@ -917,7 +917,11 @@ func (h *api) editRecipe(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		list = append(list, f)
 	}
-	h.saveRecipe(w, r, img, &body.Base, list, refs, base.Source)
+	source := ""
+	if sourced {
+		source = base.Source
+	}
+	h.saveRecipe(w, r, img, &body.Base, list, refs, source)
 }
 
 // saveRecipe stores files as the next revision; with base set, only if base is still the current one.

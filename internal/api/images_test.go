@@ -827,3 +827,20 @@ func TestRefsEditOnSourcedImageMakesEditorAutoBy(t *testing.T) {
 		t.Fatalf("plain: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestEditAfterSourceRemovedDropsSource(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	files := []store.RecipeFile{{Path: "Dockerfile", Mode: 0o644, Content: []byte("FROM alpine\n")}}
+	if _, err := e.store.AddRecipeRevision(context.Background(), store.RecipeRevision{ImageID: id, Files: files, Source: "github:o/r@" + strings.Repeat("a", 40) + ":img", CreatedBy: alice.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.send("POST", imagePath(org, id)+"/recipe/edits", tok, `{"base":1,"put":[{"path":"x","content":"eA=="}]}`); rec.Code != 200 {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+	}
+	if rev, err := e.store.RecipeRevision(context.Background(), id, 2); err != nil || rev.Source != "" {
+		t.Fatalf("revision 2: %q %v", rev.Source, err)
+	}
+}
