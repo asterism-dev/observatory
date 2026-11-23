@@ -574,7 +574,11 @@ func (h *api) setImageSource(w http.ResponseWriter, r *http.Request, src store.I
 	}) {
 		return
 	}
-	img.Source = src
+	img, err := h.store.ImageByID(ctx, img.ID)
+	if err != nil {
+		serverError(w, "image", err)
+		return
+	}
 	h.writeImage(w, r, img)
 }
 

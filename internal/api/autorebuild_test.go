@@ -466,6 +466,23 @@ func TestTrimError(t *testing.T) {
 	}
 }
 
+func TestSetSourceAnswersWithSavedApproval(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	img := e.recipeImage(aliceTok, org, "basis", `[]`)
+	e.setAuto(aliceTok, org, img, `{"autoSchedule":"weekly","approveRevision":1}`)
+
+	var shown imageJSON
+	rec := e.send("PUT", imagePath(org, img)+"/source", bobTok, sourceBody)
+	decode(t, rec, &shown)
+	if rec.Code != 200 || !shown.AutoNeedsApproval || shown.AutoRevision != nil {
+		t.Fatalf("stale answer: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAutoApprovalIsPersonal(t *testing.T) {
 	e := newEnv(t).withBuilds().withAuto()
 	_, aliceTok := e.user("alice")
