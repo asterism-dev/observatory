@@ -164,17 +164,42 @@ func relativeTo(name, path string) (string, bool) {
 }
 
 func parseGitHubSource(s string) (store.ImageSource, error) {
-	var src store.ImageSource
 	rest, path, hasPath := strings.Cut(s, ":")
 	repo, ref, hasRef := strings.Cut(rest, "@")
-	owner, name, ok := strings.Cut(repo, "/")
+	src := store.ImageSource{Repo: repo, Ref: ref, Path: path}
+	switch {
+	case hasRef && ref == "":
+		return store.ImageSource{}, errors.New("invalid ref")
+	case hasPath && path == "":
+		return store.ImageSource{}, errors.New("invalid path")
+	}
+	if err := validateGitHubSource(src); err != nil {
+		return store.ImageSource{}, err
+	}
+	return src, nil
+}
+
+func validateGitHubSource(src store.ImageSource) error {
+	owner, name, ok := strings.Cut(src.Repo, "/")
 	switch {
 	case !ok || !ghOwnerRE.MatchString(owner) || !ghNameRE.MatchString(name) || name == "." || name == "..":
-		return src, errors.New("a source reads owner/repo[@ref][:path]")
-	case hasRef && (!ghRefRE.MatchString(ref) || strings.Contains(ref, "..")):
-		return src, errors.New("invalid ref")
-	case hasPath && !validRecipePath(path):
-		return src, errors.New("invalid path")
+		return errors.New("a source reads owner/repo[@ref][:path]")
+	case src.Ref != "" && (!ghRefRE.MatchString(src.Ref) || strings.Contains(src.Ref, "..")):
+		return errors.New("invalid ref")
+	case src.Path != "" && !validRecipePath(src.Path):
+		return errors.New("invalid path")
 	}
-	return store.ImageSource{Repo: repo, Ref: ref, Path: path}, nil
+	return nil
+}
+
+// sourceString renders src as owner/repo[@ref][:path], empty for none.
+func sourceString(src store.ImageSource) string {
+	s := src.Repo
+	if src.Ref != "" {
+		s += "@" + src.Ref
+	}
+	if src.Path != "" {
+		s += ":" + src.Path
+	}
+	return s
 }

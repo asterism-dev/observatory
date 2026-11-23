@@ -59,9 +59,12 @@ type codedError struct {
 const (
 	codeWidenDeletesVersions = "widen_deletes_versions"
 	codeRecipeChanged        = "recipe_changed"
+	codeRecipeHasSource      = "recipe_has_source"
 )
 
 var errRecipeChanged = httpError{http.StatusConflict, "the recipe changed since your base revision, reload it"}
+
+var errRecipeHasSource = codedError{httpError{http.StatusConflict, "the recipe files come from GitHub; change them there"}, codeRecipeHasSource}
 
 func imageObject(scope store.EnvScope, owner *uuid.UUID) string {
 	switch scope {
@@ -176,6 +179,7 @@ type imageJSON struct {
 	CreatedAt      time.Time         `json:"createdAt"`
 	CanEdit        bool              `json:"canEdit"`
 	CanBuild       bool              `json:"canBuild"`
+	Source         *imageSourceJSON  `json:"source"`
 
 	AutoSchedule     string     `json:"autoSchedule"`
 	AutoOnBaseChange bool       `json:"autoOnBaseChange"`
@@ -186,12 +190,21 @@ type imageJSON struct {
 	AutoNeedsApproval bool `json:"autoNeedsApproval"`
 }
 
+type imageSourceJSON struct {
+	Repo string `json:"repo"`
+	Ref  string `json:"ref"`
+	Path string `json:"path"`
+}
+
 // ponytail: three queries per image; join them in the store if image lists get long.
 func (h *api) imageJSON(ctx context.Context, img store.Image, teams map[uuid.UUID]string) (imageJSON, error) {
 	j := imageJSON{ID: img.ID, Name: img.Name, Description: img.Description, Ref: imageRef(img, teams, "", ""), Scope: img.Scope,
 		Platform: img.Platform, RecipeRevision: img.RecipeRevision, Tags: map[string]string{}, PushError: img.PushError, CreatedAt: img.CreatedAt,
 		AutoSchedule: img.AutoSchedule, AutoOnBaseChange: img.AutoOnBaseChange, AutoError: img.AutoError, AutoLastAt: img.AutoLastAt,
 		AutoRevision: img.AutoRevision}
+	if img.Source != (store.ImageSource{}) {
+		j.Source = &imageSourceJSON{Repo: img.Source.Repo, Ref: img.Source.Ref, Path: img.Source.Path}
+	}
 	if img.Platform {
 		return j, nil
 	}
@@ -523,6 +536,48 @@ func (h *api) updateImage(w http.ResponseWriter, r *http.Request) {
 	h.writeImage(w, r, v)
 }
 
+func (h *api) putImageSource(w http.ResponseWriter, r *http.Request) {
+	var body struct{ GitHub *store.ImageSource }
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.GitHub == nil {
+		writeError(w, http.StatusUnprocessableEntity, "a source needs github")
+		return
+	}
+	if err := validateGitHubSource(*body.GitHub); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	h.setImageSource(w, r, *body.GitHub)
+}
+
+func (h *api) deleteImageSource(w http.ResponseWriter, r *http.Request) {
+	h.setImageSource(w, r, store.ImageSource{})
+}
+
+// setImageSource needs image:build too: automatic builds of the source run as the caller.
+func (h *api) setImageSource(w http.ResponseWriter, r *http.Request, src store.ImageSource) {
+	img, ok := h.imageFromPath(w, r, "image:edit")
+	if !ok || !h.authorize(w, r, img.OrgID, imageObject(img.Scope, img.OwnerID), "image:build") {
+		return
+	}
+	ctx := r.Context()
+	p, _ := auth.PrincipalFrom(ctx)
+	if !h.commit(w, r, func(tx *store.Store) error {
+		if err := tx.SetImageSource(ctx, img.ID, src, p.User.ID); err != nil {
+			return err
+		}
+		e := imageAudit(r, store.ActionImageUpdate, img)
+		e.Details["source"] = sourceString(src)
+		return tx.Audit(ctx, e)
+	}) {
+		return
+	}
+	img.Source = src
+	h.writeImage(w, r, img)
+}
+
 func (h *api) deleteImage(w http.ResponseWriter, r *http.Request) {
 	img, ok := h.imageFromPath(w, r, "image:edit")
 	if !ok {
@@ -769,6 +824,10 @@ func (h *api) putRecipe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if img.Source != (store.ImageSource{}) {
+		writeJSON(w, errRecipeHasSource.status, map[string]string{"error": errRecipeHasSource.msg, "code": errRecipeHasSource.code})
+		return
+	}
 	var in []recipeRefJSON
 	if raw := r.Header.Get("X-Observatory-Refs"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &in); err != nil {
@@ -786,7 +845,7 @@ func (h *api) putRecipe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, he.status, he.msg)
 		return
 	}
-	h.saveRecipe(w, r, img, nil, files, refs)
+	h.saveRecipe(w, r, img, nil, files, refs, "")
 }
 
 func (h *api) editRecipe(w http.ResponseWriter, r *http.Request) {
@@ -808,6 +867,15 @@ func (h *api) editRecipe(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRecipeBytes*4/3+1<<20)).Decode(&body); err != nil {
 		he := bodyError(err, "body")
 		writeError(w, he.status, he.msg)
+		return
+	}
+	sourced := img.Source != (store.ImageSource{})
+	if sourced && (len(body.Put) > 0 || len(body.Delete) > 0) {
+		writeJSON(w, errRecipeHasSource.status, map[string]string{"error": errRecipeHasSource.msg, "code": errRecipeHasSource.code})
+		return
+	}
+	// A references edit on a sourced image makes the editor the user automatic builds run as.
+	if sourced && !h.authorize(w, r, img.OrgID, imageObject(img.Scope, img.OwnerID), "image:build") {
 		return
 	}
 	if body.Base != currentRevision(img) {
@@ -849,11 +917,11 @@ func (h *api) editRecipe(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		list = append(list, f)
 	}
-	h.saveRecipe(w, r, img, &body.Base, list, refs)
+	h.saveRecipe(w, r, img, &body.Base, list, refs, base.Source)
 }
 
 // saveRecipe stores files as the next revision; with base set, only if base is still the current one.
-func (h *api) saveRecipe(w http.ResponseWriter, r *http.Request, img store.Image, base *int, files []store.RecipeFile, refs []store.RecipeRef) {
+func (h *api) saveRecipe(w http.ResponseWriter, r *http.Request, img store.Image, base *int, files []store.RecipeFile, refs []store.RecipeRef, source string) {
 	if he := checkRecipe(files); he != nil {
 		writeError(w, he.status, he.msg)
 		return
@@ -866,11 +934,16 @@ func (h *api) saveRecipe(w http.ResponseWriter, r *http.Request, img store.Image
 		if err != nil {
 			return err
 		}
-		if base != nil && *base != currentRevision(cur) {
+		if (base != nil && *base != currentRevision(cur)) || cur.Source != img.Source {
 			return errRecipeChanged
 		}
-		if n, err = tx.AddRecipeRevision(ctx, store.RecipeRevision{ImageID: img.ID, Files: files, Refs: refs, CreatedBy: p.User.ID}); err != nil {
+		if n, err = tx.AddRecipeRevision(ctx, store.RecipeRevision{ImageID: img.ID, Files: files, Refs: refs, Source: source, CreatedBy: p.User.ID}); err != nil {
 			return err
+		}
+		if cur.Source != (store.ImageSource{}) {
+			if err := tx.SetImageSource(ctx, img.ID, cur.Source, p.User.ID); err != nil {
+				return err
+			}
 		}
 		e := imageAudit(r, store.ActionImageRecipe, img)
 		e.Details["revision"], e.Details["files"], e.Details["refs"] = n, len(files), toRefJSON(refs)
@@ -895,6 +968,7 @@ func (h *api) getRecipe(w http.ResponseWriter, r *http.Request) {
 	files, refs := []fileJSON{}, []recipeRefJSON{}
 	var createdAt *time.Time
 	var createdBy *uuid.UUID
+	source := ""
 	if img.RecipeRevision != nil {
 		rev, err := h.store.RecipeRevision(r.Context(), img.ID, *img.RecipeRevision)
 		if err != nil {
@@ -909,9 +983,9 @@ func (h *api) getRecipe(w http.ResponseWriter, r *http.Request) {
 			}
 			files = append(files, j)
 		}
-		refs, createdAt, createdBy = toRefJSON(rev.Refs), &rev.CreatedAt, &rev.CreatedBy
+		refs, createdAt, createdBy, source = toRefJSON(rev.Refs), &rev.CreatedAt, &rev.CreatedBy, rev.Source
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revision": img.RecipeRevision, "files": files, "refs": refs, "createdAt": createdAt, "createdBy": createdBy})
+	writeJSON(w, http.StatusOK, map[string]any{"revision": img.RecipeRevision, "files": files, "refs": refs, "createdAt": createdAt, "createdBy": createdBy, "source": source})
 }
 
 // ponytail: loads the whole revision to serve one file; add a single-file store query if recipes get big.

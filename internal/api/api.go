@@ -149,6 +149,8 @@ func newAPI(s *store.Store, a *auth.Handler, z *authz.Service, f *fleet.Fleet, n
 	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/recipe/files/{path...}", h.getRecipeFile)
 	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/recipe", h.putRecipe)
 	mux.HandleFunc("POST /api/orgs/{org}/images/{id}/recipe/edits", h.editRecipe)
+	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/source", h.putImageSource)
+	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/source", h.deleteImageSource)
 	mux.HandleFunc("GET /api/orgs/{org}/images/{id}/versions", h.listImageVersions)
 	mux.HandleFunc("DELETE /api/orgs/{org}/images/{id}/versions/{digest}", h.deleteImageVersion)
 	mux.HandleFunc("PUT /api/orgs/{org}/images/{id}/tags/{tag}", h.setImageTag)
