@@ -47,10 +47,11 @@ type buildJSON struct {
 	FinishedAt *time.Time `json:"finishedAt"`
 	Digest     string     `json:"digest"`
 	Error      string     `json:"error"`
+	Source     string     `json:"source"`
 }
 
 func toBuildJSON(b store.ImageBuild) buildJSON {
-	return buildJSON{b.ID, b.ImageID, b.Revision, b.State, b.StartedBy, b.Automatic, b.QueuedAt, b.StartedAt, b.FinishedAt, b.Digest, b.Error}
+	return buildJSON{b.ID, b.ImageID, b.Revision, b.State, b.StartedBy, b.Automatic, b.QueuedAt, b.StartedAt, b.FinishedAt, b.Digest, b.Error, b.Source}
 }
 
 func buildAudit(r *http.Request, action string, img store.Image, b store.ImageBuild) store.AuditEntry {
@@ -68,18 +69,22 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "image builds need the registry, which this hub has not configured")
 		return
 	}
-	if img.RecipeRevision == nil {
+	if img.RecipeRevision == nil && img.Source == (store.ImageSource{}) {
 		writeError(w, http.StatusUnprocessableEntity, "the image has no recipe")
 		return
 	}
 	ctx := r.Context()
-	rev, err := h.store.RecipeRevision(ctx, img.ID, *img.RecipeRevision)
-	if err != nil {
-		serverError(w, "recipe revision", err)
-		return
+	var refs []store.RecipeRef
+	if img.RecipeRevision != nil {
+		cur, err := h.store.RecipeRevision(ctx, img.ID, *img.RecipeRevision)
+		if err != nil {
+			serverError(w, "recipe revision", err)
+			return
+		}
+		refs = cur.Refs
 	}
-	// An edit keeps references someone else added, so the starter's use right is checked here, not at edit time.
-	if !h.checkRefUse(w, r, img, rev.Refs) {
+	// Edits and fetches keep references someone else added, so the starter's use right is checked here, before any fetch.
+	if !h.checkRefUse(w, r, img, refs) {
 		return
 	}
 	if over, err := overImageStorageLimit(ctx, h.store, img.OrgID); err != nil {
@@ -90,6 +95,16 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.PrincipalFrom(ctx)
+	sub := authz.UserSubject(p.User.ID)
+	rev, fetchLog, err := fetchSource(ctx, h.store, h.github, func(obj, act string) bool { return h.z.Enforcer().Allowed(sub, img.OrgID, obj, act) }, img, p.User.ID)
+	var he httpError
+	if errors.As(err, &he) {
+		writeError(w, he.status, he.msg)
+		return
+	} else if err != nil {
+		serverError(w, "recipe revision", err)
+		return
+	}
 	var b store.ImageBuild
 	if !h.commit(w, r, func(tx *store.Store) error {
 		var err error
@@ -102,6 +117,7 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	appendFetchLog(ctx, h.store, b.ID, fetchLog)
 	h.builds.Kick()
 	writeJSON(w, http.StatusAccepted, map[string]any{"buildId": b.ID})
 }

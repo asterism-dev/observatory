@@ -655,3 +655,232 @@ func TestQueuedBuildWaitsWhileHeld(t *testing.T) {
 		t.Fatalf("released build state %s", b.State)
 	}
 }
+
+type fakeGitHub struct {
+	sha     string
+	status  int // answered to every request when set
+	tarball []byte
+	auth    []string
+}
+
+// withGitHub points the hub's GitHub fetches at a fake serving img/Dockerfile of o/r at sha.
+func (e *buildEnv) withGitHub() *fakeGitHub {
+	e.t.Helper()
+	gh := &fakeGitHub{sha: testSHA, tarball: makeTarball(e.t, ghEntry{name: "o-r-x/img/Dockerfile", body: "FROM scratch\n", mode: 0o644})}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gh.auth = append(gh.auth, r.Header.Get("Authorization"))
+		switch {
+		case gh.status != 0:
+			w.WriteHeader(gh.status)
+		case strings.Contains(r.URL.Path, "/commits/"):
+			w.Write([]byte(gh.sha))
+		default:
+			w.Write(gh.tarball)
+		}
+	}))
+	e.t.Cleanup(srv.Close)
+	e.api.github = gitHubSource{API: srv.URL}
+	return gh
+}
+
+func (e *buildEnv) sourcedImage(tok string, org uuid.UUID, body string) uuid.UUID {
+	e.t.Helper()
+	id := e.createImage(tok, org, body)
+	if rec := e.send("PUT", imagePath(org, id)+"/source", tok, sourceBody); rec.Code != 200 {
+		e.t.Fatalf("source: %d %s", rec.Code, rec.Body.String())
+	}
+	return id
+}
+
+func (e *buildEnv) cancel(id uuid.UUID) {
+	e.t.Helper()
+	if _, err := e.sched.Finish(context.Background(), id, store.BuildCancelled, "", ""); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *buildEnv) log(id uuid.UUID) string {
+	e.t.Helper()
+	raw, err := e.store.BuildLog(context.Background(), id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestBuildFetchesFirstRevision(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.withGitHub()
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	id := e.startBuild(tok, org, img)
+	rev, err := e.store.RecipeRevision(context.Background(), img, 1)
+	if err != nil || rev.Source != "github:o/r@"+testSHA+":img" || rev.CreatedBy != alice.ID || len(rev.Files) != 1 || rev.Files[0].Path != "Dockerfile" {
+		t.Fatalf("revision: %+v %v", rev, err)
+	}
+	if b := e.build(id); b.Revision != 1 {
+		t.Fatalf("build: %+v", b)
+	}
+	if log := e.log(id); log != "fetching o/r@main → 0123456\nrevision 1 from 0123456\n" {
+		t.Fatalf("log: %q", log)
+	}
+}
+
+type slowEOF struct{ delay time.Duration }
+
+func (s slowEOF) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err == nil && !strings.Contains(r.URL.Path, "/commits/") {
+		resp.Body = &slowEOFBody{ReadCloser: resp.Body, delay: s.delay}
+	}
+	return resp, err
+}
+
+type slowEOFBody struct {
+	io.ReadCloser
+	delay time.Duration
+}
+
+func (b *slowEOFBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		time.Sleep(b.delay)
+	}
+	return n, err
+}
+
+func TestBuildSavesRevisionAfterFetchDeadline(t *testing.T) {
+	old := sourceFetchTimeout
+	sourceFetchTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { sourceFetchTimeout = old })
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.withGitHub()
+	e.api.github.Client = &http.Client{Transport: slowEOF{delay: 300 * time.Millisecond}}
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	e.startBuild(tok, org, img)
+	if i := e.imageByID(img); i.RecipeRevision == nil || *i.RecipeRevision != 1 {
+		t.Fatalf("revision not saved: %+v", i)
+	}
+}
+
+func TestBuildReusesUnchangedCommit(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	gh := e.withGitHub()
+	e.createEnv(tok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+	e.cancel(e.startBuild(tok, org, img))
+	e.exec(`UPDATE recipe_revisions SET refs = '[{"Kind":"secret","Scope":"org","Name":"ORG_TOKEN"}]' WHERE image_id = $1`, img)
+
+	id := e.startBuild(tok, org, img)
+	if i := e.imageByID(img); *i.RecipeRevision != 1 || e.build(id).Revision != 1 {
+		t.Fatalf("new revision for the same commit: %+v", i)
+	}
+	if log := e.log(id); !strings.Contains(log, "unchanged since revision 1\n") {
+		t.Fatalf("log: %q", log)
+	}
+	e.cancel(id)
+
+	gh.sha = strings.Repeat("b", 40)
+	id = e.startBuild(tok, org, img)
+	rev, err := e.store.RecipeRevision(context.Background(), img, 2)
+	if err != nil || e.build(id).Revision != 2 || len(rev.Refs) != 1 || rev.Refs[0].Name != "ORG_TOKEN" || rev.Source != "github:o/r@"+gh.sha+":img" {
+		t.Fatalf("revision 2: %+v %v", rev, err)
+	}
+	if log := e.log(id); !strings.Contains(log, "revision 2 from bbbbbbb\n") {
+		t.Fatalf("log: %q", log)
+	}
+}
+
+func TestBuildSourceFailures(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	gh := e.withGitHub()
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	gh.status = http.StatusNotFound
+	rec := e.do("POST", buildsPath(org, img), tok)
+	if body := rec.Body.String(); rec.Code != 422 || !strings.Contains(body, "not found or no access") || !strings.Contains(body, "connect a GitHub integration") {
+		t.Fatalf("404: %d %s", rec.Code, body)
+	}
+	gh.status = http.StatusServiceUnavailable
+	if rec := e.do("POST", buildsPath(org, img), tok); rec.Code != 502 {
+		t.Fatalf("503: %d %s", rec.Code, rec.Body.String())
+	}
+	gh.status, gh.tarball = 0, makeTarball(t, ghEntry{name: "o-r-x/img/README", body: "hi", mode: 0o644})
+	if rec := e.do("POST", buildsPath(org, img), tok); rec.Code != 422 || !strings.Contains(rec.Body.String(), "the recipe needs a Dockerfile at its root") {
+		t.Fatalf("no Dockerfile: %d %s", rec.Code, rec.Body.String())
+	}
+	gh.tarball = makeTarball(t, ghEntry{name: "o-r-x/other/Dockerfile", body: "FROM x", mode: 0o644})
+	if rec := e.do("POST", buildsPath(org, img), tok); rec.Code != 422 || !strings.Contains(rec.Body.String(), ": path img not found in commit ") {
+		t.Fatalf("missing path: %d %s", rec.Code, rec.Body.String())
+	}
+	if bs, _ := e.store.ImageBuilds(context.Background(), img); len(bs) != 0 {
+		t.Fatalf("builds: %+v", bs)
+	}
+	if i := e.imageByID(img); i.RecipeRevision != nil {
+		t.Fatalf("revision: %v", *i.RecipeRevision)
+	}
+}
+
+func TestBuildUsesNarrowestGitHubIntegration(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	gh := e.withGitHub()
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"user"}`)
+
+	e.cancel(e.startBuild(tok, org, img))
+	if slices.ContainsFunc(gh.auth, func(a string) bool { return a != "" }) {
+		t.Fatalf("anonymous fetch sent %q", gh.auth)
+	}
+	e.connect(tok, org, `{"kind":"github","source":"pat","scope":"org","token":"ghp_org000000000000000"}`)
+	e.connect(tok, org, `{"kind":"github","source":"pat","scope":"user","token":"ghp_private0000000000"}`)
+	gh.auth = nil
+	e.startBuild(tok, org, img)
+	if len(gh.auth) == 0 || slices.ContainsFunc(gh.auth, func(a string) bool { return a != "Bearer ghp_private0000000000" }) {
+		t.Fatalf("auth: %q", gh.auth)
+	}
+}
+
+func TestBuildJSONSource(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	e.withGitHub()
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+	e.startBuild(tok, org, img)
+	if rec := e.do("GET", buildsPath(org, img), tok); !strings.Contains(rec.Body.String(), `"source":"github:o/r@`+testSHA+`:img"`) {
+		t.Fatalf("builds: %s", rec.Body.String())
+	}
+}
+
+func TestRefusedBuildFetchesNothing(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	gh := e.withGitHub()
+	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
+	img := e.sourcedImage(aliceTok, org, `{"name":"base","scope":"org"}`)
+	e.cancel(e.startBuild(aliceTok, org, img))
+	e.exec(`UPDATE recipe_revisions SET refs = '[{"Kind":"secret","Scope":"org","Name":"ORG_TOKEN"}]' WHERE image_id = $1`, img)
+	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
+
+	gh.sha, gh.auth = strings.Repeat("b", 40), nil
+	if rec := e.do("POST", buildsPath(org, img), bobTok); rec.Code != 403 {
+		t.Fatalf("refused build: %d %s", rec.Code, rec.Body.String())
+	}
+	if i := e.imageByID(img); *i.RecipeRevision != 1 || len(gh.auth) != 0 {
+		t.Fatalf("fetched for a refused build: revision %d, %d requests", *i.RecipeRevision, len(gh.auth))
+	}
+}

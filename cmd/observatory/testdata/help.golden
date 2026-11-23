@@ -94,6 +94,7 @@ image:
   image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...  upload a directory as the next recipe revision
   image build <ref> [--follow]                                                                  build the current recipe
   image auto <ref> [--schedule off|daily|weekly] [--on-base-change=true|false] [--approve]      rebuild an image automatically
+  image source <ref> [github <owner/repo[@ref][:path]> | --none]                                set or clear the GitHub source of an image recipe
   image builds <ref>                                                                            list the builds of an image
   image log <build-id> [--follow]                                                               show a build log
   image cancel <build-id>                                                                       cancel a queued or running build

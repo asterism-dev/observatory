@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { appendCapped, autoSettingsBody, buildDuration, defaultSourceLabel, refLabel } from './images.ts'
+import { appendCapped, autoSettingsBody, buildDuration, commitOf, defaultSourceLabel, formatSource, refLabel } from './images.ts'
 
 const teams = { t1: 'backend' }
 
@@ -60,4 +60,16 @@ test('autoSettingsBody approves the shown revision only when turning automation 
   const on = { autoSchedule: 'daily' as const, autoOnBaseChange: false, recipeRevision: 5 }
   assert.deepEqual(autoSettingsBody(on, 'weekly', true), { autoSchedule: 'weekly', autoOnBaseChange: true })
   assert.deepEqual(autoSettingsBody({ ...off, recipeRevision: null }, 'daily', false), { autoSchedule: 'daily', autoOnBaseChange: false })
+})
+
+test('formatSource renders repo, ref and path compactly', () => {
+  assert.equal(formatSource({ repo: 'o/r', ref: '', path: '' }), 'o/r')
+  assert.equal(formatSource({ repo: 'o/r', ref: 'main', path: 'img' }), 'o/r@main:img')
+  assert.equal(formatSource(null), '')
+})
+
+test('commitOf parses a build source and ignores empty ones', () => {
+  const sha = 'a'.repeat(40)
+  assert.deepEqual(commitOf(`github:o/r@${sha}:img`), { repo: 'o/r', sha })
+  assert.equal(commitOf(''), null)
 })

@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import { api, ApiError } from '@/api'
 import RecipeRefsPicker from '@/components/RecipeRefsPicker.vue'
-import { formatBytes, type Image, type Recipe, type RecipeRef } from '@/composables/images'
+import { formatBytes, formatSource, type Image, type Recipe, type RecipeRef } from '@/composables/images'
 import { Card, EmptyState, Section } from '@/ui'
 
 interface Entry {
@@ -37,7 +37,8 @@ const loaded = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const replaceInput = ref<HTMLInputElement | null>(null)
 
-const readOnly = computed(() => !props.image.canEdit)
+const readOnly = computed(() => !props.image.canEdit || !!props.image.source)
+const refsLocked = computed(() => !props.image.canEdit || (!!props.image.source && !props.image.canBuild))
 const current = computed(() => entries.value.find((e) => e.path === selected.value))
 const refsDirty = computed(() => JSON.stringify(refs.value) !== savedRefs.value)
 const dirty = computed(() => refsDirty.value || deleted.value.length > 0 || entries.value.some((e) => e.dirty))
@@ -149,12 +150,12 @@ async function save() {
   }
 }
 
-watch(() => props.image.id, load, { immediate: true })
+watch(() => [props.image.id, props.image.source?.repo, props.image.source?.ref, props.image.source?.path], load, { immediate: true })
 </script>
 
 <template>
   <EmptyState
-    v-if="loaded && !entries.length && readOnly && !deleted.length"
+    v-if="loaded && !entries.length && readOnly && !image.source && !deleted.length"
     :title="t('images.noRecipe')"
     :text="t('images.noRecipeText')"
     :command="`observatory image recipe push ${image.ref} ./recipe`"
@@ -164,8 +165,8 @@ watch(() => props.image.id, load, { immediate: true })
       {{ error }}
       <Button v-if="conflict" size="sm" @click="load">{{ t('images.reload') }}</Button>
     </p>
-    <Section :label="t('images.recipe')" :description="revision ? t('images.revision', { n: revision }) : t('images.noRecipeYet')">
-      <template v-if="!readOnly" #actions>
+    <Section :label="t('images.recipe')" :description="image.source ? t('images.filesFromSource', { source: formatSource(image.source) }) : revision ? t('images.revision', { n: revision }) : t('images.noRecipeYet')">
+      <template v-if="!refsLocked" #actions>
         <span v-if="dirty" class="muted">{{ t('images.unsaved') }}</span>
         <Button size="sm" :disabled="busy || !dirty" @click="load">{{ t('images.discard') }}</Button>
         <Button size="sm" variant="accent" :disabled="busy || !dirty" @click="save">{{ t('env.save') }}</Button>
@@ -221,7 +222,7 @@ watch(() => props.image.id, load, { immediate: true })
       </div>
     </Section>
     <Section :label="t('images.refs')" :description="t('images.refsHint')">
-      <Card><RecipeRefsPicker v-model="refs" :org-id="orgId" :image="image" :disabled="readOnly || busy" /></Card>
+      <Card><RecipeRefsPicker v-model="refs" :org-id="orgId" :image="image" :disabled="refsLocked || busy" /></Card>
     </Section>
   </template>
 </template>

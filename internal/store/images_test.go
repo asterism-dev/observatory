@@ -378,3 +378,99 @@ func TestBuildLogFinishOnce(t *testing.T) {
 		t.Fatalf("append unknown: %v", err)
 	}
 }
+
+func TestImageSourceRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, org, user, _ := newImageEnv(t)
+	img := newImage(t, s, org, user, "src")
+	want := store.ImageSource{Repo: "o/r", Ref: "main", Path: "img"}
+	if err := s.SetImageSource(ctx, img.ID, want, user); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Image(ctx, org.ID, img.ID)
+	if got.Source != want || got.AutoBy == nil || *got.AutoBy != user || got.AutoError != "" {
+		t.Fatalf("got %+v", got)
+	}
+	if err := s.SetImageSource(ctx, img.ID, store.ImageSource{}, user); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Image(ctx, org.ID, img.ID)
+	if got.Source != (store.ImageSource{}) {
+		t.Fatalf("not cleared: %+v", got.Source)
+	}
+}
+
+func TestSetImageSourceDropsForeignApproval(t *testing.T) {
+	ctx := context.Background()
+	s, org, a, _ := newImageEnv(t)
+	b := login(t, s, "other").User.ID
+	img := newImage(t, s, org, a, "appr")
+	if _, err := s.AddRecipeRevision(ctx, store.RecipeRevision{ImageID: img.ID, CreatedBy: a}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApproveImageRevision(ctx, img.ID, 1, a); err != nil {
+		t.Fatal(err)
+	}
+	src := store.ImageSource{Repo: "o/r", Ref: "main"}
+	if err := s.SetImageSource(ctx, img.ID, src, a); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Image(ctx, org.ID, img.ID)
+	if got.AutoRevision == nil || got.AutoApprovedAt == nil {
+		t.Fatalf("same user lost approval: %+v", got)
+	}
+	if err := s.SetImageSource(ctx, img.ID, src, b); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Image(ctx, org.ID, img.ID)
+	if got.AutoRevision != nil || got.AutoApprovedAt != nil || got.AutoBy == nil || *got.AutoBy != b {
+		t.Fatalf("foreign approval kept: %+v", got)
+	}
+}
+
+func TestRecipeRevisionSource(t *testing.T) {
+	ctx := context.Background()
+	s, org, user, _ := newImageEnv(t)
+	img := newImage(t, s, org, user, "revsrc")
+	if _, err := s.AddRecipeRevision(ctx, store.RecipeRevision{ImageID: img.ID, CreatedBy: user}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRecipeRevision(ctx, store.RecipeRevision{ImageID: img.ID, CreatedBy: user, Source: "github:o/r@abc:img"}); err != nil {
+		t.Fatal(err)
+	}
+	r1, _ := s.RecipeRevision(ctx, img.ID, 1)
+	r2, _ := s.RecipeRevision(ctx, img.ID, 2)
+	if r1.Source != "" || r2.Source != "github:o/r@abc:img" {
+		t.Fatalf("sources %q %q", r1.Source, r2.Source)
+	}
+}
+
+func TestAutoImagesIncludesSourcedWithoutRevision(t *testing.T) {
+	ctx := context.Background()
+	s, org, user, _ := newImageEnv(t)
+	img := newImage(t, s, org, user, "auto")
+	if err := s.SetImageAuto(ctx, img.ID, store.AutoDaily, false, user); err != nil {
+		t.Fatal(err)
+	}
+	has := func() bool {
+		imgs, err := s.AutoImages(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, i := range imgs {
+			if i.ID == img.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if has() {
+		t.Fatal("unsourced image without revision listed")
+	}
+	if err := s.SetImageSource(ctx, img.ID, store.ImageSource{Repo: "o/r", Ref: "main"}, user); err != nil {
+		t.Fatal(err)
+	}
+	if !has() {
+		t.Fatal("sourced image without revision not listed")
+	}
+}

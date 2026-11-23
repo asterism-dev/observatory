@@ -49,7 +49,7 @@ func TestKindsTable(t *testing.T) {
 		GitHub: {"api.github.com", "github.com", "uploads.github.com"},
 		Claude: {"api.anthropic.com"},
 		Linear: {"api.linear.app", "mcp.linear.app"},
-		GCloud: {"*.googleapis.com"},
+		GCloud: {"*.googleapis.com", "*.pkg.dev"},
 	}
 	if len(Kinds) != len(want) {
 		t.Fatalf("kinds: %v", Kinds)

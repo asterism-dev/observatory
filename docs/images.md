@@ -81,6 +81,57 @@ only). A private recipe that references private secrets cannot be shared; see wi
 build needs the right to use every reference, checked at build time, so a recipe edited by someone else cannot borrow
 your access.
 
+## Recipes from GitHub
+
+Instead of pushing files, an image can take its recipe from a GitHub repository: the repository is the source of truth
+and every build builds its newest commit. A source is `owner/repo`, an optional ref (branch or tag, default: the
+repository's default branch; a full commit SHA also works and pins the image) and an optional subdirectory that holds the `Dockerfile`:
+
+```
+observatory image source my-tools github me/dotfiles@main:images/tools
+observatory image source my-tools              # shows the source
+observatory image source my-tools --none       # removes it
+```
+
+In the web UI, the recipe tab has "Source: Files | GitHub repository". `observatory image show` prints a `Source:` line
+and `observatory image builds` shows the built commit (`r2 @<sha7>`); the builds list in the web UI links each commit.
+An image without a recipe may get a source; the first build creates revision 1.
+
+- **Fetch:** the hub resolves the ref to a commit and downloads that commit as an archive at the start of every build,
+  manual or automatic, before a builder VM is requested. The files under the path become a new recipe revision
+  (executable bits kept) with the same references as the previous one. When the current revision already came from this
+  repository, path and commit it is reused unchanged; the build still runs, so new base images arrive. The build log
+  starts with `fetching <repo>@<ref or default branch> → <sha7>` and `unchanged since revision N` or
+  `revision N from <sha7>`.
+- **Triggers:** manual builds and the [automatic rebuild](#automatic-rebuilds) schedule only. There is no build per
+  commit: no webhooks and no polling for new commits.
+- **Editing:** with a source, the file editor is read-only and `recipe push` and file edits are refused; change the
+  repository instead. References are not in the repository and stay editable.
+  They can only be edited once the image has a revision (an edit without one fails with "needs a Dockerfile"), so a
+  Dockerfile that needs a secret in its first build cannot get it: let the first build run without it, then add the references.
+- **Rights:** setting or removing the source, and editing references of a sourced image, need the right to edit and to
+  build the image. Like changing the automatic rebuild settings, that makes you the person automatic builds run as. A
+  fetched revision is authored by the person the build runs as (who started a manual build, or the one automatic builds run as), so
+  automatic builds need no approval for it. The checks on references stay: a manual build checks the right to use every
+  reference and the storage limit before it fetches anything.
+- **Token:** the hub fetches with the real token of the narrowest GitHub integration the person the build runs as may
+  use within the image's level (the same rule as references: private image, private then team then org; team image: team
+  then org; org image: org), whether it is in `vm` or `proxy` mode. Without one it fetches anonymously, which works
+  for public repositories only. The token goes to `api.github.com` only, never to the builder VM and never into the
+  log. A recipe that needs the token inside `RUN` still references the integration ([Build secrets](#build-secrets)).
+- **Trust:** a repository is trusted like the person who set the source. New commits are built automatically without
+  approval, also for team and org images; anyone who can push to the repository decides what the image contains. Use a
+  repository only people you trust can push to.
+- **Failures:** a failed fetch starts no build and changes nothing. A manual build answers `422` (repository or ref
+  not found or no access, where anonymous access adds "connect a GitHub integration"; path not found in the commit; no
+  `Dockerfile` or another
+  recipe limit exceeded) or `502` (GitHub unreachable or answering 5xx). An automatic build shows "automatic rebuild
+  failed" with the reason prefixed `source fetch failed: ` and the image waits 6 hours before the next automatic try;
+  saving the settings or the source, or approving a revision, ends the wait.
+- **Limits:** the recipe limits (50 MB, 1000 files) apply to the files under the path; the whole archive may hold up to
+  100,000 entries. Symlinks and other non-regular files are skipped with a line in the log. Submodules and Git LFS
+  content are not included. A fetch takes at most 40 seconds.
+
 ## Builds
 
 `observatory image build <ref> [--follow]` (or the Build button) queues a build of the current revision. The hub starts

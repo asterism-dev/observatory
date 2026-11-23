@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/asterism-dev/observatory/internal/authz"
 	"github.com/asterism-dev/observatory/internal/registry"
 	"github.com/asterism-dev/observatory/internal/store"
 )
@@ -670,5 +671,176 @@ func TestDeleteTeamDeletesImageManifests(t *testing.T) {
 	}
 	if len(m.deleted) != 1 || m.deleted[0] != "i/"+id.String()+"@"+d {
 		t.Fatalf("manifests: %v", m.deleted)
+	}
+}
+
+func (e *env) imageByID(id uuid.UUID) store.Image {
+	e.t.Helper()
+	img, err := e.store.ImageByID(context.Background(), id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return img
+}
+
+// editOnly binds a role to user that denies image:build.
+func (e *env) editOnly(tok string, org, user uuid.UUID) {
+	e.t.Helper()
+	role := e.createRole(tok, org, `{"name":"edit only","rules":[{"effect":"deny","object":"org/images","action":"image:build"}]}`)
+	e.bind(tok, org, authz.UserSubject(user), role)
+}
+
+const sourceBody = `{"github":{"repo":"o/r","ref":"main","path":"img"}}`
+
+func TestImageSourceSetAndClear(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	rec := e.send("PUT", imagePath(org, id)+"/source", tok, sourceBody)
+	var got imageJSON
+	decode(t, rec, &got)
+	if rec.Code != 200 || got.Source == nil || *got.Source != (imageSourceJSON{Repo: "o/r", Ref: "main", Path: "img"}) {
+		t.Fatalf("set: %d %s", rec.Code, rec.Body.String())
+	}
+	if i := e.imageByID(id); i.AutoBy == nil || *i.AutoBy != alice.ID || i.Source != (store.ImageSource{Repo: "o/r", Ref: "main", Path: "img"}) {
+		t.Fatalf("stored: %+v", i)
+	}
+	if es := e.audit(store.ActionImageUpdate); len(es) != 1 || es[0].Details["source"] != "o/r@main:img" {
+		t.Fatalf("audit: %+v", es)
+	}
+
+	rec = e.do("DELETE", imagePath(org, id)+"/source", tok)
+	got = imageJSON{}
+	if decode(t, rec, &got); rec.Code != 200 || got.Source != nil || !strings.Contains(rec.Body.String(), `"source":null`) {
+		t.Fatalf("clear: %d %s", rec.Code, rec.Body.String())
+	}
+	if es := e.audit(store.ActionImageUpdate); len(es) != 2 || es[0].Details["source"] != "" {
+		t.Fatalf("audit: %+v", es)
+	}
+	if i := e.imageByID(id); i.Source != (store.ImageSource{}) {
+		t.Fatalf("not cleared: %+v", i.Source)
+	}
+}
+
+func TestImageSourceValidation(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	bad := []string{`{}`, `{"github":{"repo":""}}`, `{"github":{"repo":"o"}}`, `{"github":{"repo":"o/r/x"}}`, `{"github":{"repo":"o/.."}}`,
+		`{"github":{"repo":"o/."}}`, `{"github":{"repo":"-o/r"}}`, `{"github":{"repo":"o//r"}}`, `{"github":{"repo":"o/r","path":"../x"}}`,
+		`{"github":{"repo":"o/r","path":"/abs"}}`, `{"github":{"repo":"o/r","ref":"a b"}}`, `{"github":{"repo":"o/r","ref":"a..b"}}`}
+	for _, body := range bad {
+		if rec := e.send("PUT", imagePath(org, id)+"/source", tok, body); rec.Code != 422 {
+			t.Errorf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := e.send("PUT", imagePath(org, id)+"/source", tok, `{"github":{"repo":"o/r"}}`); rec.Code != 200 {
+		t.Fatalf("repo only: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestImageSourceNeedsBuildRight(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.editOnly(tok, org, bob.ID)
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+
+	if rec := e.send("PUT", imagePath(org, id)+"/source", bobTok, sourceBody); rec.Code != 403 {
+		t.Fatalf("put: %d", rec.Code)
+	}
+	e.send("PUT", imagePath(org, id)+"/source", tok, sourceBody)
+	if rec := e.do("DELETE", imagePath(org, id)+"/source", bobTok); rec.Code != 403 {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+}
+
+func TestRecipeLockedBySource(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	if rec := e.putRecipe(tok, org, id, recipeTar(t, dockerfile), ""); rec.Code != 200 {
+		t.Fatalf("recipe: %d", rec.Code)
+	}
+	files := []store.RecipeFile{{Path: "Dockerfile", Mode: 0o644, Content: []byte("FROM alpine\n")}}
+	if _, err := e.store.AddRecipeRevision(context.Background(), store.RecipeRevision{ImageID: id, Files: files, Source: "github:o/r@" + strings.Repeat("a", 40) + ":img", CreatedBy: alice.ID}); err != nil {
+		t.Fatal(err)
+	}
+	e.send("PUT", imagePath(org, id)+"/source", tok, sourceBody)
+
+	locked := func(rec *httptest.ResponseRecorder, what string) {
+		t.Helper()
+		var body struct{ Code string }
+		if decode(t, rec, &body); rec.Code != 409 || body.Code != "recipe_has_source" {
+			t.Fatalf("%s: %d %s", what, rec.Code, rec.Body.String())
+		}
+	}
+	locked(e.putRecipe(tok, org, id, recipeTar(t, dockerfile), ""), "put")
+	path := imagePath(org, id) + "/recipe/edits"
+	locked(e.send("POST", path, tok, `{"base":2,"put":[{"path":"x","content":"eA=="}]}`), "edit put")
+	locked(e.send("POST", path, tok, `{"base":2,"delete":["Dockerfile"]}`), "edit delete")
+
+	if rec := e.send("POST", path, bobTok, `{"base":2,"refs":[]}`); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"revision":3`) {
+		t.Fatalf("refs edit: %d %s", rec.Code, rec.Body.String())
+	}
+	rev, err := e.store.RecipeRevision(context.Background(), id, 3)
+	if err != nil || len(rev.Files) != 1 || string(rev.Files[0].Content) != "FROM alpine\n" || rev.Source != "github:o/r@"+strings.Repeat("a", 40)+":img" {
+		t.Fatalf("revision 3: %+v %v", rev, err)
+	}
+	if i := e.imageByID(id); i.AutoBy == nil || *i.AutoBy != bob.ID || i.Source.Repo != "o/r" {
+		t.Fatalf("image: %+v", i)
+	}
+	var recipe struct{ Source string }
+	if decode(t, e.do("GET", imagePath(org, id)+"/recipe", tok), &recipe); recipe.Source != rev.Source {
+		t.Fatalf("recipe source: %q", recipe.Source)
+	}
+}
+
+func TestRefsEditOnSourcedImageMakesEditorAutoBy(t *testing.T) {
+	e := newEnv(t)
+	_, tok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(tok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	e.editOnly(tok, org, bob.ID)
+	sourced := e.createImage(tok, org, `{"name":"sourced","scope":"org"}`)
+	plain := e.createImage(tok, org, `{"name":"plain","scope":"org"}`)
+	for _, id := range []uuid.UUID{sourced, plain} {
+		if rec := e.putRecipe(tok, org, id, recipeTar(t, dockerfile), ""); rec.Code != 200 {
+			t.Fatalf("recipe: %d", rec.Code)
+		}
+	}
+	e.send("PUT", imagePath(org, sourced)+"/source", tok, sourceBody)
+
+	if rec := e.send("POST", imagePath(org, sourced)+"/recipe/edits", bobTok, `{"base":1,"refs":[]}`); rec.Code != 403 {
+		t.Fatalf("sourced: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.send("POST", imagePath(org, plain)+"/recipe/edits", bobTok, `{"base":1,"refs":[]}`); rec.Code != 200 {
+		t.Fatalf("plain: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEditAfterSourceRemovedDropsSource(t *testing.T) {
+	e := newEnv(t)
+	alice, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	id := e.createImage(tok, org, `{"name":"base","scope":"org"}`)
+	files := []store.RecipeFile{{Path: "Dockerfile", Mode: 0o644, Content: []byte("FROM alpine\n")}}
+	if _, err := e.store.AddRecipeRevision(context.Background(), store.RecipeRevision{ImageID: id, Files: files, Source: "github:o/r@" + strings.Repeat("a", 40) + ":img", CreatedBy: alice.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.send("POST", imagePath(org, id)+"/recipe/edits", tok, `{"base":1,"put":[{"path":"x","content":"eA=="}]}`); rec.Code != 200 {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+	}
+	if rev, err := e.store.RecipeRevision(context.Background(), id, 2); err != nil || rev.Source != "" {
+		t.Fatalf("revision 2: %q %v", rev.Source, err)
 	}
 }

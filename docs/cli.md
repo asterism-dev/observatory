@@ -146,6 +146,7 @@ See [images.md](images.md). `<ref>` is `name`, `name:tag`, `name@sha256:…` or 
 | `image recipe push <ref> <dir> [--ref secret:SCOPE/NAME]... [--ref integration:SCOPE/KIND]...` | upload a directory as the next revision; scope `org`, `private` or `team:<team>` |
 | `image build <ref> [--follow]` | build the current recipe; `--follow` streams the log |
 | `image auto <ref> [--schedule off\|daily\|weekly] [--on-base-change=true\|false] [--approve]` | automatic rebuilds on a schedule or when a base image changes; turning them on or `--approve` approves the current recipe revision; without flags shows the settings |
+| `image source <ref> [github <owner/repo[@ref][:path]> \| --none]` | build the recipe from a GitHub repository (locks recipe push and edit); `--none` removes the source; without arguments shows it |
 | `image builds <ref>` / `image log <build-id> [--follow]` | builds of an image (automatic ones marked); a build's log |
 | `image cancel <build-id>` | cancel a queued or running build |
 | `image login` | set docker's credential helper for the hub registry |

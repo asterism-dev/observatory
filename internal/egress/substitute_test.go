@@ -36,3 +36,22 @@ func TestSubstituteUnit(t *testing.T) {
 		t.Fatalf("sent %q", sent)
 	}
 }
+
+func TestSubstituteArtifactRegistryBasic(t *testing.T) {
+	s := ghSecret("*.googleapis.com", "*.pkg.dev")
+	s.Headers = []string{"Authorization"}
+	basic := func(pw string) string {
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte("oauth2accesstoken:"+pw))
+	}
+	for host, want := range map[string]string{
+		"europe-west1-python.pkg.dev": basic(ghValue),
+		"pkg.dev.evil.test":           basic(ghPH),
+	} {
+		h := http.Header{}
+		h.Set("Authorization", basic(ghPH))
+		substitute(h, host, []proto.HostBoundSecret{s})
+		if got := h.Get("Authorization"); got != want {
+			t.Errorf("%s: authorization %q, want %q", host, got, want)
+		}
+	}
+}
