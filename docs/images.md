@@ -85,7 +85,7 @@ your access.
 
 Instead of pushing files, an image can take its recipe from a GitHub repository: the repository is the source of truth
 and every build builds its newest commit. A source is `owner/repo`, an optional ref (branch or tag, default: the
-repository's default branch; no SHAs, pin by tag) and an optional subdirectory that holds the `Dockerfile`:
+repository's default branch; a full commit SHA also works and pins the image) and an optional subdirectory that holds the `Dockerfile`:
 
 ```
 observatory image source my-tools github me/dotfiles@main:images/tools
@@ -122,8 +122,9 @@ An image without a recipe may get a source; the first build creates revision 1.
 - **Trust:** a repository is trusted like the person who set the source. New commits are built automatically without
   approval, also for team and org images; anyone who can push to the repository decides what the image contains. Use a
   repository only people you trust can push to.
-- **Failures:** a failed fetch starts no build and changes nothing. A manual build answers `422` (repository, ref or
-  path not found or no access, where anonymous access adds "connect a GitHub integration"; no `Dockerfile` or another
+- **Failures:** a failed fetch starts no build and changes nothing. A manual build answers `422` (repository or ref
+  not found or no access, where anonymous access adds "connect a GitHub integration"; path not found in the commit; no
+  `Dockerfile` or another
   recipe limit exceeded) or `502` (GitHub unreachable or answering 5xx). An automatic build shows "automatic rebuild
   failed" with the reason prefixed `source fetch failed: ` and the image waits 6 hours before the next automatic try;
   saving the settings or the source, or approving a revision, ends the wait.

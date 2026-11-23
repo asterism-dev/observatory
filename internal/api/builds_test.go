@@ -818,6 +818,10 @@ func TestBuildSourceFailures(t *testing.T) {
 	if rec := e.do("POST", buildsPath(org, img), tok); rec.Code != 422 || !strings.Contains(rec.Body.String(), "the recipe needs a Dockerfile at its root") {
 		t.Fatalf("no Dockerfile: %d %s", rec.Code, rec.Body.String())
 	}
+	gh.tarball = makeTarball(t, ghEntry{name: "o-r-x/other/Dockerfile", body: "FROM x", mode: 0o644})
+	if rec := e.do("POST", buildsPath(org, img), tok); rec.Code != 422 || !strings.Contains(rec.Body.String(), ": path img not found in commit ") {
+		t.Fatalf("missing path: %d %s", rec.Code, rec.Body.String())
+	}
 	if bs, _ := e.store.ImageBuilds(context.Background(), img); len(bs) != 0 {
 		t.Fatalf("builds: %+v", bs)
 	}

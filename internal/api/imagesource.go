@@ -55,6 +55,9 @@ func fetchSource(ctx context.Context, st *store.Store, gh gitHubSource, allowed 
 	if err != nil {
 		return cur, nil, sourceFailure(src, token, err)
 	}
+	if len(files) == 0 && src.Path != "" {
+		return cur, nil, httpError{http.StatusUnprocessableEntity, fmt.Sprintf("fetching %s: path %s not found in commit %s", sourceString(src), src.Path, sha[:7])}
+	}
 	if he := checkRecipe(files); he != nil {
 		return cur, nil, *he
 	}
