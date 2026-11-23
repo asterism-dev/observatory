@@ -57,15 +57,16 @@ each build.
   person becomes `AutoBy` (automatic builds run as them), `auto_error` is cleared and an approval by someone else is
   dropped. Otherwise someone with only `image:edit` could point the source at their own repository and have it built
   with another person's references. (Builder-check ruling, follows the trust decision.)
-- Whoever sets the source becomes the author (`CreatedBy`) of revisions fetched from it. Fetched revisions skip the
-  per-revision approval check (`needsApproval`) entirely; automatic builds check only `AutoBy`'s right to build and
-  to use every reference, as for any automatic build. (Builder-check ruling.)
+- A fetched revision is authored (`CreatedBy`) by the person the build runs as: who started a manual build, `AutoBy`
+  for an automatic one. Automatic builds therefore never need a per-revision approval for fetched commits, and the
+  existing `needsApproval` logic stays unchanged. (Planning ruling: replaces "the setter is the author".)
 - While a source is set, `PUT …/recipe` answers `409` with code `recipe_has_source`, and so does
   `POST …/recipe/edits` when it changes files; the CLI and web UI say so. References are not in the repository and
-  stay editable: a `recipe/edits` call that changes only references saves a new revision with the same files and the
-  same source string, authored by the editor. That revision goes through the normal approval rule (its author is the
-  editor, not the repository). The next fetch carries its references over, and the "unchanged" check in Fetching
-  compares repo, path and SHA only.
+  stay editable through `recipe/edits` (references only): that saves a new revision with the same files and the same
+  source string, needs `image:build` in addition to `image:edit`, and counts as a settings change like setting the
+  source (the editor becomes `AutoBy`). Otherwise the next fetch, authored by `AutoBy`, would carry unapproved
+  references of someone else into an automatic build. (Planning ruling: replaces "goes through the normal approval
+  rule".)
 
 ### Fetching on build
 
@@ -82,9 +83,11 @@ At the start of each build of an image with a source, before a builder VM is req
 4. Log each step into the build log: "fetching owner/repo@main → <sha7>", "unchanged since revision N" or "revision N
    from <sha7>".
 
-Failures (repo or ref not found, no access, too large, no `Dockerfile`, GitHub unreachable) fail the build with the
-reason; `latest` does not move. For automatic builds this becomes the image's "automatic rebuild failed" reason as
-today.
+Failures (repo or ref not found, no access, too large, no `Dockerfile`, GitHub unreachable) start no build and move
+nothing: a manual build answers with the reason (`422`, or `502` when GitHub is unreachable); an automatic build sets
+the image's "automatic rebuild failed" reason as today. The fetch happens before the build row exists, because a build
+row references a revision. It is synchronous and bounded to 40 s (the hub's write timeout is 60 s). The log lines of a
+successful fetch are written into the build's log right after the build row is created. (Planning ruling.)
 
 Symlinks in the tarball: skipped with a log line (recipes have no symlinks today). Paths are taken relative to the
 tarball's top-level `owner-repo-sha/` directory.
