@@ -16,7 +16,6 @@ import {
   buildTones,
   commitOf,
   formatBytes,
-  formatSource,
   imageScope,
   imageScopes,
   shortDigest,

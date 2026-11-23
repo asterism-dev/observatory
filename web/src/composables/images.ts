@@ -136,7 +136,7 @@ export const formatSource = (s: GithubSource | null) => (s ? `${s.repo}${s.ref ?
 
 export function commitOf(source: string) {
   const m = /^github:(.+)@([0-9a-f]{40}):/.exec(source)
-  return m ? { repo: m[1], sha: m[2] } : null
+  return m ? { repo: m[1]!, sha: m[2]! } : null
 }
 
 export const defaultSourceLabel = (source: string, t: Translate) => t(`images.source.${source}`)
