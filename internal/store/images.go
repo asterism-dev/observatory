@@ -62,7 +62,12 @@ type Image struct {
 	AutoError        string
 	AutoLastAt       *time.Time
 	AutoCheckedAt    *time.Time // last base-image check that resolved every base
+
+	Source ImageSource
 }
+
+// ImageSource names the GitHub directory an image's recipe comes from; the zero value means none.
+type ImageSource struct{ Repo, Ref, Path string }
 
 type RecipeFile struct {
 	Path    string
@@ -83,6 +88,7 @@ type RecipeRevision struct {
 	Number    int
 	Files     []RecipeFile
 	Refs      []RecipeRef
+	Source    string // where the files came from, empty when saved by hand
 	CreatedBy uuid.UUID
 	CreatedAt time.Time
 }
@@ -133,11 +139,11 @@ type ImageDefault struct {
 }
 
 const imageCols = "id, coalesce(org_id, '00000000-0000-0000-0000-000000000000'::uuid), scope, coalesce(team_id, user_id), name, description, recipe_revision, platform, push_error, coalesce(created_by, '00000000-0000-0000-0000-000000000000'::uuid), created_at, " +
-	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_approved_at, auto_error, auto_last_at, auto_checked_at"
+	"auto_schedule, auto_on_base_change, auto_by, auto_revision, auto_approved_at, auto_error, auto_last_at, auto_checked_at, source_repo, source_ref, source_path"
 
 func scanImage(r pgx.Row) (v Image, err error) {
 	err = r.Scan(&v.ID, &v.OrgID, &v.Scope, &v.OwnerID, &v.Name, &v.Description, &v.RecipeRevision, &v.Platform, &v.PushError, &v.CreatedBy, &v.CreatedAt,
-		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoApprovedAt, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt)
+		&v.AutoSchedule, &v.AutoOnBaseChange, &v.AutoBy, &v.AutoRevision, &v.AutoApprovedAt, &v.AutoError, &v.AutoLastAt, &v.AutoCheckedAt, &v.Source.Repo, &v.Source.Ref, &v.Source.Path)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -245,6 +251,15 @@ func (s *Store) SetImageAuto(ctx context.Context, image uuid.UUID, schedule stri
 	return err
 }
 
+// SetImageSource sets or (zero value) clears the recipe source; by becomes the automatic-build user as in SetImageAuto.
+func (s *Store) SetImageSource(ctx context.Context, image uuid.UUID, src ImageSource, by uuid.UUID) error {
+	_, err := s.q.Exec(ctx, `UPDATE images SET source_repo = $2, source_ref = $3, source_path = $4, auto_by = $5, auto_error = '',
+		auto_revision = CASE WHEN auto_by IS NOT DISTINCT FROM $5 THEN auto_revision END,
+		auto_approved_at = CASE WHEN auto_by IS NOT DISTINCT FROM $5 THEN auto_approved_at END WHERE id = $1`,
+		image, src.Repo, src.Ref, src.Path, by)
+	return err
+}
+
 // ApproveImageRevision lets automatic builds run revision as by; ErrConflict when it is no longer the current revision.
 func (s *Store) ApproveImageRevision(ctx context.Context, image uuid.UUID, revision int, by uuid.UUID) error {
 	tag, err := s.q.Exec(ctx, `UPDATE images SET auto_revision = $2, auto_by = $3, auto_approved_at = now(), auto_error = ''
@@ -297,10 +312,10 @@ func (s *Store) CreateFailedImageBuild(ctx context.Context, b ImageBuild, msg st
 	return b, err
 }
 
-// AutoImages lists the org images with automatic rebuilds on and a recipe, grouped by org.
+// AutoImages lists the org images with automatic rebuilds on and a recipe or a source to fetch one from, grouped by org.
 func (s *Store) AutoImages(ctx context.Context) ([]Image, error) {
 	rows, err := s.q.Query(ctx, "SELECT "+imageCols+` FROM images
-		WHERE NOT platform AND recipe_revision IS NOT NULL AND (auto_schedule <> '' OR auto_on_base_change) ORDER BY org_id, id`)
+		WHERE NOT platform AND (recipe_revision IS NOT NULL OR source_repo <> '') AND (auto_schedule <> '' OR auto_on_base_change) ORDER BY org_id, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -357,8 +372,8 @@ func (s *Store) AddRecipeRevision(ctx context.Context, rev RecipeRevision) (n in
 		if err := tx.q.QueryRow(ctx, "SELECT coalesce(max(number), 0) + 1 FROM recipe_revisions WHERE image_id = $1", rev.ImageID).Scan(&n); err != nil {
 			return err
 		}
-		if _, err := tx.q.Exec(ctx, "INSERT INTO recipe_revisions (image_id, number, refs, created_by) VALUES ($1, $2, $3, $4)",
-			rev.ImageID, n, refsJSON, rev.CreatedBy); err != nil {
+		if _, err := tx.q.Exec(ctx, "INSERT INTO recipe_revisions (image_id, number, refs, source, created_by) VALUES ($1, $2, $3, $4, $5)",
+			rev.ImageID, n, refsJSON, rev.Source, rev.CreatedBy); err != nil {
 			return err
 		}
 		for _, f := range rev.Files {
@@ -376,8 +391,8 @@ func (s *Store) AddRecipeRevision(ctx context.Context, rev RecipeRevision) (n in
 func (s *Store) RecipeRevision(ctx context.Context, image uuid.UUID, n int) (RecipeRevision, error) {
 	rev := RecipeRevision{ImageID: image, Number: n}
 	var refs []byte
-	err := s.q.QueryRow(ctx, "SELECT refs, created_by, created_at FROM recipe_revisions WHERE image_id = $1 AND number = $2", image, n).
-		Scan(&refs, &rev.CreatedBy, &rev.CreatedAt)
+	err := s.q.QueryRow(ctx, "SELECT refs, source, created_by, created_at FROM recipe_revisions WHERE image_id = $1 AND number = $2", image, n).
+		Scan(&refs, &rev.Source, &rev.CreatedBy, &rev.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return rev, ErrNotFound
 	} else if err != nil {
