@@ -158,6 +158,22 @@ func TestGitHubFilesRejectsEscapes(t *testing.T) {
 	}
 }
 
+func TestGitHubFilesCountsOnlyEntriesUnderPath(t *testing.T) {
+	var entries []ghEntry
+	for i := range 2500 {
+		entries = append(entries, ghEntry{name: fmt.Sprintf("o-r-abc/other/f%d", i), body: "x", mode: 0o644})
+	}
+	entries = append(entries, ghEntry{name: "o-r-abc/img/Dockerfile", body: "FROM x", mode: 0o644}, ghEntry{name: "o-r-abc/img/a", body: "a", mode: 0o644})
+	g := tarballServer(t, makeTarball(t, entries...))
+	files, _, err := g.files(context.Background(), "", "o/r", "abc", "img")
+	if err != nil || len(files) != 2 {
+		t.Fatalf("%v %v", files, err)
+	}
+	if _, _, err = g.files(context.Background(), "", "o/r", "abc", ""); err == nil || !strings.Contains(err.Error(), "1000 files") {
+		t.Fatalf("root: %v", err)
+	}
+}
+
 func TestGitHubFilesTooLarge(t *testing.T) {
 	g := tarballServer(t, makeTarball(t, ghEntry{name: "o-r-abc/big", body: strings.Repeat("a", maxRecipeBytes+1), mode: 0o644}))
 	_, _, err := g.files(context.Background(), "", "o/r", "abc", "")

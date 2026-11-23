@@ -21,6 +21,8 @@ var (
 	errSourceUnreachable = errors.New("github is unreachable")
 )
 
+const maxArchiveEntries = 100_000
+
 var (
 	ghOwnerRE = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
 	ghNameRE  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
@@ -112,7 +114,10 @@ func (g gitHubSource) files(ctx context.Context, token, repo, sha, path string) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %v", errSourceUnreachable, err)
 		}
-		if entries > 2*maxRecipeFiles || len(files) > maxRecipeFiles {
+		if entries > maxArchiveEntries {
+			return nil, nil, fmt.Errorf("the repository archive holds more than %d entries", maxArchiveEntries)
+		}
+		if len(files) > maxRecipeFiles {
 			return nil, nil, fmt.Errorf("a recipe holds at most %d files", maxRecipeFiles)
 		}
 		switch hdr.Typeflag {
