@@ -77,6 +77,11 @@ func TestHostMatches(t *testing.T) {
 		{"*.googleapis.com", "googleapis.com", false},
 		{"*.googleapis.com", "xgoogleapis.com", false},
 		{"*.googleapis.com", "googleapis.com.evil.test", false},
+		{"*.pkg.dev", "europe-west1-python.pkg.dev", true},
+		{"*.pkg.dev", "europe-west1-docker.pkg.dev", true},
+		{"*.pkg.dev", "pkg.dev", false},
+		{"*.pkg.dev", "xpkg.dev", false},
+		{"*.pkg.dev", "pkg.dev.evil.test", false},
 		{"api.github.com", "api.github.com", true},
 		{"api.github.com", "x.api.github.com", false},
 	} {

@@ -18,7 +18,7 @@ git clone git@github.com:me/private  # works: rewritten to HTTPS, the credential
 | `github` | `pat` (classic or fine-grained) | `GET api.github.com/user` | login, scopes, expiry when GitHub sends it | `github.com`, `api.github.com`, `uploads.github.com` |
 | `claude` | `setup-token` (`claude setup-token`, `sk-ant-oat…`), `oauth` (sign-in) | `GET api.anthropic.com/v1/models` | email after sign-in; none for setup tokens | `api.anthropic.com` |
 | `linear` | `api-key` | GraphQL `{ viewer { email } }` | email | `api.linear.app`, `mcp.linear.app` |
-| `gcloud` | `adc` (`authorized_user` ADC file of `gcloud auth application-default login`) | token refresh at `oauth2.googleapis.com`, email from the token | email | `*.googleapis.com` |
+| `gcloud` | `adc` (`authorized_user` ADC file of `gcloud auth application-default login`) | token refresh at `oauth2.googleapis.com`, email from the token | email | `*.googleapis.com`, `*.pkg.dev` |
 
 The proxy substitutes the `Authorization` header only.
 
@@ -27,7 +27,7 @@ The proxy substitutes the `Authorization` header only.
   `objects.githubusercontent.com` with a short-lived token in the URL, so they need no binding.
 - **Claude:** Claude Code sends its token only to `api.anthropic.com`; `claude.ai` is not bound.
 - **Linear:** the GraphQL API and the remote MCP server.
-- **gcloud:** every `*.googleapis.com` host; see [gcloud](#gcloud).
+- **gcloud:** every `*.googleapis.com` host and Artifact Registry (`*.pkg.dev`); see [gcloud](#gcloud).
 
 A token is verified before it is stored; if verification fails nothing changes. GitHub's expiry is shown as a warning
 7 days ahead. There is no periodic re-verification.
@@ -63,6 +63,18 @@ What the guest gets:
   is set already, the active gcloud configuration has no `[core] account` (no `gcloud auth login` in the VM), and the
   ADC file is still ours; otherwise your `gcloud` runs unchanged. Set the project with `gcloud config set project`.
 - `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` among the system-wide trust variables, for gRPC clients.
+
+Artifact Registry (`<region>-python.pkg.dev`, `<region>-docker.pkg.dev`) takes the login as Basic auth with the user
+`oauth2accesstoken`; the proxy substitutes the placeholder there too. For Python packages with uv, install the keyring
+and let uv ask it:
+
+```
+uv tool install keyring --with keyrings.google-artifactregistry-auth
+export UV_KEYRING_PROVIDER=subprocess
+uv pip install --index-url https://oauth2accesstoken@<region>-python.pkg.dev/<project>/<repo>/simple/ <package>
+```
+
+For Docker: `gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin <region>-docker.pkg.dev`.
 
 Known limits of gcloud:
 

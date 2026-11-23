@@ -60,7 +60,7 @@ var Kinds = map[Kind]Spec{
 	},
 	GCloud: {
 		Sources:   []Source{SourceADC},
-		Hosts:     []string{"*.googleapis.com"},
+		Hosts:     []string{"*.googleapis.com", "*.pkg.dev"},
 		Headers:   []string{"Authorization"},
 		TokenPage: "https://myaccount.google.com/permissions",
 	},
