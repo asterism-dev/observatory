@@ -817,3 +817,26 @@ func TestBuildJSONSource(t *testing.T) {
 		t.Fatalf("builds: %s", rec.Body.String())
 	}
 }
+
+func TestRefusedBuildFetchesNothing(t *testing.T) {
+	e := newEnv(t).withBuilds()
+	_, aliceTok := e.user("alice")
+	bob, bobTok := e.user("bob")
+	org := e.createOrg(aliceTok, "Acme")
+	e.addMember(org, bob, store.RoleAdmin)
+	gh := e.withGitHub()
+	e.createEnv(aliceTok, org, `{"name":"ORG_TOKEN","value":"v","kind":"secret","scope":"org"}`)
+	img := e.sourcedImage(aliceTok, org, `{"name":"base","scope":"org"}`)
+	e.cancel(e.startBuild(aliceTok, org, img))
+	e.exec(`UPDATE recipe_revisions SET refs = '[{"Kind":"secret","Scope":"org","Name":"ORG_TOKEN"}]' WHERE image_id = $1`, img)
+	deny := e.createRole(aliceTok, org, `{"name":"no secrets","rules":[{"effect":"deny","object":"org/env","action":"env:use"}]}`)
+	e.bind(aliceTok, org, authz.UserSubject(bob.ID), deny)
+
+	gh.sha, gh.auth = strings.Repeat("b", 40), nil
+	if rec := e.do("POST", buildsPath(org, img), bobTok); rec.Code != 403 {
+		t.Fatalf("refused build: %d %s", rec.Code, rec.Body.String())
+	}
+	if i := e.imageByID(img); *i.RecipeRevision != 1 || len(gh.auth) != 0 {
+		t.Fatalf("fetched for a refused build: revision %d, %d requests", *i.RecipeRevision, len(gh.auth))
+	}
+}

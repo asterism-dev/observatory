@@ -74,6 +74,26 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	var refs []store.RecipeRef
+	if img.RecipeRevision != nil {
+		cur, err := h.store.RecipeRevision(ctx, img.ID, *img.RecipeRevision)
+		if err != nil {
+			serverError(w, "recipe revision", err)
+			return
+		}
+		refs = cur.Refs
+	}
+	// Edits and fetches keep references someone else added, so the starter's use right is checked here, before any fetch.
+	if !h.checkRefUse(w, r, img, refs) {
+		return
+	}
+	if over, err := overImageStorageLimit(ctx, h.store, img.OrgID); err != nil {
+		serverError(w, "image storage", err)
+		return
+	} else if over {
+		writeError(w, http.StatusConflict, "the org is over its image storage limit")
+		return
+	}
 	p, _ := auth.PrincipalFrom(ctx)
 	sub := authz.UserSubject(p.User.ID)
 	rev, fetchLog, err := fetchSource(ctx, h.store, h.github, func(obj, act string) bool { return h.z.Enforcer().Allowed(sub, img.OrgID, obj, act) }, img, p.User.ID)
@@ -83,17 +103,6 @@ func (h *api) startBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		serverError(w, "recipe revision", err)
-		return
-	}
-	// An edit keeps references someone else added, so the starter's use right is checked here, not at edit time.
-	if !h.checkRefUse(w, r, img, rev.Refs) {
-		return
-	}
-	if over, err := overImageStorageLimit(ctx, h.store, img.OrgID); err != nil {
-		serverError(w, "image storage", err)
-		return
-	} else if over {
-		writeError(w, http.StatusConflict, "the org is over its image storage limit")
 		return
 	}
 	var b store.ImageBuild

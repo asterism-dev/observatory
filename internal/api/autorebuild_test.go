@@ -566,3 +566,27 @@ func TestAutoRebuildFetchedRevisionNeedsNoApproval(t *testing.T) {
 		t.Fatalf("builds: %+v", bs)
 	}
 }
+
+func TestAutoRebuildFailedFetchWaits(t *testing.T) {
+	e := newEnv(t).withBuilds().withAuto()
+	_, tok := e.user("alice")
+	org := e.createOrg(tok, "Acme")
+	gh := e.withGitHub()
+	e.auto.github = e.api.github
+	img := e.sourcedImage(tok, org, `{"name":"base","scope":"org"}`)
+	e.setAuto(tok, org, img, `{"autoSchedule":"daily"}`)
+
+	gh.status = 404
+	e.autoTick()
+	gh.auth = nil
+	e.now = e.now.Add(5 * time.Hour)
+	e.autoTick()
+	if len(gh.auth) != 0 {
+		t.Fatalf("retried within 6 hours: %d requests", len(gh.auth))
+	}
+	e.now = e.now.Add(2 * time.Hour)
+	e.autoTick()
+	if len(gh.auth) == 0 {
+		t.Fatal("not retried after 6 hours")
+	}
+}

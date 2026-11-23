@@ -27,6 +27,8 @@ const (
 	autoErrorMax    = 200
 	// autoCheckPrefix marks errors of the base check, so the next good check clears them but not a failed build's.
 	autoCheckPrefix = "base image check failed: "
+	// autoFetchPrefix marks failed source fetches, which wait autoBuildEvery like failed builds; saving the settings clears them.
+	autoFetchPrefix = "source fetch failed: "
 )
 
 var autoPeriods = map[string]time.Duration{store.AutoDaily: 24 * time.Hour, store.AutoWeekly: 7 * 24 * time.Hour}
@@ -99,7 +101,8 @@ func (a *AutoRebuilds) image(ctx context.Context, img store.Image) error {
 	active, lastAutomatic, lastSuccess, err := a.store.AutoBuildState(ctx, img.ID)
 	// An approval answers the last failure, so builds before it do not count against the limit.
 	sinceApproval := lastAutomatic != nil && (img.AutoApprovedAt == nil || lastAutomatic.After(*img.AutoApprovedAt))
-	if err != nil || active || sinceApproval && now.Sub(*lastAutomatic) < autoBuildEvery {
+	fetchFailed := strings.HasPrefix(img.AutoError, autoFetchPrefix) && img.AutoLastAt != nil && now.Sub(*img.AutoLastAt) < autoBuildEvery
+	if err != nil || active || fetchFailed || sinceApproval && now.Sub(*lastAutomatic) < autoBuildEvery {
 		return err
 	}
 	due := false
@@ -210,7 +213,7 @@ func (a *AutoRebuilds) start(ctx context.Context, img store.Image) error {
 	rev, fetchLog, err := fetchSource(ctx, a.store, a.github, func(obj, act string) bool { return a.z.Allowed(sub, img.OrgID, obj, act) }, img, *img.AutoBy)
 	var he httpError
 	if errors.As(err, &he) {
-		return a.store.SetImageAutoResult(ctx, img.ID, trimError(he), a.Now())
+		return a.store.SetImageAutoResult(ctx, img.ID, autoFetchPrefix+trimError(he), a.Now())
 	} else if err != nil {
 		return err
 	}
