@@ -75,6 +75,8 @@ uv pip install --index-url https://oauth2accesstoken@<region>-python.pkg.dev/<pr
 ```
 
 For Docker: `gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin <region>-docker.pkg.dev`.
+In a VM whose Docker daemon was already running when gcloud was connected (or before `*.pkg.dev` was bound), run
+`sudo systemctl restart docker` first: the daemon reads trust at start.
 
 Known limits of gcloud:
 

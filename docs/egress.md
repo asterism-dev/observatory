@@ -60,11 +60,12 @@ bound hosts. A proxy handles up to 1 024 connections; terminated connections clo
 
 ### Wildcard bindings
 
-Only built-in integration kinds bind a wildcard host: `gcloud` binds `*.googleapis.com` (one or more labels;
-`googleapis.com` itself is not matched). The VM's CA permits `googleapis.com` and its subdomains, and leaves are still
-issued per concrete host (cached, at most 256). The proxy therefore terminates TLS for **every** `*.googleapis.com`
-connection of a VM with the integration, public hosts like `fonts.googleapis.com` included; only the placeholder in
-`Authorization` is replaced.
+Only built-in integration kinds bind a wildcard host: `gcloud` binds `*.googleapis.com` and `*.pkg.dev` (one or more
+labels; `googleapis.com` and `pkg.dev` themselves are not matched). The VM's CA permits those domains and their
+subdomains, and leaves are still issued per concrete host (cached, at most 256). The proxy therefore terminates TLS for
+**every** `*.googleapis.com` and `*.pkg.dev` connection of a VM with the integration, public hosts like
+`fonts.googleapis.com` and public Artifact Registry repositories included; only the placeholder in `Authorization` is
+replaced.
 
 For `oauth2.googleapis.com` the proxy answers `POST /token` itself, without forwarding it, when the form has
 `grant_type=refresh_token` and the integration's placeholder as `refresh_token`: `200` with the placeholder as
