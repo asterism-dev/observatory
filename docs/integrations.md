@@ -25,6 +25,8 @@ The proxy substitutes the `Authorization` header only.
 - **GitHub:** `github.com` carries git smart HTTP (Basic auth), `api.github.com` is `gh`, `uploads.github.com` is
   `gh release upload`. Archive and asset downloads redirect to `codeload.github.com` /
   `objects.githubusercontent.com` with a short-lived token in the URL, so they need no binding.
+  The hub itself uses the real GitHub token to fetch the recipe of an image with a GitHub source
+  ([images](images.md#recipes-from-github)); `vm` and `proxy` mode make no difference.
 - **Claude:** Claude Code sends its token only to `api.anthropic.com`; `claude.ai` is not bound.
 - **Linear:** the GraphQL API and the remote MCP server.
 - **gcloud:** every `*.googleapis.com` host and Artifact Registry (`*.pkg.dev`); see [gcloud](#gcloud).
