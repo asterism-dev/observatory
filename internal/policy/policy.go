@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -46,6 +47,9 @@ type Request struct {
 	Context  Context
 }
 
+// requestKeys describe the request, not the resource; the entry point puts them into every request.
+var requestKeys = []string{"obs:CurrentTime", "obs:SourceIp", "obs:SecureTransport"}
+
 type Decision struct {
 	Allowed bool
 	Reason  string
@@ -78,13 +82,18 @@ func (r Rule) matches(q Request, ctx Context, v Vars) bool {
 		return false
 	}
 	id := q.Resource.String()
-	if !slices.ContainsFunc(r.Resources, func(p string) bool { return MatchResource(Substitute(p, v), id) }) {
+	if !slices.ContainsFunc(r.Resources, func(p string) bool { return MatchResource(SubstitutePattern(p, v), id) }) {
 		return false
 	}
+	deny := r.Effect != Allow
 	for _, c := range r.Conditions {
+		// The entry point must supply request keys; a deny never lapses because one is missing.
+		if deny && c.Op != "Null" && slices.Contains(requestKeys, c.Key) && len(ctx[c.Key]) == 0 {
+			continue
+		}
 		ok, err := c.Eval(ctx, v)
 		if err != nil {
-			return r.Effect == Deny
+			return deny
 		}
 		if !ok {
 			return false
@@ -104,6 +113,9 @@ func Decide(r Rights, q Request) Decision {
 	ctx["obs:UserEmail"] = []string{r.UserEmail}
 	ctx["obs:CallerAccount"] = []string{a.String()}
 	ctx["obs:ResourceAccount"] = []string{b.String()}
+	if len(ctx["obs:CurrentTime"]) == 0 {
+		ctx["obs:CurrentTime"] = []string{time.Now().UTC().Format(time.RFC3339)}
+	}
 
 	idVars := Vars{UserID: r.UserID, UserEmail: r.UserEmail, Account: a}
 	ownerVars := idVars
@@ -121,7 +133,7 @@ func Decide(r Rights, q Request) Decision {
 	idAllow, shareAllow := false, false
 	for _, rule := range identity {
 		if rule.matches(q, ctx, idVars) {
-			if rule.Effect == Deny {
+			if rule.Effect != Allow {
 				return Decision{Reason: "deny"}
 			}
 			idAllow = true
@@ -129,7 +141,7 @@ func Decide(r Rights, q Request) Decision {
 	}
 	for _, rule := range shares {
 		if rule.matches(q, ctx, ownerVars) {
-			if rule.Effect == Deny {
+			if rule.Effect != Allow {
 				return Decision{Reason: "deny"}
 			}
 			shareAllow = true

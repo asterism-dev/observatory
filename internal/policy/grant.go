@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -19,10 +20,12 @@ func CanGrant(r Rights, acting uuid.UUID, g Rule) error {
 		return nil
 	}
 	v := Vars{UserID: r.UserID, UserEmail: r.UserEmail, Account: acting}
+	// In the granted rule a user variable stands for every grantee, so it must be covered as "any value".
+	anyUser := strings.NewReplacer("${obs:UserId}", "*", "${obs:UserEmail}", "*")
 	held := r.Accounts[acting]
 	for _, a := range g.Actions {
 		for _, res := range g.Resources {
-			res = Substitute(res, v)
+			res = Substitute(anyUser.Replace(res), v)
 			if !slices.ContainsFunc(held, func(h Rule) bool { return holds(h, a, res, v) }) {
 				return ErrEscalation
 			}
@@ -41,11 +44,11 @@ func CanShare(r Rights, owner uuid.UUID, s Rule) error { return CanGrant(r, owne
 func holds(h Rule, action, res string, v Vars) bool {
 	return h.Effect == Allow && len(h.Conditions) == 0 &&
 		slices.ContainsFunc(h.Actions, func(p string) bool { return CoversAction(p, action) }) &&
-		slices.ContainsFunc(h.Resources, func(p string) bool { return CoversResource(Substitute(p, v), res) })
+		slices.ContainsFunc(h.Resources, func(p string) bool { return CoversResource(SubstitutePattern(p, v), res) })
 }
 
 func blocks(h Rule, action, res string, v Vars) bool {
-	return h.Effect == Deny &&
+	return h.Effect != Allow &&
 		slices.ContainsFunc(h.Actions, func(p string) bool { return OverlapsAction(p, action) }) &&
-		slices.ContainsFunc(h.Resources, func(p string) bool { return OverlapsResource(Substitute(p, v), res) })
+		slices.ContainsFunc(h.Resources, func(p string) bool { return OverlapsResource(SubstitutePattern(p, v), res) })
 }

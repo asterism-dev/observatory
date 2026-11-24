@@ -42,6 +42,17 @@ func Substitute(s string, v Vars) string {
 	return strings.NewReplacer("${obs:UserId}", v.UserID, "${obs:UserEmail}", v.UserEmail, "${account}", v.Account.String()).Replace(s)
 }
 
+// literal stands in for * and ? inside substituted values; it never occurs in input, so they cannot act as wildcards.
+const literal = '￿'
+
+func SubstitutePattern(s string, v Vars) string {
+	if !strings.Contains(s, "${") {
+		return s
+	}
+	esc := strings.NewReplacer("*", string(literal), "?", string(literal))
+	return Substitute(s, Vars{UserID: esc.Replace(v.UserID), UserEmail: esc.Replace(v.UserEmail), Account: v.Account})
+}
+
 func validKey(k string) bool {
 	for _, p := range []string{"obs:ResourceTag/", "obs:RequestTag/"} {
 		if tag, ok := strings.CutPrefix(k, p); ok {
@@ -116,7 +127,11 @@ func (c Condition) Eval(ctx Context, v Vars) (bool, error) {
 	}
 	want := make([]string, len(c.Values))
 	for i, s := range c.Values {
-		want[i] = Substitute(s, v)
+		if c.Op == "StringLike" || c.Op == "StringNotLike" {
+			want[i] = SubstitutePattern(s, v)
+		} else {
+			want[i] = Substitute(s, v)
+		}
 	}
 	have := ctx[c.Key]
 	if c.Op == "Null" {
