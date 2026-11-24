@@ -85,6 +85,20 @@ moved.
 
 ## Design
 
+### Principle for every service: one core, thin adapters (user decision)
+
+Every service keeps an API of its own. Its operations live in one core (Go functions such as
+`compute.StartVM(ctx, caller, vm)`); HTTP and NATS are thin adapters that call that core in the same process. A NATS
+listener never calls the service's own HTTP API over loopback.
+
+- Authorization belongs to the core: every core operation takes a caller (user, node or service) and checks it itself.
+  A permission check left in an HTTP handler (as `internal/api` does today) would be bypassed by the NATS adapter.
+- Each service stays testable without NATS and debuggable with `curl`.
+- In this project it applies to node control: the hub's NATS handlers and today's WebSocket handlers call the same
+  `fleet` functions; that shared core is the transport seam the development switch (Delivery and migration) toggles.
+  User traffic stays HTTP to the hub. From project 2 on, each new service (storage first) gets its own small HTTP API
+  next to its NATS adapter.
+
 ### Subjects
 
 `<service>.<version>.<…>`; the service comes first, the version right after it so a service can serve two versions
