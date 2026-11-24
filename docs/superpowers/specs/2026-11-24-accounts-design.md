@@ -30,6 +30,11 @@ It comes before the telemetry service, which builds on it.
 
 ## Non-goals
 
+- The SSH proxy (later project, user decision): all VM connections go through a proxy that records who connected
+  when, and integrations are delivered per connected person (a placeholder per person and session, resolved by the
+  egress proxy only while that person holds `integration:use`). It also has to settle per-person Unix users in the
+  VM, since root in the VM can read other sessions' placeholders.
+
 - Assuming roles / temporary credentials; identity stays OIDC sessions (plus today's node credentials and telemetry
   tokens).
 - Org-wide guardrails over accounts and permission boundaries.
@@ -220,6 +225,10 @@ dropped *(design call)*.
   - per-scope image defaults: the org default wins; others are dropped;
   - a migration report lists every rename and every VM whose effective env or integrations change; the release notes
     say that formerly private items of shared orgs are now visible to the account.
+  - Subscriptions must not be shared (user requirement: a Claude subscription is one person's): formerly user-scoped
+    `claude` and `gcloud` integrations get, in their new account, a deny rule on `integration:use` for everyone except
+    the former owner (`obs:UserId` condition). Plain rules, no "personal" concept. Note that whoever controls a VM
+    can use what the VM carries; per-person delivery is the SSH proxy project below.
 - Every team becomes an account named like the team; its resources move there; `CreatedBy` = the former team-owned
   resource's creator if known, else empty.
 - Bindings: org members → `member` on `default`; org admins/owners are implicitly `admin` everywhere; team members →
