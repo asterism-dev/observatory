@@ -58,8 +58,9 @@ func (r Rule) Validate() error {
 	if len(r.Actions) == 0 || len(r.Resources) == 0 {
 		return errors.New("a rule needs actions and resources")
 	}
+	placeholders := strings.NewReplacer("${obs:UserId}", "v", "${obs:UserEmail}", "v", "${account}", "v")
 	for _, p := range r.Resources {
-		if parts := strings.Split(p, ":"); len(parts) != 4 && !(len(parts) == 5 && strings.Contains(p, "${account}")) || !strings.HasPrefix(p, "obs:") {
+		if parts := strings.Split(placeholders.Replace(p), ":"); len(parts) != 4 || parts[0] != "obs" {
 			return fmt.Errorf("invalid resource pattern %q", p)
 		}
 	}

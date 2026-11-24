@@ -126,8 +126,10 @@ func TestRightsJSONRoundTrip(t *testing.T) {
 }
 
 func TestRuleValidate(t *testing.T) {
-	if err := allow([]string{"*"}, mine).Validate(); err != nil {
-		t.Errorf("valid rule: %v", err)
+	for _, r := range []Rule{allow([]string{"*"}, mine), allow([]string{"*"}, []string{"obs:compute:" + acc + ":vm/${obs:UserId}"})} {
+		if err := r.Validate(); err != nil {
+			t.Errorf("valid rule: %v", err)
+		}
 	}
 	for _, r := range []Rule{
 		{Effect: "maybe", Actions: []string{"*"}, Resources: mine},
