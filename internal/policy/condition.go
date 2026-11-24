@@ -142,7 +142,7 @@ func (c Condition) Eval(ctx Context, v Vars) (bool, error) {
 		base = c.Op
 	}
 	if len(have) == 0 {
-		return c.Quantifier == "ForAllValues" || isNeg, nil
+		return c.Quantifier == "ForAllValues" || isNeg && c.Quantifier == "", nil
 	}
 	all := c.Quantifier == "ForAllValues"
 	for _, h := range have {

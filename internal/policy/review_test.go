@@ -60,3 +60,17 @@ func TestCanGrantUnknownEffectBlocks(t *testing.T) {
 		t.Fatalf("held rule with unknown effect did not block: %v", err)
 	}
 }
+
+func TestForAnyValueNegatedOnAbsentKey(t *testing.T) {
+	c := Condition{Op: "StringNotEquals", Key: "obs:TagKeys", Values: []string{"x"}, Quantifier: "ForAnyValue"}
+	if ok, err := c.Eval(Context{}, Vars{}); ok || err != nil {
+		t.Fatalf("ForAnyValue on an absent key = %v, %v; want false", ok, err)
+	}
+}
+
+func TestDecideRejectsInvalidResource(t *testing.T) {
+	r := Rights{Accounts: map[uuid.UUID][]Rule{accA: {allow([]string{"*"}, []string{"obs:*:${account}:*"})}}}
+	if d := Decide(r, Request{Acting: accA, Action: "compute:vm:start", Resource: NewID("compute", accA, "vm", "x:y")}); d.Reason != "invalid-resource" {
+		t.Fatalf("Decide = %+v, want invalid-resource", d)
+	}
+}

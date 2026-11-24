@@ -103,6 +103,9 @@ func (r Rule) matches(q Request, ctx Context, v Vars) bool {
 }
 
 func Decide(r Rights, q Request) Decision {
+	if id, err := ParseID(q.Resource.String()); err != nil || id != q.Resource {
+		return Decision{Reason: "invalid-resource"}
+	}
 	a, b := q.Acting, q.Resource.Account
 	ctx := maps.Clone(q.Context)
 	if ctx == nil {
