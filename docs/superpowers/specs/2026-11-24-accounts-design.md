@@ -76,9 +76,12 @@ From `docs/permissions.md` and `internal/authz`:
 
 ### Orgs, accounts, users
 
-- Signing up creates the user's own org ("<name>'s Org") with one account `default`; the user is its owner. Unlike
-  today's personal orgs it is a normal org: the owner may invite people.
-- An org admin invites people into the org, creates accounts and binds roles to members per account.
+- Signing up creates the user's personal org ("<name>'s Org") with one account `default`; the user is its owner.
+  Personal orgs stay what they are today (user decision): single-member and fixed — no invitations, role changes,
+  removal, leaving or renaming. The owner may create further accounts in it *(design call)*. Every existing user keeps
+  or gets exactly one personal org.
+- Working with others happens in a normal (shared) org: anyone may create one, as today; its admins invite people,
+  create accounts and bind roles to members per account.
 - A user may be a member of several orgs and hold roles in several accounts of each.
 - Org-level roles stay (owner, admin, member) and only cover administration: invite/remove members, set org roles
   (`member:set-role`), update the org (`org:update`), create/rename/delete accounts, manage custom roles, bind roles,
@@ -229,7 +232,7 @@ dropped *(design call)*.
   *(design call: team VMs keep running where they run, with what they have)*. VMs may sit on a network of another
   account when a share allows it.
 - Dashboard "creator may edit" (checked in the API today) becomes a `CreatedBy` rule in the built-in roles.
-- Personal orgs become normal orgs.
+- Personal orgs stay personal orgs and get their account `default` like every other org.
 - Team-level and member-level limits: team limits become that account's limits; member limits are dropped (listed in
   the release notes).
 - The migration is checked by a decision comparison: for every user and every existing VM/disk/… the old enforcer's
@@ -258,7 +261,7 @@ Step 3 is necessarily large (routes, GUI, CLI change together); it is the one ha
 ## Success criteria
 
 - Decision comparison on a copy of prod data shows no unexplained differences.
-- New signup gets "<name>'s Org" with `default` and can create a VM immediately.
+- New signup gets the personal org "<name>'s Org" with `default` and can create a VM immediately; inviting into it is refused.
 - An org admin invites a user, binds `member` on account `ml`; the user creates a VM there and sees nothing in
   `default`.
 - Share: account `infra` shares `compute:node:use` on its nodes with `ml`; a member of `ml` places a VM on an `infra`
