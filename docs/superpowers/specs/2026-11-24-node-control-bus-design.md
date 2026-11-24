@@ -9,12 +9,14 @@ and dropped as too big; this goes there step by step on `main`, each step releas
 
 Roadmap:
 
-1. **This project:** node control over NATS; the hub keeps no state the next hub instance would miss.
-2. Several storage servers as independent services on the bus (the main need: more disk space than one machine has).
-3. Gateway and the remaining services the same way.
+1. Telemetry as the first independent service ([spec](2026-11-24-telemetry-service-design.md)): brings NATS, the auth
+   callout for nodes and services, the service skeleton, per-service databases and the caller token.
+2. **This project:** node control over NATS; the hub keeps no state the next hub instance would miss.
+3. Several storage servers as independent services on the bus (the main need: more disk space than one machine has).
+4. Gateway and the remaining services the same way.
 
-The control connection comes first so storage is built on the bus once instead of on today's HTTP polling and then
-moved.
+Node control comes before storage so storage is built on the bus once instead of on today's HTTP polling and then
+moved. NATS deployment and authentication described below are built in project 1; this project reuses them.
 
 ## Goals
 
