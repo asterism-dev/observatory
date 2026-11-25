@@ -175,6 +175,9 @@ account. `obs:CreatedBy` stays available as a condition key for custom roles.
   delete, tags).
 - `admin`: `member` plus account administration: bindings, shares, deny rules, account limits.
 
+The identity side of `viewer` and `member` names every account (`obs:*:*:*`): a resource of another account is still
+reachable only where that account shares it, but a share must not need a custom role on the receiving side.
+
 ### Escalation rule
 
 Kept: nobody may write a role rule, bind a role or create a share granting an action on a resource pattern they do

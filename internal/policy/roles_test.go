@@ -28,3 +28,16 @@ func TestBuiltinRoles(t *testing.T) {
 		t.Error("unknown key must return nil")
 	}
 }
+
+func TestBuiltinRolesNeedShareAcrossAccounts(t *testing.T) {
+	r := Rights{Accounts: map[uuid.UUID][]Rule{accA: BuiltinRole("member")}}
+	node := NewID("compute", accB, "node", "n1")
+	q := Request{Acting: accA, Action: "compute:node:use", Resource: node}
+	if d := Decide(r, q); d.Reason != "no-share" {
+		t.Errorf("without a share = %+v, want no-share", d)
+	}
+	r.Shares = []Share{{Owner: accB, Grantees: []uuid.UUID{accA}, Rule: Rule{Effect: Allow, Actions: []string{"compute:node:use"}, Resources: []string{"obs:compute:${account}:node/*"}}}}
+	if d := Decide(r, q); !d.Allowed {
+		t.Errorf("with a share = %+v", d)
+	}
+}
