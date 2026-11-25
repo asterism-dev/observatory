@@ -65,6 +65,9 @@ func run(ctx context.Context, dbURL string) (int, error) {
 	for _, a := range actions {
 		fmt.Printf("widening %s: %d\n", a, rep.Widenings[a])
 	}
+	for _, c := range rep.Collapsed {
+		fmt.Printf("COLLAPSED (review manually) %s\n", c)
+	}
 	for _, d := range rep.Regressions {
 		fmt.Printf("REGRESSION user=%s org=%s object=%s action=%s reason=%s\n", d.User, d.Org, d.Object, d.Action, d.Reason)
 	}
