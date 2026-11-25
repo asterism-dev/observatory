@@ -51,7 +51,11 @@ func (h *api) orgFromPath(w http.ResponseWriter, r *http.Request) (store.Members
 // authorize audits and 403s a denial; it doesn't check membership, so resolve org via orgFromPath first.
 func (h *api) authorize(w http.ResponseWriter, r *http.Request, org uuid.UUID, obj, act string) bool {
 	p, _ := auth.PrincipalFrom(r.Context())
-	if h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, obj, act) {
+	allowed := h.z.Enforcer().Allowed(authz.UserSubject(p.User.ID), org, obj, act)
+	if h.shadow != nil {
+		h.shadow.Compare(p.User.ID, org, obj, act, allowed)
+	}
+	if allowed {
 		return true
 	}
 	h.auditDenied(r, org, obj, act)

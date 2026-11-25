@@ -61,7 +61,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(f.Close)
 	dh := disks.New(s, "storage-token", f.NotifyOrg)
 	fv, fo, fg := &fakeVerifier{}, &fakeOAuth{}, &fakeGoogle{}
-	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour)
+	h, handler := newAPI(s, a, z, f, nh, dh, Integrations{Verifier: fv, OAuth: fo, Google: fg}, nil, nil, nil, nil, "https://docs.test/", func() string { return "v9.9.9" }, "v1.18.0", nil, 14*24*time.Hour, nil)
 	return &env{t: t, pool: pool, store: s, z: z, net: nh, disks: dh, api: h, h: handler, verifier: fv, oauth: fo, google: fg}
 }
 
@@ -289,7 +289,7 @@ func TestAuthRoutesWinOverAPIMount(t *testing.T) {
 	a := &auth.Handler{Store: e.store, Issuer: "https://idp.test", PublicURL: &url.URL{Scheme: "https", Host: "hub.test"}}
 	mux := http.NewServeMux()
 	a.Routes(mux)
-	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, nil, nil, nil, nil, "", func() string { return "" }, "v1.18.0", nil, 14*24*time.Hour))
+	mux.Handle("/api/", New(e.store, a, e.z, e.newFleet(), e.net, e.disks, Integrations{}, nil, nil, nil, nil, "", func() string { return "" }, "v1.18.0", nil, 14*24*time.Hour, nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/auth/config", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "https://idp.test") {

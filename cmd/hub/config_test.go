@@ -257,3 +257,20 @@ func TestConfigLogsRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigAccountsShadow(t *testing.T) {
+	base := map[string]string{
+		"OBSERVATORY_DATABASE_URL": "postgres://x", "OBSERVATORY_PUBLIC_URL": "http://h",
+		"OBSERVATORY_OIDC_ISSUER": "http://i", "OBSERVATORY_OIDC_WEB_CLIENT_ID": "w", "OBSERVATORY_OIDC_CLI_CLIENT_ID": "c",
+		"OBSERVATORY_SECRETS_KEY":   base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		"OBSERVATORY_GATEWAY_TOKEN": strings.Repeat("t", 32),
+		"OBSERVATORY_STORAGE_TOKEN": strings.Repeat("s", 32),
+	}
+	for v, want := range map[string]bool{"": false, "0": false, "1": true} {
+		base["OBSERVATORY_ACCOUNTS_SHADOW"] = v
+		cfg, err := loadConfig(func(k string) string { return base[k] })
+		if err != nil || cfg.AccountsShadow != want {
+			t.Errorf("OBSERVATORY_ACCOUNTS_SHADOW=%q: %v, %v", v, cfg.AccountsShadow, err)
+		}
+	}
+}
