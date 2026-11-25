@@ -12,13 +12,15 @@ func BuiltinRole(key string) []Rule {
 	case "viewer":
 		return []Rule{{Effect: Allow, Actions: []string{"*:*:read", "*:*:list"}, Resources: anyResource()}}
 	case "member":
-		actions := make([]string, len(Services))
-		for i, s := range Services {
-			actions[i] = s + ":*"
-		}
-		return []Rule{{Effect: Allow, Actions: actions, Resources: anyResource()}}
+		// Node management and telemetry tokens stay with admins (user decision); members place VMs on nodes.
+		return []Rule{{Effect: Allow, Actions: []string{
+			"compute:vm:*", "compute:disk:*", "compute:network:*", "compute:node:read", "compute:node:list", "compute:node:use",
+			"secrets:*", "integrations:*", "images:*", "telemetry:dashboard:*", "telemetry:logs:*",
+		}, Resources: anyResource()}}
 	case "admin":
-		return append(BuiltinRole("member"), Rule{Effect: Allow, Actions: []string{"iam:*"}, Resources: []string{"obs:iam:${account}:*"}})
+		return append(BuiltinRole("member"),
+			Rule{Effect: Allow, Actions: []string{"compute:node:*", "telemetry:token:*"}, Resources: anyResource()},
+			Rule{Effect: Allow, Actions: []string{"iam:*"}, Resources: []string{"obs:iam:${account}:*"}})
 	}
 	return nil
 }

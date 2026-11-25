@@ -171,9 +171,12 @@ account is a shared space, and what its roles allow applies to every resource in
 account. `obs:CreatedBy` stays available as a condition key for custom roles.
 
 - `viewer`: read everything in the account.
-- `member`: everything on the account's resources (create, use, power, connect, fork, `disk:use`, snapshot, restore,
-  delete, tags).
-- `admin`: `member` plus account administration: bindings, shares, deny rules, account limits.
+- `member`: everything on the account's VMs, disks, networks, images, env, integrations and dashboards (create, use,
+  power, connect, fork, `disk:use`, snapshot, restore, delete, tags); read the account's logs; read and use nodes
+  (place VMs on them).
+- `admin`: `member` plus node management (create, rename, delete, node metrics), telemetry tokens, and account
+  administration: bindings, shares, deny rules, account limits (user decision: nodes and telemetry tokens stay with
+  admins, logs go to members).
 
 The identity side of `viewer` and `member` names every account (`obs:*:*:*`): a resource of another account is still
 reachable only where that account shares it, but a share must not need a custom role on the receiving side.

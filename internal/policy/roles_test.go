@@ -41,3 +41,24 @@ func TestBuiltinRolesNeedShareAcrossAccounts(t *testing.T) {
 		t.Errorf("with a share = %+v", d)
 	}
 }
+
+func TestBuiltinRolesKeepAdministrationWithAdmins(t *testing.T) {
+	node, token, logs := NewID("compute", accA, "node", "n1"), NewID("telemetry", accA, "token", "-"), NewID("telemetry", accA, "logs", "-")
+	for _, c := range []struct {
+		role, action string
+		id           ID
+		want         bool
+	}{
+		{"member", "compute:node:use", node, true}, {"member", "compute:node:read", node, true},
+		{"member", "compute:node:create", node, false}, {"member", "compute:node:update", node, false},
+		{"member", "compute:node:delete", node, false}, {"member", "compute:node:metrics", node, false},
+		{"member", "telemetry:token:create", token, false}, {"member", "telemetry:logs:read", logs, true},
+		{"admin", "compute:node:create", node, true}, {"admin", "compute:node:delete", node, true},
+		{"admin", "telemetry:token:create", token, true},
+	} {
+		r := Rights{Accounts: map[uuid.UUID][]Rule{accA: BuiltinRole(c.role)}}
+		if got := Decide(r, Request{Acting: accA, Action: c.action, Resource: c.id}).Allowed; got != c.want {
+			t.Errorf("%s %s = %v, want %v", c.role, c.action, got, c.want)
+		}
+	}
+}
