@@ -313,7 +313,7 @@ func TestVMLatestBatch(t *testing.T) {
 	var queries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		if r.URL.Path != "/api/v1/query" || r.Form.Get("extra_label") != "observatory_org="+testOrg.String() {
+		if r.URL.Path != "/api/v1/query" || r.Form.Get("extra_label") != "observatory_org="+testOrg.String() || r.Form.Get("latency_offset") != "1ms" {
 			t.Errorf("bad request %s %v", r.URL.Path, r.Form)
 		}
 		q := r.Form.Get("query")
