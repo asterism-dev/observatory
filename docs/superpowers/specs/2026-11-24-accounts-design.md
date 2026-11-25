@@ -211,6 +211,9 @@ account the resolved rules of all bindings (incl. parents), the shares granting 
 context keys. Size is bounded by rules, not resources. A changed binding, role or share applies within 60 s (accepted
 by the user). The hub itself checks with the same package and the same data.
 
+Built with the telemetry service, the first caller outside the hub (user decision 2026-11-25); until then the hub
+resolves rights in memory and checks itself.
+
 ### Limits
 
 Per org (platform admin) and per account (org admin), stacked like today's org/team limits. Per-member limits are
@@ -232,8 +235,9 @@ dropped *(design call)*.
   - a migration report lists every rename and every VM whose effective env or integrations change; the release notes
     say that formerly private items of shared orgs are now visible to the account.
   - Subscriptions must not be shared (user requirement: a Claude subscription is one person's): formerly user-scoped
-    `claude` and `gcloud` integrations get, in their new account, a deny rule on `integration:use` for everyone except
-    the former owner (`obs:UserId` condition). Plain rules, no "personal" concept. Note that whoever controls a VM
+    `claude` and `gcloud` integrations get the reserved tag `obs:owner=<former owner>`; a system rule in the evaluator
+    lets only that user `integrations:integration:use` an owner-tagged integration, whatever their roles (also covers
+    members who join later). Tag keys starting with `obs:` are reserved. Note that whoever controls a VM
     can use what the VM carries; per-person delivery is the SSH proxy project below.
 - Every team becomes an account named like the team; its resources move there; `CreatedBy` = the former team-owned
   resource's creator if known, else empty.
