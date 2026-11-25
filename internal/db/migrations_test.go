@@ -119,3 +119,32 @@ func TestMigration00018RoundTrip(t *testing.T) {
 		t.Fatalf("up: %v", err)
 	}
 }
+
+func TestMigration00033BackfillsClashingTeamNames(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	conn := stdlib.OpenDB(*pool.Config().ConnConfig)
+	defer conn.Close()
+	provider, err := goose.NewProvider(goose.DialectPostgres, conn, os.DirFS("migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, 32); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		WITH o AS (INSERT INTO orgs (name) VALUES ('o') RETURNING id)
+		INSERT INTO teams (org_id, name) SELECT o.id, n FROM o, unnest(ARRAY['default', 'default-team', 'ml']) n`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 33); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	var accounts, teamAccounts int
+	if err := pool.QueryRow(ctx, "SELECT count(*), count(team_id) FROM accounts WHERE NOT platform").Scan(&accounts, &teamAccounts); err != nil {
+		t.Fatal(err)
+	}
+	if accounts != 4 || teamAccounts != 3 {
+		t.Fatalf("accounts = %d (team %d), want 4 (team 3)", accounts, teamAccounts)
+	}
+}

@@ -115,3 +115,34 @@ func TestServiceConcurrentReloads(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestServiceOnReload(t *testing.T) {
+	org, user := uuid.New(), uuid.New()
+	fail := false
+	svc, err := NewService(context.Background(), func(context.Context) (Policy, error) {
+		if fail {
+			return Policy{}, errors.New("db down")
+		}
+		return memberPolicy(org, user, "member"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	svc.OnReload(func(_ context.Context, p Policy) {
+		calls++
+		if len(p.Memberships) != 1 {
+			t.Errorf("hook got %+v", p)
+		}
+	})
+	if calls != 1 {
+		t.Fatalf("OnReload must run once for the loaded policy, ran %d", calls)
+	}
+	if err := svc.Reload(context.Background()); err != nil || calls != 2 {
+		t.Fatalf("after Reload: calls=%d err=%v", calls, err)
+	}
+	fail = true
+	if err := svc.Reload(context.Background()); err == nil || calls != 2 {
+		t.Fatalf("a failed load must not call the hook: calls=%d err=%v", calls, err)
+	}
+}

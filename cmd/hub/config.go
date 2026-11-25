@@ -31,6 +31,8 @@ type config struct {
 	MetricsURL, LogsURL string
 	// LogsRetention mirrors the log store's retention and bounds the logs explorer's time range.
 	LogsRetention time.Duration
+	// AccountsShadow evaluates the account model next to every permission check and logs disagreements.
+	AccountsShadow bool
 }
 
 const minTokenLen = 32
@@ -152,6 +154,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, err
 	}
 	cfg.Dev = getenv("OBSERVATORY_DEV") == "1"
+	cfg.AccountsShadow = getenv("OBSERVATORY_ACCOUNTS_SHADOW") == "1"
 	skip := getenv("OBSERVATORY_DEV_SKIP_INTEGRATION_VERIFY")
 	cfg.DevSkipVerify, cfg.DevClaudeTokenURL = skip == "1", getenv("OBSERVATORY_DEV_CLAUDE_TOKEN_URL")
 	cfg.DevClaudeUsageURL = getenv("OBSERVATORY_DEV_CLAUDE_USAGE_URL")

@@ -18,6 +18,7 @@ import (
 	// The hub image has no zoneinfo; TZ picks the zone OBSERVATORY_REGISTRY_GC_TIME is in.
 	_ "time/tzdata"
 
+	"github.com/asterism-dev/observatory/internal/accounts"
 	"github.com/asterism-dev/observatory/internal/api"
 	"github.com/asterism-dev/observatory/internal/auth"
 	"github.com/asterism-dev/observatory/internal/authz"
@@ -73,6 +74,11 @@ func run() error {
 	z, err := authz.NewService(ctx, s.PolicySnapshot)
 	if err != nil {
 		return err
+	}
+	var shadow *accounts.Shadow
+	if cfg.AccountsShadow {
+		shadow = accounts.NewShadow(s.AccountSnapshot)
+		z.OnReload(shadow.Reload)
 	}
 	nh, err := network.Load(ctx, s, z, network.Config{GatewayHost: cfg.GatewayHost, GatewayToken: cfg.GatewayToken})
 	if err != nil {
@@ -186,7 +192,7 @@ func run() error {
 		go api.NewAutoRebuilds(s, z, sched, cfg.PublicURL, cfg.BuilderHubURL).Run(ctx, 10*time.Minute)
 	}
 	go api.NewVMExpiry(s, z, f).Run(ctx, time.Minute)
-	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention)
+	apiHandler := api.New(s, a, z, f, nh, dh, ig, manifests, tags, sched, gc, cfg.DocsURL, newer, firecrackerVersion(string(installScript)), tc, cfg.LogsRetention, shadow)
 	mux.Handle("/api/", apiHandler)
 	mux.Handle("/", spa(dist))
 	// The mux would redirect unclean paths; the Grafana proxy sees them raw and refuses them.
