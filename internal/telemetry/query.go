@@ -293,6 +293,8 @@ func (c *Client) instant(ctx context.Context, org uuid.UUID, query string, at ti
 		"query":       {query},
 		"time":        {strconv.FormatInt(at.Unix(), 10)},
 		"extra_label": {"observatory_org=" + org.String()},
+		// The default 30 s offset hides the newest samples, which would make every "latest" value look stale; 0 is rejected.
+		"latency_offset": {"1ms"},
 	}
 	resp, err := c.postForm(ctx, c.httpClient(), c.MetricsURL+"/api/v1/query", form)
 	if err != nil {
