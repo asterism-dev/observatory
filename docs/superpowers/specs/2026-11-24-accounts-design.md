@@ -263,7 +263,7 @@ On `main`, each step releasable *(order proposed; builder may adjust)*:
 1. Evaluator package with rules, patterns, conditions, shares, tests.
 2. Accounts and `account_id` / `created_by` / tags columns, filled by migration; old model still in charge; new
    decisions computed in shadow mode and differences logged.
-3. Switch: new routes, token, GUI, CLI, teams removed; old authz deleted.
+3. Switch: new routes, token, GUI, CLI, teams removed; old authz deleted (`internal/authz` and the Casbin dependency; `internal/policy` is the only evaluator).
 
 Step 3 is necessarily large (routes, GUI, CLI change together); it is the one hard cut.
 
