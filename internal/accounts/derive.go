@@ -94,26 +94,38 @@ func RewriteRule(r authz.Rule, org uuid.UUID, s store.AccountSnapshot) (policy.R
 	if !ok || k.service != "" && k != m.kind {
 		return policy.Rule{}, false
 	}
-	account, id := "${account}", "*"
+	// A scope maps to the accounts that hold it, so a rule never reaches resources its old scope did not.
+	var accounts []string
+	id := "*"
 	switch {
-	case rest == "" || rest == "*":
+	case m.scope == "org" && rest == "*":
+		accounts = []string{"${account}"}
+	case m.scope == "org" && rest != "":
+		accounts, id = []string{"${account}"}, rest
+	case m.scope == "team" && rest == "*":
+		for _, a := range s.Accounts {
+			if a.OrgID == org && a.TeamID != nil {
+				accounts = append(accounts, a.ID.String())
+			}
+		}
 	case m.scope == "team":
 		team, err := uuid.Parse(rest)
-		acc, found := s.OfTeam(team)
-		if err != nil || !found {
-			return policy.Rule{}, false
+		if acc, found := s.OfTeam(team); err == nil && found {
+			accounts = []string{acc.String()}
 		}
-		account = acc.String()
-	case m.scope == "user":
-		acc, found := s.Default(org)
-		if !found {
-			return policy.Rule{}, false
-		}
-		account = acc.String()
 	default:
-		id = rest
+		if acc, found := s.Default(org); found {
+			accounts = []string{acc.String()}
+		}
 	}
-	return policy.Rule{Effect: effect, Actions: actions, Resources: []string{"obs:" + m.service + ":" + account + ":" + m.typ + "/" + id}}, true
+	if len(accounts) == 0 {
+		return policy.Rule{}, false
+	}
+	resources := make([]string, len(accounts))
+	for i, acc := range accounts {
+		resources[i] = "obs:" + m.service + ":" + acc + ":" + m.typ + "/" + id
+	}
+	return policy.Rule{Effect: effect, Actions: actions, Resources: resources}, true
 }
 
 // sharedFromDefault is what team VMs used from the org before the org stopped owning resources.
@@ -169,8 +181,9 @@ func Derive(p authz.Policy, s store.AccountSnapshot) map[uuid.UUID]policy.Rights
 				add(subject, acc, rules...)
 			}
 		case "team":
-			if acc, ok := s.OfTeam(subject); ok {
-				for _, u := range teamMembers[subject] {
+			// A team subject was only a group of users: its role applied org-wide, like a user binding.
+			for _, u := range teamMembers[subject] {
+				for _, acc := range s.InOrg(b.OrgID) {
 					add(u, acc, rules...)
 				}
 			}

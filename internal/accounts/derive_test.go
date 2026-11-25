@@ -97,9 +97,9 @@ func TestRewriteRule(t *testing.T) {
 		ok   bool
 	}{
 		{authz.Rule{Effect: authz.Deny, Object: "org/vms/*", Action: "vm:delete"}, policy.Rule{Effect: policy.Deny, Actions: []string{"compute:vm:delete"}, Resources: []string{"obs:compute:${account}:vm/*"}}, true},
-		{authz.Rule{Effect: authz.Allow, Object: "org/team-env/*", Action: "env:use"}, policy.Rule{Effect: policy.Allow, Actions: []string{"secrets:env:use"}, Resources: []string{"obs:secrets:${account}:env/*"}}, true},
+		{authz.Rule{Effect: authz.Allow, Object: "org/team-env/*", Action: "env:use"}, policy.Rule{Effect: policy.Allow, Actions: []string{"secrets:env:use"}, Resources: []string{"obs:secrets:" + f.ml.String() + ":env/*"}}, true},
 		{authz.Rule{Effect: authz.Allow, Object: "org/team-vms/" + f.team.String(), Action: "vm:create"}, policy.Rule{Effect: policy.Allow, Actions: []string{"compute:vm:create"}, Resources: []string{"obs:compute:" + f.ml.String() + ":vm/*"}}, true},
-		{authz.Rule{Effect: authz.Allow, Object: "org/settings", Action: "telemetry:token"}, policy.Rule{Effect: policy.Allow, Actions: []string{"telemetry:token:create"}, Resources: []string{"obs:telemetry:${account}:token/*"}}, true},
+		{authz.Rule{Effect: authz.Allow, Object: "org/settings", Action: "telemetry:token"}, policy.Rule{Effect: policy.Allow, Actions: []string{"telemetry:token:create"}, Resources: []string{"obs:telemetry:" + f.def.String() + ":token/*"}}, true},
 		{authz.Rule{Effect: authz.Allow, Object: "org/members", Action: "member:invite"}, policy.Rule{}, false},
 		{authz.Rule{Effect: authz.Allow, Object: "org/user-devices/*", Action: "device:create"}, policy.Rule{}, false},
 	} {

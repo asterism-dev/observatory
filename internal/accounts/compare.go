@@ -1,6 +1,7 @@
 package accounts
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,8 +19,10 @@ type Diff struct {
 
 // Report counts old/new decisions; Widenings is keyed by the new action.
 type Report struct {
-	Regressions   []Diff
-	Widenings     map[string]int
+	Regressions []Diff
+	Widenings   map[string]int
+	// Collapsed lists custom-role rules on scopes that merge into one account, which no new rule can reproduce exactly.
+	Collapsed     []string
 	Same, Skipped int
 }
 
@@ -31,6 +34,14 @@ func Compare(p authz.Policy, s store.AccountSnapshot) (Report, error) {
 	}
 	rights := Derive(p, s)
 	rep := Report{Widenings: map[string]int{}}
+	for _, role := range p.Roles {
+		for _, r := range role.Rules {
+			prefix, _, _ := strings.Cut(strings.TrimPrefix(r.Object, "org/"), "/")
+			if m, ok := objectMap["org/"+prefix]; ok && m.scope == "user" {
+				rep.Collapsed = append(rep.Collapsed, fmt.Sprintf("%s: %s %s on %s", role.Name, r.Effect, r.Action, r.Object))
+			}
+		}
+	}
 
 	orgOfAccount := map[uuid.UUID]uuid.UUID{}
 	teamsOf := map[uuid.UUID][]uuid.UUID{}

@@ -43,6 +43,11 @@ func NewShadow(load func(context.Context) (store.AccountSnapshot, error)) *Shado
 
 // Reload rebuilds the derived rights for p; on error the previous state stays.
 func (sh *Shadow) Reload(ctx context.Context, p authz.Policy) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("accounts shadow: panic in reload", "panic", r)
+		}
+	}()
 	snap, err := sh.load(ctx)
 	if err != nil {
 		slog.Error("accounts shadow: load accounts", "err", err)

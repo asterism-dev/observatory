@@ -75,10 +75,17 @@ $$;
 -- +goose StatementEnd
 
 INSERT INTO accounts (org_id, name) SELECT id, 'default' FROM orgs;
-INSERT INTO accounts (org_id, team_id, name) SELECT org_id, id, name FROM teams t
-    WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.org_id = t.org_id AND a.name = t.name);
-INSERT INTO accounts (org_id, team_id, name) SELECT org_id, id, name || '-team' FROM teams t
-    WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.team_id = t.id);
+-- +goose StatementBegin
+DO $$
+DECLARE
+    t record;
+BEGIN
+    FOR t IN SELECT id, org_id, name FROM teams ORDER BY created_at, id LOOP
+        INSERT INTO accounts (org_id, team_id, name) VALUES (t.org_id, t.id, account_name(t.org_id, t.name, NULL));
+    END LOOP;
+END
+$$;
+-- +goose StatementEnd
 
 ALTER TABLE vms ADD COLUMN account_id uuid REFERENCES accounts (id) ON DELETE SET NULL, ADD COLUMN tags jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE disks ADD COLUMN account_id uuid REFERENCES accounts (id) ON DELETE SET NULL, ADD COLUMN tags jsonb NOT NULL DEFAULT '{}';
