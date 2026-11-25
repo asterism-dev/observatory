@@ -1,3 +1,9 @@
+## v0.23.1 (2026-11-25)
+
+### Fix
+
+- **telemetry**: query latest VM usage without latency offset (#61)
+
 ## v0.23.0 (2026-11-23)
 
 ### Feat
